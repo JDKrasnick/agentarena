@@ -39,6 +39,10 @@ The project is intended to be both useful and entertaining. The adversarial test
 
 Before the agents begin, Agent Arena inspects the repository and creates a shared execution contract.
 
+It also creates an immutable task contract from the user's prompt and authoritative references. When a task points to an official issue, pull request, specification, or public standard, Agent Arena snapshots its description, acceptance criteria, maintainer clarifications, origin, retrieval time, and content hash before any agent runs. Every contestant and judge receives the same snapshot.
+
+Requirements from an official PR may be shared, but a reference implementation diff should remain hidden unless the user explicitly makes it part of the task. Known-good tests or outputs may be retained as judge-only oracle evidence with their provenance recorded.
+
 It detects:
 
 * Languages and frameworks.
@@ -91,7 +95,7 @@ Agents may still explore the codebase, but they do not need to rediscover basic 
 
 Each contestant receives:
 
-* The same task.
+* The same immutable task contract and official source snapshots.
 * The same starting commit.
 * The same time and cost budget.
 * The same repository instructions.
@@ -126,19 +130,48 @@ An agent cannot claim success without evidence from the harness.
 
 Patches that fail essential checks may be eliminated immediately or allowed into the repair stage with a penalty.
 
-### 4. Attack round
+### 4. Attack rounds
 
 Each surviving agent receives anonymized opponent patches and changes roles from solver to attacker.
 
-The attacker is instructed to find concrete defects, including:
+The MVP runs three attack–repair rounds after the initial implementation. In each round, an agent may submit up to three executable attacks ranked from most important and most likely to land to weakest and most speculative. Submitting fewer than three is valid.
 
-1. Missing edge cases.
-2. Incorrect assumptions.
-3. Regressions.
-4. Race conditions.
-5. Security vulnerabilities.
-6. Performance problems.
-7. Incomplete handling of the issue requirements.
+Each round has its own symmetric, versioned prompt and investigation brief:
+
+| Round | Focus | Injected bug-finding methods |
+| --- | --- | --- |
+| 1 — Contract and local correctness | Acceptance criteria, wrong output, regressions, negative cases, boundaries, and error handling. | Requirement-to-code tracing, examples, table tests, boundary analysis, and focused API assertions. |
+| 2 — Systematic exploration | State transitions, persistence, serialization, ordering, concurrency, cleanup, cancellation, and test-suite blind spots. | Property and state-machine tests, generated inputs, fuzzing, mutation-guided probes, static leads, and controlled schedules. |
+| 3 — Integration, resilience, and security | Real component boundaries, dependency contracts, configuration, authentication and authorization, timeouts, retries, idempotency, partial failure, recovery, and resource behavior. | Approved ephemeral services, protocol checks, fault injection, security checks, deterministic stress, and steady-state invariants. |
+
+Required repository integration checks still run at baseline and after every
+repair, and agents may submit integration attacks in any round. Round 3 is the
+proactive deep-integration pass with the approved test topology; it is not the
+first time integrations are exercised and it never grants production access.
+
+Before ranking attacks, each agent gets a no-score scouting phase in which it
+records a concise hypothesis portfolio: bug category, invariant, proposed
+probe, required capability, and confidence. Only the zero to three committed
+attacks can land or recoil. This encourages breadth without rewarding
+unexecutable speculation.
+
+The shared taxonomy covers contract and logic, inputs and errors, state and
+lifecycle, data integrity, concurrency and time, integration and configuration,
+security and privacy, resilience, performance and resources, and test/build
+integrity. Automated methods are leads rather than verdicts: a mutation
+survivor, fuzzer input, static warning, scanner alert, or model suggestion must
+still become deterministic executable evidence with an authoritative oracle.
+Any house-generated score-changing probe must be surfaced in a normal round so
+the target gets a repair opportunity. Final validation only reruns known checks;
+a novel late finding is reported but does not alter the winner.
+
+Ordinary contestant attacks are differential and therefore cannot expose a bug
+shared by both patches. The MVP permits at most one neutral house attack in
+round 2 and one in round 3. A house attack has no contestant author or rank,
+passes the same executable-evidence and oracle checks, and is evaluated
+independently against both frozen patches. It may deal the same
+severity-weighted root-defect damage to either or both contestants, causes no
+recoil, and gives every affected contestant the normal repair opportunity.
 
 The strongest attack is an executable test:
 
@@ -151,6 +184,10 @@ Two simultaneous refresh requests can overwrite the valid session token.
 Evidence:
 tests/session-refresh-race.test.ts
 
+Oracle:
+Official issue #241 acceptance criterion 3 requires the valid token to survive
+concurrent refresh.
+
 Result:
 Patch A: PASS
 Patch B: FAIL
@@ -158,6 +195,16 @@ Patch C: PASS
 ```
 
 Purely rhetorical or stylistic criticism should not affect the result unless it identifies a measurable maintainability or correctness problem.
+
+Both agents submit their ranked attack sets before any result is revealed. The harness resolves all target damage and attacker recoil simultaneously so process order cannot influence the fight.
+
+Every attack prompt is composed from a fixed common contract, the round brief,
+and a deterministic repository method pack. The common portion includes the
+immutable task sources, frozen patches, prior attacks and root defects, current
+health, permission manifest, budgets, recoil table, and output schema. Prompts,
+method versions, tool versions, seeds, and hashes are run artifacts. Recovery,
+repair, verifier, and infrastructure-review invocations use separate prompts
+because they have different allowed actions.
 
 ### 5. Attack validation
 
@@ -173,13 +220,42 @@ An attack should be rejected when it is:
 * Designed specifically to favor the attacker’s implementation.
 * Based on unrealistic or impossible behavior.
 
-A valid test should generally reproduce consistently and evaluate meaningful external behavior.
+A valid test should generally reproduce consistently and evaluate meaningful external behavior. To land, it must pass against the attacker's current patch and fail against the target's current patch.
+
+That differential is necessary but not sufficient: it does not prove that the attacker's expected output is correct. Each attack must cite an oracle in the immutable task contract. A neutral attack verifier checks whether the claimed output or invariant is actually supported by the official task, issue or PR acceptance criteria, repository specification, public contract, or documented domain invariant. Unsupported or ambiguous expectations are `unproven`, deal no target damage, and count as a miss.
+
+A submitted attack that does not land causes recoil damage to its author. Rank 1 costs 5 HP on a miss, rank 2 costs 10 HP, and rank 3 costs 15 HP. Invalid, flaky, unrelated, duplicate, self-defeating, and blocked attacks all miss. Harness infrastructure failures cause no recoil.
 
 A lightweight verifier agent may help evaluate disputed attacks, but deterministic execution should remain the primary source of truth.
 
+The term **harness** should refer to deterministic orchestration and execution: worktrees, patches, processes, retries, and recorded pass/fail results. The **attack verifier** performs the narrow semantic judgment about oracle support, relevance, root-defect identity, and severity. Together they form the arena adjudication pipeline.
+
+For each landed defect, the visible attack is paired with up to two held-out
+sibling cases generated and frozen before repair. The siblings must exercise
+the same cited invariant and root defect, pass the attacker's patch and fail the
+target's frozen patch for a contestant attack, and pass the ordinary
+determinism and verifier checks. House siblings are evaluated independently per
+contestant. The repair prompt reveals the invariant, visible reproducer, and
+held-out case categories but not their exact inputs. Damage heals only when the
+repair passes the visible and held-out cases. A failed held-out case is revealed
+after that repair validation and every case is disclosed in the final report.
+Held-out cases never increase severity or stack damage.
+
+Harness-owned failures must never change health, but a true target defect must not be dismissed merely because it looks infrastructural. Git, filesystem, process-launch, environment, service, or provider failures are first retried in a clean worktree with author, target, base, and service-health controls.
+
+If attack causality remains unclear, the result is `provisional_infrastructure` and the attacker reviews its own failure packet. It may accept the infrastructure diagnosis and request no-fault withdrawal, or challenge the diagnosis with exactly one bounded evidence revision. Acceptance creates a replacement credit only when harness controls confirm the failure was patch-independent rather than malformed or agent-caused. A revision may improve setup, teardown, isolation, timeout limits, logging, tracing, probes, or the focused command, but may not change the claim, expected behavior, oracle, assertion, target, rank, or root defect. The harness then reruns both frozen patches with isolated service instances.
+
+A reproducible target-only failure returns to normal attack adjudication. A patch-independent environment failure becomes `infrastructure_error`. Evidence that remains causally ambiguous becomes `execution_inconclusive`. Either final no-fault status creates one replacement credit, while a revision that changes the original claim or assertion is an invalid miss. Round health waits for all provisional attacks to finish review so resolution remains simultaneous.
+
+After normal round 3, one optional recovery attack–repair round lets each agent spend up to three replacement credits on newly ranked attacks. Replacement attacks use normal recoil and damage; only the infrastructure-lost slot is free. A second infrastructure failure in recovery makes the run inconclusive, and more than three credits for one agent is treated as a systemic harness failure rather than starting an unbounded loop.
+
+A separate harness-maintainer agent owns accommodations. It may propose symmetric, versioned run overlays for service lifecycle, worktree setup, capability adapters, broker wiring, timeouts, resource limits, retries, and diagnostics. It cannot alter contestant code, attack assertions, or scoring. An overlay is applied only after harness tests, clean replay, permission review, and symmetric validation pass. Product-level harness source patches are drafted with regression fixtures but are not loaded into the referee mid-fight.
+
+If an individual attack cannot be generated at all, it causes neither damage nor recoil. If implementation, repair, required validation, or final validation cannot be trusted after harness retries and controls, the whole run is inconclusive; the system must not eliminate a contestant or declare a winner from infrastructure failure.
+
 ### 6. Defense and repair
 
-Each contestant receives the validated attacks against its patch.
+After each attack phase, each contestant receives the validated attacks against its current patch.
 
 For each attack, it must:
 
@@ -187,9 +263,13 @@ For each attack, it must:
 * Repair the implementation.
 * Or concede the issue.
 
-Agents should receive points for acknowledging and repairing valid defects. The system should not reward stubborn rhetorical defense.
+Agents should heal damage for acknowledging and repairing valid defects. The system should not reward stubborn rhetorical defense.
 
-Each contestant receives a bounded repair budget, such as one repair round, a maximum duration, or a token limit.
+Each contestant receives one bounded repair opportunity per round. A successful
+repair must pass the visible reproducer and all accepted held-out sibling cases
+before it heals the severity damage for that defect. Miss recoil is permanent.
+The next round attacks the repaired patches, and all previously landed cases
+remain in the validation set.
 
 ### 7. Final validation and ranking
 
@@ -197,32 +277,43 @@ All revised patches run against:
 
 * The original repository test suite.
 * Their own submitted tests.
-* The union of validated adversarial tests.
+* The union of validated visible and held-out adversarial cases.
+* Validated neutral house cases from rounds 2 and 3.
 * Optional integration, security, and performance checks.
 
-Correctness should dominate the ranking.
+Correctness should dominate the ranking through a health system. Every contestant starts at 100 HP. A landed attack deals damage based on the severity of the defect it proves, rather than awarding points for the raw number of tests an agent submits:
 
-Suggested ranking order:
+| Severity | Damage | Example impact |
+| -------- | -----: | -------------- |
+| Critical | 50 HP | Security boundary bypass, data loss, or corruption. |
+| High | 30 HP | Core acceptance criterion failure, crash, hang, or major regression. |
+| Medium | 15 HP | Realistic edge-case or secondary-requirement failure. |
+| Low | 5 HP | Narrow robustness or measurable performance issue. |
 
-1. Task acceptance criteria.
-2. Existing repository tests.
-3. Validated adversarial tests.
-4. Security and regression checks.
-5. Integration tests.
-6. Performance.
-7. Patch simplicity.
-8. Cost.
-9. Completion time.
+Multiple cases proving the same root defect deal target damage once. A blocked
+or otherwise missed contestant attack deals no target damage and instead
+applies rank-based recoil to its author; neutral house attacks never recoil. A
+successful repair heals only after all accepted visible and held-out cases for
+the defect pass. An unresolved failure leaves the damage active, and a later
+regression can reactivate it without stacking it. Recoil cannot be healed.
+
+Health is calculated from a ledger: `100 - permanent recoil - active distinct defect damage`, clamped between 0 and 100. Round events resolve simultaneously. A contestant downed by the combined round resolution still receives that round's repair opportunity and is eliminated only if it remains at 0 afterward. A final patch that cannot be applied or fails a required repository check is eliminated and set to 0 HP regardless of its remaining health.
+
+Attackers may propose a severity, but they do not control damage. A neutral verifier should apply the published rubric to anonymized executable evidence, choose the lowest level fully supported, and provide a saved rationale. Ambiguous High or Critical ratings should be capped at Medium. The harness then calculates health deterministically from landed tests, persisted severity verdicts, recoil, and repair results.
+
+After three normal attack–repair rounds and any required infrastructure recovery round, the surviving contestant with the most HP wins. Patch simplicity may break an HP tie; otherwise the result is a draw. If only one contestant survives earlier and no downed opponent holds replacement credits, the fight ends early. Cost and duration are reported but do not change health.
 
 The final report should include a patch-versus-test matrix:
 
-| Validation           | Patch A |    Patch B |    Patch C |
-| -------------------- | ------: | ---------: | ---------: |
-| Existing tests       |    Pass |       Pass |       Pass |
-| Concurrency attack   |    Pass |       Fail |       Pass |
-| Invalid-input attack |    Pass |       Pass |       Fail |
-| Integration checks   |    Pass |       Pass |       Pass |
-| Result               |  Winner | Eliminated | Eliminated |
+| Validation                    | Patch A | Patch B | Patch C |
+| ----------------------------- | ------: | ------: | ------: |
+| Existing tests                |    Pass |    Pass |    Pass |
+| Concurrency attack (High, 30) |    Pass |    Fail |    Pass |
+| Invalid-input attack (Med, 15) |    Pass |    Pass |    Fail |
+| Integration checks            |    Pass |    Pass |    Pass |
+| Miss recoil                   |   -5 HP |  -10 HP |    0 HP |
+| Final health                  |   95 HP |   60 HP |   85 HP |
+| Result                        |  Winner | Survived | Survived |
 
 The user remains responsible for reviewing and merging the winning patch.
 
@@ -270,26 +361,94 @@ When an agent needs an unavailable capability, it submits a structured request:
 
 The harness may approve the capability, deny it, or provide a fallback.
 
+Permissions and authentication must be resolved explicitly before the fight.
+Reconnaissance should generate one consolidated plan covering tools, services,
+network destinations, filesystem paths, credential scopes, risk, requirement
+level, execution role, and whether enforcement is OS-enforced, harness-brokered,
+or advisory. The user can choose:
+
+* **Auto:** approve only enforced or brokered capabilities matching a
+  preconfigured safe allowlist.
+* **Confirm:** approve, modify, or deny material capabilities in one preflight
+  review.
+* **Deny:** deny by default unless configuration explicitly allows a capability.
+
+`auto` must not silently authorize production credentials, deployment access,
+unrelated host files, an SSH agent, or destructive cloud operations. Required
+capability denials block the fight unless the user explicitly accepts a reduced
+validation contract. Optional denials are recorded and have no health effect.
+
+Authentication should be performed by the harness through existing scoped
+sessions, device authorization, ephemeral services, or test-only credentials.
+Secrets belong to a run-scoped credential broker and harness-only validation
+processes, never to agent prompts, worktrees, transcripts, or reports. Both
+contestants must be evaluated with identical capabilities and scopes.
+
+The MVP is not a complete hostile-code sandbox. A brokered denial means the
+harness will not provide a credential or service, but it may not prevent an
+agent from using authority already available to the current OS account.
+Advisory restrictions exist only in policy and prompts. Preflight must label
+these honestly; sensitive runs should use a sanitized account or external
+container with production credentials absent.
+
+An agent may declare extra capabilities for an integration attack. A newly
+denied optional request becomes `capability_denied` and causes no damage or
+recoil. Provisioning failure after approval is `infrastructure_error`. Reusing a
+capability that the agent already knew was denied is an invalid submission and
+receives normal miss recoil.
+
+Integration discovery always chooses the simplest sufficient environment:
+existing repository commands, fakes, fixtures, and local dependencies first;
+then a run-owned local subprocess; then a user-supplied Compose profile; and
+only then an explicitly approved remote test service. Escalation requires a
+recorded reason that the simpler level cannot exercise the cited invariant and
+must be symmetric across patches. The MVP can execute an existing Compose
+profile but does not invent arbitrary container infrastructure.
+
 Real integration testing requires explicit configuration. An optional `agent-arena.yaml` file can define services, commands, credentials, roles, and network policies:
 
 ```yaml
-setup:
-  - docker compose up -d
-  - pnpm db:migrate
+test: pnpm test
+integration:
+  setup: docker compose up -d postgres
+  check: pnpm test:integration
+  teardown: docker compose down --volumes
+  services: [postgres]
+  steady_state_invariants:
+    - health endpoint is ready
+    - seed account can complete a known-good request
+  fault_controls: [timeout, disconnect, restart]
 
-checks:
-  - pnpm test
-  - pnpm test:integration
-  - pnpm lint
+sources:
+  - github_issue: 241
+  - spec: docs/session-refresh.md
 
 agents:
   - claude
   - codex
   - gemini
 
+attack_verifier: codex
+harness_maintainer: codex
+
 limits:
-  rounds: 1
+  rounds: 3
+  attacks_per_round: 3
+  infrastructure_recovery_round: true
   timeout_minutes: 20
+
+permissions:
+  default: confirm
+  allow:
+    github_read:
+      mode: auto
+      scope: issue_and_pr_metadata
+    postgres_test:
+      mode: auto
+      role: harness_only
+  deny:
+    - production_credentials
+    - production_deploy
 ```
 
 Credentials should be test-only, scoped to an individual run, and hidden from transcripts and opponents.
@@ -346,12 +505,15 @@ Avoid initially supporting:
 
 ```bash
 agent-arena fight "fix issue #241" \
-  --agents claude,codex,gemini \
-  --rounds 1 \
+  --agents claude,codex \
+  --rounds 3 \
   --budget 5
 ```
 
-A smaller first milestone could support only two agents, one attack round, one repair round, and one configured test command.
+The MVP supports two agents, one initial implementation, three attack–repair
+rounds, up to three ranked attacks per agent per round, one optional
+infrastructure recovery round, one required validation command, and at most one
+approved ephemeral integration profile.
 
 ---
 
@@ -361,12 +523,19 @@ The report is a core feature, not an afterthought.
 
 Game mechanics should map directly to real engineering events:
 
-* **Damage:** A verified failing test.
-* **Critical hit:** A major security or correctness defect.
-* **Block:** An attack successfully disproved.
-* **Heal:** A patch repaired successfully.
-* **Elimination:** A required check remains failing.
-* **Draw:** Multiple patches survive all validation.
+* **Damage:** A verified failing test, weighted by defect severity.
+* **Critical hit:** A catastrophic defect dealing 50 HP.
+* **Shared hit:** A neutral house attack proves the same defect against both
+  patches and damages both without recoil.
+* **Block:** An attack successfully disproved; its author takes rank-based recoil.
+* **Recoil:** A missed rank 1, 2, or 3 attack costs its author 5, 10, or 15 HP.
+* **Holdout:** A repair passes the visible reproducer but remains damaged because
+  a pre-frozen sibling case still fails.
+* **Review:** A provisionally infrastructural attack is accepted as no-fault or challenged with one evidence revision.
+* **Freebie:** A confirmed infrastructure attempt earns one recovery-round replacement credit.
+* **Heal:** A repaired patch restores the exact HP lost to that attack.
+* **Elimination:** A required check remains failing and health becomes 0.
+* **Draw:** Multiple patches finish with equal HP and tie-breakers.
 
 Example terminal output:
 
@@ -374,19 +543,24 @@ Example terminal output:
 ╔══════════════ AGENT ARENA ══════════════╗
 ║ Task: Fix concurrent session refresh   ║
 ╠═════════════════════════════════════════╣
-║ Claude   92 HP   Tests: 148/148         ║
+║ Claude  100 HP   Tests: 148/148         ║
 ║ Codex     0 HP   Eliminated             ║
-║ Gemini   71 HP   Tests: 147/148         ║
 ╚═════════════════════════════════════════╝
 
-Claude attacks Codex:
+Round 2 — Codex attack #3 against Claude:
+Claim disproved by the existing concurrency test.
+Block. Codex takes 15 recoil.
+
+Round 3 — Claude attack #1 against Codex:
 Expired sessions can be revived after logout.
 
 Adversarial test: FAIL against Codex
-Critical hit.
+Critical hit: 50 damage.
 
 Codex attempted repair.
 Repair failed.
+Required validation after repair: FAIL.
+Elimination: 0 HP.
 
 WINNER: CLAUDE
 Cost: $2.83
@@ -396,6 +570,8 @@ Duration: 11m 14s
 Each run should generate:
 
 * `BATTLE.md`
+* An immutable task-contract file with official source snapshots and hashes.
+* A redacted permission manifest with approvals, denials, leases, and omitted checks.
 * A JSON result file.
 * The winning patch.
 * A command to apply the winner.
@@ -440,6 +616,7 @@ The main risks are:
 * Agents gaming the scoring system.
 * Untrusted code execution.
 * Provider-specific CLI behavior.
+* Harness failures hiding real contestant defects.
 * Large time and API costs.
 * Users treating the winner as proof of correctness.
 
@@ -448,5 +625,10 @@ The project should clearly state that surviving the arena provides additional ev
 The most important success metric is:
 
 > How often does the adversarial attack-and-repair stage produce a better patch than simply running several agents and selecting the first one that passes existing tests?
+
+Harness reliability is a release gate: zero unhandled harness failures, zero
+health or winner changes caused by harness faults, a permanent regression
+fixture for every confirmed fault, and at least 99.9% infrastructure-free attack
+evaluation in stable releases.
 
 Even when the improvement is modest, the battle format may still succeed as an entertaining and viral open-source project. The first release should therefore prioritize a simple command, convincing output, reproducibility, and shareable results.
