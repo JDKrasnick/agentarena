@@ -39,6 +39,50 @@ describe("patch quality facts", () => {
     });
   });
 
+  it("ignores whitespace-only reformatting", () => {
+    const facts = collectPatchQualityFacts({
+      contestantId: "codex",
+      patch: [
+        "diff --git a/src/a.ts b/src/a.ts",
+        "--- a/src/a.ts",
+        "+++ b/src/a.ts",
+        "@@ -1,2 +1,2 @@",
+        "-const a = 1;",
+        "-const b = 2;",
+        "+    const a = 1;",
+        "+    const b = 2;",
+        "",
+      ].join("\n"),
+    });
+    expect(facts).toMatchObject({
+      addedLines: 2,
+      deletedLines: 2,
+      normalizedProductionLines: 0,
+      formattingOnly: true,
+    });
+  });
+
+  it("still counts a reindented line that also changed", () => {
+    const facts = collectPatchQualityFacts({
+      contestantId: "codex",
+      patch: [
+        "diff --git a/src/a.ts b/src/a.ts",
+        "--- a/src/a.ts",
+        "+++ b/src/a.ts",
+        "@@ -1,2 +1,2 @@",
+        "-const a = 1;",
+        "-const b = 2;",
+        "+    const a = 1;",
+        "+    const b = 3;",
+        "",
+      ].join("\n"),
+    });
+    expect(facts).toMatchObject({
+      normalizedProductionLines: 2,
+      formattingOnly: false,
+    });
+  });
+
   it("records binary paths without crashing", () => {
     const facts = collectPatchQualityFacts({
       contestantId: "codex",

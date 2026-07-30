@@ -26,6 +26,32 @@ interface DiffFile {
   normalized: number;
   binary: boolean;
   addedText: string[];
+  deletedText: string[];
+}
+
+function whitespaceInsensitiveKey(line: string): string {
+  return line.replace(/\s+/gu, "");
+}
+
+function countNormalizedChanges(file: DiffFile): number {
+  const unmatchedDeletions = new Map<string, number>();
+  for (const line of file.deletedText) {
+    const key = whitespaceInsensitiveKey(line);
+    if (!key) continue;
+    unmatchedDeletions.set(key, (unmatchedDeletions.get(key) ?? 0) + 1);
+  }
+  let changes = 0;
+  for (const line of file.addedText) {
+    const key = whitespaceInsensitiveKey(line);
+    if (!key) continue;
+    const available = unmatchedDeletions.get(key) ?? 0;
+    if (available > 0) unmatchedDeletions.set(key, available - 1);
+    else changes += 1;
+  }
+  return [...unmatchedDeletions.values()].reduce(
+    (total, count) => total + count,
+    changes,
+  );
 }
 
 function parsePatch(patch: string): DiffFile[] {
@@ -41,6 +67,7 @@ function parsePatch(patch: string): DiffFile[] {
         normalized: 0,
         binary: false,
         addedText: [],
+        deletedText: [],
       };
       files.push(current);
       continue;
@@ -57,12 +84,12 @@ function parsePatch(patch: string): DiffFile[] {
     if (line.startsWith("+")) {
       current.added += 1;
       current.addedText.push(line.slice(1));
-      if (line.slice(1).trim()) current.normalized += 1;
     } else if (line.startsWith("-")) {
       current.deleted += 1;
-      if (line.slice(1).trim()) current.normalized += 1;
+      current.deletedText.push(line.slice(1));
     }
   }
+  for (const file of files) file.normalized = countNormalizedChanges(file);
   return files;
 }
 
