@@ -1,10 +1,153 @@
 import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { GitHubCliDeliveryAdapter } from "../../src/delivery/github.js";
+import { makeRunState } from "../helpers/run-state.js";
 
 describe("GitHub CLI delivery adapter", () => {
+  it("delivers a base-relative PR result as a child of the unchanged frozen head", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-gh-prepare-"));
+    const repositoryRoot = path.join(root, "repository");
+    const remoteRoot = path.join(root, "remote.git");
+    const bin = path.join(root, "bin");
+    await mkdir(repositoryRoot, { recursive: true });
+    await mkdir(bin, { recursive: true });
+    await execa("git", ["init", "-q"], { cwd: repositoryRoot });
+    await execa("git", ["config", "user.email", "arena@example.test"], {
+      cwd: repositoryRoot,
+    });
+    await execa("git", ["config", "user.name", "Agent Arena Test"], {
+      cwd: repositoryRoot,
+    });
+    const sourcePath = path.join(repositoryRoot, "result.txt");
+    await writeFile(sourcePath, "base\n");
+    await execa("git", ["add", "result.txt"], { cwd: repositoryRoot });
+    await execa("git", ["commit", "-qm", "base"], { cwd: repositoryRoot });
+    const baseCommit = (
+      await execa("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot })
+    ).stdout;
+    await writeFile(sourcePath, "incumbent\n");
+    await execa("git", ["add", "result.txt"], { cwd: repositoryRoot });
+    await execa("git", ["commit", "-qm", "pull request head"], {
+      cwd: repositoryRoot,
+    });
+    const headCommit = (
+      await execa("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot })
+    ).stdout;
+    await execa("git", ["init", "--bare", "-q", remoteRoot]);
+    await execa("git", ["push", remoteRoot, `HEAD:refs/heads/feature/result`], {
+      cwd: repositoryRoot,
+    });
+    await execa(
+      "git",
+      [
+        "config",
+        `url.${pathToFileURL(remoteRoot).href}.insteadOf`,
+        "https://github.com/acme/repo.git",
+      ],
+      { cwd: repositoryRoot },
+    );
+
+    await writeFile(sourcePath, "accepted final result\n");
+    const patch = await execa(
+      "git",
+      ["diff", "--binary", "--full-index", baseCommit, "--", "result.txt"],
+      {
+        cwd: repositoryRoot,
+        stripFinalNewline: false,
+      },
+    );
+    const patchPath = path.join(root, "accepted.patch");
+    await writeFile(patchPath, patch.stdout);
+    await execa("git", ["checkout", "--", "result.txt"], {
+      cwd: repositoryRoot,
+    });
+
+    const executable = path.join(bin, "gh");
+    await writeFile(
+      executable,
+      `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({
+  state: "OPEN",
+  headRefOid: process.env.FAKE_GH_HEAD,
+  headRefName: "feature/result",
+  headRepository: { nameWithOwner: "acme/repo" }
+}));
+`,
+    );
+    await chmod(executable, 0o755);
+    const previousPath = process.env.PATH;
+    const previousHead = process.env.FAKE_GH_HEAD;
+    process.env.PATH = `${bin}${path.delimiter}${previousPath ?? ""}`;
+
+    const state = makeRunState({ repositoryRoot });
+    state.config.baseCommit = baseCommit;
+    const target = {
+      kind: "github_pull_request" as const,
+      repository: "acme/repo",
+      number: 9,
+      url: "https://github.com/acme/repo/pull/9",
+      baseBranch: "main",
+      headBranch: "feature/result",
+      headRepository: "acme/repo",
+      headCommit,
+    };
+    const input = {
+      state,
+      target,
+      patchPath,
+      patchSha256: "a".repeat(64),
+      branch: "feature/result",
+      closeIssue: false,
+    };
+    try {
+      process.env.FAKE_GH_HEAD = baseCommit;
+      await expect(
+        new GitHubCliDeliveryAdapter(repositoryRoot).prepare(input),
+      ).rejects.toThrow("Pull request head moved after review");
+
+      process.env.FAKE_GH_HEAD = headCommit;
+      const prepared = await new GitHubCliDeliveryAdapter(
+        repositoryRoot,
+      ).prepare(input);
+      expect(
+        (
+          await execa(
+            "git",
+            ["show", "-s", "--format=%P", prepared.commitSha],
+            {
+              cwd: repositoryRoot,
+            },
+          )
+        ).stdout,
+      ).toBe(headCommit);
+      expect(
+        (
+          await execa("git", ["show", `${prepared.commitSha}:result.txt`], {
+            cwd: repositoryRoot,
+          })
+        ).stdout,
+      ).toBe("accepted final result");
+      expect(
+        (
+          await execa(
+            "git",
+            ["ls-remote", remoteRoot, "refs/heads/feature/result"],
+            { cwd: repositoryRoot },
+          )
+        ).stdout.split(/\s/u)[0],
+      ).toBe(prepared.commitSha);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      if (previousHead === undefined) delete process.env.FAKE_GH_HEAD;
+      else process.env.FAKE_GH_HEAD = previousHead;
+    }
+  });
+
   it("reads normalized required checks through the gh subprocess boundary", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-gh-adapter-"));
     const bin = path.join(root, "bin");

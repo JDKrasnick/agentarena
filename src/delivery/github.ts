@@ -209,6 +209,7 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
       if (current.state.toUpperCase() !== "OPEN")
         throw new Error("Frozen pull request is no longer open");
       if (
+        current.headRefOid !== input.target.headCommit ||
         current.headRefName !== input.target.headBranch ||
         current.headRepository.nameWithOwner !== input.target.headRepository
       ) {
@@ -216,10 +217,6 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
           "Pull request head moved after review; rerun/rebase, create a follow-up pull request, or cancel",
         );
       }
-      if (base !== input.target.headCommit)
-        throw new Error(
-          "The accepted patch was not validated from the frozen pull request head",
-        );
       branch = input.target.headBranch;
       pushRepository = input.target.headRepository ?? input.target.repository;
     }
@@ -245,27 +242,32 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
         cwd: temporaryRoot,
         signal: input.signal,
       });
-      await command(
+      const preparedTree = await command("git", ["write-tree"], {
+        cwd: temporaryRoot,
+        signal: input.signal,
+      });
+      const commitParent =
+        input.target.kind === "github_pull_request"
+          ? input.target.headCommit
+          : base;
+      if (!commitParent)
+        throw new Error("Delivery has no commit parent for the prepared tree");
+      const commitSha = await command(
         "git",
         [
           "-c",
           "user.name=Agent Arena",
           "-c",
           "user.email=agent-arena@localhost",
-          "commit",
+          "commit-tree",
+          preparedTree,
+          "-p",
+          commitParent,
           "-m",
           `Agent Arena: ${input.state.config.task.slice(0, 72)}`,
         ],
         { cwd: temporaryRoot, signal: input.signal },
       );
-      const commitSha = await command("git", ["rev-parse", "HEAD"], {
-        cwd: temporaryRoot,
-        signal: input.signal,
-      });
-      const preparedTree = await command("git", ["rev-parse", "HEAD^{tree}"], {
-        cwd: temporaryRoot,
-        signal: input.signal,
-      });
       const remote = `https://github.com/${pushRepository}.git`;
       const existing = await execa(
         "git",
@@ -279,24 +281,13 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
           if (remoteSha === input.target.headCommit) {
             await command(
               "git",
-              ["push", remote, `HEAD:refs/heads/${branch}`],
+              ["push", remote, `${commitSha}:refs/heads/${branch}`],
               { cwd: temporaryRoot, signal: input.signal },
             );
           } else {
-            await command("git", ["fetch", remote, remoteSha], {
-              cwd: temporaryRoot,
-              signal: input.signal,
-            });
-            const remoteTree = await command(
-              "git",
-              ["rev-parse", "FETCH_HEAD^{tree}"],
-              { cwd: temporaryRoot, signal: input.signal },
+            throw new Error(
+              "Pull request head moved before the authorized non-force push",
             );
-            if (remoteTree !== preparedTree)
-              throw new Error(
-                "Pull request head moved before the authorized non-force push",
-              );
-            deliveredSha = remoteSha;
           }
         } else {
           await command("git", ["fetch", remote, remoteSha], {
@@ -315,10 +306,14 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
           deliveredSha = remoteSha;
         }
       } else {
-        await command("git", ["push", remote, `HEAD:refs/heads/${branch}`], {
-          cwd: temporaryRoot,
-          signal: input.signal,
-        });
+        await command(
+          "git",
+          ["push", remote, `${commitSha}:refs/heads/${branch}`],
+          {
+            cwd: temporaryRoot,
+            signal: input.signal,
+          },
+        );
       }
       if (input.target.kind === "github_pull_request") {
         return {
