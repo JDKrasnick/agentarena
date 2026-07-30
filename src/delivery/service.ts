@@ -251,13 +251,18 @@ export async function executeDelivery(
         ...(options.signal ? { signal: options.signal } : {}),
       });
       const eventWrites: Array<Promise<string>> = [];
+      let eventSequence = 0;
       const onProgress = (event: DeliveryProgressEvent): void => {
         options.onProgress?.(event);
+        eventSequence += 1;
+        const eventId = `${event.operationId}-${String(eventSequence).padStart(4, "0")}`;
         eventWrites.push(
-          store.writeImmutableJson(
-            `delivery/events/${event.operationId}-${String(event.attempt).padStart(4, "0")}.json`,
-            { version: 1, ...event },
-          ),
+          store.writeImmutableJson(`delivery/events/${eventId}.json`, {
+            version: 1,
+            eventId,
+            sequence: eventSequence,
+            ...event,
+          }),
         );
       };
       let pullRequest = await adapter.getPullRequest(
