@@ -25,7 +25,7 @@ describe("review ledger", () => {
         status,
         ...(status === "accepted"
           ? {
-              selectedContestantId: "codex",
+              selectedContestantId: "a",
               selectionSource: "contestant",
               patchSha256: "a".repeat(64),
               baseCommit: "base",

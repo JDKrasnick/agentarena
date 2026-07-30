@@ -57,7 +57,7 @@ describe("built CLI smoke flow", () => {
     const result = JSON.parse(
       await readFile(path.join(runsRoot, runId!, "result.json"), "utf8"),
     ) as { schemaVersion: number; reviewPrompt: { choices: unknown[] } };
-    expect(result.schemaVersion).toBe(2);
+    expect(result.schemaVersion).toBe(3);
     expect(result.reviewPrompt.choices).toHaveLength(2);
     expect(
       await readFile(path.join(runsRoot, runId!, "BATTLE.md"), "utf8"),

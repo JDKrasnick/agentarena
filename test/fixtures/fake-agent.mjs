@@ -16,6 +16,7 @@ const prompt = await new Promise((resolve) => {
 });
 
 const agent = process.env.AGENT_ARENA_AGENT;
+const contestant = process.env.AGENT_ARENA_CONTESTANT;
 const stage = process.env.AGENT_ARENA_STAGE;
 const round = process.env.AGENT_ARENA_ROUND;
 const submission = process.env.AGENT_ARENA_SUBMISSION;
@@ -25,8 +26,15 @@ if (!agent || !stage || !submission)
 const sourcePath = path.join(process.cwd(), "src", "slug.mjs");
 
 if (stage === "implement") {
+  if (process.env.AGENT_ARENA_EMPTY_IMPLEMENTATION === "1") {
+    await writeFile(
+      submission,
+      JSON.stringify({ version: 1, explanation: "intentionally empty" }),
+    );
+    process.exit(0);
+  }
   const implementation =
-    agent === "codex"
+    (contestant ?? agent) === "a"
       ? `export function slug(value) {\n  return value.trim().toLowerCase().replace(/\\s+/g, "-");\n}\n`
       : `export function slug(value) {\n  return value.trim().toLowerCase().replaceAll(" ", "-");\n}\n`;
   await writeFile(sourcePath, implementation);

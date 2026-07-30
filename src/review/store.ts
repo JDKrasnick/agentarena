@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ArtifactStore } from "../artifacts/store.js";
-import { AgentIdSchema } from "../core/types.js";
+import { ContestantIdSchema } from "../core/types.js";
 
 export const ReviewDecisionSchema = z.object({
   version: z.literal(1),
@@ -10,7 +10,7 @@ export const ReviewDecisionSchema = z.object({
   runId: z.string(),
   promptId: z.string(),
   status: z.enum(["accepted", "rejected"]),
-  selectedContestantId: AgentIdSchema.optional(),
+  selectedContestantId: ContestantIdSchema.optional(),
   selectionSource: z.enum(["recommended", "champion", "contestant"]).optional(),
   patchSha256: z.string().length(64).optional(),
   baseCommit: z.string().optional(),

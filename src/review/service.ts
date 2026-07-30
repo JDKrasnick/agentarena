@@ -3,7 +3,7 @@ import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { ArtifactStore } from "../artifacts/store.js";
 import { stableId } from "../core/ids.js";
-import type { AgentId, ReviewPrompt, RunState } from "../core/types.js";
+import type { ContestantId, ReviewPrompt, RunState } from "../core/types.js";
 import { collectPatchQualityFacts } from "../quality/collect-facts.js";
 import {
   ApprovalContextSchema,
@@ -54,15 +54,15 @@ async function ensureReviewFacts(
     if (!contestant.finalPatchPath) continue;
     const patchPath = await trustedPatchPath(
       state,
-      contestant.agent,
+      contestant.id,
       store.runDirectory,
     );
     const patchBytes = await readFile(patchPath);
     const digest = createHash("sha256").update(patchBytes).digest("hex");
-    if (state.patchQualityFacts[contestant.agent]?.patchSha256 === digest)
+    if (state.patchQualityFacts[contestant.id]?.patchSha256 === digest)
       continue;
-    state.patchQualityFacts[contestant.agent] = collectPatchQualityFacts({
-      contestantId: contestant.agent,
+    state.patchQualityFacts[contestant.id] = collectPatchQualityFacts({
+      contestantId: contestant.id,
       patch: patchBytes.toString("utf8"),
       patchBytes,
     });
@@ -85,7 +85,7 @@ export async function reviewRun(options: RunLocation): Promise<ReviewPrompt> {
 
 export async function inspectPatch(
   options: RunLocation & {
-    contestantId: AgentId;
+    contestantId: ContestantId;
     view: "summary" | "diff" | "tests" | "quality";
   },
 ): Promise<unknown> {
@@ -115,7 +115,7 @@ export async function recordReviewDecision(
   options: RunLocation & {
     promptId: string;
     decision: "accept" | "reject";
-    selection?: "recommended" | "champion" | AgentId;
+    selection?: "recommended" | "champion" | ContestantId;
     expectedPatchSha256?: string;
     expectedBaseCommit: string;
     approval: ApprovalContext;
@@ -242,7 +242,7 @@ export async function currentReviewDecision(
 
 export async function trustedPatchPath(
   state: RunState,
-  contestantId: AgentId,
+  contestantId: ContestantId,
   expectedRunDirectory = state.artifacts.runDirectory ?? "",
 ): Promise<string> {
   const patchPath = state.contestants[contestantId]?.finalPatchPath;

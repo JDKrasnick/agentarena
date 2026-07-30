@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   PatchQualityFactsSchema,
-  type AgentId,
+  type ContestantId,
   type PatchQualityFacts,
 } from "../core/types.js";
 import {
@@ -12,7 +12,7 @@ import { compareManifest } from "./manifest-adapters.js";
 import { parseGitDiffHeader } from "../repo/git.js";
 
 export interface CollectPatchFactsInput {
-  contestantId: AgentId;
+  contestantId: ContestantId;
   patch: string;
   patchBytes?: Uint8Array;
   baseContent?: Readonly<Record<string, string>>;

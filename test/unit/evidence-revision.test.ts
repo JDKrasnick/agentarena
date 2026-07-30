@@ -5,9 +5,9 @@ import type { Attack } from "../../src/core/types.js";
 const original: Attack = {
   id: "attack",
   round: 2,
-  origin: { kind: "contestant", agent: "codex" },
+  origin: { kind: "contestant", contestant: "a", provider: "codex" },
   rank: 1,
-  targets: ["claude"],
+  targets: ["b"],
   claim: "target-only timeout",
   impact: "request hangs",
   oracle: {

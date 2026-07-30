@@ -40,13 +40,13 @@ export function deriveArenaOutcome(
           );
       if (recomputed !== contestant.finalHealth) {
         throw new Error(
-          `Persisted final health for ${contestant.agent} is ${String(contestant.finalHealth)} but the ledger derives ${String(recomputed)}`,
+          `Persisted final health for ${contestant.id} is ${String(contestant.finalHealth)} but the ledger derives ${String(recomputed)}`,
         );
       }
       return [
-        contestant.agent,
+        contestant.id,
         {
-          contestantId: contestant.agent,
+          contestantId: contestant.id,
           initialHealth: contestant.initialHealth,
           finalHealth: contestant.finalHealth,
           grossDamageReceived,

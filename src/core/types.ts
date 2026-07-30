@@ -4,6 +4,33 @@ export const AGENT_IDS = ["codex", "claude", "gemini"] as const;
 export const AgentIdSchema = z.enum(AGENT_IDS);
 export type AgentId = z.infer<typeof AgentIdSchema>;
 
+export const CONTESTANT_IDS = ["a", "b"] as const;
+export const ContestantIdSchema = z.enum(CONTESTANT_IDS);
+export type ContestantId = z.infer<typeof ContestantIdSchema>;
+
+export const ContestantRoleSchema = z.enum([
+  "solver",
+  "attacker",
+  "defender",
+  "incumbent",
+  "challenger",
+]);
+export type ContestantRole = z.infer<typeof ContestantRoleSchema>;
+
+export const StartingPatchSchema = z.enum(["none", "pull_request"]);
+export type StartingPatch = z.infer<typeof StartingPatchSchema>;
+
+export const BattleModeSchema = z.enum(["duel", "siege", "catch_up"]);
+export type BattleMode = z.infer<typeof BattleModeSchema>;
+
+export const ContestantConfigSchema = z.object({
+  id: ContestantIdSchema,
+  provider: AgentIdSchema,
+  role: ContestantRoleSchema,
+  startingPatch: StartingPatchSchema.default("none"),
+});
+export type ContestantConfig = z.infer<typeof ContestantConfigSchema>;
+
 export const SeveritySchema = z.enum(["critical", "high", "medium", "low"]);
 export type Severity = z.infer<typeof SeveritySchema>;
 
@@ -155,6 +182,65 @@ export const TaskContractSchema = z.object({
 });
 export type TaskContract = z.infer<typeof TaskContractSchema>;
 
+export const AuthorshipEvidenceSchema = z.object({
+  kind: z.enum([
+    "bot_author",
+    "coauthor_trailer",
+    "branch_prefix",
+    "title_prefix",
+    "generator_marker",
+    "statistical_fingerprint",
+  ]),
+  source: z.string().min(1),
+  value: z.string().min(1),
+});
+export type AuthorshipEvidence = z.infer<typeof AuthorshipEvidenceSchema>;
+
+export const AuthorshipAttributionSchema = z.object({
+  provider: AgentIdSchema.optional(),
+  confidence: z.enum(["confirmed", "likely", "unknown"]),
+  evidence: z.array(AuthorshipEvidenceSchema),
+});
+export type AuthorshipAttribution = z.infer<typeof AuthorshipAttributionSchema>;
+
+export const PullRequestFixtureSchema = z.object({
+  version: z.literal(1),
+  retrievedAt: z.string().datetime(),
+  repository: z.string().min(1),
+  number: z.number().int().positive(),
+  url: z.string().url(),
+  title: z.string(),
+  body: z.string(),
+  author: z.string().optional(),
+  base: z.object({ branch: z.string().min(1), commit: z.string().min(1) }),
+  head: z.object({
+    branch: z.string().min(1),
+    repository: z.string().min(1),
+    commit: z.string().min(1),
+  }),
+  commits: z.array(
+    z.object({
+      oid: z.string().min(1),
+      messageHeadline: z.string(),
+      messageBody: z.string().optional(),
+      authors: z.array(z.string()),
+    }),
+  ),
+  linkedIssues: z.array(
+    z.object({
+      repository: z.string().optional(),
+      number: z.number().int().positive(),
+      url: z.string().url().optional(),
+      title: z.string().optional(),
+    }),
+  ),
+  patchPath: z.string().min(1),
+  patchSha256: z.string().length(64),
+  metadataSha256: z.string().length(64),
+  attribution: AuthorshipAttributionSchema,
+});
+export type PullRequestFixture = z.infer<typeof PullRequestFixtureSchema>;
+
 export const OracleCitationSchema = z.object({
   expectedBehavior: z.string().min(1),
   sourceId: z.string().min(1),
@@ -186,6 +272,8 @@ export type PermissionPolicy = z.infer<typeof PermissionPolicySchema>;
 
 export const AgentInvocationSchema = z.object({
   agent: AgentIdSchema,
+  contestantId: ContestantIdSchema.optional(),
+  role: ContestantRoleSchema.optional(),
   stage: StageSchema,
   startedAt: z.string().datetime(),
   finishedAt: z.string().datetime(),
@@ -248,10 +336,15 @@ export const AttackCaseBundleSchema = z.object({
 });
 export type AttackCaseBundle = z.infer<typeof AttackCaseBundleSchema>;
 
-const AttackOriginSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("contestant"), agent: AgentIdSchema }),
+export const AttackOriginSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("contestant"),
+    contestant: ContestantIdSchema,
+    provider: AgentIdSchema,
+  }),
   z.object({ kind: z.literal("house"), methodPackId: z.string() }),
 ]);
+export type AttackOrigin = z.infer<typeof AttackOriginSchema>;
 
 export const AttackStatusSchema = z.enum([
   "submitted",
@@ -273,7 +366,7 @@ export const AttackSchema = z.object({
   round: RoundIdSchema,
   origin: AttackOriginSchema,
   rank: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
-  targets: z.array(AgentIdSchema),
+  targets: z.array(ContestantIdSchema),
   claim: z.string(),
   impact: z.string(),
   oracle: OracleCitationSchema,
@@ -354,7 +447,9 @@ export const ContestantRoundResultSchema = z.object({
 export type ContestantRoundResult = z.infer<typeof ContestantRoundResultSchema>;
 
 export const ContestantResultSchema = z.object({
-  agent: AgentIdSchema,
+  id: ContestantIdSchema,
+  provider: AgentIdSchema,
+  role: ContestantRoleSchema,
   status: z.enum(["pending", "survived", "eliminated", "failed"]),
   initialHealth: z.literal(100),
   finalHealth: z.number().int().min(0).max(100),
@@ -409,19 +504,35 @@ export const IntegrationProfileSchema = z.object({
 });
 export type IntegrationProfile = z.infer<typeof IntegrationProfileSchema>;
 
-export const FightConfigSchema = z
+function normalizeBattleConfigInput(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const input = { ...(value as Record<string, unknown>) };
+  if (input.contestants === undefined && Array.isArray(input.agents)) {
+    input.contestants = input.agents.map((provider: unknown, index) => ({
+      id: index === 0 ? "a" : "b",
+      provider,
+      role: "solver",
+      startingPatch: "none",
+    }));
+  }
+  delete input.agents;
+  if (input.mode === undefined) input.mode = "duel";
+  return input;
+}
+
+const FightConfigBaseSchema = z
   .object({
     task: z.string().min(1),
+    mode: BattleModeSchema.default("duel"),
+    // Internal, non-persisted slot list. Legacy provider input is normalized
+    // into `contestants` before this schema runs.
+    agents: z.array(ContestantIdSchema).default([]),
     acceptanceCriteria: z.array(z.string()).default([]),
     specPaths: z.array(z.string()).default([]),
     issueReferences: z.array(z.string()).default([]),
     pullRequestReferences: z.array(z.string()).default([]),
     taskReferences: z.array(TaskReferenceSchema).default([]),
-    agents: z
-      .tuple([AgentIdSchema, AgentIdSchema])
-      .refine(([left, right]) => left !== right, {
-        message: "Contestants must be different agents",
-      }),
+    contestants: z.tuple([ContestantConfigSchema, ContestantConfigSchema]),
     attackVerifier: AgentIdSchema,
     qualityVerifier: AgentIdSchema.optional(),
     harnessMaintainer: AgentIdSchema,
@@ -434,6 +545,7 @@ export const FightConfigSchema = z
     repositoryRoot: z.string(),
     artifactRoot: z.string(),
     baseCommit: z.string().optional(),
+    /** @deprecated Kept for legacy duels; catch-up and siege use PullRequestFixture. */
     baseFromPullRequest: z.string().optional(),
     permissionMode: z.enum(["auto", "confirm", "deny"]),
     permissionAllow: z
@@ -485,13 +597,34 @@ export const FightConfigSchema = z
         message: "Choose either an explicit base commit or a pull request head",
       });
     }
+    const [first, second] = value.contestants;
+    if (first.id !== "a" || second.id !== "b") {
+      context.addIssue({
+        code: "custom",
+        path: ["contestants"],
+        message: "Contestant slots must be ordered a then b",
+      });
+    }
   });
+
+export const FightConfigSchema = z.preprocess(
+  normalizeBattleConfigInput,
+  FightConfigBaseSchema.transform((config) => {
+    // This compatibility alias is deliberately non-enumerable, so v3 run
+    // artifacts persist only the normalized contestant model.
+    Object.defineProperty(config, "agents", {
+      value: config.contestants.map(({ id }) => id),
+      enumerable: false,
+    });
+    return config;
+  }),
+);
 export type FightConfig = z.infer<typeof FightConfigSchema>;
 
 export const RankingSchema = z.object({
-  winner: AgentIdSchema.nullable(),
+  winner: ContestantIdSchema.nullable(),
   draw: z.boolean(),
-  order: z.array(AgentIdSchema),
+  order: z.array(ContestantIdSchema),
   reason: z.string(),
 });
 export type Ranking = z.infer<typeof RankingSchema>;
@@ -505,7 +638,7 @@ export const MarginClassSchema = z.enum([
 export type MarginClass = z.infer<typeof MarginClassSchema>;
 
 export const ArenaContestantOutcomeSchema = z.object({
-  contestantId: AgentIdSchema,
+  contestantId: ContestantIdSchema,
   initialHealth: z.number().int().min(0).max(100),
   finalHealth: z.number().int().min(0).max(100),
   grossDamageReceived: z.number().int().nonnegative(),
@@ -516,8 +649,11 @@ export const ArenaContestantOutcomeSchema = z.object({
 });
 
 export const ArenaOutcomeSchema = z.object({
-  championId: AgentIdSchema.optional(),
-  contestants: z.partialRecord(AgentIdSchema, ArenaContestantOutcomeSchema),
+  championId: ContestantIdSchema.optional(),
+  contestants: z.partialRecord(
+    ContestantIdSchema,
+    ArenaContestantOutcomeSchema,
+  ),
   marginHp: z.number().int().nonnegative(),
   marginClass: MarginClassSchema,
   decidingFactors: z.array(
@@ -545,7 +681,7 @@ export type ManifestDelta = z.infer<typeof ManifestDeltaSchema>;
 
 export const PatchQualityFactsSchema = z.object({
   version: z.literal(1),
-  contestantId: AgentIdSchema,
+  contestantId: ContestantIdSchema,
   patchSha256: z.string().length(64),
   changedPaths: z.array(z.string()),
   binaryPaths: z.array(z.string()),
@@ -585,7 +721,7 @@ export const PatchQualityVerdictSchema = z.object({
 export type PatchQualityVerdict = z.infer<typeof PatchQualityVerdictSchema>;
 
 export const PatchRecommendationSchema = z.object({
-  contestantId: AgentIdSchema.optional(),
+  contestantId: ContestantIdSchema.optional(),
   reason: z.enum([
     "correctness",
     "implementation_quality",
@@ -599,7 +735,7 @@ export const PatchRecommendationSchema = z.object({
   rationale: z.array(z.string()),
   comparison: z.array(
     z.object({
-      contestantId: AgentIdSchema,
+      contestantId: ContestantIdSchema,
       eligible: z.boolean(),
       activeDefectDamage: z.number().int().nonnegative(),
       requiredValidationPassed: z.boolean(),
@@ -610,7 +746,10 @@ export const PatchRecommendationSchema = z.object({
 export type PatchRecommendation = z.infer<typeof PatchRecommendationSchema>;
 
 export const PatchChoiceSchema = z.object({
-  contestantId: AgentIdSchema,
+  contestantId: ContestantIdSchema,
+  provider: AgentIdSchema,
+  role: ContestantRoleSchema,
+  label: z.string(),
   eligible: z.boolean(),
   badges: z.array(z.enum(["recommended", "arena_champion"])),
   summary: z.string(),
@@ -649,8 +788,7 @@ export const DeliveryTargetSchema = z.object({
 });
 export type DeliveryTarget = z.infer<typeof DeliveryTargetSchema>;
 
-const RunStateBaseSchema = z.object({
-  schemaVersion: z.literal(1),
+const RunStateCoreSchema = z.object({
   runId: z.string(),
   harnessVersion: z.string(),
   status: z.enum([
@@ -667,37 +805,136 @@ const RunStateBaseSchema = z.object({
   stage: StageSchema,
   taskContractHash: z.string(),
   config: FightConfigSchema,
-  contestants: z.partialRecord(AgentIdSchema, ContestantResultSchema),
-  attacks: z.array(AttackSchema),
   promptManifests: z.array(RoundPromptManifestSchema),
   harnessOverlays: z.array(HarnessOverlaySchema),
-  ranking: RankingSchema.optional(),
   artifacts: z.record(z.string(), z.string()),
   warnings: z.array(z.string()),
 });
 
-export const RunStateV1Schema = RunStateBaseSchema;
-export type RunStateV1 = z.infer<typeof RunStateV1Schema>;
-
-export const RunStateV2Schema = RunStateBaseSchema.omit({
-  schemaVersion: true,
-}).extend({
-  schemaVersion: z.literal(2),
+export const RunStateV3Schema = RunStateCoreSchema.extend({
+  schemaVersion: z.literal(3),
+  contestants: z.partialRecord(ContestantIdSchema, ContestantResultSchema),
+  attacks: z.array(AttackSchema),
+  ranking: RankingSchema.optional(),
   arenaOutcome: ArenaOutcomeSchema.optional(),
   patchQualityFacts: z
-    .partialRecord(AgentIdSchema, PatchQualityFactsSchema)
+    .partialRecord(ContestantIdSchema, PatchQualityFactsSchema)
     .default({}),
   patchQualityVerdict: PatchQualityVerdictSchema.optional(),
   patchRecommendation: PatchRecommendationSchema.optional(),
   reviewPrompt: ReviewPromptSchema.optional(),
   deliveryTarget: DeliveryTargetSchema.optional(),
 });
-export const RunStateSchema = RunStateV2Schema;
+export const RunStateSchema = RunStateV3Schema;
+export type RunState = z.infer<typeof RunStateV3Schema>;
+
+// --- Legacy readers: in schema versions 1 and 2 the provider was the
+// contestant identity. They are migrated to contestant slots at load time. ---
+
+const LegacyContestantResultSchema = ContestantResultSchema.omit({
+  id: true,
+  provider: true,
+  role: true,
+}).extend({ agent: AgentIdSchema });
+export type LegacyContestantResult = z.infer<
+  typeof LegacyContestantResultSchema
+>;
+
+const LegacyAttackSchema = AttackSchema.omit({
+  origin: true,
+  targets: true,
+}).extend({
+  origin: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("contestant"), agent: AgentIdSchema }),
+    z.object({ kind: z.literal("house"), methodPackId: z.string() }),
+  ]),
+  targets: z.array(AgentIdSchema),
+});
+
+const LegacyRankingSchema = z.object({
+  winner: AgentIdSchema.nullable(),
+  draw: z.boolean(),
+  order: z.array(AgentIdSchema),
+  reason: z.string(),
+});
+
+const LegacyArenaOutcomeSchema = ArenaOutcomeSchema.omit({
+  championId: true,
+  contestants: true,
+}).extend({
+  championId: AgentIdSchema.optional(),
+  contestants: z.partialRecord(
+    AgentIdSchema,
+    ArenaContestantOutcomeSchema.omit({ contestantId: true }).extend({
+      contestantId: AgentIdSchema,
+    }),
+  ),
+});
+
+const LegacyPatchQualityFactsSchema = PatchQualityFactsSchema.omit({
+  contestantId: true,
+}).extend({ contestantId: AgentIdSchema });
+
+const LegacyPatchRecommendationSchema = PatchRecommendationSchema.omit({
+  contestantId: true,
+  comparison: true,
+}).extend({
+  contestantId: AgentIdSchema.optional(),
+  comparison: z.array(
+    z.object({
+      contestantId: AgentIdSchema,
+      eligible: z.boolean(),
+      activeDefectDamage: z.number().int().nonnegative(),
+      requiredValidationPassed: z.boolean(),
+      finalApplicabilityPassed: z.boolean(),
+    }),
+  ),
+});
+
+const LegacyReviewPromptSchema = ReviewPromptSchema.omit({
+  choices: true,
+}).extend({
+  choices: z.array(
+    z.object({
+      contestantId: AgentIdSchema,
+      eligible: z.boolean(),
+      badges: z.array(z.enum(["recommended", "arena_champion"])),
+      summary: z.string(),
+      patchSha256: z.string().length(64),
+      disabledReason: z.string().optional(),
+    }),
+  ),
+});
+
+const LegacyRunStateCommonSchema = RunStateCoreSchema.extend({
+  contestants: z.partialRecord(AgentIdSchema, LegacyContestantResultSchema),
+  attacks: z.array(LegacyAttackSchema),
+  ranking: LegacyRankingSchema.optional(),
+});
+
+export const RunStateV1Schema = LegacyRunStateCommonSchema.extend({
+  schemaVersion: z.literal(1),
+});
+export type RunStateV1 = z.infer<typeof RunStateV1Schema>;
+
+export const RunStateV2Schema = LegacyRunStateCommonSchema.extend({
+  schemaVersion: z.literal(2),
+  arenaOutcome: LegacyArenaOutcomeSchema.optional(),
+  patchQualityFacts: z
+    .partialRecord(AgentIdSchema, LegacyPatchQualityFactsSchema)
+    .default({}),
+  patchQualityVerdict: PatchQualityVerdictSchema.optional(),
+  patchRecommendation: LegacyPatchRecommendationSchema.optional(),
+  reviewPrompt: LegacyReviewPromptSchema.optional(),
+  deliveryTarget: DeliveryTargetSchema.optional(),
+});
+export type RunStateV2 = z.infer<typeof RunStateV2Schema>;
+
 export const AnyRunStateSchema = z.discriminatedUnion("schemaVersion", [
   RunStateV1Schema,
   RunStateV2Schema,
+  RunStateV3Schema,
 ]);
-export type RunState = z.infer<typeof RunStateV2Schema>;
 export type AnyRunState = z.infer<typeof AnyRunStateSchema>;
 
 export const AttackSubmissionEntrySchema = z.object({

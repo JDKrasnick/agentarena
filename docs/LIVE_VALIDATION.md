@@ -22,8 +22,8 @@ Before enabling GitHub delivery by default:
 - [x] Confirm a moved PR head stops delivery.
 - [x] Save the redacted run bundle outside version control.
 
-The provider fight used one-minute per-invocation limits, completed all three
-attack–repair rounds and final validation, and wrote run
+The provider fight used Codex and Claude with one-minute per-invocation limits,
+completed all three attack–repair rounds and final validation, and wrote run
 `2026-07-30T171501827Z-fb131555`. Its scrubbed bundle is retained under
 `.context/live-e2e-evidence/`, which is excluded from version control; a
 credential- and local-path-pattern scan passed.

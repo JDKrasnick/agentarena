@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import type { AgentId } from "../core/types.js";
+import type { ContestantId } from "../core/types.js";
 import { applyAcceptedPatch } from "./apply.js";
 import { recordReviewDecision, reviewRun } from "../review/service.js";
 
@@ -35,7 +35,7 @@ export async function runAcceptCommand(options: {
   runId: string;
   decision?: "accept" | "reject";
   selection?: "recommended" | "champion";
-  agent?: AgentId;
+  agent?: ContestantId;
   confirmSha256?: string;
   apply?: boolean;
   idempotencyKey?: string;

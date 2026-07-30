@@ -6,7 +6,7 @@ import { runAcceptCommand } from "./commands/accept.js";
 import { runDeliverCommand } from "./commands/deliver.js";
 import { runFight } from "./commands/fight.js";
 import { runInspectCommand, runReviewCommand } from "./commands/review.js";
-import { AgentIdSchema } from "./core/types.js";
+import { ContestantIdSchema } from "./core/types.js";
 import { DeliveryActionSchema } from "./delivery/types.js";
 
 const program = new Command()
@@ -155,7 +155,7 @@ program
       process.stdout.write(
         `${await runInspectCommand({
           runId,
-          agent: AgentIdSchema.parse(options.agent),
+          agent: ContestantIdSchema.parse(options.agent),
           view: options.view,
           json: options.json ?? false,
         })}\n`,
@@ -195,7 +195,7 @@ program
           runId,
           ...(options.selection ? { selection: options.selection } : {}),
           ...(options.agent
-            ? { agent: AgentIdSchema.parse(options.agent) }
+            ? { agent: ContestantIdSchema.parse(options.agent) }
             : {}),
           ...(options.confirmSha256
             ? { confirmSha256: options.confirmSha256 }

@@ -1,6 +1,7 @@
 import { sha256 } from "../core/ids.js";
 import type {
   AgentId,
+  ContestantId,
   FightConfig,
   PermissionPolicy,
   RoundId,
@@ -26,7 +27,7 @@ const OVERLAYS: Record<RoundId, string> = {
 };
 
 export interface PromptContext {
-  agent: AgentId;
+  agent: AgentId | ContestantId;
   stage: "implement" | "attack" | "repair";
   round?: RoundId;
   contract: TaskContract;

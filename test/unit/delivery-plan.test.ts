@@ -9,7 +9,7 @@ const review: ReviewDecision = {
   runId: "run-12345678",
   promptId: "prompt",
   status: "accepted",
-  selectedContestantId: "claude",
+  selectedContestantId: "b",
   selectionSource: "recommended",
   patchSha256: "b".repeat(64),
   baseCommit: "a".repeat(40),

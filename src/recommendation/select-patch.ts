@@ -1,6 +1,6 @@
 import {
   PatchRecommendationSchema,
-  type AgentId,
+  type ContestantId,
   type PatchQualityVerdict,
   type PatchRecommendation,
   type RunState,
@@ -8,13 +8,13 @@ import {
 
 export interface RecommendationInput {
   contestants: RunState["contestants"];
-  championId?: AgentId;
+  championId?: ContestantId;
   qualityVerdict?: PatchQualityVerdict;
-  anonymizationMap?: { patch_a: AgentId; patch_b: AgentId };
+  anonymizationMap?: { patch_a: ContestantId; patch_b: ContestantId };
 }
 
 function finalRequiredPassed(
-  contestant: NonNullable<RunState["contestants"][AgentId]>,
+  contestant: NonNullable<RunState["contestants"][ContestantId]>,
 ): boolean {
   return (
     [...contestant.checks].reverse().find((check) => check.kind === "required")
@@ -30,7 +30,7 @@ export function selectRecommendedPatch(
     const requiredValidationPassed = finalRequiredPassed(contestant);
     const finalApplicabilityPassed = Boolean(contestant.finalPatchPath);
     return {
-      contestantId: contestant.agent,
+      contestantId: contestant.id,
       eligible:
         contestant.status !== "eliminated" &&
         requiredValidationPassed &&
