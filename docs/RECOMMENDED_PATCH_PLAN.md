@@ -32,7 +32,9 @@ unbounded or automatic overtime.
 - Produce deterministic measurements and an anonymized, evidence-backed quality
   verdict.
 - Preserve the existing arena health ledger and replayability.
-- Keep `agent-arena apply` safe and make its default selection explicit.
+- Make the recommended patch easy to inspect and accept.
+- Require an explicit human decision on the exact patch before it can be
+  applied.
 
 ## Non-goals
 
@@ -44,6 +46,9 @@ unbounded or automatic overtime.
 - Do not penalize tests, generated files, lockfile churn, or necessary
   dependencies as if they were production complexity.
 - Do not let a cleaner but observably incorrect patch beat a correct patch.
+- Do not automatically accept, apply, commit, push, or merge any patch.
+- Do not provide a generic `--yes` bypass that silently converts a recommendation
+  into approval.
 
 ## Outcome model
 
@@ -224,11 +229,27 @@ interface PatchRecommendation {
   qualityVerdict?: "patch_a" | "patch_b" | "equivalent" | "inconclusive";
   rationale: string[];
 }
+
+interface HumanReview {
+  status: "pending" | "accepted" | "rejected";
+  selectedContestantId?: string;
+  selectionSource?: "recommended" | "champion" | "contestant";
+  patchSha256?: string;
+  baseCommit?: string;
+  actor?: string;
+  decidedAt?: string;
+  rationale?: string;
+}
 ```
 
 Persist the anonymized quality input, verifier output, deterministic facts, and
 selection replay in the run artifacts. Bump the result schema version and keep
 the reader tolerant of older runs that contain only `winner`.
+
+Persist human decisions separately from immutable battle evidence as append-only
+review artifacts. An acceptance binds the run ID, base commit, selected
+contestant, and full patch digest. Any change to one of those values invalidates
+the acceptance and returns the run to `pending`.
 
 ## Report and CLI changes
 
@@ -242,6 +263,8 @@ Recommended patch: Claude
 Unresolved damage: Codex 0, Claude 0
 Permanent recoil: Codex 0, Claude 5
 Recommendation reason: equal correctness; Claude has the cleaner final patch
+Human review: pending
+Next: agent-arena review <run-id>
 ```
 
 Add:
@@ -253,6 +276,8 @@ Add:
 - margin label and deciding factors;
 - quality measurements and verifier rationale;
 - an explicit note when arena champion and recommended patch differ.
+- human-review status and the exact next command;
+- accepted patch digest, reviewer label, and decision time after approval.
 
 ### Machine-readable output
 
@@ -260,24 +285,84 @@ Add:
 Retain the old winner field for one compatibility window if external consumers
 already use it.
 
-### Applying a patch
+Human decisions should be written to `reviews/*.json` rather than rewriting the
+battle result. The reviewer label is useful audit context, not a cryptographic
+identity claim.
 
-Make the safe default:
+### Review and acceptance
 
-```sh
-agent-arena apply <run-id> --selection recommended
-```
-
-Support an explicit override:
+The default post-battle command should present a compact decision screen:
 
 ```sh
-agent-arena apply <run-id> --selection champion
-agent-arena apply <run-id> --agent <contestant-id>
+agent-arena review <run-id>
 ```
 
-The command must print which selection rule chose the patch before changing the
-working tree. Existing clean-repository, base-commit, trusted-artifact, and
-`git apply --check` guards remain mandatory.
+It must show:
+
+- arena champion and recommended patch;
+- why they match or differ;
+- unresolved damage and recoil;
+- required-check, adversarial-case, and integration-test results;
+- dependency, production-surface, testing, and observability differences;
+- warnings, rejected attacks, and infrastructure limitations;
+- final diffstat, changed files, base commit, and patch digest;
+- commands to inspect the full diff or either contestant.
+
+The interactive review offers four explicit actions:
+
+1. Accept the recommended patch.
+2. Accept the arena champion or another contestant.
+3. Reject both patches.
+4. Leave the decision pending.
+
+There is no preselected acceptance action, and pressing Enter alone must not
+approve a patch.
+
+For the shortest safe path, support:
+
+```sh
+agent-arena accept <run-id> --selection recommended --apply
+```
+
+This command first displays the same critical summary and exact patch digest,
+then asks the user to confirm the selected contestant. Only after confirmation
+does it record acceptance and invoke the existing application guards.
+
+Non-interactive environments must provide the full displayed digest:
+
+```sh
+agent-arena accept <run-id> \
+  --selection recommended \
+  --confirm-sha256 <full-patch-digest>
+```
+
+This keeps automation explicit and patch-bound without a generic confirmation
+bypass. A later hosted workflow may replace this with a signed approval from an
+authenticated reviewer.
+
+### Applying an accepted patch
+
+`apply` must refuse runs whose review is pending or rejected:
+
+```sh
+agent-arena apply <run-id>
+```
+
+To choose something other than the recommendation, accept that selection first:
+
+```sh
+agent-arena accept <run-id> --selection champion --apply
+agent-arena accept <run-id> --agent <contestant-id> --apply
+```
+
+Before changing the working tree, `apply` must rehash the patch and verify that
+the run ID, selected contestant, base commit, and digest match the acceptance.
+It must print who or what recorded the review, when it happened, which patch was
+accepted, and why it was recommended. Existing clean-repository, base-commit,
+trusted-artifact, and `git apply --check` guards remain mandatory.
+
+Acceptance and application do not commit, push, open a pull request, merge, or
+deploy. Those remain separate user-authorized actions.
 
 ## Implementation phases
 
@@ -312,12 +397,16 @@ working tree. Existing clean-repository, base-commit, trusted-artifact, and
 - Persist a replayable recommendation decision.
 - Show both arena champion and recommended patch.
 
-### Phase 4 — make application selection explicit
+### Phase 4 — add human review and safe application
 
-- Default `apply` to the recommended patch.
-- Add champion and contestant overrides.
-- Preserve compatibility for older runs without recommendation data by using
-  their recorded winner and explaining the fallback.
+- Add the compact review screen, full-diff navigation, and explicit accept/reject
+  actions.
+- Store append-only, patch-bound review artifacts.
+- Add the interactive `accept --apply` convenience path.
+- Require full-digest confirmation in non-interactive environments.
+- Make `apply` require a valid acceptance and recheck its digest and base commit.
+- Preserve compatibility for older runs by showing their recorded winner but
+  still requiring the user to select and accept an exact patch.
 
 ## Test plan
 
@@ -340,6 +429,12 @@ working tree. Existing clean-repository, base-commit, trusted-artifact, and
   observability.
 - Necessary dependencies are not automatically treated as a loss.
 - Old result schemas fall back safely to the recorded winner.
+- Review starts pending even when only one contestant survives.
+- Empty input cannot accept a patch.
+- Acceptance records the exact run, contestant, base commit, and full digest.
+- Changed or replaced patches invalidate prior acceptance.
+- Rejected runs cannot be applied.
+- A non-interactive accept requires the exact displayed digest.
 
 ### Integration tests
 
@@ -349,8 +444,12 @@ working tree. Existing clean-repository, base-commit, trusted-artifact, and
   the 100 HP patch remains arena champion.
 - Add an unresolved Low defect to the cleaner patch and verify correctness wins.
 - Verify `BATTLE.md` and `result.json` explain a split outcome consistently.
-- Verify default apply selects the recommendation and `--selection champion`
-  selects the combat winner.
+- Verify review makes the recommendation easy to inspect but leaves it pending.
+- Verify `accept --selection recommended --apply` confirms, records, and applies
+  the exact recommended patch.
+- Verify an accepted champion override applies the combat winner.
+- Verify pending, rejected, stale-digest, and wrong-base applications fail
+  without changing the working tree.
 - Compare two behaviorally equal service patches where only one exposes
   repository-conventional failure signals and verify the evidence-backed
   recommendation.
@@ -371,6 +470,11 @@ working tree. Existing clean-repository, base-commit, trusted-artifact, and
 - The comparison explains the strength of task-relevant testing and operational
   observability without using raw-volume proxies.
 - Reports explain every selection with reproducible evidence.
-- `apply` states and obeys the chosen selection mode.
+- Every recommendation remains pending until a human explicitly accepts or
+  rejects an exact patch.
+- The common accept-and-apply path requires one clear confirmation and no manual
+  artifact handling.
+- `apply` refuses absent, rejected, or stale acceptance.
+- Acceptance never implies permission to commit, push, merge, or deploy.
 - No close margin automatically extends battle duration.
 - All existing unit and integration tests continue to pass.
