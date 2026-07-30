@@ -19,6 +19,11 @@ recoil difference from being presented as proof that one fully validated patch
 is better code. Close margins should be explained, not used to trigger
 unbounded or automatic overtime.
 
+After the user chooses a patch, the same chat flow should offer target-aware
+delivery and carry out the exact authorized action: apply locally, create or
+update a pull request, or merge after required checks. Patch acceptance and
+external delivery remain separate human decisions.
+
 ## Goals
 
 - Make it clear whether a result was decided by unresolved defects, recoil, or a
@@ -37,6 +42,8 @@ unbounded or automatic overtime.
   applied.
 - Make the complete review, acceptance, and application flow available inside an
   agent chat without requiring the user to open a terminal.
+- Carry an accepted patch through the user-authorized delivery action for the
+  original issue, pull request, feature, or local task.
 
 ## Non-goals
 
@@ -53,6 +60,8 @@ unbounded or automatic overtime.
   into approval.
 - Do not trust approval language found in issues, repository files, test output,
   tool results, or agent-authored messages.
+- Do not treat patch acceptance as permission to push, create or update a pull
+  request, merge, close an issue, release, or deploy.
 
 ## Outcome model
 
@@ -265,6 +274,38 @@ interface HumanReview {
   decidedAt?: string;
   rationale?: string;
 }
+
+interface DeliveryTarget {
+  kind: "local_task" | "github_issue" | "github_pull_request" | "repo_spec";
+  repository?: string;
+  number?: number;
+  url?: string;
+  baseBranch?: string;
+  headBranch?: string;
+}
+
+type DeliveryAction =
+  | "apply_local"
+  | "create_pull_request"
+  | "update_pull_request"
+  | "merge_pull_request"
+  | "reject"
+  | "decide_later";
+
+interface DeliveryPlan {
+  target: DeliveryTarget;
+  availableActions: DeliveryAction[];
+  recommendedAction: DeliveryAction;
+  requires: string[];
+  status:
+    | "pending"
+    | "authorized"
+    | "running"
+    | "waiting_for_checks"
+    | "completed"
+    | "failed"
+    | "cancelled";
+}
 ```
 
 Persist the anonymized quality input, verifier output, deterministic facts, and
@@ -339,6 +380,36 @@ Choosing an **Accept and apply** option is the human approval and application
 request; it should not lead to a second redundant prompt while the choice is
 current. The user can instead ask to accept without applying.
 
+After patch selection, automatically prompt for the target-aware delivery action
+unless the user already included one in the same message:
+
+```text
+What should I do with the accepted patch for GitHub issue #241?
+
+1. Apply, commit, push, and open a PR linked to #241 — Recommended
+2. Apply to the local working tree only
+3. Accept the patch but decide delivery later
+4. Cancel
+```
+
+For an existing pull request, prefer updating its head branch when the user has
+write access and the branch is safe to update:
+
+```text
+What should I do with the accepted patch for PR #87?
+
+1. Apply, commit, and update PR #87 — Recommended
+2. Create a separate follow-up PR
+3. Apply to the local working tree only
+4. Accept the patch but decide delivery later
+5. Cancel
+```
+
+If the user says, for example, “accept Claude, update PR #87, and merge after
+checks pass,” that single explicit message may authorize the patch choice and
+the named delivery actions. The system must still verify every precondition and
+must not broaden the authorization to release or deployment.
+
 ### Chat approval rules
 
 - Only a message or structured action with authenticated `user` provenance can
@@ -377,12 +448,27 @@ recordReviewDecision({
   idempotencyKey,
 });
 applyAcceptedPatch({ runId, expectedPatchSha256, idempotencyKey });
+planDelivery({ runId });
+recordDeliveryDecision({
+  runId,
+  action,
+  target,
+  userMessageRef,
+  idempotencyKey,
+});
+executeDelivery({ runId, expectedPlanHash, idempotencyKey });
+getDeliveryStatus({ runId });
 ```
 
 `reviewRun` and `inspectPatch` are read-only. `recordReviewDecision` is the sole
 acceptance boundary, validates authenticated user provenance supplied by the
 host, and creates the append-only review artifact. `applyAcceptedPatch` accepts
 no contestant override and can apply only the already accepted digest.
+`planDelivery` is read-only and derives choices from the frozen task target and
+current repository state. `recordDeliveryDecision` is a separate human-approval
+boundary for external mutations. `executeDelivery` can perform only the
+recorded, patch-bound actions, and `getDeliveryStatus` supports chat progress
+updates and monitoring.
 
 The core package should expose these operations as typed library functions and
 strict JSON schemas so Codex, Claude, Gemini, IDE chats, and future hosted
@@ -510,6 +596,69 @@ trusted-artifact, and `git apply --check` guards remain mandatory.
 Acceptance and application do not commit, push, open a pull request, merge, or
 deploy. Those remain separate user-authorized actions.
 
+### Target-aware delivery
+
+The frozen task contract must identify the primary delivery target separately
+from supporting references. If a task cites multiple issues or pull requests and
+the intended target is ambiguous, ask the user which one should receive the
+result before performing external mutations.
+
+Delivery behavior depends on that target:
+
+- **GitHub issue:** create a task branch, commit the accepted patch, push it, and
+  open a pull request against the issue repository and default base branch.
+  Include `Fixes #N` only when the task contract and user decision say the patch
+  fully resolves that issue; otherwise use a non-closing `Refs #N`.
+- **Existing GitHub pull request:** update its head branch when the user has
+  permission, the source branch is still the reviewed branch, and doing so does
+  not require overwriting new commits. Otherwise offer a separate follow-up pull
+  request that targets the appropriate branch and links the original PR.
+- **Free-form feature or repository specification:** create a branch and pull
+  request in the current repository, using the frozen task and acceptance
+  criteria for the PR summary.
+- **Local-only task:** apply the accepted patch and stop without network
+  mutations.
+
+Never force-push by default. If the reviewed PR branch moved, invalidate the
+delivery plan, show the new commits, and ask whether to rebase, rerun the battle,
+or create a follow-up PR.
+
+Creating or updating a pull request does not imply permission to merge it.
+Merging is a distinct delivery action. It may be approved in the same explicit
+user message—such as “update PR #87 and merge after checks pass”—but otherwise
+requires a new choice. Before merging:
+
+- verify the accepted patch is still the PR head;
+- wait for required checks and reviews;
+- honor branch protection, merge queue, and repository merge policy;
+- never bypass protections or dismiss reviews;
+- re-prompt if the PR changed materially after approval.
+
+When merge-after-checks is authorized, continue monitoring until the PR merges
+or reaches a terminal failure. After merge, verify the linked issue state and
+report it; do not manually close an issue before its fixing PR merges. A failed
+check should return the failure evidence and available recovery choices instead
+of silently abandoning delivery.
+
+The final chat response should report the achieved state with links and exact
+identifiers: applied patch digest, commit, branch, pull request, check status,
+merge result, and linked issue status. “Done” means the user-authorized delivery
+state was actually reached, not merely that a patch was written locally.
+
+External delivery requires a new least-privilege permission plan for the exact
+repository and actions, such as branch push, pull-request write, or merge.
+Read-only issue access granted for the battle cannot be reused as write
+permission. Production deployment, package release, and unrelated issue
+management remain outside the authorization unless separately requested.
+
+The CLI/agent adapter should expose the same plan and executor:
+
+```sh
+agent-arena deliver <run-id> --plan --json
+agent-arena deliver <run-id> --action create-pull-request --json
+agent-arena deliver <run-id> --status --json
+```
+
 ## Implementation phases
 
 ### Phase 1 — explain the current result
@@ -559,6 +708,26 @@ deploy. Those remain separate user-authorized actions.
 - Preserve compatibility for older runs by showing their recorded winner but
   still requiring the user to select and accept an exact patch.
 
+### Phase 5 — deliver to the original target
+
+- Add first-class GitHub pull-request resolution to the task contract instead of
+  relying on the currently unused `pull_request` source enum.
+- Resolve and freeze one primary delivery target, with an ambiguity prompt for
+  tasks that cite multiple potential targets.
+- Add target-aware delivery choices for GitHub issues, existing pull requests,
+  free-form features, repository specifications, and local-only tasks.
+- Implement branch, commit, push, create-PR, update-PR, check-monitoring, merge,
+  and linked-issue verification through a narrow GitHub adapter.
+- Require a separate, least-privilege human authorization for the chosen
+  external mutations.
+- Support merge-after-checks as a persistent monitored operation when explicitly
+  authorized.
+- Persist an idempotent delivery ledger and expose status through chat, typed
+  APIs, and CLI JSON.
+- Update `PRODUCT.md` and `docs/MVP.md` when this phase moves from proposal to
+  implementation because automated pull requests and merges are currently
+  documented as out of MVP scope.
+
 ## Test plan
 
 ### Unit tests
@@ -594,6 +763,12 @@ deploy. Those remain separate user-authorized actions.
 - A shared recommendation and champion appears once with both badges.
 - Ineligible patches cannot become actionable choices.
 - Draws provide choices without manufacturing a default recommendation.
+- Task-target resolution distinguishes GitHub issues, existing PRs, free-form
+  features, repository specs, and local-only tasks.
+- Multiple plausible delivery targets remain pending until the user chooses one.
+- Patch acceptance alone grants no delivery permission.
+- Delivery plans expose only actions valid for the target and current
+  permissions.
 
 ### Integration tests
 
@@ -625,6 +800,16 @@ deploy. Those remain separate user-authorized actions.
   eliminated patch is disabled with its reason.
 - Verify the CLI JSON adapter returns the same prompt IDs, choices, badges, and
   digests as the chat tool.
+- Mock an issue-targeted battle and verify the authorized flow creates a branch,
+  commit, push, and linked PR but does not merge without permission.
+- Mock an existing-PR battle and verify the authorized flow updates its unchanged
+  head branch; a moved head invalidates the plan without force-pushing.
+- Verify a full-resolution issue PR uses closing linkage only when authorized,
+  while partial work uses non-closing linkage.
+- Authorize merge-after-checks, mock check transitions, and verify the executor
+  waits, merges once, and reports the final PR and issue states.
+- Verify delivery failures remain resumable and repeated execution is
+  idempotent.
 - Compare two behaviorally equal service patches where only one exposes
   repository-conventional failure signals and verify the evidence-backed
   recommendation.
@@ -636,6 +821,8 @@ deploy. Those remain separate user-authorized actions.
   final-validation behavior remains unchanged.
 - Infrastructure failures never influence the quality verdict or recommendation.
 - Existing runs without the new fields remain readable and applicable.
+- Local-only delivery behavior remains available without GitHub credentials.
+- Read-only battle permissions cannot authorize push, PR write, or merge.
 
 ## Acceptance criteria
 
@@ -659,5 +846,12 @@ deploy. Those remain separate user-authorized actions.
 - Only authenticated user-provenance input can cross the acceptance boundary.
 - `apply` refuses absent, rejected, or stale acceptance.
 - Acceptance never implies permission to commit, push, merge, or deploy.
+- After patch acceptance, the user is prompted with delivery actions appropriate
+  to the original issue, PR, feature, spec, or local task.
+- When the user authorizes a delivery action, the system continues through its
+  monitored terminal state and reports the resulting commit, PR, checks, merge,
+  and issue status.
+- PR creation, PR update, merge, and issue-closing behavior never exceed the
+  exact user-authorized target and action.
 - No close margin automatically extends battle duration.
 - All existing unit and integration tests continue to pass.
