@@ -216,8 +216,7 @@ unscored report finding.
 - Arena-generated container environments, network sandboxes, GPU workloads,
   and mobile builds. Running a user-supplied Compose profile is allowed.
 - Production credentials or enterprise-grade secret management.
-- Deployment, package release, or GitHub writes without a separately
-  authenticated, patch-bound delivery decision.
+- Automated pull requests or merges.
 - Elo ratings, persistent leaderboards, GIFs, and polished HTML replays.
 - A verifier-agent debate. Attack validity is decided by deterministic execution;
   the verifier only checks the cited oracle, relevance, root-defect identity, and
@@ -595,19 +594,9 @@ the published damage and recoil tables determine its numeric effect.
 
 ### The user owns the merge
 
-Agent Arena distinguishes the health-ledger arena champion from the
-correctness-first recommended patch. A patch cannot be applied until a human
-accepts an exact contestant, base commit, prompt, and full patch digest.
-`agent-arena apply` refuses pending, rejected, stale, or mismatched decisions
-and retains the clean-tree and `git apply --check` guards.
-
-Acceptance is not delivery permission. Optional GitHub branch, pull-request,
-issue-linkage, and merge operations require a second authenticated decision for
-the exact repository and action. Delivery is idempotent, never force-pushes,
-stops when a reviewed PR head moves, and monitors an authorized
-merge-after-checks request until success or terminal failure. GitHub delivery
-and merge are independently disabled by default; release and deployment are
-not part of the MVP.
+Agent Arena recommends and exports a patch; it never merges or commits a winner
+automatically. `agent-arena apply` refuses to run over a dirty worktree unless
+the user explicitly overrides the guard.
 
 ## Configuration
 
@@ -629,7 +618,6 @@ agents:
   - codex
   - claude
 attack_verifier: codex
-quality_verifier: codex
 harness_maintainer: codex
 permissions:
   default: confirm
@@ -645,8 +633,6 @@ permissions:
     - production_deploy
 sources:
   - github_issue: 241
-    primary: true
-  # - github_pr: 87
   - spec: docs/session-refresh.md
 limits:
   rounds: 3
@@ -656,13 +642,6 @@ limits:
   attack_minutes: 8
   verifier_minutes: 2
   repair_minutes: 8
-selection:
-  enabled: true
-review:
-  required_for_apply: true
-delivery:
-  enabled: false
-  merge_enabled: false
 ```
 
 Explicit CLI flags override the file. The MVP recognizes common repository
@@ -671,9 +650,6 @@ instruction files such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and
 service discovery. The verifier may use any installed supported adapter,
 including one of the contestants, but always receives anonymized evidence in a
 fresh invocation; the report identifies which provider performed the rating.
-Pull-request sources are requirements-only by default. `--base-from-pr` or
-`base_from_pr` is the explicit choice that freezes and fetches the reviewed PR
-head as the identical contestant base; no reference diff is shared by default.
 
 ### Round prompts
 

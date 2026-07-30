@@ -22,15 +22,13 @@ export function renderConsoleSummary(state: RunState): string {
     "",
     state.ranking?.draw
       ? `Draw: ${state.ranking.reason}`
-      : `Arena champion: ${state.ranking?.winner ?? "none"} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`,
-    `Recommended patch: ${state.patchRecommendation?.contestantId ?? "draw"}`,
-    `Recommendation reason: ${state.patchRecommendation?.rationale.join(" ") ?? "run incomplete"}`,
-    ...contestants.map((contestant) => {
-      const outcome = state.arenaOutcome?.contestants[contestant.agent];
-      return `${contestant.agent}: unresolved ${String(outcome?.activeDefectDamage ?? 0)}, recoil ${String(outcome?.permanentRecoil ?? 0)}, gross damage ${String(outcome?.grossDamageReceived ?? 0)}, healed ${String(outcome?.grossHealing ?? 0)}`;
-    }),
-    "Human review: pending",
+      : `Winner: ${state.ranking?.winner ?? "none"}`,
+    `Reason: ${state.ranking?.reason ?? "run incomplete"}`,
     `Artifacts: ${state.artifacts.runDirectory ?? ""}`,
-    `Next: agent-arena review ${state.runId}`,
+    ...(state.ranking?.winner
+      ? [
+          `Apply: agent-arena apply ${state.runId} --agent ${state.ranking.winner}`,
+        ]
+      : []),
   ].join("\n");
 }

@@ -2,27 +2,9 @@
 
 Make your coding agents fight for the merge.
 
-Agent Arena is a local Node.js library and CLI that gives two coding agents the same repository task, validates both patches, and runs three attack–repair rounds. Attacks are executable test patches, not critiques. The harness reproduces them twice, checks their task-contract oracle, resolves damage and recoil simultaneously, gives both contestants bounded repair opportunities, and exports the evidence and final patches.
+Agent Arena is a local Node.js CLI that gives two coding agents the same repository task, validates both patches, and runs three attack–repair rounds. Attacks are executable test patches, not critiques. The harness reproduces them twice, checks their task-contract oracle, resolves damage and recoil simultaneously, gives both contestants bounded repair opportunities, and exports the evidence and final patches.
 
 Surviving the arena is additional evidence, not a correctness guarantee.
-
-## Review in chat
-
-The primary workflow is a chat or IDE host calling the exported typed
-operations:
-
-1. `reviewRun` presents the arena champion, correctness-first recommendation,
-   evidence, choices, and exact patch digests.
-2. `inspectPatch` reads a summary, diff, checks, or quality evidence.
-3. `recordReviewDecision` accepts or rejects only an authenticated user action
-   bound to the current prompt, base commit, contestant, and digest.
-4. `applyAcceptedPatch` applies only that accepted patch.
-5. `planDelivery`, `recordDeliveryDecision`, `executeDelivery`, and
-   `getDeliveryStatus` provide a separate, gated GitHub delivery workflow.
-
-The core never parses conversational language. A chat host maps an authenticated
-user action to the strict schemas exported from `agent-arena`. Tokens and raw
-chat text are not stored.
 
 ## Requirements
 
@@ -56,11 +38,9 @@ An optional `agent-arena.yaml` stores repeatable settings:
 test: npm test
 agents: [codex, claude]
 attack_verifier: codex
-quality_verifier: codex
 harness_maintainer: codex
 sources:
   - github_issue: 241
-  # - github_pr: 87
   - spec: docs/session-refresh.md
 permissions:
   default: confirm
@@ -87,22 +67,9 @@ limits:
   attack_minutes: 8
   verifier_minutes: 2
   repair_minutes: 8
-selection:
-  enabled: true
-review:
-  required_for_apply: true
-delivery:
-  enabled: false
-  merge_enabled: false
 ```
 
 Explicit CLI flags override YAML.
-
-`--pr 87` snapshots PR requirements and maintainer clarifications but does not
-silently change the implementation base or share the reference diff. A
-PR-improvement fight must explicitly use `--base-from-pr 87` (or
-`base_from_pr: 87`); Agent Arena freezes and fetches that exact head for both
-contestants.
 
 ## Evidence and scoring
 
@@ -127,37 +94,14 @@ Each run is persisted atomically under `.agent-arena/runs/<run-id>/`:
 - redacted `permissions.json`
 - implementation, attack, revision, held-out case, and final patches
 - rendered prompts, prompt manifests, method-pack seeds, hypotheses, command logs, and provider transcripts
-- deterministic quality facts, anonymized verifier input/output, and a
-  chat-ready review prompt
-- append-only `reviews/`, `delivery/events/`, and idempotent `operations/`
 
-See [the artifact reference](docs/ARTIFACTS.md), [review and delivery
-security](docs/SECURITY.md), and [the live release
-checklist](docs/LIVE_VALIDATION.md).
-
-Review, explicitly accept, and apply a final patch without committing it:
+Apply a selected final patch without committing it:
 
 ```bash
-agent-arena review <run-id>
-agent-arena inspect <run-id> --agent codex --view diff
-agent-arena accept <run-id> --selection recommended --apply
+agent-arena apply <run-id> --agent codex
 ```
 
-Non-interactive clients must provide the full displayed digest with
-`--confirm-sha256`. `agent-arena apply <run-id>` accepts no contestant override
-and verifies the review ledger, digest, repository, base commit, clean worktree,
-trusted run path, and `git apply --check`.
-
-GitHub delivery is disabled by default. When explicitly enabled, inspect the
-exact side effects and authorize them separately:
-
-```bash
-agent-arena deliver <run-id> --plan --json
-agent-arena deliver <run-id> --action create_pull_request \
-  --confirm-sha256 <full-digest> --json
-agent-arena deliver <run-id> --execute --json
-agent-arena deliver <run-id> --status --json
-```
+The command verifies the repository, base commit, clean worktree, trusted run path, and `git apply --check` before changing files.
 
 ## Development
 
@@ -167,13 +111,8 @@ npm run lint
 npm run typecheck
 npm run test:unit
 npm run test:integration
-npm run test:smoke
 npm test
 npm run build
 ```
 
-Integration and smoke tests use temporary Git repositories, local bare-state
-fakes, fake provider executables, and controlled check transitions. No network
-or paid provider session runs in CI. `npm run test:live` exits with a clear skip
-unless `AGENT_ARENA_LIVE=1`; live reads and disposable-repository writes remain
-manual, explicitly authorized release checks.
+Integration tests initialize real temporary Git repositories and drive executable fake provider processes through implementation, three attack–repair rounds, a shared house defect, a held-out overfitting check, an ephemeral integration profile, infrastructure credit recovery, final reporting, and guarded patch application. Real-provider smoke tests are intentionally opt-in because they require authentication and may incur cost.

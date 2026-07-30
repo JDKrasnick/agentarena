@@ -51,49 +51,15 @@ export function renderBattleReport(state: RunState): string {
     state.ranking?.draw
       ? `Draw: ${state.ranking.reason}`
       : `Winner: **${state.ranking?.winner ?? "none"}** — ${state.ranking?.reason ?? "run incomplete"}`,
-    state.arenaOutcome
-      ? `Arena champion: **${state.arenaOutcome.championId ?? "draw"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
-      : "Arena champion: unavailable",
-    `Recommended patch: **${state.patchRecommendation?.contestantId ?? "draw"}** (${state.patchRecommendation?.reason ?? "pending"})`,
-    ...(state.patchRecommendation?.contestantId &&
-    state.patchRecommendation.contestantId !== state.arenaOutcome?.championId
-      ? [
-          "",
-          "> The arena champion and recommended patch differ: arena health remains unchanged; the recommendation is an advisory correctness-first selection.",
-        ]
-      : []),
     "",
-    "| Contestant | Required suite | Final HP | Gross damage | Healed | Active damage | Recoil | Patch bytes | Status |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    "| Contestant | Required suite | Final HP | Patch bytes | Status |",
+    "| --- | --- | ---: | ---: | --- |",
     ...contestants.map((contestant) => {
       const finalRequired = [...contestant.checks]
         .reverse()
         .find((check) => check.kind === "required");
-      const outcome = state.arenaOutcome?.contestants[contestant.agent];
-      return `| ${contestant.agent} | ${finalRequired?.status ?? "not run"} | ${String(contestant.finalHealth)} | ${String(outcome?.grossDamageReceived ?? 0)} | ${String(outcome?.grossHealing ?? 0)} | ${String(outcome?.activeDefectDamage ?? 0)} | ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil)} | ${String(contestant.patchSize)} | ${contestant.status} |`;
+      return `| ${contestant.agent} | ${finalRequired?.status ?? "not run"} | ${String(contestant.finalHealth)} | ${String(contestant.patchSize)} | ${contestant.status} |`;
     }),
-    "",
-    `Deciding factors: ${state.arenaOutcome?.decidingFactors.join(", ") || "none"}`,
-    "",
-    "## Patch recommendation",
-    "",
-    ...(state.patchRecommendation?.rationale.map(
-      (rationale) => `- ${rationale}`,
-    ) ?? ["- Recommendation not available."]),
-    "",
-    "| Contestant | Production files | Normalized production lines | Tests | Manifests | Observability |",
-    "| --- | ---: | ---: | ---: | ---: | ---: |",
-    ...contestants.map((contestant) => {
-      const facts = state.patchQualityFacts[contestant.agent];
-      return `| ${contestant.agent} | ${String(facts?.productionFilesChanged ?? 0)} | ${String(facts?.normalizedProductionLines ?? 0)} | ${String(facts?.testFilesChanged ?? 0)} | ${String(facts?.manifestDeltas.length ?? 0)} | ${String(facts?.observabilityChanges.length ?? 0)} |`;
-    }),
-    "",
-    "Human review: pending",
-    "",
-    ...(state.reviewPrompt?.choices.map(
-      (choice) =>
-        `- ${choice.contestantId}${choice.badges.length ? ` (${choice.badges.join(", ")})` : ""}: ${choice.eligible ? choice.summary : choice.disabledReason}`,
-    ) ?? []),
     "",
     "## Attacks",
     "",
@@ -116,37 +82,6 @@ export function renderBattleReport(state: RunState): string {
         ) ?? [],
     ),
     "",
-    "## Infrastructure recovery",
-    "",
-    ...contestants.flatMap((contestant) =>
-      contestant.replacementCredits.length
-        ? contestant.replacementCredits.map(
-            (credit) =>
-              `- ${contestant.agent}: credit ${credit.id} from ${credit.sourceAttackId} — ${credit.status}${credit.replacementAttackId ? ` by ${credit.replacementAttackId}` : ""}`,
-          )
-        : [`- ${contestant.agent}: no replacement credits`],
-    ),
-    ...state.attacks
-      .filter(
-        (attack) =>
-          attack.infrastructureReview ||
-          [
-            "infrastructure_error",
-            "execution_inconclusive",
-            "provisional_infrastructure",
-          ].includes(attack.status),
-      )
-      .map(
-        (attack) =>
-          `- ${attack.id}: ${attack.status}; review ${attack.infrastructureReview ?? "not recorded"}`,
-      ),
-    ...(state.harnessOverlays.length
-      ? state.harnessOverlays.map(
-          (overlay) =>
-            `- Overlay ${overlay.id}: ${overlay.status}; scopes ${overlay.scopes.join(", ") || "none"}; validation ${overlay.validationChecks.map((check) => `${check.id}:${check.status}`).join(", ") || "none"}`,
-        )
-      : ["- No harness overlays applied."]),
-    "",
     ...contestants.flatMap(contestantSection),
     "## Permissions and limitations",
     "",
@@ -158,7 +93,7 @@ export function renderBattleReport(state: RunState): string {
     "",
     `Required command: \`${state.config.testCommand}\``,
     "",
-    `Review with \`agent-arena review ${state.runId}\`, accept an exact digest, then apply with \`agent-arena apply ${state.runId}\`.`,
+    `Apply a selected patch with \`agent-arena apply ${state.runId} --agent <id>\`.`,
     "",
   ];
   return lines.join("\n");

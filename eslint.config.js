@@ -7,7 +7,6 @@ export default tseslint.config(
       "dist/**",
       "coverage/**",
       ".agent-arena/**",
-      ".context/**",
       ".serena/**",
       "eslint.config.js",
       "test/fixtures/*.mjs",

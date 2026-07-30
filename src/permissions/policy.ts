@@ -44,10 +44,7 @@ export function discoverCapabilities(config: FightConfig): CapabilityRequest[] {
       scopes: [config.repositoryRoot],
     },
   ];
-  if (
-    config.issueReferences.length > 0 ||
-    config.pullRequestReferences.length > 0
-  ) {
+  if (config.issueReferences.length > 0) {
     requests.push({
       id: "github_read",
       reason: "Snapshot official issue content",
@@ -55,7 +52,7 @@ export function discoverCapabilities(config: FightConfig): CapabilityRequest[] {
       requirement: "required",
       role: "harness_only",
       enforcement: "brokered",
-      scopes: [...config.issueReferences, ...config.pullRequestReferences],
+      scopes: config.issueReferences,
     });
   }
   if (config.integrationProfile) {

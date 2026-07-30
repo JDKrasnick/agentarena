@@ -9,7 +9,6 @@ import type {
   HouseScout,
   InfrastructureReviewer,
   IssueResolver,
-  PullRequestResolver,
 } from "../index-internal.js";
 import { readAttackSubmission, removeSubmission } from "../agents/adapter.js";
 import { composePrompt, createPromptManifest } from "../agents/prompts.js";
@@ -30,32 +29,15 @@ import {
 } from "../permissions/policy.js";
 import {
   assertCleanRepository,
-  fetchRemoteCommit,
-  readTextAtCommit,
   resolveCommit,
-  resolveGitHubRepositoryIdentity,
   resolveRepositoryRoot,
   WorktreeManager,
 } from "../repo/git.js";
 import { renderConsoleSummary } from "../reports/console.js";
 import { renderBattleReport } from "../reports/markdown.js";
-import { deriveArenaOutcome } from "../outcomes/derive-outcome.js";
-import { collectPatchQualityFacts } from "../quality/collect-facts.js";
-import { isManifestPath } from "../quality/manifest-adapters.js";
-import {
-  inconclusiveQualityVerdict,
-  type PatchQualityVerifier,
-} from "../quality/verifier.js";
-import { selectRecommendedPatch } from "../recommendation/select-patch.js";
-import { buildReviewPrompt } from "../review/prompt.js";
 import { runShellCommand } from "../runner/process-runner.js";
 import { provisionIntegrationProfile } from "../runner/integration.js";
-import {
-  buildTaskContract,
-  GitHubPullRequestResolver,
-  type ResolvedPullRequest,
-} from "../task/task-contract.js";
-import { deriveDeliveryTarget } from "../delivery/target.js";
+import { buildTaskContract } from "../task/task-contract.js";
 import { createRunId, sha256, stableId } from "./ids.js";
 import {
   calculateHealth,
@@ -88,8 +70,6 @@ export interface ArenaDependencies {
   infrastructureReviewer?: InfrastructureReviewer;
   harnessMaintainer?: HarnessMaintainer;
   issueResolver?: IssueResolver;
-  pullRequestResolver?: PullRequestResolver;
-  qualityVerifier?: PatchQualityVerifier;
   now?: () => Date;
   onProgress?: (message: string) => void;
 }
@@ -209,27 +189,10 @@ export class Arena {
       rawConfig.repositoryRoot,
     );
     await assertCleanRepository(repositoryRoot);
-    let frozenBasePullRequest: ResolvedPullRequest | undefined;
-    let baseCommit: string;
-    if (rawConfig.baseFromPullRequest) {
-      const resolver =
-        this.dependencies.pullRequestResolver ??
-        new GitHubPullRequestResolver();
-      frozenBasePullRequest = await resolver.resolve(
-        rawConfig.baseFromPullRequest,
-        repositoryRoot,
-      );
-      baseCommit = await fetchRemoteCommit(
-        repositoryRoot,
-        frozenBasePullRequest.headRepository,
-        frozenBasePullRequest.headCommit,
-      );
-    } else {
-      baseCommit = await resolveCommit(
-        repositoryRoot,
-        rawConfig.baseCommit ?? "HEAD",
-      );
-    }
+    const baseCommit = await resolveCommit(
+      repositoryRoot,
+      rawConfig.baseCommit ?? "HEAD",
+    );
     const config = FightConfigSchema.parse({
       ...rawConfig,
       repositoryRoot,
@@ -260,39 +223,15 @@ export class Arena {
         acceptanceCriteria: config.acceptanceCriteria,
         specPaths: config.specPaths,
         issueReferences: config.issueReferences,
-        pullRequestReferences: config.pullRequestReferences,
-        taskReferences: config.taskReferences,
         repositoryRoot,
         sourceDirectory: store.resolve("sources"),
         ...(this.dependencies.issueResolver
           ? { issueResolver: this.dependencies.issueResolver }
           : {}),
-        ...(frozenBasePullRequest && rawConfig.baseFromPullRequest
-          ? {
-              pullRequestResolver: {
-                resolve: (reference: string) => {
-                  if (reference !== rawConfig.baseFromPullRequest)
-                    return (
-                      this.dependencies.pullRequestResolver ??
-                      new GitHubPullRequestResolver()
-                    ).resolve(reference, repositoryRoot);
-                  return Promise.resolve(frozenBasePullRequest);
-                },
-              },
-            }
-          : this.dependencies.pullRequestResolver
-            ? { pullRequestResolver: this.dependencies.pullRequestResolver }
-            : {}),
         now: this.now(),
         warnings: contractWarnings,
       });
       await store.writeJson("task-contract.json", contract);
-      const targetResolution = deriveDeliveryTarget(
-        contract,
-        await resolveGitHubRepositoryIdentity(repositoryRoot),
-      );
-      if (targetResolution.ambiguous && targetResolution.reason)
-        contractWarnings.push(targetResolution.reason);
       const permissions = resolvePermissionPolicy(
         config,
         discoverCapabilities(config),
@@ -300,7 +239,7 @@ export class Arena {
       await store.writeJson("permissions.json", permissions);
       const startedAt = this.now().toISOString();
       const state: RunState = {
-        schemaVersion: 2,
+        schemaVersion: 1,
         runId,
         harnessVersion: "0.1.0",
         status: "running",
@@ -315,10 +254,6 @@ export class Arena {
         attacks: [],
         promptManifests: [],
         harnessOverlays: [],
-        patchQualityFacts: {},
-        ...(targetResolution.target
-          ? { deliveryTarget: targetResolution.target }
-          : {}),
         artifacts: {
           runDirectory: store.runDirectory,
           taskContract: store.resolve("task-contract.json"),
@@ -375,7 +310,6 @@ export class Arena {
       }
 
       await this.finalValidation(context);
-      await this.finalizeRecommendation(context);
       await this.transition(context, "report");
       const report = renderBattleReport(context.state);
       await store.writeText("BATTLE.md", report);
@@ -1743,219 +1677,6 @@ export class Arena {
     }
     context.state.ranking = rankContestants(
       context.config.agents.map((agent) => getContestant(context.state, agent)),
-    );
-    await this.persist(context);
-  }
-
-  private async finalizeRecommendation(context: ArenaContext): Promise<void> {
-    context.state.arenaOutcome = deriveArenaOutcome(context.state);
-    for (const agent of context.config.agents) {
-      const contestant = getContestant(context.state, agent);
-      if (!contestant.finalPatchPath) continue;
-      const patchBytes = await readFile(contestant.finalPatchPath);
-      const patch = patchBytes.toString("utf8");
-      let facts = collectPatchQualityFacts({
-        contestantId: agent,
-        patch,
-        patchBytes,
-      });
-      const manifestPaths = facts.changedPaths.filter(isManifestPath);
-      if (manifestPaths.length > 0 && context.config.baseCommit) {
-        const worktree = await context.worktrees.create(
-          `quality-facts-${agent}`,
-        );
-        try {
-          await context.worktrees.applyPatch(
-            worktree,
-            contestant.finalPatchPath,
-          );
-          const baseContent: Record<string, string> = {};
-          const patchedContent: Record<string, string> = {};
-          for (const manifestPath of manifestPaths) {
-            const base = await readTextAtCommit(
-              context.config.repositoryRoot,
-              context.config.baseCommit,
-              manifestPath,
-            );
-            if (base !== undefined) baseContent[manifestPath] = base;
-            try {
-              patchedContent[manifestPath] = await readFile(
-                path.join(worktree, manifestPath),
-                "utf8",
-              );
-            } catch (error) {
-              if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-                throw error;
-            }
-          }
-          facts = collectPatchQualityFacts({
-            contestantId: agent,
-            patch,
-            patchBytes,
-            baseContent,
-            patchedContent,
-          });
-        } finally {
-          await context.worktrees.remove(worktree);
-        }
-      }
-      context.state.patchQualityFacts[agent] = facts;
-      await context.store.writeImmutableJson(
-        `quality/${agent}-facts.json`,
-        facts,
-      );
-    }
-    const [left, right] = context.config.agents;
-    const anonymizationMap =
-      left && right
-        ? Number.parseInt(
-            sha256(`quality-labels:${context.state.runId}`).slice(0, 2),
-            16,
-          ) %
-            2 ===
-          0
-          ? { patch_a: left, patch_b: right }
-          : { patch_a: right, patch_b: left }
-        : undefined;
-    const comparableContestants =
-      left && right
-        ? [left, right].map((agent) => getContestant(context.state, agent))
-        : [];
-    const shouldCompareQuality =
-      comparableContestants.length === 2 &&
-      comparableContestants.every(
-        (contestant) =>
-          contestant.status !== "eliminated" &&
-          latestRequiredPass(contestant) &&
-          Boolean(contestant.finalPatchPath),
-      ) &&
-      new Set(
-        comparableContestants.map((contestant) =>
-          contestant.healthLedger.activeDefects.reduce(
-            (total, defect) => total + defect.damage,
-            0,
-          ),
-        ),
-      ).size === 1;
-    let verdict = inconclusiveQualityVerdict(
-      shouldCompareQuality
-        ? "No quality verifier was configured."
-        : "Patches were not equally correct and did not require a quality tie-break.",
-    );
-    const qualityStartedAt = this.now();
-    if (
-      context.config.selectionEnabled &&
-      shouldCompareQuality &&
-      this.dependencies.qualityVerifier &&
-      anonymizationMap
-    ) {
-      const patchAFacts =
-        context.state.patchQualityFacts[anonymizationMap.patch_a];
-      const patchBFacts =
-        context.state.patchQualityFacts[anonymizationMap.patch_b];
-      const patchAPath = getContestant(
-        context.state,
-        anonymizationMap.patch_a,
-      ).finalPatchPath;
-      const patchBPath = getContestant(
-        context.state,
-        anonymizationMap.patch_b,
-      ).finalPatchPath;
-      if (patchAFacts && patchBFacts && patchAPath && patchBPath) {
-        const { contestantId: patchAId, ...anonymousPatchAFacts } = patchAFacts;
-        const { contestantId: patchBId, ...anonymousPatchBFacts } = patchBFacts;
-        void patchAId;
-        void patchBId;
-        const worktree = await context.worktrees.create("quality-verifier");
-        const promptPath = context.store.resolve("quality/prompt.txt");
-        await context.store.writeText(
-          "quality/prompt.txt",
-          "Anonymized neutral implementation-quality comparison. See verifier transcript and input bundle.",
-        );
-        await context.store.writeImmutableJson(
-          "quality/anonymization-map.json",
-          anonymizationMap,
-        );
-        const input = {
-          taskContract: context.contract,
-          finalValidation: Object.fromEntries(
-            context.config.agents.map((agent) => [
-              agent === anonymizationMap.patch_a ? "patch_a" : "patch_b",
-              getContestant(context.state, agent).checks,
-            ]),
-          ),
-          activeDefects: Object.fromEntries(
-            context.config.agents.map((agent) => [
-              agent === anonymizationMap.patch_a ? "patch_a" : "patch_b",
-              getContestant(context.state, agent).healthLedger.activeDefects,
-            ]),
-          ),
-          patches: [
-            {
-              label: "patch_a" as const,
-              patch: await readFile(patchAPath, "utf8"),
-              facts: anonymousPatchAFacts,
-            },
-            {
-              label: "patch_b" as const,
-              patch: await readFile(patchBPath, "utf8"),
-              facts: anonymousPatchBFacts,
-            },
-          ] as const,
-          promptPath,
-          worktree,
-          transcriptPrefix: context.store.resolve("logs/quality-verifier"),
-          timeoutMs: context.config.limits.verifierMs,
-          signal: context.controller.signal,
-        };
-        await context.store.writeImmutableJson("quality/input.json", {
-          ...input,
-          signal: undefined,
-          worktree: undefined,
-          transcriptPrefix: undefined,
-        });
-        try {
-          verdict = await this.dependencies.qualityVerifier.compare(input);
-        } catch (error) {
-          verdict = inconclusiveQualityVerdict(
-            `Quality verifier failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        } finally {
-          await context.worktrees.remove(worktree);
-        }
-      }
-    }
-    context.state.patchQualityVerdict = verdict;
-    await context.store.writeImmutableJson("quality/verdict.json", verdict);
-    const qualityFinishedAt = this.now();
-    await context.store.writeImmutableJson("quality/operation.json", {
-      version: 1,
-      operationId: stableId("quality", context.state.runId),
-      runId: context.state.runId,
-      stage: "quality_verifier",
-      verifierId: this.dependencies.qualityVerifier?.id ?? "none",
-      startedAt: qualityStartedAt.toISOString(),
-      finishedAt: qualityFinishedAt.toISOString(),
-      durationMs: Math.max(
-        0,
-        qualityFinishedAt.getTime() - qualityStartedAt.getTime(),
-      ),
-      timeoutMs: context.config.limits.verifierMs,
-      cost: { status: "unknown", amountUsd: null },
-      status: verdict.verdict,
-    });
-    context.state.patchRecommendation = selectRecommendedPatch({
-      contestants: context.state.contestants,
-      ...(context.state.arenaOutcome.championId
-        ? { championId: context.state.arenaOutcome.championId }
-        : {}),
-      qualityVerdict: verdict,
-      ...(anonymizationMap ? { anonymizationMap } : {}),
-    });
-    context.state.reviewPrompt = buildReviewPrompt(context.state);
-    await context.store.writeImmutableJson(
-      "review-prompt.json",
-      context.state.reviewPrompt,
     );
     await this.persist(context);
   }

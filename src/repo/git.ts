@@ -27,73 +27,6 @@ export async function resolveCommit(
   return git(repositoryRoot, ["rev-parse", `${ref}^{commit}`]);
 }
 
-export async function fetchRemoteCommit(
-  repositoryRoot: string,
-  repository: string,
-  commit: string,
-): Promise<string> {
-  await git(repositoryRoot, [
-    "fetch",
-    "--no-tags",
-    `https://github.com/${repository}.git`,
-    commit,
-  ]);
-  const fetched = await resolveCommit(repositoryRoot, "FETCH_HEAD");
-  if (fetched !== commit)
-    throw new Error(
-      `Fetched commit ${fetched} does not match frozen pull request head ${commit}`,
-    );
-  return fetched;
-}
-
-export async function resolveGitHubRepositoryIdentity(
-  repositoryRoot: string,
-): Promise<{ repository: string; baseBranch?: string } | undefined> {
-  let remote: string;
-  try {
-    remote = await git(repositoryRoot, ["remote", "get-url", "origin"]);
-  } catch {
-    return undefined;
-  }
-  const match =
-    /^(?:https:\/\/github\.com\/|git@github\.com:)([^/]+\/[^/]+?)(?:\.git)?$/u.exec(
-      remote,
-    );
-  const repository = match?.[1];
-  if (!repository) return undefined;
-  let baseBranch: string | undefined;
-  try {
-    const symbolic = await git(repositoryRoot, [
-      "symbolic-ref",
-      "--short",
-      "refs/remotes/origin/HEAD",
-    ]);
-    baseBranch = symbolic.replace(/^origin\//u, "");
-  } catch {
-    try {
-      baseBranch = await git(repositoryRoot, ["branch", "--show-current"]);
-    } catch {
-      // A detached repository still has a stable repository identity.
-    }
-  }
-  return {
-    repository,
-    ...(baseBranch ? { baseBranch } : {}),
-  };
-}
-
-export async function readTextAtCommit(
-  repositoryRoot: string,
-  commit: string,
-  filePath: string,
-): Promise<string | undefined> {
-  const result = await execa("git", ["show", `${commit}:${filePath}`], {
-    cwd: repositoryRoot,
-    reject: false,
-  });
-  return result.exitCode === 0 ? result.stdout : undefined;
-}
-
 export async function assertCleanRepository(
   repositoryRoot: string,
 ): Promise<void> {
@@ -187,38 +120,9 @@ export class WorktreeManager {
 }
 
 export function changedPathsFromPatch(patch: string): string[] {
-  const headers = patch.split(/\r?\n/u).flatMap((line) => {
-    const parsed = parseGitDiffHeader(line);
-    return parsed ? [parsed.after] : [];
-  });
-  return [
-    ...new Set(
-      headers.length
-        ? headers
-        : [...patch.matchAll(/^\+\+\+ b\/(.+)$/gm)].map(
-            (match) => match[1] ?? "",
-          ),
-    ),
-  ].filter(Boolean);
-}
-
-export function parseGitDiffHeader(
-  line: string,
-): { before: string; after: string } | undefined {
-  const match =
-    /^diff --git ("(?:\\.|[^"])*"|\S+) ("(?:\\.|[^"])*"|\S+)$/u.exec(line);
-  if (!match?.[1] || !match[2]) return undefined;
-  try {
-    const decode = (token: string): string => {
-      const value = token.startsWith('"')
-        ? (JSON.parse(token) as string)
-        : token;
-      return value.replace(/^[ab]\//u, "");
-    };
-    return { before: decode(match[1]), after: decode(match[2]) };
-  } catch {
-    return undefined;
-  }
+  return [...patch.matchAll(/^\+\+\+ b\/(.+)$/gm)].map(
+    (match) => match[1] ?? "",
+  );
 }
 
 export function isAllowedAttackPath(filePath: string): boolean {
