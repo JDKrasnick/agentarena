@@ -51,28 +51,50 @@ export function deriveDeliveryPlan(
     sideEffects = ["Apply the accepted patch to the current working tree."];
   } else if (target.kind === "github_pull_request") {
     availableActions = [
-      "update_pull_request",
-      ...(state.config.mergeEnabled ? (["merge_pull_request"] as const) : []),
+      "apply_local",
+      ...(state.config.deliveryEnabled
+        ? (["update_pull_request"] as const)
+        : []),
+      ...(state.config.deliveryEnabled && state.config.mergeEnabled
+        ? (["merge_pull_request"] as const)
+        : []),
       "reject",
       "decide_later",
     ];
-    recommendedAction = "update_pull_request";
-    requires = ["git_push", "pull_request_write"];
-    sideEffects = [
-      `Update GitHub pull request #${String(target.number ?? "")} only if its head is unchanged.`,
-    ];
+    recommendedAction = state.config.deliveryEnabled
+      ? "update_pull_request"
+      : "apply_local";
+    requires = state.config.deliveryEnabled
+      ? ["git_push", "pull_request_write"]
+      : ["local_worktree_write"];
+    sideEffects = state.config.deliveryEnabled
+      ? [
+          `Push to ${target.headRepository ?? target.repository ?? "the pull request head repository"}:${target.headBranch ?? deliveryBranch(state, target)} and update GitHub pull request #${String(target.number ?? "")} only if its head is unchanged.`,
+        ]
+      : ["Apply the accepted patch to the current working tree."];
   } else {
     availableActions = [
-      "create_pull_request",
-      ...(state.config.mergeEnabled ? (["merge_pull_request"] as const) : []),
+      "apply_local",
+      ...(state.config.deliveryEnabled
+        ? (["create_pull_request"] as const)
+        : []),
+      ...(state.config.deliveryEnabled && state.config.mergeEnabled
+        ? (["merge_pull_request"] as const)
+        : []),
       "reject",
       "decide_later",
     ];
-    recommendedAction = "create_pull_request";
-    requires = ["git_push", "pull_request_write"];
-    sideEffects = [
-      `Create branch ${deliveryBranch(state, target)} and a pull request in ${target.repository ?? "the current GitHub repository"}.`,
-    ];
+    recommendedAction = state.config.deliveryEnabled
+      ? "create_pull_request"
+      : "apply_local";
+    requires = state.config.deliveryEnabled
+      ? ["git_push", "pull_request_write"]
+      : ["local_worktree_write"];
+    sideEffects = state.config.deliveryEnabled
+      ? [
+          `Create branch ${deliveryBranch(state, target)} and a pull request in ${target.repository ?? "the current GitHub repository"}.`,
+        ]
+      : ["Apply the accepted patch to the current working tree."];
   }
   const base = {
     version: 1 as const,

@@ -49,21 +49,30 @@ async function ensureReviewFacts(
   store: ArtifactStore,
   state: RunState,
 ): Promise<void> {
+  let changed = false;
   for (const contestant of Object.values(state.contestants)) {
-    if (state.patchQualityFacts[contestant.agent]) continue;
     if (!contestant.finalPatchPath) continue;
     const patchPath = await trustedPatchPath(
       state,
       contestant.agent,
       store.runDirectory,
     );
-    const patch = await readFile(patchPath, "utf8");
+    const patchBytes = await readFile(patchPath);
+    const digest = createHash("sha256").update(patchBytes).digest("hex");
+    if (state.patchQualityFacts[contestant.agent]?.patchSha256 === digest)
+      continue;
     state.patchQualityFacts[contestant.agent] = collectPatchQualityFacts({
       contestantId: contestant.agent,
-      patch,
+      patch: patchBytes.toString("utf8"),
+      patchBytes,
     });
+    changed = true;
   }
-  if (!state.reviewPrompt) state.reviewPrompt = buildReviewPrompt(state);
+  if (!state.reviewPrompt || changed) {
+    state.reviewPrompt = buildReviewPrompt(state);
+    changed = true;
+  }
+  if (changed) await store.writeState(state);
 }
 
 export async function reviewRun(options: RunLocation): Promise<ReviewPrompt> {
@@ -200,7 +209,7 @@ export async function recordReviewDecision(
     ...(approval.userMessageRef
       ? { userMessageRef: approval.userMessageRef }
       : {}),
-    attestationHash: verified.attestationHash,
+    attestationHash: hashValue(`${verified.attestationHash}\0${payloadHash}`),
     idempotencyKeyHash: hashValue(options.idempotencyKey),
     decidedAt,
   });

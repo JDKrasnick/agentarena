@@ -46,9 +46,15 @@ async function acceptedIssueRun(
   const patch =
     "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -0,0 +1 @@\n+export const a = 2;\n";
   const patchPath = store.resolve("patches/claude.diff");
-  await writeFile(patchPath, patch);
+  const otherPatchPath = store.resolve("patches/codex.diff");
+  await Promise.all([
+    writeFile(patchPath, patch),
+    writeFile(otherPatchPath, patch),
+  ]);
   state.contestants.claude!.finalPatchPath = patchPath;
+  state.contestants.codex!.finalPatchPath = otherPatchPath;
   state.patchQualityFacts.claude!.patchSha256 = hashValue(patch);
+  state.patchQualityFacts.codex!.patchSha256 = hashValue(patch);
   state.reviewPrompt = undefined;
   await store.writeState(state);
   const prompt = await reviewRun({

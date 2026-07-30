@@ -14,6 +14,7 @@ import { parseGitDiffHeader } from "../repo/git.js";
 export interface CollectPatchFactsInput {
   contestantId: AgentId;
   patch: string;
+  patchBytes?: Uint8Array;
   baseContent?: Readonly<Record<string, string>>;
   patchedContent?: Readonly<Record<string, string>>;
   classification?: PathClassificationOverrides;
@@ -146,12 +147,14 @@ export function collectPatchQualityFacts(
   const production = classified.filter((file) => file.kind === "production");
   const formattingOnly =
     files.length > 0 &&
-    files.every((file) => file.normalized === 0 || file.binary);
+    files.every((file) => !file.binary && file.normalized === 0);
 
   return PatchQualityFactsSchema.parse({
     version: 1,
     contestantId: input.contestantId,
-    patchSha256: createHash("sha256").update(input.patch).digest("hex"),
+    patchSha256: createHash("sha256")
+      .update(input.patchBytes ?? Buffer.from(input.patch, "utf8"))
+      .digest("hex"),
     changedPaths: files.map((file) => file.path),
     binaryPaths: files.filter((file) => file.binary).map((file) => file.path),
     productionFilesChanged: production.length,
@@ -175,12 +178,12 @@ export function collectPatchQualityFacts(
     formattingOnly,
     manifestDeltas,
     publicSurfaceChanges: {
-      status: publicSurface.length ? "known" : "unknown",
+      status: "known",
       values: publicSurface,
       evidencePaths: publicSurface,
     },
     operationalRequirementsAdded: {
-      status: operational.length ? "known" : "unknown",
+      status: "known",
       values: operational,
       evidencePaths: operational,
     },

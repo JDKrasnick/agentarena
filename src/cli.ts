@@ -248,6 +248,7 @@ program
   .argument("<run-id>")
   .option("--plan")
   .option("--status")
+  .option("--execute")
   .option("--action <action>")
   .option("--confirm-sha256 <digest>")
   .option("--merge-after-checks")
@@ -260,6 +261,7 @@ program
       options: {
         plan?: boolean;
         status?: boolean;
+        execute?: boolean;
         action?: string;
         confirmSha256?: string;
         mergeAfterChecks?: boolean;
@@ -272,7 +274,9 @@ program
         ? "status"
         : options.plan
           ? "plan"
-          : "execute";
+          : options.execute
+            ? "execute"
+            : "authorize";
       process.stdout.write(
         `${await runDeliverCommand({
           runId,

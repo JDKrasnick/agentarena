@@ -1752,8 +1752,13 @@ export class Arena {
     for (const agent of context.config.agents) {
       const contestant = getContestant(context.state, agent);
       if (!contestant.finalPatchPath) continue;
-      const patch = await readFile(contestant.finalPatchPath, "utf8");
-      let facts = collectPatchQualityFacts({ contestantId: agent, patch });
+      const patchBytes = await readFile(contestant.finalPatchPath);
+      const patch = patchBytes.toString("utf8");
+      let facts = collectPatchQualityFacts({
+        contestantId: agent,
+        patch,
+        patchBytes,
+      });
       const manifestPaths = facts.changedPaths.filter(isManifestPath);
       if (manifestPaths.length > 0 && context.config.baseCommit) {
         const worktree = await context.worktrees.create(
@@ -1786,6 +1791,7 @@ export class Arena {
           facts = collectPatchQualityFacts({
             contestantId: agent,
             patch,
+            patchBytes,
             baseContent,
             patchedContent,
           });
@@ -1801,7 +1807,16 @@ export class Arena {
     }
     const [left, right] = context.config.agents;
     const anonymizationMap =
-      left && right ? { patch_a: left, patch_b: right } : undefined;
+      left && right
+        ? Number.parseInt(
+            sha256(`quality-labels:${context.state.runId}`).slice(0, 2),
+            16,
+          ) %
+            2 ===
+          0
+          ? { patch_a: left, patch_b: right }
+          : { patch_a: right, patch_b: left }
+        : undefined;
     const comparableContestants =
       left && right
         ? [left, right].map((agent) => getContestant(context.state, agent))
@@ -1834,15 +1849,23 @@ export class Arena {
       this.dependencies.qualityVerifier &&
       anonymizationMap
     ) {
-      const leftFacts = context.state.patchQualityFacts[left];
-      const rightFacts = context.state.patchQualityFacts[right];
-      const leftPath = getContestant(context.state, left).finalPatchPath;
-      const rightPath = getContestant(context.state, right).finalPatchPath;
-      if (leftFacts && rightFacts && leftPath && rightPath) {
-        const { contestantId: leftId, ...anonymousLeftFacts } = leftFacts;
-        const { contestantId: rightId, ...anonymousRightFacts } = rightFacts;
-        void leftId;
-        void rightId;
+      const patchAFacts =
+        context.state.patchQualityFacts[anonymizationMap.patch_a];
+      const patchBFacts =
+        context.state.patchQualityFacts[anonymizationMap.patch_b];
+      const patchAPath = getContestant(
+        context.state,
+        anonymizationMap.patch_a,
+      ).finalPatchPath;
+      const patchBPath = getContestant(
+        context.state,
+        anonymizationMap.patch_b,
+      ).finalPatchPath;
+      if (patchAFacts && patchBFacts && patchAPath && patchBPath) {
+        const { contestantId: patchAId, ...anonymousPatchAFacts } = patchAFacts;
+        const { contestantId: patchBId, ...anonymousPatchBFacts } = patchBFacts;
+        void patchAId;
+        void patchBId;
         const worktree = await context.worktrees.create("quality-verifier");
         const promptPath = context.store.resolve("quality/prompt.txt");
         await context.store.writeText(
@@ -1857,26 +1880,26 @@ export class Arena {
           taskContract: context.contract,
           finalValidation: Object.fromEntries(
             context.config.agents.map((agent) => [
-              agent === left ? "patch_a" : "patch_b",
+              agent === anonymizationMap.patch_a ? "patch_a" : "patch_b",
               getContestant(context.state, agent).checks,
             ]),
           ),
           activeDefects: Object.fromEntries(
             context.config.agents.map((agent) => [
-              agent === left ? "patch_a" : "patch_b",
+              agent === anonymizationMap.patch_a ? "patch_a" : "patch_b",
               getContestant(context.state, agent).healthLedger.activeDefects,
             ]),
           ),
           patches: [
             {
               label: "patch_a" as const,
-              patch: await readFile(leftPath, "utf8"),
-              facts: anonymousLeftFacts,
+              patch: await readFile(patchAPath, "utf8"),
+              facts: anonymousPatchAFacts,
             },
             {
               label: "patch_b" as const,
-              patch: await readFile(rightPath, "utf8"),
-              facts: anonymousRightFacts,
+              patch: await readFile(patchBPath, "utf8"),
+              facts: anonymousPatchBFacts,
             },
           ] as const,
           promptPath,

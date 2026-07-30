@@ -40,6 +40,51 @@ export function hashValue(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+export function resolveLedgerHead<
+  T extends {
+    decisionId: string;
+    parentDecisionId?: string | undefined;
+  },
+>(decisions: readonly T[], ledgerName: string): T | undefined {
+  if (decisions.length === 0) return undefined;
+  const byId = new Map(
+    decisions.map((decision) => [decision.decisionId, decision]),
+  );
+  if (byId.size !== decisions.length)
+    throw new Error(`${ledgerName} ledger contains duplicate decision IDs`);
+  const claimedParents = new Set<string>();
+  for (const decision of decisions) {
+    if (!decision.parentDecisionId) continue;
+    if (!byId.has(decision.parentDecisionId))
+      throw new Error(
+        `${ledgerName} ledger contains an unknown parent decision`,
+      );
+    claimedParents.add(decision.parentDecisionId);
+  }
+  const heads = decisions.filter(
+    (decision) => !claimedParents.has(decision.decisionId),
+  );
+  if (heads.length !== 1)
+    throw new Error(
+      `${ledgerName} ledger does not have exactly one structural head`,
+    );
+  const visited = new Set<string>();
+  let current: T | undefined = heads[0];
+  while (current) {
+    if (visited.has(current.decisionId))
+      throw new Error(`${ledgerName} ledger contains a decision cycle`);
+    visited.add(current.decisionId);
+    current = current.parentDecisionId
+      ? byId.get(current.parentDecisionId)
+      : undefined;
+  }
+  if (visited.size !== decisions.length)
+    throw new Error(
+      `${ledgerName} ledger contains a disconnected decision chain`,
+    );
+  return heads[0];
+}
+
 export async function readCurrentReview(
   store: ArtifactStore,
 ): Promise<ReviewDecision | undefined> {
@@ -47,9 +92,7 @@ export async function readCurrentReview(
     "reviews",
     ReviewDecisionSchema,
   );
-  return decisions
-    .sort((left, right) => left.decidedAt.localeCompare(right.decidedAt))
-    .at(-1);
+  return resolveLedgerHead(decisions, "Review");
 }
 
 export async function readOperation(

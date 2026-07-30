@@ -97,20 +97,6 @@ export async function applyAcceptedPatch(options: {
     repositoryRoot,
     ...(options.artifactRoot ? { artifactRoot: options.artifactRoot } : {}),
   });
-  const payloadHash = hashValue(
-    JSON.stringify({
-      runId: options.runId,
-      expectedPatchSha256: options.expectedPatchSha256,
-      repositoryRoot,
-    }),
-  );
-  const replay = await readOperation(store, options.idempotencyKey);
-  if (replay) {
-    if (replay.payloadHash !== payloadHash)
-      throw new Error("Idempotency key was already used with another payload");
-    const prior = ApplyResultSchema.parse(replay.result);
-    return { ...prior, idempotentReplay: true };
-  }
   if (state.config.repositoryRoot !== repositoryRoot)
     throw new Error("Run belongs to a different repository");
   const prompt = await reviewRun({
@@ -142,6 +128,20 @@ export async function applyAcceptedPatch(options: {
     options.expectedPatchSha256 !== decision.patchSha256
   )
     throw new Error("Expected patch digest does not match the acceptance");
+  const payloadHash = hashValue(
+    JSON.stringify({
+      runId: options.runId,
+      patchSha256: decision.patchSha256,
+      repositoryRoot,
+    }),
+  );
+  const replay = await readOperation(store, options.idempotencyKey);
+  if (replay) {
+    if (replay.payloadHash !== payloadHash)
+      throw new Error("Idempotency key was already used with another payload");
+    const prior = ApplyResultSchema.parse(replay.result);
+    return { ...prior, idempotentReplay: true };
+  }
   const patchPath = await trustedPatchPath(
     state,
     decision.selectedContestantId,

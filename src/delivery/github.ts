@@ -25,13 +25,22 @@ export interface GitHubDeliveryInput {
 
 export interface GitHubDeliveryAdapter {
   prepare(input: GitHubDeliveryInput): Promise<PreparedDelivery>;
-  getPullRequest(repository: string, number: number): Promise<PullRequestState>;
+  getPullRequest(
+    repository: string,
+    number: number,
+    signal?: AbortSignal,
+  ): Promise<PullRequestState>;
   requestMerge(
     repository: string,
     number: number,
     expectedHeadSha: string,
+    signal?: AbortSignal,
   ): Promise<void>;
-  getIssueState(repository: string, number: number): Promise<string>;
+  getIssueState(
+    repository: string,
+    number: number,
+    signal?: AbortSignal,
+  ): Promise<string>;
 }
 
 async function command(
@@ -52,7 +61,7 @@ async function command(
   return result.stdout;
 }
 
-function stateFromGh(value: {
+export function stateFromGh(value: {
   url: string;
   number: number;
   state: string;
@@ -60,31 +69,82 @@ function stateFromGh(value: {
   headRefOid: string;
   mergeable?: string;
   mergeStateStatus?: string;
-  statusCheckRollup?: Array<{ status?: string; conclusion?: string }>;
-  reviews?: Array<{ state: string }>;
+  statusCheckRollup?: Array<{
+    status?: string;
+    conclusion?: string;
+    name?: string;
+    context?: string;
+    state?: string;
+  }>;
+  requiredChecks?: Array<{
+    name: string;
+    state: string;
+    bucket: string;
+  }>;
+  reviewDecision?: string;
+  reviews?: Array<{
+    state: string;
+    submittedAt?: string;
+    author?: { login?: string };
+  }>;
 }): PullRequestState {
-  const checks = value.statusCheckRollup ?? [];
-  const checkState = checks.some((check) =>
-    ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT"].includes(
-      check.conclusion ?? "",
-    ),
-  )
-    ? "failure"
-    : checks.some(
-          (check) =>
-            check.status !== "COMPLETED" ||
-            !["SUCCESS", "NEUTRAL", "SKIPPED"].includes(check.conclusion ?? ""),
+  const allChecks = value.statusCheckRollup ?? [];
+  const requiredChecks = value.requiredChecks ?? [];
+  const checkState =
+    requiredChecks.length > 0
+      ? requiredChecks.some((check) =>
+          ["fail", "cancel"].includes(check.bucket),
         )
-      ? "pending"
-      : "success";
-  const reviews = value.reviews ?? [];
-  const reviewState = reviews.some(
-    (review) => review.state === "CHANGES_REQUESTED",
-  )
-    ? "changes_requested"
-    : reviews.some((review) => review.state === "APPROVED")
-      ? "approved"
-      : "pending";
+        ? "failure"
+        : requiredChecks.every((check) =>
+              ["pass", "skipping"].includes(check.bucket),
+            )
+          ? "success"
+          : "pending"
+      : allChecks.some(
+            (check) =>
+              ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT"].includes(
+                check.conclusion ?? "",
+              ) || ["FAILURE", "ERROR"].includes(check.state ?? ""),
+          )
+        ? "failure"
+        : allChecks.length === 0 ||
+            allChecks.some(
+              (check) =>
+                !(
+                  (check.status === "COMPLETED" &&
+                    ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(
+                      check.conclusion ?? "",
+                    )) ||
+                  check.state === "SUCCESS"
+                ),
+            )
+          ? "pending"
+          : "success";
+  const latestByAuthor = new Map<
+    string,
+    NonNullable<typeof value.reviews>[number]
+  >();
+  for (const [index, review] of (value.reviews ?? []).entries()) {
+    const author = review.author?.login ?? `unknown-${String(index)}`;
+    const previous = latestByAuthor.get(author);
+    if (
+      !previous ||
+      (review.submittedAt ?? "").localeCompare(previous.submittedAt ?? "") >= 0
+    )
+      latestByAuthor.set(author, review);
+  }
+  const reviews = [...latestByAuthor.values()];
+  const reviewState =
+    value.reviewDecision === "CHANGES_REQUESTED"
+      ? "changes_requested"
+      : value.reviewDecision === "APPROVED"
+        ? "approved"
+        : reviews.some((review) => review.state === "CHANGES_REQUESTED")
+          ? "changes_requested"
+          : reviews.some((review) => review.state === "APPROVED")
+            ? "approved"
+            : "pending";
   return PullRequestStateSchema.parse({
     repository: "",
     number: value.number,
@@ -116,7 +176,7 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
     const patch = await readFile(input.patchPath, "utf8");
     if (changedPathsFromPatch(patch).length === 0)
       throw new Error("Accepted patch has no changed paths");
-    let base = input.state.config.baseCommit;
+    const base = input.state.config.baseCommit;
     let branch = input.branch;
     let pushRepository = input.target.repository;
     if (input.target.kind === "github_pull_request") {
@@ -136,15 +196,18 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
             "--repo",
             input.target.repository,
             "--json",
-            "headRefOid,headRefName,headRepository",
+            "state,headRefOid,headRefName,headRepository",
           ],
           { cwd: this.repositoryRoot, signal: input.signal },
         ),
       ) as {
+        state: string;
         headRefOid: string;
         headRefName: string;
         headRepository: { nameWithOwner: string };
       };
+      if (current.state.toUpperCase() !== "OPEN")
+        throw new Error("Frozen pull request is no longer open");
       if (
         current.headRefName !== input.target.headBranch ||
         current.headRepository.nameWithOwner !== input.target.headRepository
@@ -157,7 +220,6 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
         throw new Error(
           "The accepted patch was not validated from the frozen pull request head",
         );
-      base = input.target.headCommit;
       branch = input.target.headBranch;
       pushRepository = input.target.headRepository ?? input.target.repository;
     }
@@ -176,10 +238,6 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
         signal: input.signal,
       });
       await command("git", ["apply", input.patchPath], {
-        cwd: temporaryRoot,
-        signal: input.signal,
-      });
-      await command("git", ["diff", "--check"], {
         cwd: temporaryRoot,
         signal: input.signal,
       });
@@ -281,7 +339,7 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
             "--head",
             branch,
             "--state",
-            "all",
+            "open",
             "--json",
             "number,url,headRefOid",
           ],
@@ -308,6 +366,7 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
         [
           "pr",
           "create",
+          "--draft",
           "--repo",
           input.target.repository,
           "--head",
@@ -318,7 +377,7 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
           input.state.config.task.slice(0, 120),
           "--body",
           [
-            "Implemented and selected by Agent Arena.",
+            "Prepared by the repository validation workflow.",
             "",
             `Run: ${input.state.runId}`,
             `Patch SHA-256: ${input.patchSha256}`,
@@ -352,6 +411,7 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
   async getPullRequest(
     repository: string,
     number: number,
+    signal?: AbortSignal,
   ): Promise<PullRequestState> {
     const value = JSON.parse(
       await command(
@@ -363,20 +423,58 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
           "--repo",
           repository,
           "--json",
-          "url,number,state,mergedAt,headRefOid,mergeable,mergeStateStatus,statusCheckRollup,reviews",
+          "url,number,state,mergedAt,headRefOid,mergeable,mergeStateStatus,statusCheckRollup,reviewDecision,reviews",
         ],
-        { cwd: this.repositoryRoot },
+        { cwd: this.repositoryRoot, signal },
       ),
     ) as Parameters<typeof stateFromGh>[0];
-    return { ...stateFromGh(value), repository };
+    const requiredResult = await execa(
+      "gh",
+      [
+        "pr",
+        "checks",
+        String(number),
+        "--repo",
+        repository,
+        "--required",
+        "--json",
+        "name,state,bucket",
+      ],
+      {
+        cwd: this.repositoryRoot,
+        reject: false,
+        ...(signal ? { cancelSignal: signal } : {}),
+      },
+    );
+    const noRequiredChecks = /no (?:required )?checks reported/iu.test(
+      requiredResult.stderr || requiredResult.stdout,
+    );
+    if (![0, 8].includes(requiredResult.exitCode ?? -1) && !noRequiredChecks) {
+      throw new Error(
+        `Unable to read required checks: ${requiredResult.stderr || requiredResult.stdout}`,
+      );
+    }
+    const requiredChecks =
+      noRequiredChecks || !requiredResult.stdout.trim().startsWith("[")
+        ? []
+        : (JSON.parse(requiredResult.stdout) as Array<{
+            name: string;
+            state: string;
+            bucket: string;
+          }>);
+    return {
+      ...stateFromGh({ ...value, requiredChecks }),
+      repository,
+    };
   }
 
   async requestMerge(
     repository: string,
     number: number,
     expectedHeadSha: string,
+    signal?: AbortSignal,
   ): Promise<void> {
-    const current = await this.getPullRequest(repository, number);
+    const current = await this.getPullRequest(repository, number, signal);
     if (current.headSha !== expectedHeadSha)
       throw new Error("Pull request head changed after merge authorization");
     const policy = JSON.parse(
@@ -389,7 +487,7 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
           "--json",
           "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed",
         ],
-        { cwd: this.repositoryRoot },
+        { cwd: this.repositoryRoot, signal },
       ),
     ) as {
       mergeCommitAllowed: boolean;
@@ -404,14 +502,40 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
           ? "--rebase"
           : undefined;
     if (!method) throw new Error("Repository policy allows no merge method");
+    const draft = JSON.parse(
+      await command(
+        "gh",
+        [
+          "pr",
+          "view",
+          String(number),
+          "--repo",
+          repository,
+          "--json",
+          "isDraft",
+        ],
+        { cwd: this.repositoryRoot, signal },
+      ),
+    ) as { isDraft: boolean };
+    if (draft.isDraft) {
+      await command(
+        "gh",
+        ["pr", "ready", String(number), "--repo", repository],
+        { cwd: this.repositoryRoot, signal },
+      );
+    }
     await command(
       "gh",
       ["pr", "merge", String(number), "--repo", repository, "--auto", method],
-      { cwd: this.repositoryRoot },
+      { cwd: this.repositoryRoot, signal },
     );
   }
 
-  async getIssueState(repository: string, number: number): Promise<string> {
+  async getIssueState(
+    repository: string,
+    number: number,
+    signal?: AbortSignal,
+  ): Promise<string> {
     const value = JSON.parse(
       await command(
         "gh",
@@ -424,7 +548,7 @@ export class GitHubCliDeliveryAdapter implements GitHubDeliveryAdapter {
           "--json",
           "state",
         ],
-        { cwd: this.repositoryRoot },
+        { cwd: this.repositoryRoot, signal },
       ),
     ) as { state: string };
     return value.state.toLowerCase();
