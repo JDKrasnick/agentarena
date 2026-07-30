@@ -6,7 +6,7 @@ import { runAcceptCommand } from "./commands/accept.js";
 import { runDeliverCommand } from "./commands/deliver.js";
 import { runFight } from "./commands/fight.js";
 import { runInspectCommand, runReviewCommand } from "./commands/review.js";
-import { AgentIdSchema } from "./core/types.js";
+import { ContestantIdSchema } from "./core/types.js";
 import { DeliveryActionSchema } from "./delivery/types.js";
 
 const program = new Command()
@@ -155,7 +155,7 @@ program
       process.stdout.write(
         `${await runInspectCommand({
           runId,
-          agent: AgentIdSchema.parse(options.agent),
+          agent: ContestantIdSchema.parse(options.agent),
           view: options.view,
           json: options.json ?? false,
         })}\n`,
@@ -195,7 +195,7 @@ program
           runId,
           ...(options.selection ? { selection: options.selection } : {}),
           ...(options.agent
-            ? { agent: AgentIdSchema.parse(options.agent) }
+            ? { agent: ContestantIdSchema.parse(options.agent) }
             : {}),
           ...(options.confirmSha256
             ? { confirmSha256: options.confirmSha256 }
@@ -248,6 +248,7 @@ program
   .argument("<run-id>")
   .option("--plan")
   .option("--status")
+  .option("--execute")
   .option("--action <action>")
   .option("--confirm-sha256 <digest>")
   .option("--merge-after-checks")
@@ -260,6 +261,7 @@ program
       options: {
         plan?: boolean;
         status?: boolean;
+        execute?: boolean;
         action?: string;
         confirmSha256?: string;
         mergeAfterChecks?: boolean;
@@ -272,7 +274,9 @@ program
         ? "status"
         : options.plan
           ? "plan"
-          : "execute";
+          : options.execute
+            ? "execute"
+            : "authorize";
       process.stdout.write(
         `${await runDeliverCommand({
           runId,

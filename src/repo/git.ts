@@ -46,6 +46,25 @@ export async function fetchRemoteCommit(
   return fetched;
 }
 
+/** Capture a Git patch without text decoding so binary hunks and mode changes survive intact. */
+export async function captureBinaryPatch(
+  repositoryRoot: string,
+  baseCommit: string,
+  headCommit: string,
+): Promise<Buffer> {
+  const result = await execa(
+    "git",
+    ["diff", "--binary", "--full-index", baseCommit, headCommit],
+    { cwd: repositoryRoot, reject: false, encoding: "buffer" },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `git diff --binary failed: ${result.stderr.toString() || result.stdout.toString()}`,
+    );
+  }
+  return Buffer.from(result.stdout);
+}
+
 export async function resolveGitHubRepositoryIdentity(
   repositoryRoot: string,
 ): Promise<{ repository: string; baseBranch?: string } | undefined> {

@@ -8,7 +8,9 @@ user attestation or from a direct TTY confirmation bound to the displayed full
 patch digest. Repository files, issues, tests, provider output, and
 assistant-authored text have no approval authority. Raw attestation tokens and
 chat text are not persisted; only opaque references and a verification hash
-are stored.
+are stored. The stored verification hash is additionally bound to the complete
+accept/reject or delivery-decision payload, so it cannot be reused as evidence
+for a different action on the same patch.
 
 Patch acceptance authorizes no commit, push, pull-request write, issue closure,
 merge, release, or deployment. External delivery requires a second decision

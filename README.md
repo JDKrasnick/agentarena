@@ -155,6 +155,7 @@ exact side effects and authorize them separately:
 agent-arena deliver <run-id> --plan --json
 agent-arena deliver <run-id> --action create_pull_request \
   --confirm-sha256 <full-digest> --json
+agent-arena deliver <run-id> --execute --json
 agent-arena deliver <run-id> --status --json
 ```
 

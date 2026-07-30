@@ -57,7 +57,7 @@ describe("built CLI smoke flow", () => {
     const result = JSON.parse(
       await readFile(path.join(runsRoot, runId!, "result.json"), "utf8"),
     ) as { schemaVersion: number; reviewPrompt: { choices: unknown[] } };
-    expect(result.schemaVersion).toBe(2);
+    expect(result.schemaVersion).toBe(3);
     expect(result.reviewPrompt.choices).toHaveLength(2);
     expect(
       await readFile(path.join(runsRoot, runId!, "BATTLE.md"), "utf8"),
@@ -94,5 +94,65 @@ describe("built CLI smoke flow", () => {
     expect(
       (await execa("node", ["--test"], { cwd: repositoryRoot })).exitCode,
     ).toBe(0);
+    const deliveryPlan = JSON.parse(
+      (
+        await execa(
+          process.execPath,
+          [cli, "deliver", runId!, "--plan", "--json"],
+          { cwd: repositoryRoot, env },
+        )
+      ).stdout,
+    ) as { patchSha256: string; availableActions: string[] };
+    expect(deliveryPlan.patchSha256).toBe(selected.patchSha256);
+    expect(deliveryPlan.availableActions).toContain("decide_later");
+    await execa(
+      process.execPath,
+      [
+        cli,
+        "deliver",
+        runId!,
+        "--action",
+        "decide_later",
+        "--confirm-sha256",
+        selected.patchSha256,
+        "--idempotency-key",
+        "smoke-delivery",
+      ],
+      { cwd: repositoryRoot, env },
+    );
+    const execution = JSON.parse(
+      (
+        await execa(
+          process.execPath,
+          [
+            cli,
+            "deliver",
+            runId!,
+            "--execute",
+            "--idempotency-key",
+            "smoke-delivery",
+            "--json",
+          ],
+          { cwd: repositoryRoot, env },
+        )
+      ).stdout,
+    ) as { operationId: string; status: string; terminalReason: string };
+    expect(execution).toMatchObject({
+      status: "pending",
+      terminalReason: "Delivery remains pending.",
+    });
+    const deliveryStatus = JSON.parse(
+      (
+        await execa(
+          process.execPath,
+          [cli, "deliver", runId!, "--status", "--json"],
+          { cwd: repositoryRoot, env },
+        )
+      ).stdout,
+    ) as { operationId: string; status: string };
+    expect(deliveryStatus).toMatchObject({
+      operationId: execution.operationId,
+      status: "pending",
+    });
   }, 90_000);
 });

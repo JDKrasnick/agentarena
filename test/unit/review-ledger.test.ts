@@ -17,12 +17,15 @@ describe("review ledger", () => {
       const value = ReviewDecisionSchema.parse({
         version: 1,
         decisionId: `decision-${String(index)}`,
+        ...(index > 0
+          ? { parentDecisionId: `decision-${String(index - 1)}` }
+          : {}),
         runId: "run",
         promptId: "prompt",
         status,
         ...(status === "accepted"
           ? {
-              selectedContestantId: "codex",
+              selectedContestantId: "a",
               selectionSource: "contestant",
               patchSha256: "a".repeat(64),
               baseCommit: "base",
@@ -31,12 +34,33 @@ describe("review ledger", () => {
         channel: "api",
         attestationHash: "b".repeat(64),
         idempotencyKeyHash: String(index).repeat(64),
-        decidedAt: `2026-07-29T00:00:0${String(index)}.000Z`,
+        decidedAt:
+          index === 0 ? "2026-07-29T00:00:01.000Z" : "2026-07-29T00:00:00.000Z",
       });
       await store.writeImmutableJson(`reviews/${value.decisionId}.json`, value);
     }
     expect(await readCurrentReview(store)).toMatchObject({
       status: "accepted",
     });
+  });
+
+  it("fails closed when concurrent decisions create multiple heads", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-review-fork-"));
+    const store = new ArtifactStore(root, "run");
+    await store.initialize();
+    for (const decisionId of ["first", "second"]) {
+      await store.writeImmutableJson(`reviews/${decisionId}.json`, {
+        version: 1,
+        decisionId,
+        runId: "run",
+        promptId: "prompt",
+        status: "rejected",
+        channel: "api",
+        attestationHash: "b".repeat(64),
+        idempotencyKeyHash: decisionId.padEnd(64, "0"),
+        decidedAt: "2026-07-29T00:00:00.000Z",
+      });
+    }
+    await expect(readCurrentReview(store)).rejects.toThrow("structural head");
   });
 });

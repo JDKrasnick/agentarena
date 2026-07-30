@@ -1,6 +1,6 @@
 import type {
-  AgentId,
   Attack,
+  ContestantId,
   ContestantResult,
   HealthLedger,
   Ranking,
@@ -34,7 +34,7 @@ export function calculateHealth(ledger: HealthLedger): number {
 }
 
 export interface RoundResolution {
-  contestants: Partial<Record<AgentId, ContestantResult>>;
+  contestants: Partial<Record<ContestantId, ContestantResult>>;
   eventsApplied: number;
 }
 
@@ -43,7 +43,7 @@ function cloneContestant(contestant: ContestantResult): ContestantResult {
 }
 
 export function resolveRound(
-  contestants: Partial<Record<AgentId, ContestantResult>>,
+  contestants: Partial<Record<ContestantId, ContestantResult>>,
   attacks: readonly Attack[],
   round: RoundId,
 ): RoundResolution {
@@ -52,7 +52,7 @@ export function resolveRound(
       id,
       cloneContestant(contestant),
     ]),
-  ) as Partial<Record<AgentId, ContestantResult>>;
+  ) as Partial<Record<ContestantId, ContestantResult>>;
   let eventsApplied = 0;
 
   const roundAttacks = attacks
@@ -100,9 +100,11 @@ export function resolveRound(
       attack.rank !== undefined
     ) {
       const recoil = RECOIL_BY_RANK[attack.rank];
-      const author = next[attack.origin.agent];
+      const author = next[attack.origin.contestant];
       if (!author)
-        throw new Error(`Missing author contestant ${attack.origin.agent}`);
+        throw new Error(
+          `Missing author contestant ${attack.origin.contestant}`,
+        );
       author.healthLedger.permanentRecoil += recoil;
       author.healthEvents.push({
         attackId: attack.id,
@@ -158,8 +160,8 @@ export function rankContestants(
       winner: null,
       draw: true,
       order: [...contestants]
-        .sort((left, right) => left.agent.localeCompare(right.agent))
-        .map((contestant) => contestant.agent),
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map((contestant) => contestant.id),
       reason:
         "No winner: both contestants were eliminated by required validation or zero health",
     };
@@ -167,14 +169,12 @@ export function rankContestants(
   if (survivors.length === 1) {
     const winner = survivors[0];
     if (!winner) throw new Error("Missing sole survivor");
-    const other = contestants.find(
-      (contestant) => contestant.agent !== winner.agent,
-    );
+    const other = contestants.find((contestant) => contestant.id !== winner.id);
     return {
-      winner: winner.agent,
+      winner: winner.id,
       draw: false,
-      order: [winner.agent, ...(other ? [other.agent] : [])],
-      reason: `${winner.agent} is the only surviving contestant`,
+      order: [winner.id, ...(other ? [other.id] : [])],
+      reason: `${winner.id} is the only surviving contestant`,
     };
   }
   const sorted = [...contestants].sort((left, right) => {
@@ -182,7 +182,7 @@ export function rankContestants(
       return right.finalHealth - left.finalHealth;
     if (left.patchSize !== right.patchSize)
       return left.patchSize - right.patchSize;
-    return left.agent.localeCompare(right.agent);
+    return left.id.localeCompare(right.id);
   });
   const first = sorted[0];
   const second = sorted[1];
@@ -196,17 +196,17 @@ export function rankContestants(
     return {
       winner: null,
       draw: true,
-      order: sorted.map((contestant) => contestant.agent),
+      order: sorted.map((contestant) => contestant.id),
       reason: `Draw at ${first.finalHealth} HP and ${first.patchSize}-byte patches`,
     };
   }
   return {
-    winner: first.agent,
+    winner: first.id,
     draw: false,
-    order: sorted.map((contestant) => contestant.agent),
+    order: sorted.map((contestant) => contestant.id),
     reason:
       first.finalHealth !== second.finalHealth
-        ? `${first.agent} has ${first.finalHealth} HP versus ${second.finalHealth} HP`
-        : `${first.agent} wins the patch-size tie-breaker (${first.patchSize} versus ${second.patchSize} bytes)`,
+        ? `${first.id} has ${first.finalHealth} HP versus ${second.finalHealth} HP`
+        : `${first.id} wins the patch-size tie-breaker (${first.patchSize} versus ${second.patchSize} bytes)`,
   };
 }

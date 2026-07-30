@@ -8,17 +8,17 @@ describe("recommended patch selection", () => {
     expect(
       selectRecommendedPatch({
         contestants: state.contestants,
-        championId: "codex",
+        championId: "a",
         qualityVerdict: {
           version: 1,
           verdict: "patch_b",
           criteria: [],
           rationale: ["Patch B is cleaner."],
         },
-        anonymizationMap: { patch_a: "codex", patch_b: "claude" },
+        anonymizationMap: { patch_a: "a", patch_b: "b" },
       }),
     ).toMatchObject({
-      contestantId: "claude",
+      contestantId: "b",
       reason: "implementation_quality",
     });
   });
@@ -33,15 +33,15 @@ describe("recommended patch selection", () => {
     expect(
       selectRecommendedPatch({
         contestants: state.contestants,
-        championId: "claude",
+        championId: "b",
         qualityVerdict: {
           version: 1,
           verdict: "patch_a",
           criteria: [],
           rationale: [],
         },
-        anonymizationMap: { patch_a: "codex", patch_b: "claude" },
+        anonymizationMap: { patch_a: "a", patch_b: "b" },
       }),
-    ).toMatchObject({ contestantId: "claude", reason: "correctness" });
+    ).toMatchObject({ contestantId: "b", reason: "correctness" });
   });
 });

@@ -26,12 +26,15 @@ describe("configuration", () => {
       permissionMode: "confirm",
     });
     expect(config.testCommand).toBe("pnpm test");
-    expect(config.agents).toEqual(["codex", "claude"]);
+    expect(config.contestants).toMatchObject([
+      { id: "a", provider: "codex" },
+      { id: "b", provider: "claude" },
+    ]);
     expect(config.limits.implementationMs).toBe(60_000);
     expect(config.permissionMode).toBe("confirm");
   });
 
-  it("rejects duplicate contestants", async () => {
+  it("allows duplicate providers in separate contestant slots", async () => {
     await expect(
       loadFightConfig({
         task: "do work",
@@ -39,7 +42,12 @@ describe("configuration", () => {
         testCommand: "true",
         agents: "codex,codex",
       }),
-    ).rejects.toThrow(/different agents/);
+    ).resolves.toMatchObject({
+      contestants: [
+        { id: "a", provider: "codex" },
+        { id: "b", provider: "codex" },
+      ],
+    });
   });
 
   it("rejects unknown YAML keys instead of silently ignoring typos", async () => {

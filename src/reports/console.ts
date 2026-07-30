@@ -1,4 +1,5 @@
 import type { RunState } from "../core/types.js";
+import { contestantLabel } from "../core/labels.js";
 
 export function renderConsoleSummary(state: RunState): string {
   const contestants = Object.values(state.contestants);
@@ -17,7 +18,7 @@ export function renderConsoleSummary(state: RunState): string {
     "",
     ...contestants.map(
       (contestant) =>
-        `${contestant.agent.padEnd(10)} ${String(contestant.finalHealth).padStart(3)} HP  ${contestant.status}`,
+        `${contestantLabel(state.config.contestants, contestant.id).padEnd(10)} ${String(contestant.finalHealth).padStart(3)} HP  ${contestant.status}`,
     ),
     "",
     state.ranking?.draw
@@ -26,8 +27,8 @@ export function renderConsoleSummary(state: RunState): string {
     `Recommended patch: ${state.patchRecommendation?.contestantId ?? "draw"}`,
     `Recommendation reason: ${state.patchRecommendation?.rationale.join(" ") ?? "run incomplete"}`,
     ...contestants.map((contestant) => {
-      const outcome = state.arenaOutcome?.contestants[contestant.agent];
-      return `${contestant.agent}: unresolved ${String(outcome?.activeDefectDamage ?? 0)}, recoil ${String(outcome?.permanentRecoil ?? 0)}, gross damage ${String(outcome?.grossDamageReceived ?? 0)}, healed ${String(outcome?.grossHealing ?? 0)}`;
+      const outcome = state.arenaOutcome?.contestants[contestant.id];
+      return `${contestantLabel(state.config.contestants, contestant.id)}: unresolved ${String(outcome?.activeDefectDamage ?? 0)}, recoil ${String(outcome?.permanentRecoil ?? 0)}, gross damage ${String(outcome?.grossDamageReceived ?? 0)}, healed ${String(outcome?.grossHealing ?? 0)}`;
     }),
     "Human review: pending",
     `Artifacts: ${state.artifacts.runDirectory ?? ""}`,

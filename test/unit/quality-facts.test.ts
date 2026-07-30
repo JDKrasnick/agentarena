@@ -27,7 +27,7 @@ describe("patch quality facts", () => {
       "",
     ].join("\n");
     const facts = collectPatchQualityFacts({
-      contestantId: "codex",
+      contestantId: "a",
       patch,
     });
     expect(facts).toMatchObject({
@@ -41,7 +41,7 @@ describe("patch quality facts", () => {
 
   it("ignores whitespace-only reformatting", () => {
     const facts = collectPatchQualityFacts({
-      contestantId: "codex",
+      contestantId: "a",
       patch: [
         "diff --git a/src/a.ts b/src/a.ts",
         "--- a/src/a.ts",
@@ -64,7 +64,7 @@ describe("patch quality facts", () => {
 
   it("still counts a reindented line that also changed", () => {
     const facts = collectPatchQualityFacts({
-      contestantId: "codex",
+      contestantId: "a",
       patch: [
         "diff --git a/src/a.ts b/src/a.ts",
         "--- a/src/a.ts",
@@ -85,10 +85,43 @@ describe("patch quality facts", () => {
 
   it("records binary paths without crashing", () => {
     const facts = collectPatchQualityFacts({
-      contestantId: "codex",
+      contestantId: "a",
       patch:
         "diff --git a/assets/a.png b/assets/a.png\nBinary files a/assets/a.png and b/assets/a.png differ\n",
     });
     expect(facts.binaryPaths).toEqual(["assets/a.png"]);
+    expect(facts.formattingOnly).toBe(false);
+  });
+
+  it("reports completed zero-match heuristics as known", () => {
+    const facts = collectPatchQualityFacts({
+      contestantId: "a",
+      patch:
+        "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -0,0 +1 @@\n+const value = 1;\n",
+    });
+    expect(facts.publicSurfaceChanges.status).toBe("known");
+    expect(facts.publicSurfaceChanges.values).toEqual([]);
+    expect(facts.operationalRequirementsAdded.status).toBe("known");
+    expect(facts.operationalRequirementsAdded.values).toEqual([]);
+  });
+
+  it("hashes the original patch bytes", () => {
+    const patchBytes = Buffer.from([
+      ...Buffer.from(
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -0,0 +1 @@\n+",
+      ),
+      0xff,
+      0x0a,
+    ]);
+    const facts = collectPatchQualityFacts({
+      contestantId: "a",
+      patch: patchBytes.toString("utf8"),
+      patchBytes,
+    });
+    const decodedFacts = collectPatchQualityFacts({
+      contestantId: "a",
+      patch: patchBytes.toString("utf8"),
+    });
+    expect(facts.patchSha256).not.toBe(decodedFacts.patchSha256);
   });
 });

@@ -9,7 +9,7 @@ const review: ReviewDecision = {
   runId: "run-12345678",
   promptId: "prompt",
   status: "accepted",
-  selectedContestantId: "claude",
+  selectedContestantId: "b",
   selectionSource: "recommended",
   patchSha256: "b".repeat(64),
   baseCommit: "a".repeat(40),
@@ -39,6 +39,24 @@ describe("delivery plan", () => {
     };
     const plan = deriveDeliveryPlan(state, review);
     expect(plan.branch).toContain("github_issue-17-run-1234");
+    expect(plan.availableActions).toEqual([
+      "apply_local",
+      "reject",
+      "decide_later",
+    ]);
+    expect(plan.recommendedAction).toBe("apply_local");
     expect(plan.availableActions).not.toContain("merge_pull_request");
+  });
+
+  it("offers external delivery only when it is enabled", () => {
+    const state = makeRunState();
+    state.config.deliveryEnabled = true;
+    state.deliveryTarget = {
+      kind: "repo_spec",
+      repository: "acme/repo",
+    };
+    expect(deriveDeliveryPlan(state, review).availableActions).toContain(
+      "create_pull_request",
+    );
   });
 });

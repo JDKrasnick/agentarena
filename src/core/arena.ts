@@ -71,6 +71,8 @@ import {
   type Attack,
   type CheckResult,
   type ContestantResult,
+  type ContestantConfig,
+  type ContestantId,
   type ContestantRoundResult,
   type FightConfig,
   type PermissionPolicy,
@@ -109,9 +111,11 @@ interface ArenaContext {
   controller: AbortController;
 }
 
-function initialContestant(agent: AgentId): ContestantResult {
+function initialContestant(config: ContestantConfig): ContestantResult {
   return {
-    agent,
+    id: config.id,
+    provider: config.provider,
+    role: config.role,
     status: "pending",
     initialHealth: 100,
     finalHealth: 100,
@@ -128,9 +132,13 @@ function initialContestant(agent: AgentId): ContestantResult {
   };
 }
 
-function getContestant(state: RunState, agent: AgentId): ContestantResult {
-  const contestant = state.contestants[agent];
-  if (!contestant) throw new Error(`Missing contestant state for ${agent}`);
+function getContestant(
+  state: RunState,
+  contestantId: ContestantId,
+): ContestantResult {
+  const contestant = state.contestants[contestantId];
+  if (!contestant)
+    throw new Error(`Missing contestant state for ${contestantId}`);
   return contestant;
 }
 
@@ -167,9 +175,14 @@ function latestRequiredPass(contestant: ContestantResult): boolean {
   );
 }
 
-function opponentOf(config: FightConfig, agent: AgentId): AgentId {
-  const opponent = config.agents.find((candidate) => candidate !== agent);
-  if (!opponent) throw new Error(`No opponent found for ${agent}`);
+function opponentOf(
+  config: FightConfig,
+  contestantId: ContestantId,
+): ContestantId {
+  const opponent = config.agents.find(
+    (candidate) => candidate !== contestantId,
+  );
+  if (!opponent) throw new Error(`No opponent found for ${contestantId}`);
   return opponent;
 }
 
@@ -300,7 +313,7 @@ export class Arena {
       await store.writeJson("permissions.json", permissions);
       const startedAt = this.now().toISOString();
       const state: RunState = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         runId,
         harnessVersion: "0.1.0",
         status: "running",
@@ -310,7 +323,10 @@ export class Arena {
         taskContractHash: contract.contractHash,
         config,
         contestants: Object.fromEntries(
-          config.agents.map((agent) => [agent, initialContestant(agent)]),
+          config.contestants.map((contestant) => [
+            contestant.id,
+            initialContestant(contestant),
+          ]),
         ),
         attacks: [],
         promptManifests: [],
@@ -413,6 +429,16 @@ export class Arena {
     await context.store.writeState(context.state);
   }
 
+  private adapterFor(
+    context: ArenaContext,
+    contestantId: ContestantId,
+  ): AgentAdapter {
+    return getAdapter(
+      this.dependencies.adapters,
+      getContestant(context.state, contestantId).provider,
+    );
+  }
+
   private async transition(
     context: ArenaContext,
     stage: Stage,
@@ -431,8 +457,8 @@ export class Arena {
     await this.transition(context, "resolve_permissions");
     const unavailable: string[] = [];
     for (const agent of context.config.agents) {
-      const availability = await getAdapter(
-        this.dependencies.adapters,
+      const availability = await this.adapterFor(
+        context,
         agent,
       ).checkAvailability();
       if (!availability.available)
@@ -462,7 +488,7 @@ export class Arena {
 
   private async implement(context: ArenaContext): Promise<void> {
     await this.transition(context, "implement");
-    const worktrees = new Map<AgentId, string>();
+    const worktrees = new Map<ContestantId, string>();
     for (const agent of context.config.agents) {
       worktrees.set(
         agent,
@@ -486,11 +512,9 @@ export class Arena {
             `prompts/implementation-${agent}.md`,
             prompt,
           );
-          const invocation = await getAdapter(
-            this.dependencies.adapters,
-            agent,
-          ).implement({
+          const invocation = await this.adapterFor(context, agent).implement({
             worktree,
+            contestantId: agent,
             prompt,
             promptPath,
             transcriptPrefix: context.store.resolve(
@@ -508,6 +532,8 @@ export class Arena {
             patchPath,
           );
           const contestant = getContestant(context.state, agent);
+          invocation.contestantId = agent;
+          invocation.role = contestant.role;
           contestant.implementation = invocation;
           contestant.initialPatchPath = patchPath;
           contestant.currentPatchPath = patchPath;
@@ -618,7 +644,7 @@ export class Arena {
         );
       }
     }
-    const roundStarts = new Map<AgentId, number>();
+    const roundStarts = new Map<ContestantId, number>();
     for (const agent of context.config.agents) {
       roundStarts.set(agent, getContestant(context.state, agent).finalHealth);
     }
@@ -631,7 +657,7 @@ export class Arena {
     );
     const seed = sha256(`${context.state.runId}:${String(round)}`).slice(0, 16);
     const sharedPrompt = composePrompt({
-      agent: context.config.agents[0],
+      agent: context.config.agents[0] ?? "a",
       stage: "attack",
       round,
       contract: context.contract,
@@ -656,13 +682,21 @@ export class Arena {
     const collected: Attack[] = [];
     for (const agent of context.config.agents) {
       const contestant = getContestant(context.state, agent);
-      if (!latestRequiredPass(contestant) || contestant.status === "eliminated")
+      if (
+        contestant.patchSize === 0 ||
+        !latestRequiredPass(contestant) ||
+        contestant.status === "eliminated" ||
+        contestant.status === "failed"
+      )
         continue;
       const target = opponentOf(context.config, agent);
-      const targetPatchPath = getContestant(
-        context.state,
-        target,
-      ).currentPatchPath;
+      const targetContestant = getContestant(context.state, target);
+      const targetPatchPath = targetContestant.currentPatchPath;
+      if (
+        targetContestant.patchSize === 0 ||
+        targetContestant.status === "failed"
+      )
+        continue;
       if (!contestant.currentPatchPath || !targetPatchPath) continue;
       const worktree = await context.worktrees.create(
         `round-${String(round)}-attack-${agent}`,
@@ -695,11 +729,9 @@ export class Arena {
           `prompts/round-${String(round)}-${agent}.md`,
           prompt,
         );
-        const invocation = await getAdapter(
-          this.dependencies.adapters,
-          agent,
-        ).attack({
+        const invocation = await this.adapterFor(context, agent).attack({
           worktree,
+          contestantId: agent,
           prompt,
           promptPath,
           transcriptPrefix: context.store.resolve(
@@ -744,6 +776,7 @@ export class Arena {
           collected.push(
             await materializeAttack(entry, {
               author: agent,
+              authorProvider: contestant.provider,
               target,
               round,
               patchPath,
@@ -758,7 +791,17 @@ export class Arena {
         await context.worktrees.remove(worktree);
       }
     }
-    if ((round === 2 || round === 3) && this.dependencies.houseScout) {
+    const bothContestantsAreAttackable = context.config.agents.every(
+      (agent) => {
+        const contestant = getContestant(context.state, agent);
+        return contestant.patchSize > 0 && contestant.status !== "failed";
+      },
+    );
+    if (
+      (round === 2 || round === 3) &&
+      bothContestantsAreAttackable &&
+      this.dependencies.houseScout
+    ) {
       const worktree = await context.worktrees.create(
         `round-${String(round)}-attack-house`,
       );
@@ -854,10 +897,10 @@ export class Arena {
           (right.origin.kind === "house" ? 1 : 0) ||
         (left.rank ?? 0) - (right.rank ?? 0) ||
         (left.origin.kind === "contestant"
-          ? left.origin.agent
+          ? left.origin.contestant
           : ""
         ).localeCompare(
-          right.origin.kind === "contestant" ? right.origin.agent : "",
+          right.origin.kind === "contestant" ? right.origin.contestant : "",
         ),
     );
     for (const attack of ordered) {
@@ -892,7 +935,7 @@ export class Arena {
         validated.push(result);
         continue;
       }
-      const author = attack.origin.agent;
+      const author = attack.origin.contestant;
       const target = attack.targets[0];
       if (!target) continue;
       const authorPatch = getContestant(context.state, author).currentPatchPath;
@@ -990,7 +1033,7 @@ export class Arena {
     await this.persist(context);
 
     await this.transition(context, "repair", round);
-    const repairs = new Map<AgentId, AgentInvocation>();
+    const repairs = new Map<ContestantId, AgentInvocation>();
     for (const agent of context.config.agents) {
       const contestant = getContestant(context.state, agent);
       const currentPatch = contestant.currentPatchPath;
@@ -1005,6 +1048,8 @@ export class Arena {
       );
       if (
         !currentPatch ||
+        contestant.patchSize === 0 ||
+        contestant.status === "failed" ||
         contestant.status === "eliminated" ||
         (latestRequiredPass(contestant) && activeAttacks.length === 0)
       ) {
@@ -1057,11 +1102,9 @@ export class Arena {
           `prompts/round-${String(round)}-repair-${agent}.md`,
           prompt,
         );
-        const invocation = await getAdapter(
-          this.dependencies.adapters,
-          agent,
-        ).repair({
+        const invocation = await this.adapterFor(context, agent).repair({
           worktree,
+          contestantId: agent,
           prompt,
           promptPath,
           transcriptPrefix: context.store.resolve(
@@ -1072,6 +1115,8 @@ export class Arena {
           round,
           activeAttacks,
         });
+        invocation.contestantId = agent;
+        invocation.role = contestant.role;
         repairs.set(agent, invocation);
         await removeSubmission(worktree);
         const patchPath = context.store.resolve(
@@ -1097,8 +1142,12 @@ export class Arena {
     for (const agent of context.config.agents) {
       let contestant = getContestant(context.state, agent);
       const currentPatch = contestant.currentPatchPath;
-      if (!currentPatch) {
-        contestant.status = "eliminated";
+      if (
+        !currentPatch ||
+        contestant.patchSize === 0 ||
+        contestant.status === "failed"
+      ) {
+        if (contestant.status !== "failed") contestant.status = "eliminated";
         contestant.healthLedger.eliminatedByRequiredCheck = true;
         contestant.finalHealth = 0;
         continue;
@@ -1209,7 +1258,7 @@ export class Arena {
           .filter(
             (attack) =>
               attack.origin.kind === "contestant" &&
-              attack.origin.agent === agent,
+              attack.origin.contestant === agent,
           )
           .map((attack) => attack.id),
         postAttackHealth: postAttack.get(agent) ?? contestant.finalHealth,
@@ -1247,7 +1296,7 @@ export class Arena {
   ): Promise<Attack> {
     const author =
       provisional.origin.kind === "contestant"
-        ? provisional.origin.agent
+        ? provisional.origin.contestant
         : undefined;
     if (!author) return { ...provisional, status: "infrastructure_error" };
     await this.proposeHarnessOverlay(context, provisional, round);
@@ -1291,7 +1340,7 @@ export class Arena {
         `Write an accept/challenge response to ${path.join(worktree, ".agent-arena-infrastructure-review.json")}.`,
       ].join("\n");
       const review = await this.dependencies.infrastructureReviewer.review({
-        agent: author,
+        agent: getContestant(context.state, author).provider,
         attack: provisional,
         redactedEvidence:
           provisional.outcomeReason ?? "ambiguous infrastructure",
@@ -1401,8 +1450,8 @@ export class Arena {
         null,
         2,
       )
-        .replaceAll(context.config.agents[0], "[CONTESTANT]")
-        .replaceAll(context.config.agents[1], "[CONTESTANT]")
+        .replaceAll(context.config.agents[0] ?? "a", "[CONTESTANT]")
+        .replaceAll(context.config.agents[1] ?? "b", "[CONTESTANT]")
         .replaceAll(context.config.repositoryRoot, "[REPOSITORY]");
       const prompt = [
         "# Anonymized Agent Arena harness-maintainer packet",
@@ -1508,7 +1557,7 @@ export class Arena {
         if (attack.origin.kind === "contestant") {
           authorPatch = getContestant(
             context.state,
-            attack.origin.agent,
+            attack.origin.contestant,
           ).currentPatchPath;
           if (authorPatch)
             await context.worktrees.applyPatch(worktree, authorPatch);
@@ -1620,7 +1669,12 @@ export class Arena {
     for (const agent of context.config.agents) {
       const contestant = getContestant(context.state, agent);
       const currentPatch = contestant.currentPatchPath;
-      if (!currentPatch || contestant.status === "eliminated") {
+      if (
+        !currentPatch ||
+        contestant.patchSize === 0 ||
+        contestant.status === "failed" ||
+        contestant.status === "eliminated"
+      ) {
         contestant.finalHealth = 0;
         continue;
       }
@@ -1751,8 +1805,9 @@ export class Arena {
     context.state.arenaOutcome = deriveArenaOutcome(context.state);
     for (const agent of context.config.agents) {
       const contestant = getContestant(context.state, agent);
-      if (!contestant.finalPatchPath) continue;
-      const patch = await readFile(contestant.finalPatchPath, "utf8");
+      const patchPath = contestant.finalPatchPath ?? contestant.currentPatchPath;
+      if (!patchPath) continue;
+      const patch = await readFile(patchPath, "utf8");
       let facts = collectPatchQualityFacts({ contestantId: agent, patch });
       const manifestPaths = facts.changedPaths.filter(isManifestPath);
       if (manifestPaths.length > 0 && context.config.baseCommit) {
@@ -1762,7 +1817,7 @@ export class Arena {
         try {
           await context.worktrees.applyPatch(
             worktree,
-            contestant.finalPatchPath,
+            patchPath,
           );
           const baseContent: Record<string, string> = {};
           const patchedContent: Record<string, string> = {};
@@ -1801,7 +1856,16 @@ export class Arena {
     }
     const [left, right] = context.config.agents;
     const anonymizationMap =
-      left && right ? { patch_a: left, patch_b: right } : undefined;
+      left && right
+        ? Number.parseInt(
+            sha256(`quality-labels:${context.state.runId}`).slice(0, 2),
+            16,
+          ) %
+            2 ===
+          0
+          ? { patch_a: left, patch_b: right }
+          : { patch_a: right, patch_b: left }
+        : undefined;
     const comparableContestants =
       left && right
         ? [left, right].map((agent) => getContestant(context.state, agent))
@@ -1834,15 +1898,23 @@ export class Arena {
       this.dependencies.qualityVerifier &&
       anonymizationMap
     ) {
-      const leftFacts = context.state.patchQualityFacts[left];
-      const rightFacts = context.state.patchQualityFacts[right];
-      const leftPath = getContestant(context.state, left).finalPatchPath;
-      const rightPath = getContestant(context.state, right).finalPatchPath;
-      if (leftFacts && rightFacts && leftPath && rightPath) {
-        const { contestantId: leftId, ...anonymousLeftFacts } = leftFacts;
-        const { contestantId: rightId, ...anonymousRightFacts } = rightFacts;
-        void leftId;
-        void rightId;
+      const patchAFacts =
+        context.state.patchQualityFacts[anonymizationMap.patch_a];
+      const patchBFacts =
+        context.state.patchQualityFacts[anonymizationMap.patch_b];
+      const patchAPath = getContestant(
+        context.state,
+        anonymizationMap.patch_a,
+      ).finalPatchPath;
+      const patchBPath = getContestant(
+        context.state,
+        anonymizationMap.patch_b,
+      ).finalPatchPath;
+      if (patchAFacts && patchBFacts && patchAPath && patchBPath) {
+        const { contestantId: patchAId, ...anonymousPatchAFacts } = patchAFacts;
+        const { contestantId: patchBId, ...anonymousPatchBFacts } = patchBFacts;
+        void patchAId;
+        void patchBId;
         const worktree = await context.worktrees.create("quality-verifier");
         const promptPath = context.store.resolve("quality/prompt.txt");
         await context.store.writeText(
@@ -1857,26 +1929,26 @@ export class Arena {
           taskContract: context.contract,
           finalValidation: Object.fromEntries(
             context.config.agents.map((agent) => [
-              agent === left ? "patch_a" : "patch_b",
+              agent === anonymizationMap.patch_a ? "patch_a" : "patch_b",
               getContestant(context.state, agent).checks,
             ]),
           ),
           activeDefects: Object.fromEntries(
             context.config.agents.map((agent) => [
-              agent === left ? "patch_a" : "patch_b",
+              agent === anonymizationMap.patch_a ? "patch_a" : "patch_b",
               getContestant(context.state, agent).healthLedger.activeDefects,
             ]),
           ),
           patches: [
             {
               label: "patch_a" as const,
-              patch: await readFile(leftPath, "utf8"),
-              facts: anonymousLeftFacts,
+              patch: await readFile(patchAPath, "utf8"),
+              facts: anonymousPatchAFacts,
             },
             {
               label: "patch_b" as const,
-              patch: await readFile(rightPath, "utf8"),
-              facts: anonymousRightFacts,
+              patch: await readFile(patchBPath, "utf8"),
+              facts: anonymousPatchBFacts,
             },
           ] as const,
           promptPath,
