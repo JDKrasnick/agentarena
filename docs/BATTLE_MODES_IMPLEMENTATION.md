@@ -170,6 +170,11 @@ agent-arena fight \
   --challenger codex
 ```
 
+When the frozen PR has no confirmed provider attribution, catch-up additionally
+requires `--incumbent <provider>`. That provider owns the incumbent's later
+attack and repair invocations; Agent Arena must not silently guess it from PR
+wording or reuse the challenger's provider.
+
 If authorship is confirmed and no challenger or attacker is supplied, recommend
 the opposite provider when available. Require an explicit `--use-recommended-
 opponent` or interactive confirmation before launching it; attribution must not

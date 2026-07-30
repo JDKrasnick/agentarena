@@ -8,6 +8,10 @@ export default defineConfig({
     },
     testTimeout: 30_000,
     hookTimeout: 30_000,
+    // Arena integration and smoke tests each create nested Git worktrees and
+    // child agent processes. Parallel files contend for those resources and
+    // turn otherwise deterministic tests into timeout failures.
+    fileParallelism: false,
     restoreMocks: true,
   },
 });

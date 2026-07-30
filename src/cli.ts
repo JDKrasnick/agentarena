@@ -22,11 +22,24 @@ program
   .argument("<task>", "Concrete repository task")
   .option("-c, --config <path>", "YAML configuration path", "agent-arena.yaml")
   .option("--agents <ids>", "Exactly two comma-separated agents")
+  .option(
+    "--models <ids>",
+    "Optional comma-separated models for contestants A and B",
+  )
   .option("--rounds <count>", "Attack–repair rounds (MVP requires 3)", "3")
   .option("--test <command>", "Required validation command")
   .option("--spec <path...>", "Local specification path(s)")
   .option("--issue <reference...>", "Official GitHub issue reference(s)")
   .option("--pr <reference...>", "Official GitHub pull request reference(s)")
+  .option(
+    "--incumbent-from-pr",
+    "Start contestant A from the frozen PR patch and give contestant B a clean catch-up implementation phase",
+  )
+  .option("--challenger <agent>", "Provider for the catch-up challenger")
+  .option(
+    "--incumbent <agent>",
+    "Provider that attacks and repairs the frozen PR incumbent when attribution is unknown",
+  )
   .option(
     "--base-from-pr <reference>",
     "Explicitly fetch and use this reviewed PR head as both contestants' base",
@@ -52,11 +65,15 @@ program
       options: {
         config: string;
         agents?: string;
+        models?: string;
         rounds: string;
         test?: string;
         spec?: string[];
         issue?: string[];
         pr?: string[];
+        incumbentFromPr?: boolean;
+        challenger?: string;
+        incumbent?: string;
         baseFromPr?: string;
         acceptance?: string[];
         permissions: "auto" | "confirm" | "deny";
@@ -75,13 +92,101 @@ program
         task,
         configPath: options.config,
         ...(options.agents ? { agents: options.agents } : {}),
+        ...(options.models ? { models: options.models } : {}),
         ...(options.test ? { testCommand: options.test } : {}),
         ...(options.spec ? { specPaths: options.spec } : {}),
         ...(options.issue ? { issueReferences: options.issue } : {}),
         ...(options.pr ? { pullRequestReferences: options.pr } : {}),
+        ...(options.incumbentFromPr ? { mode: "catch_up" as const } : {}),
+        ...(options.challenger ? { challenger: options.challenger } : {}),
+        ...(options.incumbent ? { incumbent: options.incumbent } : {}),
         ...(options.baseFromPr
           ? { baseFromPullRequest: options.baseFromPr }
           : {}),
+        ...(options.acceptance
+          ? { acceptanceCriteria: options.acceptance }
+          : {}),
+        permissionMode: options.permissions,
+        ...(options.verifier ? { verifier: options.verifier } : {}),
+        ...(options.qualityVerifier
+          ? { qualityVerifier: options.qualityVerifier }
+          : {}),
+        ...(options.maintainer ? { maintainer: options.maintainer } : {}),
+        nonInteractiveApproval: options.yes ?? false,
+        reducedValidationAccepted: options.acceptReducedValidation ?? false,
+        keepWorktrees: options.keepWorktrees ?? false,
+      });
+      process.stdout.write(`${summary}\n`);
+    },
+  );
+
+program
+  .command("defend")
+  .description(
+    "Run a scored attacker-versus-defender review of a frozen pull request",
+  )
+  .requiredOption("--pr <reference>", "Pull request to defend")
+  .requiredOption(
+    "--attacker <agent>",
+    "Provider that produces test-only attacks",
+  )
+  .requiredOption(
+    "--defender <agent>",
+    "Provider that repairs the frozen PR patch",
+  )
+  .option(
+    "--models <ids>",
+    "Optional comma-separated models for attacker and defender",
+  )
+  .option("-c, --config <path>", "YAML configuration path", "agent-arena.yaml")
+  .option("--test <command>", "Required validation command")
+  .option("--spec <path...>", "Local specification path(s)")
+  .option("--issue <reference...>", "Official GitHub issue reference(s)")
+  .option("--acceptance <criterion...>", "Explicit acceptance criteria")
+  .addOption(
+    new Option("--permissions <mode>", "Permission mode")
+      .choices(["auto", "confirm", "deny"])
+      .default("confirm"),
+  )
+  .option("--verifier <agent>", "Neutral verifier provider")
+  .option(
+    "--quality-verifier <agent>",
+    "Ignored in siege mode; retained for shared config",
+  )
+  .option("--maintainer <agent>", "Harness-maintainer provider")
+  .option("--yes", "Approve the displayed confirm-mode plan noninteractively")
+  .option("--accept-reduced-validation", "Allow required capability denials")
+  .option("--keep-worktrees", "Preserve temporary worktrees for debugging")
+  .action(
+    async (options: {
+      pr: string;
+      attacker: string;
+      defender: string;
+      models?: string;
+      config: string;
+      test?: string;
+      spec?: string[];
+      issue?: string[];
+      acceptance?: string[];
+      permissions: "auto" | "confirm" | "deny";
+      verifier?: string;
+      qualityVerifier?: string;
+      maintainer?: string;
+      yes?: boolean;
+      acceptReducedValidation?: boolean;
+      keepWorktrees?: boolean;
+    }) => {
+      const summary = await runFight({
+        task: `Defend pull request #${options.pr}`,
+        configPath: options.config,
+        mode: "siege",
+        pullRequestReferences: [options.pr],
+        attacker: options.attacker,
+        defender: options.defender,
+        ...(options.models ? { models: options.models } : {}),
+        ...(options.test ? { testCommand: options.test } : {}),
+        ...(options.spec ? { specPaths: options.spec } : {}),
+        ...(options.issue ? { issueReferences: options.issue } : {}),
         ...(options.acceptance
           ? { acceptanceCriteria: options.acceptance }
           : {}),

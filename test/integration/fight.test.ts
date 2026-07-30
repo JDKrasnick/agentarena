@@ -260,6 +260,23 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(outcome.state.attacks.map((attack) => attack.status)).toEqual(
       expect.arrayContaining(["landed", "blocked"]),
     );
+    expect(outcome.state.attackInvocations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          attacker: "a",
+          target: "b",
+          submissionStatus: "submitted",
+          attackCount: 1,
+        }),
+        expect.objectContaining({
+          attacker: "b",
+          target: "a",
+          round: 2,
+          submissionStatus: "not_submitted",
+          attackCount: 0,
+        }),
+      ]),
+    );
     const landed = outcome.state.attacks.find(
       (attack) => attack.status === "landed",
     );
@@ -279,17 +296,12 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(house).toMatchObject({
       status: "landed",
       severity: "medium",
-      targets: ["a", "b"],
+      targets: ["b"],
     });
     expect(house?.rank).toBeUndefined();
     expect(
       outcome.state.contestants.b?.healthEvents.map((event) => event.type),
     ).toEqual(expect.arrayContaining(["target_damage", "recoil", "heal"]));
-    expect(
-      outcome.state.contestants.a?.healthEvents
-        .filter((event) => event.attackId === house?.id)
-        .map((event) => event.type),
-    ).toEqual(["target_damage", "heal"]);
     expect(outcome.state.contestants.b?.finalHealth).toBe(95);
     expect(outcome.state.contestants.b?.rounds[0]).toMatchObject({
       endingHealth: 65,
@@ -313,6 +325,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       "utf8",
     );
     expect(report).toContain("Winner: **a**");
+    expect(report).toContain("### Generation activity");
+    expect(report).toContain("not_submitted");
     expect(report).toContain("Repeated whitespace is not collapsed");
     const taskContract = JSON.parse(
       await readFile(
@@ -360,9 +374,6 @@ describe("fake-adapter fight on a mocked real issue", () => {
         idempotencyKey: "integration-apply",
       }),
     ).resolves.toMatchObject({ testCommand: "node --test" });
-    expect(
-      await readFile(path.join(repositoryRoot, "src", "slug.mjs"), "utf8"),
-    ).toContain('throw new Error("Blank title")');
     expect(
       (await execa("node", ["--test"], { cwd: repositoryRoot })).exitCode,
     ).toBe(0);

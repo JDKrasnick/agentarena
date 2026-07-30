@@ -151,6 +151,7 @@ export function healDefect(
 
 export function rankContestants(
   contestants: readonly ContestantResult[],
+  options: { patchSizeTieBreaker?: boolean } = {},
 ): Ranking {
   const survivors = contestants.filter(
     (contestant) => contestant.status !== "eliminated",
@@ -180,7 +181,7 @@ export function rankContestants(
   const sorted = [...contestants].sort((left, right) => {
     if (left.finalHealth !== right.finalHealth)
       return right.finalHealth - left.finalHealth;
-    if (left.patchSize !== right.patchSize)
+    if (options.patchSizeTieBreaker !== false && left.patchSize !== right.patchSize)
       return left.patchSize - right.patchSize;
     return left.id.localeCompare(right.id);
   });
@@ -191,13 +192,16 @@ export function rankContestants(
 
   const tied =
     first.finalHealth === second.finalHealth &&
-    first.patchSize === second.patchSize;
+    (options.patchSizeTieBreaker === false || first.patchSize === second.patchSize);
   if (tied) {
     return {
       winner: null,
       draw: true,
       order: sorted.map((contestant) => contestant.id),
-      reason: `Draw at ${first.finalHealth} HP and ${first.patchSize}-byte patches`,
+      reason:
+        options.patchSizeTieBreaker === false
+          ? `Draw at ${first.finalHealth} HP`
+          : `Draw at ${first.finalHealth} HP and ${first.patchSize}-byte patches`,
     };
   }
   return {

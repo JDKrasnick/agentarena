@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -55,6 +55,10 @@ import {
   GitHubPullRequestResolver,
   type ResolvedPullRequest,
 } from "../task/task-contract.js";
+import {
+  freezePullRequest,
+  type PullRequestFixtureOptions,
+} from "../task/pr-fixture.js";
 import { deriveDeliveryTarget } from "../delivery/target.js";
 import { createRunId, sha256, stableId } from "./ids.js";
 import {
@@ -76,6 +80,7 @@ import {
   type ContestantRoundResult,
   type FightConfig,
   type PermissionPolicy,
+  type PullRequestFixture,
   type RoundId,
   type RunState,
   type Stage,
@@ -84,6 +89,10 @@ import {
 
 export interface ArenaDependencies {
   adapters: Partial<Record<AgentId, AgentAdapter>>;
+  contestantAdapters?: Partial<Record<ContestantId, AgentAdapter>>;
+  adapterFactory?: (
+    contestant: Pick<ContestantConfig, "id" | "provider" | "model">,
+  ) => AgentAdapter;
   verifier: AttackVerifier;
   houseScout?: HouseScout;
   caseBuilder?: CaseBuilder;
@@ -92,6 +101,9 @@ export interface ArenaDependencies {
   issueResolver?: IssueResolver;
   pullRequestResolver?: PullRequestResolver;
   qualityVerifier?: PatchQualityVerifier;
+  freezePullRequest?: (
+    options: PullRequestFixtureOptions,
+  ) => Promise<PullRequestFixture>;
   now?: () => Date;
   onProgress?: (message: string) => void;
 }
@@ -115,6 +127,7 @@ function initialContestant(config: ContestantConfig): ContestantResult {
   return {
     id: config.id,
     provider: config.provider,
+    ...(config.model ? { model: config.model } : {}),
     role: config.role,
     status: "pending",
     initialHealth: 100,
@@ -208,6 +221,9 @@ async function repositoryFacts(repositoryRoot: string): Promise<string[]> {
 export class Arena {
   private readonly now: () => Date;
   private readonly progress: (message: string) => void;
+  private readonly generatedContestantAdapters: Partial<
+    Record<ContestantId, AgentAdapter>
+  > = {};
 
   constructor(private readonly dependencies: ArenaDependencies) {
     this.now = dependencies.now ?? (() => new Date());
@@ -218,13 +234,57 @@ export class Arena {
     rawConfig: FightConfig,
     externalSignal?: AbortSignal,
   ): Promise<FightOutcome> {
+    for (const contestantId of Object.keys(
+      this.generatedContestantAdapters,
+    ) as ContestantId[])
+      delete this.generatedContestantAdapters[contestantId];
     const repositoryRoot = await resolveRepositoryRoot(
       rawConfig.repositoryRoot,
     );
     await assertCleanRepository(repositoryRoot);
+    let config = FightConfigSchema.parse({ ...rawConfig, repositoryRoot });
+    const runId = createRunId(this.now());
+    const store = new ArtifactStore(config.artifactRoot, runId);
+    await store.initialize();
+    let pullRequestFixture: PullRequestFixture | undefined;
     let frozenBasePullRequest: ResolvedPullRequest | undefined;
+    let frozenModePullRequest: ResolvedPullRequest | undefined;
     let baseCommit: string;
-    if (rawConfig.baseFromPullRequest) {
+    if (config.mode === "catch_up" || config.mode === "siege") {
+      const reference = config.pullRequestReferences[0];
+      if (!reference)
+        throw new Error(`${config.mode} mode requires a pull request`);
+      const resolver =
+        this.dependencies.pullRequestResolver ??
+        new GitHubPullRequestResolver();
+      frozenModePullRequest = await resolver.resolve(reference, repositoryRoot);
+      pullRequestFixture = await (
+        this.dependencies.freezePullRequest ?? freezePullRequest
+      )({
+        reference,
+        repositoryRoot,
+        artifactDirectory: store.resolve("pull-request"),
+        resolver: { resolve: () => Promise.resolve(frozenModePullRequest!) },
+        now: this.now,
+      });
+      const incumbentProvider =
+        config.incumbentProvider ?? pullRequestFixture.attribution.provider;
+      if (config.mode === "catch_up" && !incumbentProvider) {
+        throw new Error(
+          "The frozen PR has unknown authorship; pass --incumbent <agent> to choose the provider that will attack and repair the incumbent patch",
+        );
+      }
+      config = FightConfigSchema.parse({
+        ...config,
+        baseCommit: pullRequestFixture.base.commit,
+        contestants: config.contestants.map((contestant) =>
+          contestant.role === "incumbent" && incumbentProvider
+            ? { ...contestant, provider: incumbentProvider }
+            : contestant,
+        ),
+      });
+      baseCommit = pullRequestFixture.base.commit;
+    } else if (rawConfig.baseFromPullRequest) {
       const resolver =
         this.dependencies.pullRequestResolver ??
         new GitHubPullRequestResolver();
@@ -243,14 +303,11 @@ export class Arena {
         rawConfig.baseCommit ?? "HEAD",
       );
     }
-    const config = FightConfigSchema.parse({
-      ...rawConfig,
+    config = FightConfigSchema.parse({
+      ...config,
       repositoryRoot,
       baseCommit,
     });
-    const runId = createRunId(this.now());
-    const store = new ArtifactStore(config.artifactRoot, runId);
-    await store.initialize();
     const temporaryRoot = await mkdtemp(
       path.join(os.tmpdir(), `agent-arena-${runId}-`),
     );
@@ -280,16 +337,24 @@ export class Arena {
         ...(this.dependencies.issueResolver
           ? { issueResolver: this.dependencies.issueResolver }
           : {}),
-        ...(frozenBasePullRequest && rawConfig.baseFromPullRequest
+        ...(frozenBasePullRequest || frozenModePullRequest
           ? {
               pullRequestResolver: {
                 resolve: (reference: string) => {
-                  if (reference !== rawConfig.baseFromPullRequest)
-                    return (
-                      this.dependencies.pullRequestResolver ??
-                      new GitHubPullRequestResolver()
-                    ).resolve(reference, repositoryRoot);
-                  return Promise.resolve(frozenBasePullRequest);
+                  if (
+                    frozenBasePullRequest &&
+                    reference === rawConfig.baseFromPullRequest
+                  )
+                    return Promise.resolve(frozenBasePullRequest);
+                  if (
+                    frozenModePullRequest &&
+                    reference === String(config.pullRequestReferences[0])
+                  )
+                    return Promise.resolve(frozenModePullRequest);
+                  return (
+                    this.dependencies.pullRequestResolver ??
+                    new GitHubPullRequestResolver()
+                  ).resolve(reference, repositoryRoot);
                 },
               },
             }
@@ -329,6 +394,7 @@ export class Arena {
           ]),
         ),
         attacks: [],
+        attackInvocations: [],
         promptManifests: [],
         harnessOverlays: [],
         patchQualityFacts: {},
@@ -346,6 +412,7 @@ export class Arena {
           "Worktrees isolate accidental changes; they are not a hostile-code security sandbox.",
           ...contractWarnings,
         ],
+        ...(pullRequestFixture ? { pullRequestFixture } : {}),
       };
       context = {
         config,
@@ -359,8 +426,38 @@ export class Arena {
       await this.persist(context);
 
       await this.preflight(context);
-      await this.implement(context);
-      await this.initialValidation(context);
+      if (pullRequestFixture) {
+        await this.initializePullRequestContestant(context, pullRequestFixture);
+        const protectedContestant = context.config.contestants.find(
+          (contestant) => contestant.startingPatch === "pull_request",
+        );
+        if (!protectedContestant)
+          throw new Error(
+            "PR battle topology is missing its frozen-patch contestant",
+          );
+        await this.initialValidation(context, [protectedContestant.id]);
+        const protectedState = getContestant(
+          context.state,
+          protectedContestant.id,
+        );
+        if (!latestRequiredPass(protectedState)) {
+          const check = protectedState.checks.at(-1);
+          throw new Error(
+            `Frozen PR patch failed required validation; preflight cannot award a free win${check?.reason ? `: ${check.reason}` : check?.command?.stderrPath ? ` (stderr: ${check.command.stderrPath})` : ""}`,
+          );
+        }
+      }
+      if (config.mode !== "siege") {
+        await this.implement(context);
+        const readyContext = context;
+        await this.initialValidation(
+          readyContext,
+          readyContext.config.agents.filter(
+            (agent) =>
+              getContestant(readyContext.state, agent).role !== "incumbent",
+          ),
+        );
+      }
 
       for (const round of [1, 2, 3] as const) {
         if (this.shouldStop(context)) break;
@@ -433,10 +530,18 @@ export class Arena {
     context: ArenaContext,
     contestantId: ContestantId,
   ): AgentAdapter {
-    return getAdapter(
-      this.dependencies.adapters,
-      getContestant(context.state, contestantId).provider,
-    );
+    const contestantAdapter =
+      this.dependencies.contestantAdapters?.[contestantId];
+    if (contestantAdapter) return contestantAdapter;
+    const generatedAdapter = this.generatedContestantAdapters[contestantId];
+    if (generatedAdapter) return generatedAdapter;
+    const contestant = getContestant(context.state, contestantId);
+    if (this.dependencies.adapterFactory) {
+      const adapter = this.dependencies.adapterFactory(contestant);
+      this.generatedContestantAdapters[contestantId] = adapter;
+      return adapter;
+    }
+    return getAdapter(this.dependencies.adapters, contestant.provider);
   }
 
   private async transition(
@@ -489,7 +594,12 @@ export class Arena {
   private async implement(context: ArenaContext): Promise<void> {
     await this.transition(context, "implement");
     const worktrees = new Map<ContestantId, string>();
-    for (const agent of context.config.agents) {
+    const implementationAgents = context.config.agents.filter(
+      (agent) =>
+        context.config.contestants.find((contestant) => contestant.id === agent)
+          ?.startingPatch !== "pull_request",
+    );
+    for (const agent of implementationAgents) {
       worktrees.set(
         agent,
         await context.worktrees.create(`implement-${agent}`),
@@ -497,7 +607,7 @@ export class Arena {
     }
     try {
       await Promise.all(
-        context.config.agents.map(async (agent) => {
+        implementationAgents.map(async (agent) => {
           const worktree = worktrees.get(agent);
           if (!worktree)
             throw new Error(`Missing implementation worktree for ${agent}`);
@@ -549,9 +659,31 @@ export class Arena {
     await this.persist(context);
   }
 
-  private async initialValidation(context: ArenaContext): Promise<void> {
+  private async initializePullRequestContestant(
+    context: ArenaContext,
+    fixture: PullRequestFixture,
+  ): Promise<void> {
+    const contestant = context.config.contestants.find(
+      (candidate) => candidate.startingPatch === "pull_request",
+    );
+    if (!contestant)
+      throw new Error("Missing frozen PR contestant configuration");
+    const state = getContestant(context.state, contestant.id);
+    const patch = await stat(fixture.patchPath);
+    if (patch.size === 0)
+      throw new Error("Frozen PR patch is empty; preflight cannot continue");
+    state.initialPatchPath = fixture.patchPath;
+    state.currentPatchPath = fixture.patchPath;
+    state.patchSize = patch.size;
+    await this.persist(context);
+  }
+
+  private async initialValidation(
+    context: ArenaContext,
+    contestantIds: readonly ContestantId[] = context.config.agents,
+  ): Promise<void> {
     await this.transition(context, "initial_validate");
-    for (const agent of context.config.agents) {
+    for (const agent of contestantIds) {
       const contestant = getContestant(context.state, agent);
       if (!contestant.currentPatchPath || contestant.patchSize === 0) {
         contestant.checks.push({
@@ -680,16 +812,32 @@ export class Arena {
     );
 
     const collected: Attack[] = [];
-    for (const agent of context.config.agents) {
+    const siegeAttacker = context.config.contestants.find(
+      (contestant) => contestant.role === "attacker",
+    );
+    const siegeDefender = context.config.contestants.find(
+      (contestant) => contestant.role === "defender",
+    );
+    const collectingAgents =
+      context.config.mode === "siege" && siegeAttacker
+        ? [siegeAttacker.id]
+        : context.config.agents;
+    for (const agent of collectingAgents) {
       const contestant = getContestant(context.state, agent);
+      const isSiegeAttacker =
+        context.config.mode === "siege" && contestant.role === "attacker";
       if (
-        contestant.patchSize === 0 ||
-        !latestRequiredPass(contestant) ||
-        contestant.status === "eliminated" ||
-        contestant.status === "failed"
+        !isSiegeAttacker &&
+        (contestant.patchSize === 0 ||
+          !latestRequiredPass(contestant) ||
+          contestant.status === "eliminated" ||
+          contestant.status === "failed")
       )
         continue;
-      const target = opponentOf(context.config, agent);
+      const target = isSiegeAttacker
+        ? siegeDefender?.id
+        : opponentOf(context.config, agent);
+      if (!target) throw new Error("Siege is missing its defender");
       const targetContestant = getContestant(context.state, target);
       const targetPatchPath = targetContestant.currentPatchPath;
       if (
@@ -697,14 +845,18 @@ export class Arena {
         targetContestant.status === "failed"
       )
         continue;
-      if (!contestant.currentPatchPath || !targetPatchPath) continue;
+      if (
+        (!isSiegeAttacker && !contestant.currentPatchPath) ||
+        !targetPatchPath
+      )
+        continue;
       const worktree = await context.worktrees.create(
         `round-${String(round)}-attack-${agent}`,
       );
       try {
         await context.worktrees.applyPatch(
           worktree,
-          contestant.currentPatchPath,
+          targetPatchPath,
         );
         const opponentPatch = await readFile(targetPatchPath, "utf8");
         const prompt = composePrompt({
@@ -743,44 +895,78 @@ export class Arena {
           opponent: target,
         });
         if (invocation.status !== "succeeded") {
-          if (invocation.status === "infrastructure_error") {
-            context.state.warnings.push(
-              `Attack generation infrastructure failed for ${agent}`,
-            );
-          }
+          context.state.attackInvocations.push({
+            round,
+            attacker: agent,
+            target,
+            invocation,
+            submissionStatus: "not_run",
+            attackCount: 0,
+            detail: `Attack generation ${invocation.status}`,
+          });
+          context.state.warnings.push(
+            `Attack generation ${invocation.status} for ${agent} against ${target}; no submission was collected`,
+          );
           continue;
         }
-        const submission = await readAttackSubmission(worktree);
-        validateAttackOrdering(submission);
-        const availableCredits =
-          round === "recovery"
-            ? contestant.replacementCredits.filter(
-                (credit) => credit.status === "available",
-              ).length
-            : 3;
-        const accepted = submission.attacks.slice(0, availableCredits);
-        await context.store.writeJson(
-          `hypotheses/round-${String(round)}/${agent}.json`,
-          submission.hypotheses,
-        );
-        await removeSubmission(worktree);
-        for (const entry of accepted) {
-          const patchPath = context.store.resolve(
-            `attacks/round-${String(round)}/${agent}/${String(entry.rank)}.diff`,
+        try {
+          const submission = await readAttackSubmission(worktree);
+          validateAttackOrdering(submission);
+          const availableCredits =
+            round === "recovery"
+              ? contestant.replacementCredits.filter(
+                  (credit) => credit.status === "available",
+                ).length
+              : 3;
+          const accepted = submission.attacks.slice(0, availableCredits);
+          await context.store.writeJson(
+            `hypotheses/round-${String(round)}/${agent}.json`,
+            submission.hypotheses,
           );
-          await context.worktrees.capturePatch(
-            worktree,
-            patchPath,
-            entry.paths,
-          );
-          collected.push(
-            await materializeAttack(entry, {
-              author: agent,
-              authorProvider: contestant.provider,
-              target,
-              round,
+          await removeSubmission(worktree);
+          for (const entry of accepted) {
+            const patchPath = context.store.resolve(
+              `attacks/round-${String(round)}/${agent}/${String(entry.rank)}.diff`,
+            );
+            await context.worktrees.capturePatch(
+              worktree,
               patchPath,
-            }),
+              entry.paths,
+            );
+            collected.push(
+              await materializeAttack(entry, {
+                author: agent,
+                authorProvider: contestant.provider,
+                target,
+                round,
+                patchPath,
+              }),
+            );
+          }
+          context.state.attackInvocations.push({
+            round,
+            attacker: agent,
+            target,
+            invocation,
+            submissionStatus: "submitted",
+            attackCount: accepted.length,
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          context.state.attackInvocations.push({
+            round,
+            attacker: agent,
+            target,
+            invocation,
+            submissionStatus:
+              (error as NodeJS.ErrnoException).code === "ENOENT"
+                ? "not_submitted"
+                : "invalid_submission",
+            attackCount: 0,
+            detail,
+          });
+          context.state.warnings.push(
+            `Attack submission from ${agent} against ${target} was not usable: ${detail}`,
           );
         }
       } catch (error) {
@@ -791,93 +977,87 @@ export class Arena {
         await context.worktrees.remove(worktree);
       }
     }
-    const bothContestantsAreAttackable = context.config.agents.every(
-      (agent) => {
-        const contestant = getContestant(context.state, agent);
-        return contestant.patchSize > 0 && contestant.status !== "failed";
-      },
-    );
     if (
+      context.config.mode !== "siege" &&
       (round === 2 || round === 3) &&
-      bothContestantsAreAttackable &&
       this.dependencies.houseScout
     ) {
-      const worktree = await context.worktrees.create(
-        `round-${String(round)}-attack-house`,
-      );
-      try {
-        const patches = await Promise.all(
-          context.config.agents.map(async (agent) => {
-            const patchPath = getContestant(
-              context.state,
-              agent,
-            ).currentPatchPath;
-            return patchPath ? readFile(patchPath, "utf8") : "";
-          }),
+      for (const [candidateIndex, target] of context.config.agents.entries()) {
+        const targetContestant = getContestant(context.state, target);
+        const targetPatchPath = targetContestant.currentPatchPath;
+        if (
+          targetContestant.patchSize === 0 ||
+          targetContestant.status === "failed" ||
+          !targetPatchPath
+        )
+          continue;
+        const worktree = await context.worktrees.create(
+          `round-${String(round)}-attack-house-${target}`,
         );
-        const prompt = [
-          "# Neutral house scout",
-          "Inspect two anonymized frozen patches for one task defect shared by either or both.",
-          "You may submit zero or one unranked executable test-only attack. You have no health, recoil, or replacement credits.",
-          "Use the ordinary oracle and determinism rules. Do not infer contestant identity.",
-          "",
-          "# Task contract",
-          JSON.stringify(context.contract, null, 2),
-          "",
-          "# Method pack",
-          JSON.stringify(selection, null, 2),
-          "",
-          "# Patch A",
-          patches[0] ?? "",
-          "",
-          "# Patch B",
-          patches[1] ?? "",
-          "",
-          `Write {"version":1,"hypotheses":[],"attacks":[]} to ${path.join(worktree, ".agent-arena-house.json")}. Each attack uses the normal attack schema without rank.`,
-        ].join("\n");
-        const submission = await this.dependencies.houseScout.scout({
-          worktree,
-          prompt,
-          timeoutMs: context.config.limits.attackMs,
-          transcriptPrefix: context.store.resolve(
-            `logs/round-${String(round)}-attack-house`,
-          ),
-          signal: context.controller.signal,
-          round,
-        });
-        await context.store.writeJson(
-          `hypotheses/round-${String(round)}/house.json`,
-          submission.hypotheses,
-        );
-        const entry = submission.attacks[0];
-        if (entry) {
-          await rm(path.join(worktree, ".agent-arena-house.json"), {
-            force: true,
-          });
-          const patchPath = context.store.resolve(
-            `attacks/round-${String(round)}/house.diff`,
-          );
-          await context.worktrees.capturePatch(
+        try {
+          await context.worktrees.applyPatch(worktree, targetPatchPath);
+          const patch = await readFile(targetPatchPath, "utf8");
+          const prompt = [
+            "# Neutral house scout",
+            `Inspect Candidate ${String(candidateIndex + 1)}'s anonymized frozen patch for one task defect.`,
+            "You may submit zero or one unranked executable test-only attack. You have no health, recoil, or replacement credits.",
+            "Use the ordinary oracle and determinism rules. The assigned worktree contains this candidate patch; execute every probe against it. Do not infer contestant identity.",
+            "",
+            "# Task contract",
+            JSON.stringify(context.contract, null, 2),
+            "",
+            "# Method pack",
+            JSON.stringify(selection, null, 2),
+            "",
+            "# Candidate patch",
+            patch,
+            "",
+            `Write {"version":1,"hypotheses":[],"attacks":[]} to ${path.join(worktree, ".agent-arena-house.json")}. Each attack uses the normal attack schema without rank.`,
+          ].join("\n");
+          const submission = await this.dependencies.houseScout.scout({
             worktree,
-            patchPath,
-            entry.paths,
+            prompt,
+            timeoutMs: context.config.limits.attackMs,
+            transcriptPrefix: context.store.resolve(
+              `logs/round-${String(round)}-attack-house-${target}`,
+            ),
+            signal: context.controller.signal,
+            round,
+          });
+          await context.store.writeJson(
+            `hypotheses/round-${String(round)}/house-${target}.json`,
+            submission.hypotheses,
           );
-          collected.push(
-            await materializeHouseAttack(entry, {
-              targets: [...context.config.agents],
-              round,
+          const entry = submission.attacks[0];
+          if (entry) {
+            await rm(path.join(worktree, ".agent-arena-house.json"), {
+              force: true,
+            });
+            const patchPath = context.store.resolve(
+              `attacks/round-${String(round)}/house-${target}.diff`,
+            );
+            await context.worktrees.capturePatch(
+              worktree,
               patchPath,
-              methodPackId:
-                selection.methodPackIds[0] ?? `${selection.profile}@1`,
-            }),
+              entry.paths,
+            );
+            collected.push(
+              await materializeHouseAttack(entry, {
+                targets: [target],
+                round,
+                patchPath,
+                methodPackId:
+                  selection.methodPackIds[0] ?? `${selection.profile}@1`,
+              }),
+            );
+          }
+        } catch (error) {
+          context.state.warnings.push(
+            `House scout failed for Candidate ${String(candidateIndex + 1)} without health effect: ${error instanceof Error ? error.message : String(error)}`,
           );
+        } finally {
+          await context.worktrees.remove(worktree);
         }
-      } catch (error) {
-        context.state.warnings.push(
-          `House scout failed without health effect: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      } finally {
-        await context.worktrees.remove(worktree);
       }
     }
     await this.persist(context);
@@ -938,30 +1118,50 @@ export class Arena {
       const author = attack.origin.contestant;
       const target = attack.targets[0];
       if (!target) continue;
-      const authorPatch = getContestant(context.state, author).currentPatchPath;
       const targetPatch = getContestant(context.state, target).currentPatchPath;
-      if (!authorPatch || !targetPatch) continue;
-      let result = await validateAttack({
-        attack,
-        authorPatch,
-        targetPatch,
-        taskContract: context.contract,
-        permissionPolicy: context.permissions,
-        config: context.config,
-        worktrees: context.worktrees,
-        verifier: this.dependencies.verifier,
-        logRoot: context.store.resolve(
-          `logs/round-${String(round)}/attack-${attack.id}`,
-        ),
-        signal: context.controller.signal,
-        knownRootDefects: knownRoots,
-      });
+      if (!targetPatch) continue;
+      const authorPatch = getContestant(context.state, author).currentPatchPath;
+      let result =
+        context.config.mode === "siege"
+          ? await validateHouseAttack({
+              attack,
+              targetPatches: { [target]: targetPatch },
+              taskContract: context.contract,
+              permissionPolicy: context.permissions,
+              config: context.config,
+              worktrees: context.worktrees,
+              verifier: this.dependencies.verifier,
+              logRoot: context.store.resolve(
+                `logs/round-${String(round)}/attack-${attack.id}`,
+              ),
+              signal: context.controller.signal,
+              knownRootDefects: knownRoots,
+            })
+          : authorPatch
+            ? await validateAttack({
+                attack,
+                authorPatch,
+                targetPatch,
+                taskContract: context.contract,
+                permissionPolicy: context.permissions,
+                config: context.config,
+                worktrees: context.worktrees,
+                verifier: this.dependencies.verifier,
+                logRoot: context.store.resolve(
+                  `logs/round-${String(round)}/attack-${attack.id}`,
+                ),
+                signal: context.controller.signal,
+                knownRootDefects: knownRoots,
+              })
+            : undefined;
+      if (!result) continue;
       if (result.status === "provisional_infrastructure") {
         if (typeof round !== "number") {
           throw new Error(
             "Infrastructure failure during recovery makes the run inconclusive",
           );
         }
+        if (!authorPatch) continue;
         result = await this.reviewInfrastructure(
           context,
           result,
@@ -1141,6 +1341,9 @@ export class Arena {
     await this.transition(context, "validate_repairs", round);
     for (const agent of context.config.agents) {
       let contestant = getContestant(context.state, agent);
+      if (context.config.mode === "siege" && contestant.role === "attacker") {
+        continue;
+      }
       const currentPatch = contestant.currentPatchPath;
       if (
         !currentPatch ||
@@ -1668,6 +1871,11 @@ export class Arena {
     await this.transition(context, "final_validate");
     for (const agent of context.config.agents) {
       const contestant = getContestant(context.state, agent);
+      if (context.config.mode === "siege" && contestant.role === "attacker") {
+        contestant.status = "survived";
+        contestant.finalHealth = calculateHealth(contestant.healthLedger);
+        continue;
+      }
       const currentPatch = contestant.currentPatchPath;
       if (
         !currentPatch ||
@@ -1797,15 +2005,22 @@ export class Arena {
     }
     context.state.ranking = rankContestants(
       context.config.agents.map((agent) => getContestant(context.state, agent)),
+      { patchSizeTieBreaker: context.config.mode !== "siege" },
     );
     await this.persist(context);
   }
 
   private async finalizeRecommendation(context: ArenaContext): Promise<void> {
     context.state.arenaOutcome = deriveArenaOutcome(context.state);
-    for (const agent of context.config.agents) {
+    const productionAgents = context.config.agents.filter(
+      (agent) =>
+        context.config.mode !== "siege" ||
+        getContestant(context.state, agent).role === "defender",
+    );
+    for (const agent of productionAgents) {
       const contestant = getContestant(context.state, agent);
-      const patchPath = contestant.finalPatchPath ?? contestant.currentPatchPath;
+      const patchPath =
+        contestant.finalPatchPath ?? contestant.currentPatchPath;
       if (!patchPath) continue;
       const patchBytes = await readFile(patchPath);
       const patch = patchBytes.toString("utf8");
@@ -1820,10 +2035,7 @@ export class Arena {
           `quality-facts-${agent}`,
         );
         try {
-          await context.worktrees.applyPatch(
-            worktree,
-            patchPath,
-          );
+          await context.worktrees.applyPatch(worktree, patchPath);
           const baseContent: Record<string, string> = {};
           const patchedContent: Record<string, string> = {};
           for (const manifestPath of manifestPaths) {
@@ -1859,6 +2071,15 @@ export class Arena {
         `quality/${agent}-facts.json`,
         facts,
       );
+    }
+    if (context.config.mode === "siege") {
+      context.state.reviewPrompt = buildReviewPrompt(context.state);
+      await context.store.writeImmutableJson(
+        "review-prompt.json",
+        context.state.reviewPrompt,
+      );
+      await this.persist(context);
+      return;
     }
     const [left, right] = context.config.agents;
     const anonymizationMap =

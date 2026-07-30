@@ -16,6 +16,12 @@ agent-arena fight "fix issue #241"
 
 Agent Arena launches Claude Code, Codex, Gemini CLI, OpenCode, or other supported agents in separate Git worktrees. Each agent independently explores the repository, implements a solution, adds tests, and submits a patch.
 
+Contestants may optionally pin provider-specific model IDs. Model selection is
+per contestant, including mirror matches that use the same provider twice. When
+a contestant model is omitted, Agent Arena leaves model selection to that
+provider CLI's configured default. The selected model is persisted with the
+battle configuration and invocation metadata.
+
 The agents then receive their opponents’ solutions and attempt to break them. A credible attack must include evidence such as a failing test, reproducible command, integration failure, security issue, benchmark, or static-analysis result.
 
 Contestants may defend their solution by disproving the attack, repairing their patch, or conceding the defect. The harness reruns all valid tests and produces an evidence-backed winner.

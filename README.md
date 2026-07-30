@@ -43,6 +43,7 @@ npm link
 agent-arena fight \
   "fix issue #241: collapse repeated whitespace in generated slugs" \
   --agents codex,claude \
+  --models gpt-5.2-codex,claude-opus-4-6 \
   --issue 241 \
   --permissions confirm \
   --test "npm test"
@@ -55,6 +56,7 @@ An optional `agent-arena.yaml` stores repeatable settings:
 ```yaml
 test: npm test
 agents: [codex, claude]
+models: [gpt-5.2-codex, claude-opus-4-6]
 attack_verifier: codex
 quality_verifier: codex
 harness_maintainer: codex
@@ -95,6 +97,10 @@ delivery:
   enabled: false
   merge_enabled: false
 ```
+
+`models`/`--models` is optional and follows contestant order. If omitted, each
+provider CLI chooses its configured default. This also permits model-vs-model
+mirror matches, for example `--agents codex,codex --models model-a,model-b`.
 
 Explicit CLI flags override YAML.
 

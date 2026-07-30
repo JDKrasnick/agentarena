@@ -55,7 +55,14 @@ export async function captureBinaryPatch(
   const result = await execa(
     "git",
     ["diff", "--binary", "--full-index", baseCommit, headCommit],
-    { cwd: repositoryRoot, reject: false, encoding: "buffer" },
+    {
+      cwd: repositoryRoot,
+      reject: false,
+      encoding: "buffer",
+      // Git patches require their terminating newline. Execa otherwise strips
+      // it, which turns a valid one-hunk frozen PR patch into a corrupt patch.
+      stripFinalNewline: false,
+    },
   );
   if (result.exitCode !== 0) {
     throw new Error(

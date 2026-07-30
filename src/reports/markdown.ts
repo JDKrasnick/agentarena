@@ -43,6 +43,8 @@ export function renderBattleReport(state: RunState): string {
     "",
     `Task: ${state.config.task}`,
     "",
+    `Mode: **${state.config.mode}**`,
+    "",
     `Task contract: \`${state.taskContractHash}\``,
     "",
     "Surviving the arena is additional evidence, not a correctness guarantee.",
@@ -55,7 +57,9 @@ export function renderBattleReport(state: RunState): string {
     state.arenaOutcome
       ? `Arena champion: **${state.arenaOutcome.championId ?? "draw"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
       : "Arena champion: unavailable",
-    `Recommended patch: **${state.patchRecommendation?.contestantId ?? "draw"}** (${state.patchRecommendation?.reason ?? "pending"})`,
+    state.config.mode === "siege"
+      ? "Production artifact: **defender final patch only** (patch comparison disabled)"
+      : `Recommended patch: **${state.patchRecommendation?.contestantId ?? "draw"}** (${state.patchRecommendation?.reason ?? "pending"})`,
     ...(state.patchRecommendation?.contestantId &&
     state.patchRecommendation.contestantId !== state.arenaOutcome?.championId
       ? [
@@ -76,11 +80,15 @@ export function renderBattleReport(state: RunState): string {
     "",
     `Deciding factors: ${state.arenaOutcome?.decidingFactors.join(", ") || "none"}`,
     "",
-    "## Patch recommendation",
+    state.config.mode === "siege" ? "## Defender artifact" : "## Patch recommendation",
     "",
     ...(state.patchRecommendation?.rationale.map(
       (rationale) => `- ${rationale}`,
-    ) ?? ["- Recommendation not available."]),
+    ) ?? [
+      state.config.mode === "siege"
+        ? "- Only the defender's final production patch is available for review and delivery."
+        : "- Recommendation not available.",
+    ]),
     "",
     "| Contestant | Production files | Normalized production lines | Tests | Manifests | Observability |",
     "| --- | ---: | ---: | ---: | ---: | ---: |",
@@ -97,6 +105,16 @@ export function renderBattleReport(state: RunState): string {
     ) ?? []),
     "",
     "## Attacks",
+    "",
+    "### Generation activity",
+    "",
+    "| Round | Attacker | Target | Invocation | Submission | Attacks | Duration | Detail |",
+    "| --- | --- | --- | --- | --- | ---: | ---: | --- |",
+    ...state.attackInvocations.map(
+      (attempt) =>
+        `| ${String(attempt.round)} | ${attempt.attacker} | ${attempt.target} | ${attempt.invocation.status} | ${attempt.submissionStatus} | ${String(attempt.attackCount)} | ${(attempt.invocation.durationMs / 1000).toFixed(1)}s | ${(attempt.detail ?? "—").replaceAll("|", "\\|")} |`,
+    ),
+    ...(state.attackInvocations.length ? [] : ["| — | — | — | — | — | 0 | — | No contestant attack invocation recorded |"]),
     "",
     "| Round | Author | Rank | Claim | Outcome | Severity | Effect |",
     "| --- | --- | ---: | --- | --- | --- | --- |",

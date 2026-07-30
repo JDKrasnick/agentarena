@@ -31,6 +31,7 @@ From the root of a clean Git repository, the developer runs:
 ```bash
 agent-arena fight "fix the refresh-token race condition" \
   --agents codex,claude \
+  --models gpt-5.2-codex,claude-opus-4-6 \
   --rounds 3 \
   --permissions confirm \
   --test "npm test"
@@ -183,6 +184,8 @@ unscored report finding.
 - One user-supplied required validation command and at most one optional
   declared integration profile.
 - Two contestants selected from Codex CLI, Claude Code, and Gemini CLI.
+- Optional provider-specific model selection for each contestant. Omission uses
+  the provider CLI default; explicit selections are recorded in run artifacts.
 - A provider adapter boundary, even if only two adapters are release-ready.
 - One anonymized verifier invocation per mechanically landed candidate.
 - One isolated harness-maintainer role for validated run accommodations.

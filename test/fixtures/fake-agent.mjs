@@ -43,7 +43,7 @@ if (stage === "implement") {
     JSON.stringify({ version: 1, explanation: `${agent} implementation` }),
   );
 } else if (stage === "house") {
-  if (round !== "2") {
+  if (round !== "2" || !prompt.includes("Candidate 2")) {
     await writeFile(
       submission,
       JSON.stringify({ version: 1, hypotheses: [], attacks: [] }),
@@ -131,12 +131,17 @@ if (stage === "implement") {
     await writeFile(submission, JSON.stringify({ version: 1, cases: [] }));
   }
 } else if (stage === "collect_attacks") {
-  if (round !== "1") {
+  if (round === "2" && agent === "claude") {
+    process.exit(0);
+  } else if (round !== "1") {
     await writeFile(
       submission,
       JSON.stringify({ version: 1, hypotheses: [], attacks: [] }),
     );
-  } else if (agent === "codex") {
+  } else if (
+    agent === "codex" &&
+    (await readFile(sourcePath, "utf8")).includes('replaceAll(" ", "-")')
+  ) {
     const testPath = "test/arena-repeated-whitespace.test.mjs";
     await writeFile(
       path.join(process.cwd(), testPath),

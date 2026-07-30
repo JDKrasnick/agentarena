@@ -49,11 +49,13 @@ export async function runFight(overrides: CliConfigOverrides): Promise<string> {
   const adapters = Object.fromEntries(
     config.contestants.map((contestant) => [
       contestant.provider,
-      createProviderAdapter(contestant.provider),
+      createProviderAdapter(contestant.provider, contestant.model),
     ]),
   );
   const arena = new Arena({
     adapters,
+    adapterFactory: (contestant) =>
+      createProviderAdapter(contestant.provider, contestant.model),
     verifier: new CommandAttackVerifier(config.attackVerifier),
     qualityVerifier: new CommandPatchQualityVerifier(
       config.qualityVerifier ?? config.attackVerifier,

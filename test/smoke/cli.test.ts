@@ -37,6 +37,7 @@ describe("built CLI smoke flow", () => {
       env,
     });
     expect(help.stdout).toContain("review");
+    expect(help.stdout).toContain("defend");
     await execa(
       process.execPath,
       [
@@ -47,6 +48,8 @@ describe("built CLI smoke flow", () => {
         "node --test",
         "--agents",
         "codex,claude",
+        "--models",
+        "codex-test-model,claude-test-model",
         "--yes",
       ],
       { cwd: repositoryRoot, env, timeout: 60_000 },
@@ -56,8 +59,27 @@ describe("built CLI smoke flow", () => {
     expect(runId).toBeTruthy();
     const result = JSON.parse(
       await readFile(path.join(runsRoot, runId!, "result.json"), "utf8"),
-    ) as { schemaVersion: number; reviewPrompt: { choices: unknown[] } };
+    ) as {
+      schemaVersion: number;
+      config: {
+        contestants: Array<{ model?: string }>;
+      };
+      contestants: Record<
+        string,
+        { model?: string; implementation?: { model?: string } }
+      >;
+      reviewPrompt: { choices: unknown[] };
+    };
     expect(result.schemaVersion).toBe(3);
+    expect(
+      result.config.contestants.map((contestant) => contestant.model),
+    ).toEqual(["codex-test-model", "claude-test-model"]);
+    expect(result.contestants.a?.implementation?.model).toBe(
+      "codex-test-model",
+    );
+    expect(result.contestants.b?.implementation?.model).toBe(
+      "claude-test-model",
+    );
     expect(result.reviewPrompt.choices).toHaveLength(2);
     expect(
       await readFile(path.join(runsRoot, runId!, "BATTLE.md"), "utf8"),

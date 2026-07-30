@@ -11,7 +11,11 @@ export function buildReviewPrompt(state: RunState): ReviewPrompt {
     throw new Error("Run has no frozen base commit");
   const recommendation = state.patchRecommendation?.contestantId;
   const champion = state.arenaOutcome?.championId ?? state.ranking?.winner;
-  const choices = Object.values(state.contestants).map((contestant) => {
+  const selectableContestants = Object.values(state.contestants).filter(
+    (contestant) =>
+      state.config.mode !== "siege" || contestant.role === "defender",
+  );
+  const choices = selectableContestants.map((contestant) => {
     const facts = state.patchQualityFacts[contestant.id];
     if (!facts)
       throw new Error(

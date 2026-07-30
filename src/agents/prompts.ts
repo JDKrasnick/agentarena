@@ -72,6 +72,7 @@ export function composePrompt(context: PromptContext): string {
       "# Submission schema",
       '{"version":1,"hypotheses":[{"category":"contract_logic","invariant":"...","probe":"...","requiredCapabilities":[],"confidence":90}],"attacks":[{"rank":1,"claim":"...","impact":"...","oracle":{"expectedBehavior":"...","sourceId":"task-user","sourceLocation":"task text","rationale":"..."},"proposedSeverity":"high","confidence":90,"focusedCommand":"npm test -- test/file.test.ts","requiredCapabilities":[],"paths":["test/file.test.ts"]}]}',
       "Attack ranks must be unique and contiguous. Attacks cannot share paths. Production code changes are forbidden.",
+      "The assigned worktree already contains the target patch. Run every probe against that code. Once a defect reproduces, write the structured submission and focused test before exploring further; an empty submission is valid when no defect reproduces.",
     );
   }
   if (context.round !== undefined) {

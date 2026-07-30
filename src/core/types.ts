@@ -26,6 +26,7 @@ export type BattleMode = z.infer<typeof BattleModeSchema>;
 export const ContestantConfigSchema = z.object({
   id: ContestantIdSchema,
   provider: AgentIdSchema,
+  model: z.string().trim().min(1).optional(),
   role: ContestantRoleSchema,
   startingPatch: StartingPatchSchema.default("none"),
 });
@@ -272,6 +273,7 @@ export type PermissionPolicy = z.infer<typeof PermissionPolicySchema>;
 
 export const AgentInvocationSchema = z.object({
   agent: AgentIdSchema,
+  model: z.string().optional(),
   contestantId: ContestantIdSchema.optional(),
   role: ContestantRoleSchema.optional(),
   stage: StageSchema,
@@ -292,6 +294,22 @@ export const AgentInvocationSchema = z.object({
   explanation: z.string().optional(),
 });
 export type AgentInvocation = z.infer<typeof AgentInvocationSchema>;
+
+export const AttackInvocationRecordSchema = z.object({
+  round: RoundIdSchema,
+  attacker: ContestantIdSchema,
+  target: ContestantIdSchema,
+  invocation: AgentInvocationSchema,
+  submissionStatus: z.enum([
+    "submitted",
+    "invalid_submission",
+    "not_submitted",
+    "not_run",
+  ]),
+  attackCount: z.number().int().nonnegative(),
+  detail: z.string().optional(),
+});
+export type AttackInvocationRecord = z.infer<typeof AttackInvocationRecordSchema>;
 
 export const AttackHypothesisSchema = z.object({
   id: z.string(),
@@ -449,6 +467,7 @@ export type ContestantRoundResult = z.infer<typeof ContestantRoundResultSchema>;
 export const ContestantResultSchema = z.object({
   id: ContestantIdSchema,
   provider: AgentIdSchema,
+  model: z.string().optional(),
   role: ContestantRoleSchema,
   status: z.enum(["pending", "survived", "eliminated", "failed"]),
   initialHealth: z.literal(100),
@@ -547,6 +566,12 @@ const FightConfigBaseSchema = z
     baseCommit: z.string().optional(),
     /** @deprecated Kept for legacy duels; catch-up and siege use PullRequestFixture. */
     baseFromPullRequest: z.string().optional(),
+    /**
+     * Optional explicit provider for the frozen PR incumbent. When omitted in
+     * catch-up mode, the arena resolves a confirmed provider from the frozen
+     * PR attribution before any provider invocation is made.
+     */
+    incumbentProvider: AgentIdSchema.optional(),
     permissionMode: z.enum(["auto", "confirm", "deny"]),
     permissionAllow: z
       .record(
@@ -604,6 +629,49 @@ const FightConfigBaseSchema = z
         path: ["contestants"],
         message: "Contestant slots must be ordered a then b",
       });
+    }
+    if (value.mode === "catch_up") {
+      if (value.pullRequestReferences.length !== 1) {
+        context.addIssue({
+          code: "custom",
+          path: ["pullRequestReferences"],
+          message: "Catch-up mode requires exactly one frozen pull request",
+        });
+      }
+      if (
+        first.role !== "incumbent" ||
+        first.startingPatch !== "pull_request" ||
+        second.role !== "challenger"
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["contestants"],
+          message:
+            "Catch-up contestants must be an incumbent PR patch and a challenger",
+        });
+      }
+    }
+    if (value.mode === "siege") {
+      if (value.pullRequestReferences.length !== 1) {
+        context.addIssue({
+          code: "custom",
+          path: ["pullRequestReferences"],
+          message: "Siege mode requires exactly one frozen pull request",
+        });
+      }
+      if (
+        first.role !== "attacker" ||
+        first.startingPatch !== "none" ||
+        second.role !== "defender" ||
+        second.startingPatch !== "pull_request"
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["contestants"],
+          message:
+            "Siege contestants must be an attacker and a defender PR patch",
+        });
+      }
     }
   });
 
@@ -815,6 +883,7 @@ export const RunStateV3Schema = RunStateCoreSchema.extend({
   schemaVersion: z.literal(3),
   contestants: z.partialRecord(ContestantIdSchema, ContestantResultSchema),
   attacks: z.array(AttackSchema),
+  attackInvocations: z.array(AttackInvocationRecordSchema).default([]),
   ranking: RankingSchema.optional(),
   arenaOutcome: ArenaOutcomeSchema.optional(),
   patchQualityFacts: z
@@ -824,6 +893,7 @@ export const RunStateV3Schema = RunStateCoreSchema.extend({
   patchRecommendation: PatchRecommendationSchema.optional(),
   reviewPrompt: ReviewPromptSchema.optional(),
   deliveryTarget: DeliveryTargetSchema.optional(),
+  pullRequestFixture: PullRequestFixtureSchema.optional(),
 });
 export const RunStateSchema = RunStateV3Schema;
 export type RunState = z.infer<typeof RunStateV3Schema>;

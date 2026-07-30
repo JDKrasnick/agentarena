@@ -44,7 +44,13 @@ const FileConfigSchema = z
   .object({
     test: z.string().optional(),
     base_from_pr: z.union([z.string(), z.number()]).optional(),
+    mode: z.enum(["duel", "siege", "catch_up"]).optional(),
+    incumbent: AgentIdSchema.optional(),
+    attacker: AgentIdSchema.optional(),
+    defender: AgentIdSchema.optional(),
+    challenger: AgentIdSchema.optional(),
     agents: z.array(AgentIdSchema).length(2).optional(),
+    models: z.array(z.string().trim().min(1)).length(2).optional(),
     attack_verifier: AgentIdSchema.optional(),
     quality_verifier: AgentIdSchema.optional(),
     harness_maintainer: AgentIdSchema.optional(),
@@ -133,6 +139,7 @@ export interface CliConfigOverrides {
   configPath?: string;
   testCommand?: string;
   agents?: string;
+  models?: string;
   verifier?: string;
   qualityVerifier?: string;
   maintainer?: string;
@@ -141,6 +148,11 @@ export interface CliConfigOverrides {
   issueReferences?: string[];
   pullRequestReferences?: string[];
   baseFromPullRequest?: string;
+  mode?: "duel" | "siege" | "catch_up";
+  incumbent?: string;
+  attacker?: string;
+  defender?: string;
+  challenger?: string;
   acceptanceCriteria?: string[];
   nonInteractiveApproval?: boolean;
   reducedValidationAccepted?: boolean;
@@ -161,6 +173,21 @@ function parseAgents(
   if (agents.length !== 2)
     throw new Error("Exactly two comma-separated agents are required");
   return [agents[0] ?? "", agents[1] ?? ""];
+}
+
+function parseModels(
+  value: string | undefined,
+  fallback: readonly string[] | undefined,
+): [string, string] | undefined {
+  if (value === undefined && fallback === undefined) return undefined;
+  const models = value
+    ? value.split(",").map((model) => model.trim())
+    : [...(fallback ?? [])];
+  if (models.length !== 2 || models.some((model) => model.length === 0))
+    throw new Error(
+      "Exactly two non-empty comma-separated models are required",
+    );
+  return [models[0] ?? "", models[1] ?? ""];
 }
 
 export async function loadFightConfig(
@@ -208,10 +235,79 @@ export async function loadFightConfig(
           (match) => (match[1] ? [match[1]] : []),
         )
       : [];
+  const mode = overrides.mode ?? file.mode ?? "duel";
   const agents = parseAgents(
     overrides.agents,
     file.agents ?? ["codex", "claude"],
   );
+  const models = parseModels(overrides.models, file.models);
+  const challenger = overrides.challenger ?? file.challenger;
+  const attacker = overrides.attacker ?? file.attacker;
+  const defender = overrides.defender ?? file.defender;
+  const incumbent = overrides.incumbent ?? file.incumbent;
+  if (mode === "catch_up" && !challenger)
+    throw new Error("Catch-up mode requires --challenger <agent>");
+  if (mode === "siege" && (!attacker || !defender))
+    throw new Error(
+      "Siege mode requires --attacker <agent> and --defender <agent>",
+    );
+  if (mode !== "duel" && explicitPullRequests.length !== 1)
+    throw new Error(
+      `${mode === "siege" ? "Siege" : "Catch-up"} mode requires exactly one --pr <reference>`,
+    );
+  const contestants =
+    mode === "catch_up"
+      ? [
+          {
+            id: "a" as const,
+            // The arena replaces this provisional value with either --incumbent
+            // or confirmed frozen-PR attribution before an invocation occurs.
+            provider: incumbent ?? challenger ?? agents[0],
+            ...(models?.[0] ? { model: models[0] } : {}),
+            role: "incumbent" as const,
+            startingPatch: "pull_request" as const,
+          },
+          {
+            id: "b" as const,
+            provider: challenger ?? agents[1],
+            ...(models?.[1] ? { model: models[1] } : {}),
+            role: "challenger" as const,
+            startingPatch: "none" as const,
+          },
+        ]
+      : mode === "siege"
+        ? [
+            {
+              id: "a" as const,
+              provider: attacker ?? agents[0],
+              ...(models?.[0] ? { model: models[0] } : {}),
+              role: "attacker" as const,
+              startingPatch: "none" as const,
+            },
+            {
+              id: "b" as const,
+              provider: defender ?? agents[1],
+              ...(models?.[1] ? { model: models[1] } : {}),
+              role: "defender" as const,
+              startingPatch: "pull_request" as const,
+            },
+          ]
+        : [
+            {
+              id: "a" as const,
+              provider: agents[0],
+              ...(models?.[0] ? { model: models[0] } : {}),
+              role: "solver" as const,
+              startingPatch: "none" as const,
+            },
+            {
+              id: "b" as const,
+              provider: agents[1],
+              ...(models?.[1] ? { model: models[1] } : {}),
+              role: "solver" as const,
+              startingPatch: "none" as const,
+            },
+          ];
   const permissionAllow = Object.fromEntries(
     Object.entries(file.permissions.allow).map(([id, entry]) => [
       id,
@@ -225,6 +321,9 @@ export async function loadFightConfig(
 
   return FightConfigSchema.parse({
     task: overrides.task,
+    mode,
+    contestants,
+    ...(incumbent ? { incumbentProvider: incumbent } : {}),
     acceptanceCriteria:
       overrides.acceptanceCriteria ?? file.acceptance_criteria,
     specPaths: [...file.specs, ...sourceSpecs, ...(overrides.specPaths ?? [])],
