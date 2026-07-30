@@ -31,3 +31,15 @@ credential- and local-path-pattern scan passed.
 Every live write requires an explicit user decision naming the disposable
 target. `npm run test:live` skips unless `AGENT_ARENA_LIVE=1`; even with that
 flag, the script performs no automatic external write.
+
+## Mirror-match evidence
+
+Separate from the delivery validation above, a disposable local mirror sample
+completed one Codex mirror, one Claude mirror, and one Codex-versus-Claude
+control on 2026-07-30. Exact run IDs, prompt/patch evidence, and the E2E
+failure-path fix it uncovered are recorded in
+`.context/live-evaluation/2026-07-30.md`.
+
+The sample shows isolated transcripts and distinct patch hashes. It does not
+yet satisfy the planned three-mirrors-per-provider diversity gate, so it must
+not be used to make a release claim about same-provider diversity.
