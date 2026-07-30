@@ -1,6 +1,7 @@
 {
   "name": "agent-arena",
   "version": "0.1.0",
+  "packageManager": "npm@11.8.0",
   "description": "Make your coding agents fight for the merge.",
   "type": "module",
   "bin": {
