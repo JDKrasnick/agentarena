@@ -234,6 +234,23 @@ interface PatchRecommendation {
   rationale: string[];
 }
 
+interface PatchChoice {
+  contestantId: string;
+  eligible: boolean;
+  badges: Array<"recommended" | "arena_champion">;
+  summary: string;
+  patchSha256: string;
+  disabledReason?: string;
+}
+
+interface ReviewPrompt {
+  runId: string;
+  promptId: string;
+  baseCommit: string;
+  choices: PatchChoice[];
+  actions: Array<"inspect" | "compare" | "reject_all" | "leave_pending">;
+}
+
 interface HumanReview {
   status: "pending" | "accepted" | "rejected";
   selectedContestantId?: string;
@@ -243,6 +260,7 @@ interface HumanReview {
   channel?: "chat" | "cli" | "api";
   conversationRef?: string;
   userMessageRef?: string;
+  promptId?: string;
   actor?: string;
   decidedAt?: string;
   rationale?: string;
@@ -270,7 +288,7 @@ machine as the CLI. The user must be able to complete the flow conversationally:
 
 ```text
 User: Show me how the battle went.
-Agent: [compact comparison, recommendation, warnings, and patch digest]
+Agent: [compact comparison and a prompt listing each eligible patch]
 User: Show me the dependency and observability differences.
 Agent: [requested evidence; no mutation]
 User: Accept and apply the recommended patch.
@@ -289,10 +307,37 @@ once. It must support natural requests such as:
 - “Accept the recommended patch.”
 - “Accept and apply the recommended patch.”
 
-The initial chat result should include an **Accept and apply** action when the
-client supports structured buttons. The button and the equivalent explicit user
-message are bound to the displayed run ID, contestant, base commit, and patch
-digest.
+Every completed battle and every explicit review request should end with a
+decision prompt. For example:
+
+```text
+Which patch would you like to use?
+
+1. Accept and apply Claude — Recommended
+   Equal correctness; smaller operational surface and better failure signals.
+2. Accept and apply Codex — Arena champion, 100–95
+   Same validated behavior; won because Claude took 5 recoil.
+3. Inspect or compare the patches
+4. Reject both
+5. Decide later
+```
+
+Each eligible patch is a selectable option. When the recommendation and arena
+champion are the same patch, show one option with both badges. Ineligible or
+eliminated patches may be shown for transparency, but they must be disabled and
+include the exact reason they cannot be applied. A draw still presents every
+eligible patch without silently inventing a recommendation.
+
+When the client supports structured buttons, render one clearly labeled action
+per eligible patch plus inspect, reject, and decide-later actions. Plain-text
+chat accepts the contestant name, an unambiguous description such as
+“recommended,” or the number from the current prompt. The structured action and
+equivalent user reply are bound to the prompt ID, run ID, contestant, base
+commit, and patch digest.
+
+Choosing an **Accept and apply** option is the human approval and application
+request; it should not lead to a second redundant prompt while the choice is
+current. The user can instead ask to accept without applying.
 
 ### Chat approval rules
 
@@ -302,7 +347,8 @@ digest.
 - “Looks good,” “interesting,” reactions, silence, and unrelated affirmative
   language are not acceptance.
 - An explicit “accept,” “apply,” or “accept and apply” is valid only when it
-  names or unambiguously references the currently displayed patch selection.
+  names or unambiguously references an option in the currently displayed patch
+  prompt.
 - If the run, recommendation, selected contestant, base commit, or patch digest
   changed since the review card was shown, the agent must show the new summary
   and request a new decision.
@@ -318,10 +364,11 @@ digest.
 Provide strict, channel-agnostic operations that chat agents can call:
 
 ```ts
-reviewRun({ runId, detail? });
+reviewRun({ runId, detail? }); // returns ReviewPrompt
 inspectPatch({ runId, contestantId, view });
 recordReviewDecision({
   runId,
+  promptId,
   decision: "accept" | "reject",
   selection?,
   expectedPatchSha256,
@@ -342,6 +389,12 @@ strict JSON schemas so Codex, Claude, Gemini, IDE chats, and future hosted
 interfaces can integrate without parsing terminal text. The CLI should call the
 same operations rather than maintain separate acceptance logic.
 
+User-facing documentation should lead with the chat workflow. Keep the CLI as a
+fully supported fallback for power users and as a stable `--json` adapter that
+agents can execute when direct library or tool integration is unavailable. An
+agent invoking the CLI must forward host-issued approval context from the
+user-authored message; it cannot manufacture its own acceptance.
+
 ### Console and `BATTLE.md`
 
 Show the result in this order:
@@ -353,7 +406,8 @@ Unresolved damage: Codex 0, Claude 0
 Permanent recoil: Codex 0, Claude 5
 Recommendation reason: equal correctness; Claude has the cleaner final patch
 Human review: pending
-Next: accept or inspect in chat; CLI fallback: agent-arena review <run-id>
+Patch choices: Claude (recommended), Codex (arena champion)
+Next: choose a patch, inspect, reject both, or decide later in chat
 ```
 
 Add:
@@ -365,8 +419,9 @@ Add:
 - margin label and deciding factors;
 - quality measurements and verifier rationale;
 - an explicit note when arena champion and recommended patch differ.
-- human-review status and the exact next command;
+- human-review status and the available next actions;
 - accepted patch digest, reviewer label, and decision time after approval.
+- every eligible patch choice, its badges, and any disabled reason.
 
 ### Machine-readable output
 
@@ -378,12 +433,14 @@ Human decisions should be written to `reviews/*.json` rather than rewriting the
 battle result. The reviewer label is useful audit context, not a cryptographic
 identity claim.
 
-### CLI review and acceptance
+### CLI and agent-automation adapter
 
-The CLI fallback should present the same compact decision screen:
+The CLI should present the same compact decision prompt for a human and expose
+the same data as strict JSON for an agent:
 
 ```sh
 agent-arena review <run-id>
+agent-arena review <run-id> --json
 ```
 
 It must show:
@@ -490,9 +547,10 @@ deploy. Those remain separate user-authorized actions.
 
 - Implement one channel-agnostic review and acceptance state machine.
 - Expose typed read, inspect, decide, and apply operations for agent chats.
-- Add the compact chat review card, progressive diff navigation, and explicit
-  accept/reject actions.
-- Add the equivalent CLI review screen as a fallback.
+- Generate a patch-choice prompt for every completed battle and review request.
+- Add the compact chat review card, one action per eligible patch, progressive
+  diff navigation, and explicit reject/decide-later actions.
+- Add the equivalent CLI prompt and stable JSON adapter.
 - Store append-only, patch-bound review artifacts.
 - Add the interactive `accept --apply` convenience path.
 - Require full-digest confirmation in non-interactive environments.
@@ -532,6 +590,10 @@ deploy. Those remain separate user-authorized actions.
 - Agent, issue, repository, and tool-result text cannot create acceptance.
 - Ambiguous chat language does not create acceptance.
 - Repeated delivery of one chat action creates one decision and one application.
+- Every eligible patch appears once in the decision prompt.
+- A shared recommendation and champion appears once with both badges.
+- Ineligible patches cannot become actionable choices.
+- Draws provide choices without manufacturing a default recommendation.
 
 ### Integration tests
 
@@ -555,6 +617,14 @@ deploy. Those remain separate user-authorized actions.
 - Verify ambiguous chat replies remain pending and a stale review card requires
   a new decision.
 - Verify retrying the same approval and apply action is idempotent.
+- Verify split outcomes prompt separately for the recommended patch and arena
+  champion.
+- Verify a shared recommendation and champion collapses to one double-badged
+  choice.
+- Verify a draw offers all eligible patches with no preselected choice and an
+  eliminated patch is disabled with its reason.
+- Verify the CLI JSON adapter returns the same prompt IDs, choices, badges, and
+  digests as the chat tool.
 - Compare two behaviorally equal service patches where only one exposes
   repository-conventional failure signals and verify the evidence-backed
   recommendation.
@@ -581,7 +651,11 @@ deploy. Those remain separate user-authorized actions.
   artifact handling.
 - A user can review, accept, reject, and apply entirely inside a compatible agent
   chat.
+- Every battle proactively prompts the user with the eligible patch choices,
+  including concise reasons and recommendation/champion badges.
 - Chat and CLI clients use the same acceptance state machine and safety checks.
+- The CLI remains usable by humans and executable by agents through stable JSON,
+  but is not required for the normal user flow.
 - Only authenticated user-provenance input can cross the acceptance boundary.
 - `apply` refuses absent, rejected, or stale acceptance.
 - Acceptance never implies permission to commit, push, merge, or deploy.
