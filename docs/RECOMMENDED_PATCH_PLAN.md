@@ -25,6 +25,8 @@ unbounded or automatic overtime.
   quality comparison.
 - Prefer the cleaner implementation when both final patches demonstrate equal
   correctness.
+- Prefer implementations whose behavior can be verified and whose production
+  failures can be detected and diagnosed.
 - Keep known correctness failures more important than code size, dependency
   count, or subjective style.
 - Produce deterministic measurements and an anonymized, evidence-backed quality
@@ -37,6 +39,8 @@ unbounded or automatic overtime.
 - Do not add automatic overtime based only on a 5 or 10 HP margin.
 - Do not convert maintainability judgments into health damage.
 - Do not reward the fewest raw lines regardless of readability or task needs.
+- Do not reward raw test count, coverage percentage, log volume, or dashboard
+  count without task-relevant diagnostic value.
 - Do not penalize tests, generated files, lockfile churn, or necessary
   dependencies as if they were production complexity.
 - Do not let a cleaner but observably incorrect patch beat a correct patch.
@@ -129,7 +133,41 @@ not lose to a fragile reimplementation solely because it adds one package.
 - New abstractions relative to their demonstrated need.
 - Readability and alignment with existing repository conventions.
 
-### 5. Normalized patch size
+### 5. Verification and observability
+
+Evaluate whether the implementation is easy to verify before release and easy
+to understand when it fails in production.
+
+Testing evidence includes:
+
+- Focused regression tests for the task's acceptance criteria.
+- Meaningful failure-path and boundary coverage.
+- Integration tests where the patch crosses real component or dependency
+  boundaries.
+- Deterministic assertions that identify the failed behavior instead of merely
+  increasing line or branch coverage.
+- Tests that are maintainable and proportionate to the production change.
+
+Operational observability includes, where relevant to the repository and task:
+
+- Actionable errors that preserve useful causal context.
+- Structured logs consistent with repository conventions.
+- Metrics, traces, health checks, readiness signals, or audit events for new
+  operational behavior.
+- Correlation identifiers or equivalent context across component boundaries.
+- Signals that let an operator detect degradation and distinguish likely causes.
+- Safe telemetry that avoids secrets, personal data, unbounded cardinality, and
+  excessive noise.
+
+Observability is task-aware. A small pure function should not lose because it
+does not add metrics, and a repository without a telemetry framework should not
+be forced to adopt one for an unrelated change. Conversely, a new retry loop,
+background worker, external-service dependency, authorization path, or recovery
+mechanism should normally expose enough state to diagnose failure. Added
+monitoring dependencies and configuration are evaluated as a tradeoff against
+the dependency and operational-footprint criterion.
+
+### 6. Normalized patch size
 
 Use normalized added-and-modified production lines only as the final quality
 differentiator. Exclude:
@@ -170,6 +208,9 @@ interface PatchQualityFacts {
   runtimeDependenciesAdded: string[];
   publicSurfaceChanges: string[];
   operationalRequirementsAdded: string[];
+  verificationEvidence: string[];
+  observabilityChanges: string[];
+  observabilityRisks: string[];
 }
 
 interface PatchRecommendation {
@@ -253,6 +294,12 @@ working tree. Existing clean-repository, base-commit, trusted-artifact, and
 - Classify production, test, generated, vendored, lock, and documentation paths.
 - Measure normalized production diff size and changed surface.
 - Detect manifest-level runtime dependency additions.
+- Inventory test changes by acceptance criterion, failure path, and component
+  boundary without treating raw test count as quality.
+- Inventory task-relevant logs, metrics, traces, health signals, audit events,
+  actionable errors, and correlation context.
+- Flag telemetry risks such as secret exposure, excessive noise, and unbounded
+  metric dimensions.
 - Record public-surface and operational changes through repository-aware
   adapters, falling back to neutral-verifier evidence when static detection is
   unavailable.
@@ -284,6 +331,13 @@ working tree. Existing clean-repository, base-commit, trusted-artifact, and
 - Equivalent or inconclusive quality falls back to the arena champion.
 - Tests, fixtures, lockfiles, generated files, and formatting-only changes are
   excluded from normalized production size.
+- Raw test count and coverage percentage cannot decide the comparator.
+- Relevant failure-path tests and diagnostic signals can distinguish otherwise
+  equal implementations.
+- Missing telemetry is neutral when the task introduces no meaningful
+  operational behavior.
+- Noisy or unsafe telemetry is recorded as a quality risk, not rewarded as
+  observability.
 - Necessary dependencies are not automatically treated as a loss.
 - Old result schemas fall back safely to the recorded winner.
 
@@ -297,6 +351,9 @@ working tree. Existing clean-repository, base-commit, trusted-artifact, and
 - Verify `BATTLE.md` and `result.json` explain a split outcome consistently.
 - Verify default apply selects the recommendation and `--selection champion`
   selects the combat winner.
+- Compare two behaviorally equal service patches where only one exposes
+  repository-conventional failure signals and verify the evidence-backed
+  recommendation.
 - Verify recommendation artifacts are anonymized and replay to the same result.
 
 ### Regression tests
@@ -311,6 +368,8 @@ working tree. Existing clean-repository, base-commit, trusted-artifact, and
 - Users can distinguish final patch correctness from offensive arena performance.
 - A known defect always outweighs cleanliness.
 - Equal-correctness patches receive a documented, anonymized quality comparison.
+- The comparison explains the strength of task-relevant testing and operational
+  observability without using raw-volume proxies.
 - Reports explain every selection with reproducible evidence.
 - `apply` states and obeys the chosen selection mode.
 - No close margin automatically extends battle duration.
