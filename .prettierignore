@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+.agent-arena/
+.serena/
+PRODUCT.md
+docs/MVP.md
+docs/MVP_IMPLEMENTATION.md
+AGENTS.md
+CLAUDE.md
+.context/
