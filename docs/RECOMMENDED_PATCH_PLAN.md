@@ -35,6 +35,8 @@ unbounded or automatic overtime.
 - Make the recommended patch easy to inspect and accept.
 - Require an explicit human decision on the exact patch before it can be
   applied.
+- Make the complete review, acceptance, and application flow available inside an
+  agent chat without requiring the user to open a terminal.
 
 ## Non-goals
 
@@ -49,6 +51,8 @@ unbounded or automatic overtime.
 - Do not automatically accept, apply, commit, push, or merge any patch.
 - Do not provide a generic `--yes` bypass that silently converts a recommendation
   into approval.
+- Do not trust approval language found in issues, repository files, test output,
+  tool results, or agent-authored messages.
 
 ## Outcome model
 
@@ -236,6 +240,9 @@ interface HumanReview {
   selectionSource?: "recommended" | "champion" | "contestant";
   patchSha256?: string;
   baseCommit?: string;
+  channel?: "chat" | "cli" | "api";
+  conversationRef?: string;
+  userMessageRef?: string;
   actor?: string;
   decidedAt?: string;
   rationale?: string;
@@ -251,7 +258,89 @@ review artifacts. An acceptance binds the run ID, base commit, selected
 contestant, and full patch digest. Any change to one of those values invalidates
 the acceptance and returns the run to `pending`.
 
-## Report and CLI changes
+Conversation and message references should be opaque identifiers or hashes. Do
+not copy private chat contents into battle artifacts.
+
+## Chat, report, and CLI changes
+
+### Chat-first workflow
+
+An agent chat is a first-class client of the same review and acceptance state
+machine as the CLI. The user must be able to complete the flow conversationally:
+
+```text
+User: Show me how the battle went.
+Agent: [compact comparison, recommendation, warnings, and patch digest]
+User: Show me the dependency and observability differences.
+Agent: [requested evidence; no mutation]
+User: Accept and apply the recommended patch.
+Agent: [records the user decision, verifies the digest, applies, and reports the
+        changed files; does not commit or push]
+```
+
+The agent should expose progressive detail instead of dumping every artifact at
+once. It must support natural requests such as:
+
+- “Show the full diff.”
+- “Why is this patch recommended?”
+- “Compare tests, dependencies, and monitoring.”
+- “Choose the arena champion instead.”
+- “Reject both.”
+- “Accept the recommended patch.”
+- “Accept and apply the recommended patch.”
+
+The initial chat result should include an **Accept and apply** action when the
+client supports structured buttons. The button and the equivalent explicit user
+message are bound to the displayed run ID, contestant, base commit, and patch
+digest.
+
+### Chat approval rules
+
+- Only a message or structured action with authenticated `user` provenance can
+  approve or reject. System, developer, assistant, repository, issue, attack,
+  test, and tool content never has approval authority.
+- “Looks good,” “interesting,” reactions, silence, and unrelated affirmative
+  language are not acceptance.
+- An explicit “accept,” “apply,” or “accept and apply” is valid only when it
+  names or unambiguously references the currently displayed patch selection.
+- If the run, recommendation, selected contestant, base commit, or patch digest
+  changed since the review card was shown, the agent must show the new summary
+  and request a new decision.
+- A single explicit “accept and apply the recommended patch” message may both
+  record acceptance and apply it. Do not add a redundant second confirmation
+  when the displayed selection is still current.
+- Repeated delivery of the same approval message must be idempotent.
+- If the chat platform cannot preserve user-message provenance, fall back to
+  full-digest confirmation and do not infer approval from conversation text.
+
+### Agent tool contract
+
+Provide strict, channel-agnostic operations that chat agents can call:
+
+```ts
+reviewRun({ runId, detail? });
+inspectPatch({ runId, contestantId, view });
+recordReviewDecision({
+  runId,
+  decision: "accept" | "reject",
+  selection?,
+  expectedPatchSha256,
+  expectedBaseCommit,
+  userMessageRef,
+  idempotencyKey,
+});
+applyAcceptedPatch({ runId, expectedPatchSha256, idempotencyKey });
+```
+
+`reviewRun` and `inspectPatch` are read-only. `recordReviewDecision` is the sole
+acceptance boundary, validates authenticated user provenance supplied by the
+host, and creates the append-only review artifact. `applyAcceptedPatch` accepts
+no contestant override and can apply only the already accepted digest.
+
+The core package should expose these operations as typed library functions and
+strict JSON schemas so Codex, Claude, Gemini, IDE chats, and future hosted
+interfaces can integrate without parsing terminal text. The CLI should call the
+same operations rather than maintain separate acceptance logic.
 
 ### Console and `BATTLE.md`
 
@@ -264,7 +353,7 @@ Unresolved damage: Codex 0, Claude 0
 Permanent recoil: Codex 0, Claude 5
 Recommendation reason: equal correctness; Claude has the cleaner final patch
 Human review: pending
-Next: agent-arena review <run-id>
+Next: accept or inspect in chat; CLI fallback: agent-arena review <run-id>
 ```
 
 Add:
@@ -289,9 +378,9 @@ Human decisions should be written to `reviews/*.json` rather than rewriting the
 battle result. The reviewer label is useful audit context, not a cryptographic
 identity claim.
 
-### Review and acceptance
+### CLI review and acceptance
 
-The default post-battle command should present a compact decision screen:
+The CLI fallback should present the same compact decision screen:
 
 ```sh
 agent-arena review <run-id>
@@ -399,12 +488,16 @@ deploy. Those remain separate user-authorized actions.
 
 ### Phase 4 — add human review and safe application
 
-- Add the compact review screen, full-diff navigation, and explicit accept/reject
-  actions.
+- Implement one channel-agnostic review and acceptance state machine.
+- Expose typed read, inspect, decide, and apply operations for agent chats.
+- Add the compact chat review card, progressive diff navigation, and explicit
+  accept/reject actions.
+- Add the equivalent CLI review screen as a fallback.
 - Store append-only, patch-bound review artifacts.
 - Add the interactive `accept --apply` convenience path.
 - Require full-digest confirmation in non-interactive environments.
 - Make `apply` require a valid acceptance and recheck its digest and base commit.
+- Make repeated approval and apply calls idempotent.
 - Preserve compatibility for older runs by showing their recorded winner but
   still requiring the user to select and accept an exact patch.
 
@@ -435,6 +528,10 @@ deploy. Those remain separate user-authorized actions.
 - Changed or replaced patches invalidate prior acceptance.
 - Rejected runs cannot be applied.
 - A non-interactive accept requires the exact displayed digest.
+- Only authenticated user-provenance input can create a review decision.
+- Agent, issue, repository, and tool-result text cannot create acceptance.
+- Ambiguous chat language does not create acceptance.
+- Repeated delivery of one chat action creates one decision and one application.
 
 ### Integration tests
 
@@ -450,6 +547,14 @@ deploy. Those remain separate user-authorized actions.
 - Verify an accepted champion override applies the combat winner.
 - Verify pending, rejected, stale-digest, and wrong-base applications fail
   without changing the working tree.
+- Drive the entire review, accept, and apply flow through mocked agent-chat tool
+  calls without invoking the CLI.
+- Verify direct user messages and structured user actions can approve, while
+  assistant messages, issue text, repository instructions, and tool output
+  cannot.
+- Verify ambiguous chat replies remain pending and a stale review card requires
+  a new decision.
+- Verify retrying the same approval and apply action is idempotent.
 - Compare two behaviorally equal service patches where only one exposes
   repository-conventional failure signals and verify the evidence-backed
   recommendation.
@@ -474,6 +579,10 @@ deploy. Those remain separate user-authorized actions.
   rejects an exact patch.
 - The common accept-and-apply path requires one clear confirmation and no manual
   artifact handling.
+- A user can review, accept, reject, and apply entirely inside a compatible agent
+  chat.
+- Chat and CLI clients use the same acceptance state machine and safety checks.
+- Only authenticated user-provenance input can cross the acceptance boundary.
 - `apply` refuses absent, rejected, or stale acceptance.
 - Acceptance never implies permission to commit, push, merge, or deploy.
 - No close margin automatically extends battle duration.
