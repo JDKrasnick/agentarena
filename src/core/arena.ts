@@ -1805,8 +1805,7 @@ export class Arena {
     context.state.arenaOutcome = deriveArenaOutcome(context.state);
     for (const agent of context.config.agents) {
       const contestant = getContestant(context.state, agent);
-      const patchPath =
-        contestant.finalPatchPath ?? contestant.currentPatchPath;
+      const patchPath = contestant.finalPatchPath ?? contestant.currentPatchPath;
       if (!patchPath) continue;
       const patch = await readFile(patchPath, "utf8");
       let facts = collectPatchQualityFacts({ contestantId: agent, patch });
@@ -1816,7 +1815,10 @@ export class Arena {
           `quality-facts-${agent}`,
         );
         try {
-          await context.worktrees.applyPatch(worktree, patchPath);
+          await context.worktrees.applyPatch(
+            worktree,
+            patchPath,
+          );
           const baseContent: Record<string, string> = {};
           const patchedContent: Record<string, string> = {};
           for (const manifestPath of manifestPaths) {
