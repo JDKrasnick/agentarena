@@ -1,0 +1,101 @@
+import {
+  ArenaOutcomeSchema,
+  type ArenaOutcome,
+  type RunState,
+} from "../core/types.js";
+
+export function classifyMargin(marginHp: number): ArenaOutcome["marginClass"] {
+  if (marginHp === 0) return "tied";
+  if (marginHp <= 5) return "razor_thin";
+  if (marginHp <= 10) return "narrow";
+  return "clear";
+}
+
+export function deriveArenaOutcome(
+  state: Pick<RunState, "contestants" | "ranking">,
+): ArenaOutcome {
+  const contestants = Object.values(state.contestants);
+  const derived = Object.fromEntries(
+    contestants.map((contestant) => {
+      const grossDamageReceived = contestant.healthEvents
+        .filter((event) => event.type === "target_damage")
+        .reduce((total, event) => total + Math.abs(event.amount), 0);
+      const grossHealing = contestant.healthEvents
+        .filter((event) => event.type === "heal")
+        .reduce((total, event) => total + Math.abs(event.amount), 0);
+      const activeDefectDamage = contestant.healthLedger.activeDefects.reduce(
+        (total, defect) => total + defect.damage,
+        0,
+      );
+      const recomputed = contestant.healthLedger.eliminatedByRequiredCheck
+        ? 0
+        : Math.max(
+            0,
+            Math.min(
+              100,
+              contestant.initialHealth -
+                contestant.healthLedger.permanentRecoil -
+                activeDefectDamage,
+            ),
+          );
+      if (recomputed !== contestant.finalHealth) {
+        throw new Error(
+          `Persisted final health for ${contestant.agent} is ${String(contestant.finalHealth)} but the ledger derives ${String(recomputed)}`,
+        );
+      }
+      return [
+        contestant.agent,
+        {
+          contestantId: contestant.agent,
+          initialHealth: contestant.initialHealth,
+          finalHealth: contestant.finalHealth,
+          grossDamageReceived,
+          grossHealing,
+          activeDefectDamage,
+          permanentRecoil: contestant.healthLedger.permanentRecoil,
+          eliminatedByRequiredCheck:
+            contestant.healthLedger.eliminatedByRequiredCheck,
+        },
+      ] as const;
+    }),
+  );
+  const orderedHealth = contestants
+    .map((contestant) => contestant.finalHealth)
+    .sort((left, right) => right - left);
+  const marginHp = Math.max(
+    0,
+    (orderedHealth[0] ?? 0) - (orderedHealth[1] ?? 0),
+  );
+  const decidingFactors = new Set<ArenaOutcome["decidingFactors"][number]>();
+  if (
+    contestants.some(
+      (contestant) =>
+        contestant.healthLedger.eliminatedByRequiredCheck ||
+        contestant.status === "eliminated",
+    )
+  ) {
+    decidingFactors.add("elimination");
+  }
+  const activeDamageValues = contestants.map((contestant) =>
+    contestant.healthLedger.activeDefects.reduce(
+      (total, defect) => total + defect.damage,
+      0,
+    ),
+  );
+  if (new Set(activeDamageValues).size > 1)
+    decidingFactors.add("unresolved_defects");
+  const recoilValues = contestants.map(
+    (contestant) => contestant.healthLedger.permanentRecoil,
+  );
+  if (new Set(recoilValues).size > 1) decidingFactors.add("recoil");
+  if (marginHp === 0 && state.ranking?.winner)
+    decidingFactors.add("tie_breaker");
+
+  return ArenaOutcomeSchema.parse({
+    ...(state.ranking?.winner ? { championId: state.ranking.winner } : {}),
+    contestants: derived,
+    marginHp,
+    marginClass: classifyMargin(marginHp),
+    decidingFactors: [...decidingFactors],
+  });
+}

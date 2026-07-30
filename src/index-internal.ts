@@ -7,4 +7,7 @@ export type {
   HarnessMaintainer,
   InfrastructureReviewer,
 } from "./agents/adapter.js";
-export type { IssueResolver } from "./task/task-contract.js";
+export type {
+  IssueResolver,
+  PullRequestResolver,
+} from "./task/task-contract.js";

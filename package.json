@@ -32,6 +32,9 @@
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration",
     "test:smoke": "vitest run test/smoke",
+    "test:coverage": "vitest run test/unit test/integration --coverage.enabled --coverage.reporter=text --coverage.reporter=json-summary",
+    "test:live": "tsx test/live/run.ts",
+    "test:package": "npm run build && npm pack --dry-run",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -51,11 +54,12 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.1.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^10.8.0",
     "prettier": "^3.6.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.38.0",
-    "vitest": "^3.2.0"
+    "vitest": "^4.1.10"
   }
 }

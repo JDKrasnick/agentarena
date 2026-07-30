@@ -1,12 +1,36 @@
-import { readFile, realpath } from "node:fs/promises";
-import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { execa } from "execa";
-import { AgentIdSchema, RunStateSchema, type AgentId } from "../core/types.js";
+import { z } from "zod";
+import { stableId } from "../core/ids.js";
 import {
   assertCleanRepository,
+  changedPathsFromPatch,
   resolveCommit,
   resolveRepositoryRoot,
 } from "../repo/git.js";
+import {
+  reviewRun,
+  openRun,
+  patchSha256,
+  trustedPatchPath,
+} from "../review/service.js";
+import {
+  hashValue,
+  readCurrentReview,
+  readOperation,
+} from "../review/store.js";
+
+export const ApplyResultSchema = z.object({
+  operationId: z.string(),
+  runId: z.string(),
+  contestantId: z.string(),
+  patchSha256: z.string().length(64),
+  changedPaths: z.array(z.string()),
+  appliedAt: z.string().datetime(),
+  testCommand: z.string(),
+  idempotentReplay: z.boolean(),
+});
+export type ApplyResult = z.infer<typeof ApplyResultSchema>;
 
 async function git(cwd: string, args: string[]): Promise<void> {
   const result = await execa("git", args, { cwd, reject: false });
@@ -17,46 +41,173 @@ async function git(cwd: string, args: string[]): Promise<void> {
   }
 }
 
-export async function applyResult(options: {
-  runId: string;
-  agent: AgentId;
-  repositoryRoot?: string;
+async function exactPatchAlreadyApplied(
+  repositoryRoot: string,
+  patchPath: string,
+  changedPaths: string[],
+): Promise<boolean> {
+  const reverse = await execa(
+    "git",
+    ["apply", "--reverse", "--check", patchPath],
+    { cwd: repositoryRoot, reject: false },
+  );
+  if (reverse.exitCode !== 0) return false;
+  const status = await execa("git", ["status", "--porcelain"], {
+    cwd: repositoryRoot,
+  });
+  const dirtyPaths = status.stdout
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((line) => line.slice(3).split(" -> ").at(-1) ?? "")
+    .sort();
+  return (
+    dirtyPaths.length === changedPaths.length &&
+    dirtyPaths.every(
+      (entry, index) => entry === [...changedPaths].sort()[index],
+    )
+  );
+}
+
+export async function applyPatchGuarded(options: {
+  repositoryRoot: string;
+  patchPath: string;
   forceDirty?: boolean;
-}): Promise<string> {
+}): Promise<string[]> {
+  if (!options.forceDirty) await assertCleanRepository(options.repositoryRoot);
+  const patch = await readFile(options.patchPath, "utf8");
+  await git(options.repositoryRoot, ["apply", "--check", options.patchPath]);
+  await git(options.repositoryRoot, ["apply", options.patchPath]);
+  return changedPathsFromPatch(patch);
+}
+
+export async function applyAcceptedPatch(options: {
+  runId: string;
+  repositoryRoot?: string;
+  artifactRoot?: string;
+  expectedPatchSha256?: string;
+  idempotencyKey: string;
+  forceDirty?: boolean;
+  now?: Date;
+}): Promise<ApplyResult> {
   const repositoryRoot = await resolveRepositoryRoot(
     options.repositoryRoot ?? process.cwd(),
   );
-  if (!options.forceDirty) await assertCleanRepository(repositoryRoot);
-  const resultPath = path.join(
+  const { store, state } = await openRun({
+    runId: options.runId,
     repositoryRoot,
-    ".agent-arena",
-    "runs",
-    options.runId,
-    "result.json",
+    ...(options.artifactRoot ? { artifactRoot: options.artifactRoot } : {}),
+  });
+  const payloadHash = hashValue(
+    JSON.stringify({
+      runId: options.runId,
+      expectedPatchSha256: options.expectedPatchSha256,
+      repositoryRoot,
+    }),
   );
-  const state = RunStateSchema.parse(
-    JSON.parse(await readFile(resultPath, "utf8")),
-  );
-  const agent = AgentIdSchema.parse(options.agent);
-  if (state.config.repositoryRoot !== repositoryRoot) {
-    throw new Error("Run belongs to a different repository");
+  const replay = await readOperation(store, options.idempotencyKey);
+  if (replay) {
+    if (replay.payloadHash !== payloadHash)
+      throw new Error("Idempotency key was already used with another payload");
+    const prior = ApplyResultSchema.parse(replay.result);
+    return { ...prior, idempotentReplay: true };
   }
-  const currentCommit = await resolveCommit(repositoryRoot);
-  if (currentCommit !== state.config.baseCommit) {
+  if (state.config.repositoryRoot !== repositoryRoot)
+    throw new Error("Run belongs to a different repository");
+  const prompt = await reviewRun({
+    runId: options.runId,
+    repositoryRoot,
+    ...(options.artifactRoot ? { artifactRoot: options.artifactRoot } : {}),
+  });
+  const decision = await readCurrentReview(store);
+  if (!decision || decision.status !== "accepted")
+    throw new Error("Run has no accepted review decision");
+  if (
+    decision.promptId !== prompt.promptId ||
+    !decision.selectedContestantId ||
+    !decision.patchSha256 ||
+    decision.baseCommit !== prompt.baseCommit
+  )
+    throw new Error("Accepted review decision is stale");
+  const choice = prompt.choices.find(
+    (candidate) =>
+      candidate.contestantId === decision.selectedContestantId &&
+      candidate.eligible,
+  );
+  if (!choice || choice.patchSha256 !== decision.patchSha256)
     throw new Error(
-      `Current HEAD ${currentCommit} does not match run base ${state.config.baseCommit ?? "unknown"}`,
+      "Accepted review decision no longer matches an eligible patch",
+    );
+  if (
+    options.expectedPatchSha256 &&
+    options.expectedPatchSha256 !== decision.patchSha256
+  )
+    throw new Error("Expected patch digest does not match the acceptance");
+  const patchPath = await trustedPatchPath(
+    state,
+    decision.selectedContestantId,
+    store.runDirectory,
+  );
+  if ((await patchSha256(patchPath)) !== decision.patchSha256)
+    throw new Error("Accepted patch digest has changed");
+  const currentCommit = await resolveCommit(repositoryRoot);
+  if (currentCommit !== decision.baseCommit) {
+    throw new Error(
+      `Current HEAD ${currentCommit} does not match accepted base ${decision.baseCommit}`,
     );
   }
-  const patchPath = state.contestants[agent]?.finalPatchPath;
-  if (!patchPath) throw new Error(`Run has no final patch for ${agent}`);
-  const expectedRoot = await realpath(
-    path.resolve(repositoryRoot, ".agent-arena", "runs", options.runId),
+  const patch = await readFile(patchPath, "utf8");
+  const expectedChangedPaths = changedPathsFromPatch(patch);
+  const alreadyApplied = await exactPatchAlreadyApplied(
+    repositoryRoot,
+    patchPath,
+    expectedChangedPaths,
   );
-  const resolvedPatch = await realpath(path.resolve(patchPath));
-  if (!resolvedPatch.startsWith(`${expectedRoot}${path.sep}`)) {
-    throw new Error("Result patch path is outside the trusted run directory");
-  }
-  await git(repositoryRoot, ["apply", "--check", resolvedPatch]);
-  await git(repositoryRoot, ["apply", resolvedPatch]);
-  return `Applied ${agent}'s patch. Run: ${state.config.testCommand}`;
+  const changedPaths = alreadyApplied
+    ? expectedChangedPaths
+    : await applyPatchGuarded({
+        repositoryRoot,
+        patchPath,
+        forceDirty: options.forceDirty ?? false,
+      });
+  const appliedAt = (options.now ?? new Date()).toISOString();
+  const result = ApplyResultSchema.parse({
+    operationId: stableId(
+      "apply",
+      state.runId,
+      decision.patchSha256,
+      options.idempotencyKey,
+    ),
+    runId: state.runId,
+    contestantId: decision.selectedContestantId,
+    patchSha256: decision.patchSha256,
+    changedPaths,
+    appliedAt,
+    testCommand: state.config.testCommand,
+    idempotentReplay: alreadyApplied,
+  });
+  const keyHash = hashValue(options.idempotencyKey);
+  await store.writeImmutableJson(`delivery/events/${result.operationId}.json`, {
+    version: 1,
+    eventId: result.operationId,
+    runId: state.runId,
+    patchSha256: decision.patchSha256,
+    idempotencyKeyHash: keyHash,
+    timestamp: appliedAt,
+    stage: "apply_local",
+    status: "completed",
+    evidence: { changedPaths },
+  });
+  await store.writeImmutableJson(`operations/${keyHash}.json`, {
+    version: 1,
+    operationId: result.operationId,
+    kind: "apply_local",
+    runId: state.runId,
+    idempotencyKeyHash: keyHash,
+    payloadHash,
+    result,
+    createdAt: appliedAt,
+  });
+  return result;
 }
+
+export const applyResult = applyAcceptedPatch;

@@ -1,0 +1,165 @@
+import {
+  FightConfigSchema,
+  RunStateSchema,
+  type AgentId,
+  type ContestantResult,
+  type RunState,
+} from "../../src/core/types.js";
+import { deriveArenaOutcome } from "../../src/outcomes/derive-outcome.js";
+import { collectPatchQualityFacts } from "../../src/quality/collect-facts.js";
+import { selectRecommendedPatch } from "../../src/recommendation/select-patch.js";
+import { buildReviewPrompt } from "../../src/review/prompt.js";
+
+function contestant(
+  agent: AgentId,
+  health: number,
+  recoil = 0,
+  activeDamage: 0 | 5 | 15 | 30 | 50 = 0,
+): ContestantResult {
+  return {
+    agent,
+    status: "survived",
+    initialHealth: 100,
+    finalHealth: health,
+    replacementCredits: [],
+    healthLedger: {
+      permanentRecoil: recoil,
+      activeDefects: activeDamage
+        ? [
+            {
+              rootDefectId: `${agent}-defect`,
+              attackId: `${agent}-attack`,
+              damage: activeDamage,
+            },
+          ]
+        : [],
+      eliminatedByRequiredCheck: false,
+    },
+    healthEvents: [
+      ...(activeDamage
+        ? [
+            {
+              attackId: `${agent}-attack`,
+              round: 1 as const,
+              type: "target_damage" as const,
+              amount: -activeDamage,
+              reason: "test fixture",
+            },
+          ]
+        : []),
+      ...(recoil
+        ? [
+            {
+              attackId: `${agent}-miss`,
+              round: 1 as const,
+              type: "recoil" as const,
+              amount: -recoil,
+              reason: "test fixture",
+            },
+          ]
+        : []),
+    ],
+    patchSize: 1,
+    rounds: [],
+    checks: [{ id: "final", kind: "required", status: "passed" }],
+    finalPatchPath: `/tmp/${agent}.diff`,
+  };
+}
+
+export function makeRunState(
+  options: {
+    codexHealth?: number;
+    claudeHealth?: number;
+    codexRecoil?: number;
+    claudeRecoil?: number;
+    codexDamage?: 0 | 5 | 15 | 30 | 50;
+    claudeDamage?: 0 | 5 | 15 | 30 | 50;
+    repositoryRoot?: string;
+    runDirectory?: string;
+  } = {},
+): RunState {
+  const codex = contestant(
+    "codex",
+    options.codexHealth ?? 100,
+    options.codexRecoil ?? 0,
+    options.codexDamage ?? 0,
+  );
+  const claude = contestant(
+    "claude",
+    options.claudeHealth ?? 95,
+    options.claudeRecoil ?? 5,
+    options.claudeDamage ?? 0,
+  );
+  const repositoryRoot = options.repositoryRoot ?? "/tmp/repository";
+  const runDirectory = options.runDirectory ?? "/tmp/run";
+  const state = RunStateSchema.parse({
+    schemaVersion: 2,
+    runId: "run-12345678",
+    harnessVersion: "0.1.0",
+    status: "complete",
+    startedAt: "2026-07-29T00:00:00.000Z",
+    updatedAt: "2026-07-29T00:01:00.000Z",
+    completedAt: "2026-07-29T00:01:00.000Z",
+    stage: "complete",
+    taskContractHash: "contract",
+    config: FightConfigSchema.parse({
+      task: "Implement the fixture",
+      agents: ["codex", "claude"],
+      attackVerifier: "codex",
+      harnessMaintainer: "codex",
+      rounds: 3,
+      maxAttacksPerRound: 3,
+      infrastructureRecoveryRound: true,
+      maxHeldOutCasesPerDefect: 2,
+      testCommand: "npm test",
+      repositoryRoot,
+      artifactRoot: `${repositoryRoot}/.agent-arena/runs`,
+      baseCommit: "a".repeat(40),
+      permissionMode: "confirm",
+      limits: {
+        implementationMs: 1,
+        attackMs: 1,
+        verifierMs: 1,
+        repairMs: 1,
+      },
+    }),
+    contestants: { codex, claude },
+    attacks: [],
+    promptManifests: [],
+    harnessOverlays: [],
+    ranking: {
+      winner: "codex",
+      draw: false,
+      order: ["codex", "claude"],
+      reason: "higher health",
+    },
+    artifacts: { runDirectory },
+    warnings: [],
+    patchQualityFacts: {
+      codex: collectPatchQualityFacts({
+        contestantId: "codex",
+        patch:
+          "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -0,0 +1 @@\n+export const a = 1;\n",
+      }),
+      claude: collectPatchQualityFacts({
+        contestantId: "claude",
+        patch:
+          "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -0,0 +1 @@\n+export const a = 2;\n",
+      }),
+    },
+  });
+  state.arenaOutcome = deriveArenaOutcome(state);
+  state.patchRecommendation = selectRecommendedPatch({
+    contestants: state.contestants,
+    championId: "codex",
+    qualityVerdict: {
+      version: 1,
+      verdict: "patch_b",
+      criteria: [],
+      rationale: ["Patch B is more focused."],
+    },
+    anonymizationMap: { patch_a: "codex", patch_b: "claude" },
+  });
+  state.reviewPrompt = buildReviewPrompt(state);
+  return state;
+}

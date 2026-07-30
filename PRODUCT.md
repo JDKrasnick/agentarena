@@ -303,6 +303,28 @@ Attackers may propose a severity, but they do not control damage. A neutral veri
 
 After three normal attack–repair rounds and any required infrastructure recovery round, the surviving contestant with the most HP wins. Patch simplicity may break an HP tie; otherwise the result is a draw. If only one contestant survives earlier and no downed opponent holds replacement credits, the fight ends early. Cost and duration are reported but do not change health.
 
+The **arena champion** remains this health-ledger result. After final
+validation, Agent Arena separately derives deterministic patch-quality facts
+and may ask a neutral, identity-blind verifier to compare equally correct
+patches. The resulting **recommended patch** is correctness-first: failed or
+inapplicable patches are removed, less active defect damage always wins, quality
+may decide only equal-correctness patches, and an equivalent or inconclusive
+quality verdict falls back to the arena champion. Quality never changes HP,
+damage, healing, recoil, or the champion.
+
+Every completed run produces a stable review prompt with all eligible patch
+choices and full SHA-256 digests. Applying a patch requires a current human
+decision bound to the run, prompt, contestant, base commit, and exact digest.
+Acceptance does not authorize commits, pushes, pull-request writes, issue
+closure, or merge.
+
+Optional GitHub delivery is a separately authorized, least-privilege
+post-fight operation. It uses deterministic branches and append-only
+idempotency records, refuses moved pull-request heads and force pushes, honors
+repository checks and protection, and monitors merge-after-checks requests to a
+terminal result. GitHub writes and merge are independently gated and disabled
+by default. Deployment and release remain outside Agent Arena.
+
 The final report should include a patch-versus-test matrix:
 
 | Validation                    | Patch A | Patch B | Patch C |

@@ -8,6 +8,7 @@ import {
   CommandInfrastructureReviewer,
   createProviderAdapter,
 } from "../agents/adapter.js";
+import { CommandPatchQualityVerifier } from "../quality/verifier.js";
 import {
   loadFightConfig,
   type CliConfigOverrides,
@@ -51,6 +52,9 @@ export async function runFight(overrides: CliConfigOverrides): Promise<string> {
   const arena = new Arena({
     adapters,
     verifier: new CommandAttackVerifier(config.attackVerifier),
+    qualityVerifier: new CommandPatchQualityVerifier(
+      config.qualityVerifier ?? config.attackVerifier,
+    ),
     houseScout: new CommandHouseScout(config.attackVerifier),
     caseBuilder: new CommandCaseBuilder(config.attackVerifier),
     infrastructureReviewer: new CommandInfrastructureReviewer(),
