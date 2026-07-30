@@ -1,5 +1,27 @@
 # Battle Modes Implementation Plan
 
+## Implementation status
+
+The local implementation is complete through Phase 7:
+
+- Stable contestant slots and schema-v3 migration support mirror matches.
+- Frozen pull-request fixtures support catch-up and siege.
+- Duel, catch-up, and siege run through the shared three-round orchestration.
+- Reports, review, guarded apply, and delivery use contestant identity; siege
+  exposes only the defender's production patch.
+- Automated tests cover isolation, secrecy, landed-and-healed siege draws,
+  unresolved attacker wins, missed-attack defender wins, empty incumbent
+  rejection, and guarded defender application.
+- Product, MVP, implementation, artifact, security, and user documentation
+  describe the shipped topology.
+
+The controlled live-validation matrix in Phase 2 remains a release gate rather
+than an automated implementation task. It requires explicit authorization,
+authenticated paid providers, cost bounds, and disposable repositories. No
+release claim about mirror diversity, catch-up secrecy against real provider
+processes, or siege effectiveness should be made until that matrix is recorded
+in `docs/LIVE_VALIDATION.md`.
+
 ## Goal
 
 Expand Agent Arena from one symmetric provider-versus-provider fight into three

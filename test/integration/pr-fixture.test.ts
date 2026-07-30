@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { chmod, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
@@ -12,11 +12,19 @@ describe("pull request fixtures", () => {
     const baseCommit = (
       await execa("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot })
     ).stdout;
+    const originalPath = path.join(repositoryRoot, "src", "slug.mjs");
+    const renamedPath = path.join(repositoryRoot, "src", "slug-renamed.mjs");
+    await rename(originalPath, renamedPath);
     await writeFile(
-      path.join(repositoryRoot, "src", "slug.mjs"),
-      "export const changed = true;\n",
+      renamedPath,
+      `${await readFile(renamedPath, "utf8")}\nexport const changed = true;\n`,
     );
-    await execa("git", ["add", "."], { cwd: repositoryRoot });
+    await chmod(renamedPath, 0o755);
+    await writeFile(
+      path.join(repositoryRoot, "src", "fixture.bin"),
+      Buffer.from([0, 255, 1, 254, 2, 253]),
+    );
+    await execa("git", ["add", "-A"], { cwd: repositoryRoot });
     await execa(
       "git",
       [
@@ -79,7 +87,12 @@ describe("pull request fixtures", () => {
       ["acme/repo", baseCommit],
       ["acme/repo", headCommit],
     ]);
-    expect(patch.toString("utf8")).toContain("export const changed = true");
+    const patchText = patch.toString("utf8");
+    expect(patchText).toContain("rename from src/slug.mjs");
+    expect(patchText).toContain("rename to src/slug-renamed.mjs");
+    expect(patchText).toContain("new mode 100755");
+    expect(patchText).toContain("GIT binary patch");
+    expect(patchText).toContain("export const changed = true");
     expect(fixture.patchSha256).toBe(sha256(patch));
     expect(fixture.metadataSha256).toHaveLength(64);
     expect(fixture.attribution).toMatchObject({

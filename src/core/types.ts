@@ -309,7 +309,9 @@ export const AttackInvocationRecordSchema = z.object({
   attackCount: z.number().int().nonnegative(),
   detail: z.string().optional(),
 });
-export type AttackInvocationRecord = z.infer<typeof AttackInvocationRecordSchema>;
+export type AttackInvocationRecord = z.infer<
+  typeof AttackInvocationRecordSchema
+>;
 
 export const AttackHypothesisSchema = z.object({
   id: z.string(),

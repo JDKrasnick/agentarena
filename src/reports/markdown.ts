@@ -11,6 +11,37 @@ function attackEffect(attack: Attack): string {
   return "no health effect";
 }
 
+function tableCell(value: string): string {
+  return value.replaceAll("|", "\\|").replaceAll(/\r?\n/gu, " ");
+}
+
+function pullRequestProvenance(state: RunState): string[] {
+  const fixture = state.pullRequestFixture;
+  if (!fixture) return [];
+  const attribution = fixture.attribution;
+  return [
+    "## Frozen pull request",
+    "",
+    `Source: ${fixture.repository}#${String(fixture.number)}`,
+    "",
+    `Commits: \`${fixture.base.commit}\` → \`${fixture.head.commit}\``,
+    "",
+    `Incumbent attribution: **${attribution.confidence}**${attribution.provider ? ` (${attribution.provider})` : ""}`,
+    "",
+    "| Signal | Source | Value |",
+    "| --- | --- | --- |",
+    ...(attribution.evidence.length > 0
+      ? attribution.evidence.map(
+          (entry) =>
+            `| ${entry.kind} | ${tableCell(entry.source)} | ${tableCell(entry.value)} |`,
+        )
+      : ["| none | — | No explicit provider provenance was found |"]),
+    "",
+    "Attribution is provenance metadata only; it does not change permissions, health, attack validity, or patch selection.",
+    "",
+  ];
+}
+
 function contestantSection(contestant: ContestantResult): string[] {
   const events = contestant.healthEvents.length
     ? contestant.healthEvents.map(
@@ -22,6 +53,8 @@ function contestantSection(contestant: ContestantResult): string[] {
     `## ${contestant.provider} ${contestant.id.toUpperCase()} (${contestant.role})`,
     "",
     `Status: ${contestant.status}`,
+    "",
+    `Initial source: ${contestant.role === "incumbent" || contestant.role === "defender" ? "frozen pull request" : contestant.role === "attacker" ? "test-only investigation role" : "fresh implementation"}`,
     "",
     `Final health: ${String(contestant.finalHealth)} HP`,
     "",
@@ -49,6 +82,7 @@ export function renderBattleReport(state: RunState): string {
     "",
     "Surviving the arena is additional evidence, not a correctness guarantee.",
     "",
+    ...pullRequestProvenance(state),
     "## Final result",
     "",
     state.ranking?.draw
@@ -80,7 +114,9 @@ export function renderBattleReport(state: RunState): string {
     "",
     `Deciding factors: ${state.arenaOutcome?.decidingFactors.join(", ") || "none"}`,
     "",
-    state.config.mode === "siege" ? "## Defender artifact" : "## Patch recommendation",
+    state.config.mode === "siege"
+      ? "## Defender artifact"
+      : "## Patch recommendation",
     "",
     ...(state.patchRecommendation?.rationale.map(
       (rationale) => `- ${rationale}`,
@@ -114,7 +150,11 @@ export function renderBattleReport(state: RunState): string {
       (attempt) =>
         `| ${String(attempt.round)} | ${attempt.attacker} | ${attempt.target} | ${attempt.invocation.status} | ${attempt.submissionStatus} | ${String(attempt.attackCount)} | ${(attempt.invocation.durationMs / 1000).toFixed(1)}s | ${(attempt.detail ?? "—").replaceAll("|", "\\|")} |`,
     ),
-    ...(state.attackInvocations.length ? [] : ["| — | — | — | — | — | 0 | — | No contestant attack invocation recorded |"]),
+    ...(state.attackInvocations.length
+      ? []
+      : [
+          "| — | — | — | — | — | 0 | — | No contestant attack invocation recorded |",
+        ]),
     "",
     "| Round | Author | Rank | Claim | Outcome | Severity | Effect |",
     "| --- | --- | ---: | --- | --- | --- | --- |",

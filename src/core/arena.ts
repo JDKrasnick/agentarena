@@ -854,10 +854,7 @@ export class Arena {
         `round-${String(round)}-attack-${agent}`,
       );
       try {
-        await context.worktrees.applyPatch(
-          worktree,
-          targetPatchPath,
-        );
+        await context.worktrees.applyPatch(worktree, targetPatchPath);
         const opponentPatch = await readFile(targetPatchPath, "utf8");
         const prompt = composePrompt({
           agent,

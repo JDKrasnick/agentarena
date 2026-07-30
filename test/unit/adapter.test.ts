@@ -19,7 +19,9 @@ describe("provider model selection", () => {
   it("resolves the Codex default-family alias to its ChatGPT CLI model ID", () => {
     const command = providerCommand("codex", "gpt-5.6");
 
-    expect(command.args).toEqual(expect.arrayContaining(["--model", "gpt-5.6-sol"]));
+    expect(command.args).toEqual(
+      expect.arrayContaining(["--model", "gpt-5.6-sol"]),
+    );
     expect(command.model).toBe("gpt-5.6-sol");
   });
 });

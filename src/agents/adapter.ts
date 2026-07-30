@@ -210,7 +210,8 @@ export function providerCommand(
 ): Omit<CommandAdapterOptions, "id"> {
   // `gpt-5.6` is the default-family name, while ChatGPT-authenticated Codex
   // CLI expects the concrete flagship model identifier.
-  const resolvedModel = id === "codex" && model === "gpt-5.6" ? "gpt-5.6-sol" : model;
+  const resolvedModel =
+    id === "codex" && model === "gpt-5.6" ? "gpt-5.6-sol" : model;
   const modelArgs = resolvedModel ? ["--model", resolvedModel] : [];
   switch (id) {
     case "codex":

@@ -181,7 +181,10 @@ export function rankContestants(
   const sorted = [...contestants].sort((left, right) => {
     if (left.finalHealth !== right.finalHealth)
       return right.finalHealth - left.finalHealth;
-    if (options.patchSizeTieBreaker !== false && left.patchSize !== right.patchSize)
+    if (
+      options.patchSizeTieBreaker !== false &&
+      left.patchSize !== right.patchSize
+    )
       return left.patchSize - right.patchSize;
     return left.id.localeCompare(right.id);
   });
@@ -192,7 +195,8 @@ export function rankContestants(
 
   const tied =
     first.finalHealth === second.finalHealth &&
-    (options.patchSizeTieBreaker === false || first.patchSize === second.patchSize);
+    (options.patchSizeTieBreaker === false ||
+      first.patchSize === second.patchSize);
   if (tied) {
     return {
       winner: null,

@@ -37,6 +37,25 @@ The user receives:
 
 The project is intended to be both useful and entertaining. The adversarial testing provides engineering value, while the competition format creates a memorable and shareable GitHub project.
 
+### Battle modes
+
+The same evidence and health system supports three topologies:
+
+- **Duel:** two contestant slots independently implement the task and attack
+  each other. Slots may use different providers or isolated invocations of the
+  same provider.
+- **Catch-up:** an incumbent starts from a frozen pull-request patch while a
+  challenger independently implements from the PR base without seeing that
+  patch. The normal duel begins only after both patches pass initial validation.
+- **Siege:** an attacker submits test-only evidence against a frozen
+  pull-request patch and a defender owns its production lineage and repairs.
+  Only the defender's final patch is reviewable or deliverable.
+
+Pull-request authorship is provenance metadata, not proof of who wrote the
+code. Explicit bot, co-author, generator, title, or branch signals may select a
+provider only under published attribution rules; conflicts remain unknown and
+attribution never changes scoring.
+
 ---
 
 ## Core Workflow

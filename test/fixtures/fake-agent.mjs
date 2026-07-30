@@ -225,6 +225,7 @@ if (stage === "implement") {
 } else if (stage === "repair") {
   if (
     agent === "claude" &&
+    process.env.AGENT_ARENA_FAKE_SKIP_REPAIR !== "1" &&
     prompt.includes("Repeated whitespace is not collapsed")
   ) {
     const current = await readFile(sourcePath, "utf8");

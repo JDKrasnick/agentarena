@@ -93,6 +93,28 @@ Apply: agent-arena apply 2026-07-29T142200Z --agent codex
 The language can be playful, but the recommendation must always be explained in
 plain engineering terms.
 
+## Battle modes
+
+The MVP exposes three battle modes over the same three-round adjudication loop:
+
+- `duel` is the default. Two contestant slots independently implement and
+  attack. Duplicate providers are valid mirror matches; each slot still has a
+  separate worktree, prompt, process, transcript, timeout, and artifact path.
+- `catch_up` freezes a referenced PR at its base and head commits, gives the
+  incumbent the frozen patch, and lets the challenger implement from the base
+  using requirements that exclude the incumbent diff. The PR patch must be
+  non-empty, apply cleanly, and pass required validation before the challenger
+  spends an implementation budget.
+- `siege` freezes a referenced PR for a defender and gives an attacker a
+  test-only evidence role. Landed defects damage the defender, successful
+  repairs heal it, and misses recoil against the attacker. Only the defender
+  owns a production patch and can be reviewed, applied, or delivered.
+
+All persisted records use stable contestant IDs (`a` and `b`) independently of
+provider identity. PR authorship evidence is recorded as confirmed, likely, or
+unknown provenance and never changes health or attack validity. Catch-up
+requires an explicit incumbent provider when attribution is unknown.
+
 ## Final round structure and bug coverage
 
 The three rounds are a progressive investigation, not three copies of the same

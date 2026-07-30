@@ -6,6 +6,12 @@ export function renderConsoleSummary(state: RunState): string {
   return [
     "Agent Arena — final result",
     `Mode: ${state.config.mode}`,
+    ...(state.pullRequestFixture
+      ? [
+          `Frozen PR: ${state.pullRequestFixture.repository}#${String(state.pullRequestFixture.number)}`,
+          `Incumbent attribution: ${state.pullRequestFixture.attribution.confidence}${state.pullRequestFixture.attribution.provider ? ` (${state.pullRequestFixture.attribution.provider})` : ""}`,
+        ]
+      : []),
     `Rounds completed: ${String(
       Math.max(
         0,

@@ -104,6 +104,49 @@ mirror matches, for example `--agents codex,codex --models model-a,model-b`.
 
 Explicit CLI flags override YAML.
 
+## Battle modes
+
+The default duel gives both contestant slots a fresh implementation:
+
+```bash
+agent-arena fight "fix issue #241" \
+  --agents codex,codex \
+  --models model-a,model-b \
+  --test "npm test"
+```
+
+Catch-up freezes an existing PR as contestant A and lets contestant B recreate
+the solution from the PR base without seeing the incumbent diff:
+
+```bash
+agent-arena fight \
+  --pr 87 \
+  --incumbent-from-pr \
+  --challenger codex \
+  --incumbent claude \
+  --test "npm test"
+```
+
+`--incumbent` may be omitted only when the frozen PR has confirmed provider
+attribution. Agent Arena never guesses from writing style or silently launches
+a recommended opponent.
+
+Siege gives the attacker a test-only role and the defender the frozen PR
+production lineage:
+
+```bash
+agent-arena defend \
+  --pr 87 \
+  --attacker codex \
+  --defender claude \
+  --test "npm test"
+```
+
+Both roles start at 100 HP. Unresolved defects favor the attacker, missed
+ranked attacks recoil against it, and fully healed evidence can produce a draw.
+Only the defender's final patch can be reviewed, accepted, applied, or
+delivered.
+
 `--pr 87` snapshots PR requirements and maintainer clarifications but does not
 silently change the implementation base or share the reference diff. A
 PR-improvement fight must explicitly use `--base-from-pr 87` (or
