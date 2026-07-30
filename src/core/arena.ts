@@ -1807,8 +1807,13 @@ export class Arena {
       const contestant = getContestant(context.state, agent);
       const patchPath = contestant.finalPatchPath ?? contestant.currentPatchPath;
       if (!patchPath) continue;
-      const patch = await readFile(patchPath, "utf8");
-      let facts = collectPatchQualityFacts({ contestantId: agent, patch });
+      const patchBytes = await readFile(patchPath);
+      const patch = patchBytes.toString("utf8");
+      let facts = collectPatchQualityFacts({
+        contestantId: agent,
+        patch,
+        patchBytes,
+      });
       const manifestPaths = facts.changedPaths.filter(isManifestPath);
       if (manifestPaths.length > 0 && context.config.baseCommit) {
         const worktree = await context.worktrees.create(
