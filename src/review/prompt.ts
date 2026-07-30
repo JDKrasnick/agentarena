@@ -1,5 +1,4 @@
 import { stableId } from "../core/ids.js";
-import { contestantLabel } from "../core/labels.js";
 import {
   ReviewPromptSchema,
   type ReviewPrompt,
@@ -12,26 +11,23 @@ export function buildReviewPrompt(state: RunState): ReviewPrompt {
   const recommendation = state.patchRecommendation?.contestantId;
   const champion = state.arenaOutcome?.championId ?? state.ranking?.winner;
   const choices = Object.values(state.contestants).map((contestant) => {
-    const facts = state.patchQualityFacts[contestant.id];
+    const facts = state.patchQualityFacts[contestant.agent];
     if (!facts)
       throw new Error(
-        `Run has no saved patch digest for ${contestant.id}; hydrate the legacy run before review`,
+        `Run has no saved patch digest for ${contestant.agent}; hydrate the legacy run before review`,
       );
     const comparison = state.patchRecommendation?.comparison.find(
-      (candidate) => candidate.contestantId === contestant.id,
+      (candidate) => candidate.contestantId === contestant.agent,
     );
     const eligible =
       comparison?.eligible ??
       (contestant.status !== "eliminated" &&
         Boolean(contestant.finalPatchPath));
     const badges: Array<"recommended" | "arena_champion"> = [];
-    if (contestant.id === recommendation) badges.push("recommended");
-    if (contestant.id === champion) badges.push("arena_champion");
+    if (contestant.agent === recommendation) badges.push("recommended");
+    if (contestant.agent === champion) badges.push("arena_champion");
     return {
-      contestantId: contestant.id,
-      provider: contestant.provider,
-      role: contestant.role,
-      label: contestantLabel(state.config.contestants, contestant.id),
+      contestantId: contestant.agent,
       eligible,
       badges,
       summary: `${String(contestant.finalHealth)} HP; ${String(
@@ -62,7 +58,7 @@ export function buildReviewPrompt(state: RunState): ReviewPrompt {
     recommendation ?? "draw",
     JSON.stringify(
       Object.values(state.contestants).map((contestant) => ({
-        contestantId: contestant.id,
+        contestantId: contestant.agent,
         finalHealth: contestant.finalHealth,
         checks: contestant.checks.map((check) => ({
           id: check.id,

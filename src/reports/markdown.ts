@@ -1,8 +1,7 @@
 import type { Attack, ContestantResult, RunState } from "../core/types.js";
-import { contestantLabel } from "../core/labels.js";
 
 function attackOwner(attack: Attack): string {
-  return attack.origin.kind === "house" ? "House" : attack.origin.contestant;
+  return attack.origin.kind === "house" ? "House" : attack.origin.agent;
 }
 
 function attackEffect(attack: Attack): string {
@@ -19,7 +18,7 @@ function contestantSection(contestant: ContestantResult): string[] {
       )
     : ["- No health events"];
   return [
-    `## ${contestant.provider} ${contestant.id.toUpperCase()} (${contestant.role})`,
+    `## ${contestant.agent}`,
     "",
     `Status: ${contestant.status}`,
     "",
@@ -70,8 +69,8 @@ export function renderBattleReport(state: RunState): string {
       const finalRequired = [...contestant.checks]
         .reverse()
         .find((check) => check.kind === "required");
-      const outcome = state.arenaOutcome?.contestants[contestant.id];
-      return `| ${contestantLabel(state.config.contestants, contestant.id)} | ${finalRequired?.status ?? "not run"} | ${String(contestant.finalHealth)} | ${String(outcome?.grossDamageReceived ?? 0)} | ${String(outcome?.grossHealing ?? 0)} | ${String(outcome?.activeDefectDamage ?? 0)} | ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil)} | ${String(contestant.patchSize)} | ${contestant.status} |`;
+      const outcome = state.arenaOutcome?.contestants[contestant.agent];
+      return `| ${contestant.agent} | ${finalRequired?.status ?? "not run"} | ${String(contestant.finalHealth)} | ${String(outcome?.grossDamageReceived ?? 0)} | ${String(outcome?.grossHealing ?? 0)} | ${String(outcome?.activeDefectDamage ?? 0)} | ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil)} | ${String(contestant.patchSize)} | ${contestant.status} |`;
     }),
     "",
     `Deciding factors: ${state.arenaOutcome?.decidingFactors.join(", ") || "none"}`,
@@ -85,8 +84,8 @@ export function renderBattleReport(state: RunState): string {
     "| Contestant | Production files | Normalized production lines | Tests | Manifests | Observability |",
     "| --- | ---: | ---: | ---: | ---: | ---: |",
     ...contestants.map((contestant) => {
-      const facts = state.patchQualityFacts[contestant.id];
-      return `| ${contestantLabel(state.config.contestants, contestant.id)} | ${String(facts?.productionFilesChanged ?? 0)} | ${String(facts?.normalizedProductionLines ?? 0)} | ${String(facts?.testFilesChanged ?? 0)} | ${String(facts?.manifestDeltas.length ?? 0)} | ${String(facts?.observabilityChanges.length ?? 0)} |`;
+      const facts = state.patchQualityFacts[contestant.agent];
+      return `| ${contestant.agent} | ${String(facts?.productionFilesChanged ?? 0)} | ${String(facts?.normalizedProductionLines ?? 0)} | ${String(facts?.testFilesChanged ?? 0)} | ${String(facts?.manifestDeltas.length ?? 0)} | ${String(facts?.observabilityChanges.length ?? 0)} |`;
     }),
     "",
     "Human review: pending",
@@ -123,11 +122,9 @@ export function renderBattleReport(state: RunState): string {
       contestant.replacementCredits.length
         ? contestant.replacementCredits.map(
             (credit) =>
-              `- ${contestantLabel(state.config.contestants, contestant.id)}: credit ${credit.id} from ${credit.sourceAttackId} — ${credit.status}${credit.replacementAttackId ? ` by ${credit.replacementAttackId}` : ""}`,
+              `- ${contestant.agent}: credit ${credit.id} from ${credit.sourceAttackId} — ${credit.status}${credit.replacementAttackId ? ` by ${credit.replacementAttackId}` : ""}`,
           )
-        : [
-            `- ${contestantLabel(state.config.contestants, contestant.id)}: no replacement credits`,
-          ],
+        : [`- ${contestant.agent}: no replacement credits`],
     ),
     ...state.attacks
       .filter(

@@ -1,13 +1,10 @@
 import path from "node:path";
-import {
-  anonymizeAttackForVerifier,
-  type AttackVerifier,
-} from "../agents/adapter.js";
+import type { AttackVerifier } from "../agents/adapter.js";
 import { sha256, stableId } from "../core/ids.js";
 import type {
+  AgentId,
   Attack,
   CheckResult,
-  ContestantId,
   FightConfig,
   TaskContract,
 } from "../core/types.js";
@@ -24,7 +21,7 @@ interface ValidateSiblingOptions {
   attack: Attack;
   candidate: SiblingCaseCandidate;
   authorPatch?: string;
-  targetPatches: Partial<Record<ContestantId, string>>;
+  targetPatches: Partial<Record<AgentId, string>>;
   config: FightConfig;
   contract: TaskContract;
   worktrees: WorktreeManager;
@@ -161,7 +158,7 @@ export async function validateSiblingCase(
       checks: [],
     };
     const verdict = await options.verifier.assess({
-      attack: anonymizeAttackForVerifier(siblingAttack),
+      attack: siblingAttack,
       taskContract: options.contract,
       authorPassed: true,
       targetFailed: true,

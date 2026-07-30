@@ -1,5 +1,5 @@
 import { inspectPatch, reviewRun } from "../review/service.js";
-import type { ContestantId } from "../core/types.js";
+import type { AgentId } from "../core/types.js";
 
 export async function runReviewCommand(options: {
   runId: string;
@@ -23,7 +23,7 @@ export async function runReviewCommand(options: {
 
 export async function runInspectCommand(options: {
   runId: string;
-  agent: ContestantId;
+  agent: AgentId;
   view: "summary" | "diff" | "tests" | "quality";
   json?: boolean;
 }): Promise<string> {

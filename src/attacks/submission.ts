@@ -4,7 +4,6 @@ import type {
   AgentId,
   Attack,
   AttackSubmission,
-  ContestantId,
   HouseSubmission,
   RoundId,
 } from "../core/types.js";
@@ -24,9 +23,8 @@ export function validateAttackOrdering(submission: AttackSubmission): void {
 export async function materializeAttack(
   submission: AttackSubmission["attacks"][number],
   options: {
-    author: ContestantId;
-    authorProvider: AgentId;
-    target: ContestantId;
+    author: AgentId;
+    target: AgentId;
     round: RoundId;
     patchPath: string;
   },
@@ -41,11 +39,7 @@ export async function materializeAttack(
       patchHash,
     ),
     round: options.round,
-    origin: {
-      kind: "contestant",
-      contestant: options.author,
-      provider: options.authorProvider,
-    },
+    origin: { kind: "contestant", agent: options.author },
     rank: submission.rank,
     targets: [options.target],
     claim: submission.claim,
@@ -70,7 +64,7 @@ export async function materializeAttack(
 export async function materializeHouseAttack(
   submission: HouseSubmission["attacks"][number],
   options: {
-    targets: ContestantId[];
+    targets: AgentId[];
     round: 2 | 3;
     patchPath: string;
     methodPackId: string;

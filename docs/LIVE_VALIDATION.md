@@ -1,32 +1,19 @@
 # Live validation checklist
 
-Status: complete as of 2026-07-30.
-
-The GitHub delivery boundary was validated against the explicitly authorized
-`JDKrasnick/agentarena` repository. Draft PR
-[#4](https://github.com/JDKrasnick/agentarena/pull/4) covered idempotent
-adoption and moved-head refusal before it was closed. PR
-[#5](https://github.com/JDKrasnick/agentarena/pull/5) ran the real GitHub
-Actions suite and was merged into a disposable base branch; the base and head
-branches were then deleted, and the validation marker was confirmed absent
-from `main`.
+Status: release blocker — not performed in this development workspace because
+no explicitly authorized disposable GitHub target or paid provider session was
+provided.
 
 Before enabling GitHub delivery by default:
 
-- [x] Read one public issue and one public pull request.
-- [x] Run one cost-bounded fight with two installed, authenticated providers in
+- [ ] Read one public issue and one public pull request.
+- [ ] Run one cost-bounded fight with two installed, authenticated providers in
       a disposable repository.
-- [x] Create one draft pull request in an explicitly authorized repository.
-- [x] Adopt an unchanged PR head without force push.
-- [x] Exercise merge-after-checks in the disposable repository.
-- [x] Confirm a moved PR head stops delivery.
-- [x] Save the redacted run bundle outside version control.
-
-The provider fight used Codex and Claude with one-minute per-invocation limits,
-completed all three attack–repair rounds and final validation, and wrote run
-`2026-07-30T171501827Z-fb131555`. Its scrubbed bundle is retained under
-`.context/live-e2e-evidence/`, which is excluded from version control; a
-credential- and local-path-pattern scan passed.
+- [ ] Create one pull request in a disposable sandbox repository.
+- [ ] Update an unchanged sandbox PR head without force push.
+- [ ] Exercise merge-after-checks in the disposable repository.
+- [ ] Confirm a moved PR head stops delivery.
+- [ ] Save the redacted run bundle outside version control.
 
 Every live write requires an explicit user decision naming the disposable
 target. `npm run test:live` skips unless `AGENT_ARENA_LIVE=1`; even with that

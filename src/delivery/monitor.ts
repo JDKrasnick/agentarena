@@ -56,7 +56,6 @@ export async function monitorPullRequest(
     const state = await options.adapter.getPullRequest(
       options.repository,
       options.pullRequestNumber,
-      options.signal,
     );
     if (state.headSha !== options.expectedHeadSha)
       throw new Error("Pull request head changed while monitoring");
@@ -93,7 +92,6 @@ export async function monitorPullRequest(
         options.repository,
         options.pullRequestNumber,
         options.expectedHeadSha,
-        options.signal,
       );
       mergeRequested = true;
     } else if (!options.mergeAuthorized && state.checks === "success") {

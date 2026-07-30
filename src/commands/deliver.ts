@@ -9,7 +9,7 @@ import type { DeliveryAction } from "../delivery/types.js";
 
 export async function runDeliverCommand(options: {
   runId: string;
-  mode: "plan" | "status" | "authorize" | "execute";
+  mode: "plan" | "status" | "execute";
   action?: DeliveryAction;
   confirmSha256?: string;
   mergeAfterChecks?: boolean;
@@ -23,34 +23,28 @@ export async function runDeliverCommand(options: {
   }
   const plan = await planDelivery({ runId: options.runId });
   if (options.mode === "plan") return JSON.stringify(plan, null, 2);
+  if (!options.action) throw new Error("--action is required for delivery");
+  if (options.confirmSha256 !== plan.patchSha256)
+    throw new Error(
+      "Delivery requires --confirm-sha256 with the accepted patch digest",
+    );
   const key = options.idempotencyKey ?? randomUUID();
-  if (options.mode === "authorize") {
-    if (!options.action)
-      throw new Error("--action is required for authorization");
-    if (options.confirmSha256 !== plan.patchSha256)
-      throw new Error(
-        "Delivery authorization requires --confirm-sha256 with the accepted patch digest",
-      );
-    const decision = await recordDeliveryDecision({
-      runId: options.runId,
-      expectedPlanHash: plan.planHash,
-      action: options.action,
-      mergeAfterChecks: options.mergeAfterChecks ?? false,
-      closeIssue: options.closeIssue ?? false,
-      approval: {
-        channel: "cli",
-        promptId: plan.planHash,
-        provenance: {
-          kind: "direct_tty",
-          confirmedPatchSha256: plan.patchSha256,
-        },
+  await recordDeliveryDecision({
+    runId: options.runId,
+    expectedPlanHash: plan.planHash,
+    action: options.action,
+    mergeAfterChecks: options.mergeAfterChecks ?? false,
+    closeIssue: options.closeIssue ?? false,
+    approval: {
+      channel: "cli",
+      promptId: plan.planHash,
+      provenance: {
+        kind: "direct_tty",
+        confirmedPatchSha256: plan.patchSha256,
       },
-      idempotencyKey: `${key}:decision`,
-    });
-    return options.json
-      ? JSON.stringify(decision, null, 2)
-      : `Delivery authorized: ${decision.action}. Run deliver --execute to perform it.`;
-  }
+    },
+    idempotencyKey: `${key}:decision`,
+  });
   const result = await executeDelivery({
     runId: options.runId,
     expectedPlanHash: plan.planHash,

@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { CheckResult, ContestantId, FightConfig } from "../core/types.js";
+import type { AgentId, CheckResult, FightConfig } from "../core/types.js";
 import type { WorktreeManager } from "../repo/git.js";
 import { runShellCommand } from "./process-runner.js";
 
@@ -11,7 +11,7 @@ export interface IntegrationProvisionResult {
 
 export async function provisionIntegrationProfile(options: {
   config: FightConfig;
-  patches: Partial<Record<ContestantId, string>>;
+  patches: Partial<Record<AgentId, string>>;
   worktrees: WorktreeManager;
   logRoot: string;
   signal: AbortSignal;
@@ -26,7 +26,7 @@ export async function provisionIntegrationProfile(options: {
   const checks: CheckResult[] = [];
 
   for (const [agent, patch] of Object.entries(options.patches) as Array<
-    [ContestantId, string]
+    [AgentId, string]
   >) {
     const worktree = await options.worktrees.create(`integration-${agent}`);
     let setupSucceeded = false;

@@ -18,12 +18,12 @@ describe("arena outcome", () => {
   it("explains a 100–95 recoil-only result", () => {
     const outcome = deriveArenaOutcome(makeRunState());
     expect(outcome).toMatchObject({
-      championId: "a",
+      championId: "codex",
       marginHp: 5,
       marginClass: "razor_thin",
       decidingFactors: ["recoil"],
     });
-    expect(outcome.contestants.b).toMatchObject({
+    expect(outcome.contestants.claude).toMatchObject({
       grossDamageReceived: 0,
       grossHealing: 0,
       activeDefectDamage: 0,

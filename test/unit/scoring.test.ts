@@ -6,11 +6,12 @@ import {
 } from "../../src/core/scoring.js";
 import type { Attack, ContestantResult } from "../../src/core/types.js";
 
-function contestant(id: "a" | "b", patchSize = 20): ContestantResult {
+function contestant(
+  agent: "codex" | "claude",
+  patchSize = 20,
+): ContestantResult {
   return {
-    id,
-    provider: id === "a" ? "codex" : "claude",
-    role: "solver",
+    agent,
     status: "pending",
     initialHealth: 100,
     finalHealth: 100,
@@ -32,9 +33,9 @@ function attacks(): Attack[] {
     {
       id: "land",
       round: 1,
-      origin: { kind: "contestant", contestant: "a", provider: "codex" },
+      origin: { kind: "contestant", agent: "codex" },
       rank: 1,
-      targets: ["b"],
+      targets: ["claude"],
       claim: "core defect",
       impact: "wrong result",
       oracle: {
@@ -56,9 +57,9 @@ function attacks(): Attack[] {
     {
       id: "miss",
       round: 1,
-      origin: { kind: "contestant", contestant: "b", provider: "claude" },
+      origin: { kind: "contestant", agent: "claude" },
       rank: 2,
-      targets: ["a"],
+      targets: ["codex"],
       claim: "guess",
       impact: "none",
       oracle: {
@@ -80,8 +81,8 @@ function attacks(): Attack[] {
 describe("ledger scoring", () => {
   it("resolves damage and recoil independently of attack processing order", () => {
     const contestants = {
-      a: contestant("a"),
-      b: contestant("b"),
+      codex: contestant("codex"),
+      claude: contestant("claude"),
     };
     const forward = resolveRound(contestants, attacks(), 1).contestants;
     const reverse = resolveRound(
@@ -90,16 +91,16 @@ describe("ledger scoring", () => {
       1,
     ).contestants;
     expect(forward).toEqual(reverse);
-    expect(forward.b?.finalHealth).toBe(60);
-    expect(forward.b?.healthLedger.permanentRecoil).toBe(10);
+    expect(forward.claude?.finalHealth).toBe(60);
+    expect(forward.claude?.healthLedger.permanentRecoil).toBe(10);
   });
 
   it("heals defect damage without restoring permanent recoil", () => {
     const damaged = resolveRound(
-      { a: contestant("a"), b: contestant("b") },
+      { codex: contestant("codex"), claude: contestant("claude") },
       attacks(),
       1,
-    ).contestants.b;
+    ).contestants.claude;
     expect(damaged).toBeDefined();
     const healed = healDefect(damaged!, "root", 1);
     expect(healed.finalHealth).toBe(90);
@@ -107,9 +108,9 @@ describe("ledger scoring", () => {
   });
 
   it("ranks by health, then patch size, then draws", () => {
-    const codex = contestant("a", 10);
-    const claude = contestant("b", 20);
-    expect(rankContestants([codex, claude]).winner).toBe("a");
+    const codex = contestant("codex", 10);
+    const claude = contestant("claude", 20);
+    expect(rankContestants([codex, claude]).winner).toBe("codex");
     claude.patchSize = 10;
     expect(rankContestants([codex, claude]).draw).toBe(true);
   });

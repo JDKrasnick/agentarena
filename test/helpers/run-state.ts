@@ -2,7 +2,6 @@ import {
   FightConfigSchema,
   RunStateSchema,
   type AgentId,
-  type ContestantId,
   type ContestantResult,
   type RunState,
 } from "../../src/core/types.js";
@@ -12,16 +11,13 @@ import { selectRecommendedPatch } from "../../src/recommendation/select-patch.js
 import { buildReviewPrompt } from "../../src/review/prompt.js";
 
 function contestant(
-  id: ContestantId,
-  provider: AgentId,
+  agent: AgentId,
   health: number,
   recoil = 0,
   activeDamage: 0 | 5 | 15 | 30 | 50 = 0,
 ): ContestantResult {
   return {
-    id,
-    provider,
-    role: "solver",
+    agent,
     status: "survived",
     initialHealth: 100,
     finalHealth: health,
@@ -31,8 +27,8 @@ function contestant(
       activeDefects: activeDamage
         ? [
             {
-              rootDefectId: `${id}-defect`,
-              attackId: `${id}-attack`,
+              rootDefectId: `${agent}-defect`,
+              attackId: `${agent}-attack`,
               damage: activeDamage,
             },
           ]
@@ -43,7 +39,7 @@ function contestant(
       ...(activeDamage
         ? [
             {
-              attackId: `${id}-attack`,
+              attackId: `${agent}-attack`,
               round: 1 as const,
               type: "target_damage" as const,
               amount: -activeDamage,
@@ -54,7 +50,7 @@ function contestant(
       ...(recoil
         ? [
             {
-              attackId: `${id}-miss`,
+              attackId: `${agent}-miss`,
               round: 1 as const,
               type: "recoil" as const,
               amount: -recoil,
@@ -66,7 +62,7 @@ function contestant(
     patchSize: 1,
     rounds: [],
     checks: [{ id: "final", kind: "required", status: "passed" }],
-    finalPatchPath: `/tmp/${id}.diff`,
+    finalPatchPath: `/tmp/${agent}.diff`,
   };
 }
 
@@ -83,14 +79,12 @@ export function makeRunState(
   } = {},
 ): RunState {
   const codex = contestant(
-    "a",
     "codex",
     options.codexHealth ?? 100,
     options.codexRecoil ?? 0,
     options.codexDamage ?? 0,
   );
   const claude = contestant(
-    "b",
     "claude",
     options.claudeHealth ?? 95,
     options.claudeRecoil ?? 5,
@@ -99,7 +93,7 @@ export function makeRunState(
   const repositoryRoot = options.repositoryRoot ?? "/tmp/repository";
   const runDirectory = options.runDirectory ?? "/tmp/run";
   const state = RunStateSchema.parse({
-    schemaVersion: 3,
+    schemaVersion: 2,
     runId: "run-12345678",
     harnessVersion: "0.1.0",
     status: "complete",
@@ -129,26 +123,26 @@ export function makeRunState(
         repairMs: 1,
       },
     }),
-    contestants: { a: codex, b: claude },
+    contestants: { codex, claude },
     attacks: [],
     promptManifests: [],
     harnessOverlays: [],
     ranking: {
-      winner: "a",
+      winner: "codex",
       draw: false,
-      order: ["a", "b"],
+      order: ["codex", "claude"],
       reason: "higher health",
     },
     artifacts: { runDirectory },
     warnings: [],
     patchQualityFacts: {
-      a: collectPatchQualityFacts({
-        contestantId: "a",
+      codex: collectPatchQualityFacts({
+        contestantId: "codex",
         patch:
           "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -0,0 +1 @@\n+export const a = 1;\n",
       }),
-      b: collectPatchQualityFacts({
-        contestantId: "b",
+      claude: collectPatchQualityFacts({
+        contestantId: "claude",
         patch:
           "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -0,0 +1 @@\n+export const a = 2;\n",
       }),
@@ -157,14 +151,14 @@ export function makeRunState(
   state.arenaOutcome = deriveArenaOutcome(state);
   state.patchRecommendation = selectRecommendedPatch({
     contestants: state.contestants,
-    championId: "a",
+    championId: "codex",
     qualityVerdict: {
       version: 1,
       verdict: "patch_b",
       criteria: [],
       rationale: ["Patch B is more focused."],
     },
-    anonymizationMap: { patch_a: "a", patch_b: "b" },
+    anonymizationMap: { patch_a: "codex", patch_b: "claude" },
   });
   state.reviewPrompt = buildReviewPrompt(state);
   return state;

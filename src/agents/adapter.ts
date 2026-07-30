@@ -12,7 +12,6 @@ import {
   type AgentId,
   type AgentInvocation,
   type Attack,
-  type ContestantId,
   type AttackSubmission,
   type CaseSubmission,
   type HouseSubmission,
@@ -32,7 +31,6 @@ export interface Availability {
 
 interface InvocationInput {
   worktree: string;
-  contestantId?: ContestantId;
   prompt: string;
   promptPath: string;
   transcriptPrefix: string;
@@ -44,7 +42,7 @@ interface InvocationInput {
 export type ImplementInput = InvocationInput;
 
 export interface AttackInput extends InvocationInput {
-  opponent: ContestantId;
+  opponent: AgentId;
 }
 
 export interface RepairInput extends InvocationInput {
@@ -68,31 +66,8 @@ export interface AttackVerdict {
   rationale: string;
 }
 
-export type AnonymizedAttack = Pick<
-  Attack,
-  | "claim"
-  | "impact"
-  | "oracle"
-  | "assertionFingerprint"
-  | "patchPath"
-  | "proposedSeverity"
->;
-
-export function anonymizeAttackForVerifier(attack: Attack): AnonymizedAttack {
-  return {
-    claim: attack.claim,
-    impact: attack.impact,
-    oracle: attack.oracle,
-    assertionFingerprint: attack.assertionFingerprint,
-    patchPath: attack.patchPath,
-    ...(attack.proposedSeverity
-      ? { proposedSeverity: attack.proposedSeverity }
-      : {}),
-  };
-}
-
 export interface AnonymizedAttackInput {
-  attack: AnonymizedAttack;
+  attack: Attack;
   taskContract: TaskContract;
   authorPassed: boolean;
   targetFailed: boolean;
@@ -292,7 +267,6 @@ export class CommandAgentAdapter implements AgentAdapter {
       env: {
         ...this.options.environment,
         AGENT_ARENA_AGENT: this.id,
-        AGENT_ARENA_CONTESTANT: input.contestantId ?? "",
         AGENT_ARENA_STAGE: stage,
         AGENT_ARENA_ROUND: input.round === undefined ? "" : String(input.round),
         AGENT_ARENA_SUBMISSION: path.join(
@@ -570,7 +544,8 @@ export class RuleBasedVerifier implements AttackVerifier {
         (source) => source.id === input.attack.oracle.sourceId,
       ),
       oracleRationale: `Citation ${input.attack.oracle.sourceId} exists in the immutable task contract`,
-      rootDefectId: input.attack.assertionFingerprint,
+      rootDefectId:
+        input.attack.rootDefectId ?? input.attack.assertionFingerprint,
       severity,
       rationale: `Mechanically reproduced against the target and not the author; rated ${severity} using the submitted impact and fixed rubric.`,
     });

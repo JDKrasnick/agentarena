@@ -71,31 +71,4 @@ describe("merge monitor", () => {
       }),
     ).rejects.toThrow("checks failed");
   });
-
-  it("propagates cancellation to an in-flight pull request read", async () => {
-    const controller = new AbortController();
-    let receivedSignal: AbortSignal | undefined;
-    const adapter: GitHubDeliveryAdapter = {
-      prepare: () => Promise.reject(new Error("unused")),
-      getPullRequest: (_repository, _number, signal) => {
-        receivedSignal = signal;
-        return Promise.reject(new Error("cancelled"));
-      },
-      requestMerge: () => Promise.resolve(),
-      getIssueState: () => Promise.resolve("open"),
-    };
-    await expect(
-      monitorPullRequest({
-        adapter,
-        repository: "acme/repo",
-        pullRequestNumber: 1,
-        expectedHeadSha: "head",
-        mergeAuthorized: true,
-        operationId: "operation",
-        runId: "run",
-        signal: controller.signal,
-      }),
-    ).rejects.toThrow("cancelled");
-    expect(receivedSignal).toBe(controller.signal);
-  });
 });

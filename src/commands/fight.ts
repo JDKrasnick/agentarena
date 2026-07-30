@@ -47,10 +47,7 @@ async function approvePermissionPlan(
 export async function runFight(overrides: CliConfigOverrides): Promise<string> {
   const config = await approvePermissionPlan(await loadFightConfig(overrides));
   const adapters = Object.fromEntries(
-    config.contestants.map((contestant) => [
-      contestant.provider,
-      createProviderAdapter(contestant.provider),
-    ]),
+    config.agents.map((agent) => [agent, createProviderAdapter(agent)]),
   );
   const arena = new Arena({
     adapters,

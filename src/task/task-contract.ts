@@ -36,20 +36,6 @@ export interface ResolvedPullRequest extends ResolvedIssue {
   headBranch: string;
   headRepository: string;
   headCommit: string;
-  baseCommit?: string;
-  author?: string;
-  commits?: Array<{
-    oid: string;
-    messageHeadline: string;
-    messageBody?: string;
-    authors: string[];
-  }>;
-  linkedIssues?: Array<{
-    repository?: string;
-    number: number;
-    url?: string;
-    title?: string;
-  }>;
 }
 
 export type PullRequestResolver = TaskSourceResolver<ResolvedPullRequest>;
@@ -147,7 +133,7 @@ export class GitHubPullRequestResolver implements PullRequestResolver {
         "view",
         reference,
         "--json",
-        "title,body,comments,url,number,author,baseRefName,baseRefOid,headRefName,headRepository,headRefOid,commits,closingIssuesReferences",
+        "title,body,comments,url,number,baseRefName,headRefName,headRepository,headRefOid",
       ],
       { cwd: repositoryRoot, reject: false },
     );
@@ -164,21 +150,7 @@ export class GitHubPullRequestResolver implements PullRequestResolver {
       baseRefName: string;
       headRefName: string;
       headRefOid: string;
-      baseRefOid: string;
       headRepository: { nameWithOwner: string };
-      author?: { login?: string };
-      commits?: Array<{
-        oid: string;
-        messageHeadline: string;
-        messageBody?: string;
-        authors?: Array<{ login?: string; name?: string }>;
-      }>;
-      closingIssuesReferences?: Array<{
-        repository?: { nameWithOwner?: string };
-        number: number;
-        url?: string;
-        title?: string;
-      }>;
       comments: Array<{ author: { login: string }; body: string }>;
     };
     const identity = githubIdentity(value.url);
@@ -201,26 +173,6 @@ export class GitHubPullRequestResolver implements PullRequestResolver {
       headBranch: value.headRefName,
       headRepository: value.headRepository.nameWithOwner,
       headCommit: value.headRefOid,
-      baseCommit: value.baseRefOid,
-      ...(value.author?.login ? { author: value.author.login } : {}),
-      commits: (value.commits ?? []).map((commit) => ({
-        oid: commit.oid,
-        messageHeadline: commit.messageHeadline,
-        ...(commit.messageBody ? { messageBody: commit.messageBody } : {}),
-        authors: (commit.authors ?? []).flatMap((author) =>
-          (author.login ?? author.name)
-            ? [author.login ?? author.name ?? ""]
-            : [],
-        ),
-      })),
-      linkedIssues: (value.closingIssuesReferences ?? []).map((issue) => ({
-        ...(issue.repository?.nameWithOwner
-          ? { repository: issue.repository.nameWithOwner }
-          : {}),
-        number: issue.number,
-        ...(issue.url ? { url: issue.url } : {}),
-        ...(issue.title ? { title: issue.title } : {}),
-      })),
     };
   }
 }
@@ -360,14 +312,6 @@ export async function buildTaskContract(
       `# ${pullRequest.title}`,
       "",
       pullRequest.body,
-      ...(pullRequest.author ? ["", `Author: ${pullRequest.author}`] : []),
-      ...(pullRequest.commits ?? []).flatMap((commit) => [
-        "",
-        `## Commit ${commit.oid}`,
-        "",
-        commit.messageHeadline,
-        ...(commit.messageBody ? ["", commit.messageBody] : []),
-      ]),
       ...pullRequest.comments.flatMap((comment) => [
         "",
         `## Comment by ${comment.author}`,

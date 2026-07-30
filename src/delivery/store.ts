@@ -1,5 +1,4 @@
 import type { ArtifactStore } from "../artifacts/store.js";
-import { resolveLedgerHead } from "../review/store.js";
 import {
   DeliveryDecisionSchema,
   DeliveryResultSchema,
@@ -14,7 +13,9 @@ export async function readCurrentDeliveryDecision(
     "delivery/decisions",
     DeliveryDecisionSchema,
   );
-  return resolveLedgerHead(values, "Delivery");
+  return values
+    .sort((left, right) => left.decidedAt.localeCompare(right.decidedAt))
+    .at(-1);
 }
 
 export async function readDeliveryResult(

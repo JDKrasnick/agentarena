@@ -38,10 +38,11 @@ export async function planDelivery(
   options: RunLocation,
 ): Promise<DeliveryPlan> {
   const { store, state } = await openRun(options);
-  const prompt = await reviewRun(options);
+  await reviewRun(options);
   const review = await readCurrentReview(store);
   if (!review || review.status !== "accepted")
     throw new Error("Delivery planning requires an accepted patch");
+  const prompt = await reviewRun(options);
   if (review.promptId !== prompt.promptId)
     throw new Error("Accepted patch is stale");
   const plan = deriveDeliveryPlan(state, review);
@@ -72,10 +73,7 @@ export async function recordDeliveryDecision(
     !state.config.mergeEnabled
   )
     throw new Error("Merge delivery is disabled by configuration");
-  if (
-    !state.config.deliveryEnabled &&
-    !["apply_local", "reject", "decide_later"].includes(options.action)
-  )
+  if (!state.config.deliveryEnabled && options.action !== "apply_local")
     throw new Error("External delivery is disabled by configuration");
   if (options.approval.promptId !== plan.planHash)
     throw new Error("Delivery approval is not bound to the current plan");
@@ -122,7 +120,7 @@ export async function recordDeliveryDecision(
     ...(options.approval.userMessageRef
       ? { userMessageRef: options.approval.userMessageRef }
       : {}),
-    attestationHash: hashValue(`${verified.attestationHash}\0${payloadHash}`),
+    attestationHash: verified.attestationHash,
     idempotencyKeyHash: hashValue(options.idempotencyKey),
     decidedAt,
   });
@@ -255,6 +253,7 @@ export async function executeDelivery(
       const eventWrites: Array<Promise<string>> = [];
       let eventSequence = 0;
       const onProgress = (event: DeliveryProgressEvent): void => {
+        options.onProgress?.(event);
         eventSequence += 1;
         const eventId = `${event.operationId}-${String(eventSequence).padStart(4, "0")}`;
         eventWrites.push(
@@ -265,63 +264,36 @@ export async function executeDelivery(
             ...event,
           }),
         );
-        options.onProgress?.(event);
       };
       let pullRequest = await adapter.getPullRequest(
         target.repository,
         prepared.pullRequestNumber,
-        options.signal,
       );
-      if (pullRequest.headSha !== prepared.commitSha)
-        throw new Error("Pull request head changed after delivery preparation");
-      if (pullRequest.state === "closed")
-        throw new Error("Pull request closed without merging");
       const shouldMonitor =
         decision.mergeAfterChecks || decision.action === "merge_pull_request";
-      let monitorFailure: unknown;
       if (shouldMonitor) {
-        try {
-          pullRequest = await monitorPullRequest({
-            adapter,
-            repository: target.repository,
-            pullRequestNumber: prepared.pullRequestNumber,
-            expectedHeadSha: prepared.commitSha,
-            mergeAuthorized: true,
-            operationId,
-            runId: state.runId,
-            ...(options.signal ? { signal: options.signal } : {}),
-            ...(options.monitorTimeoutMs
-              ? { timeoutMs: options.monitorTimeoutMs }
-              : {}),
-            ...(options.now ? { now: options.now } : {}),
-            onProgress,
-          });
-        } catch (error) {
-          monitorFailure = error;
-        }
+        pullRequest = await monitorPullRequest({
+          adapter,
+          repository: target.repository,
+          pullRequestNumber: prepared.pullRequestNumber,
+          expectedHeadSha: prepared.commitSha,
+          mergeAuthorized: true,
+          operationId,
+          runId: state.runId,
+          ...(options.signal ? { signal: options.signal } : {}),
+          ...(options.monitorTimeoutMs
+            ? { timeoutMs: options.monitorTimeoutMs }
+            : {}),
+          ...(options.now ? { now: options.now } : {}),
+          onProgress,
+        });
       }
-      const eventResults = await Promise.allSettled(eventWrites);
-      if (monitorFailure !== undefined) {
-        if (monitorFailure instanceof Error) throw monitorFailure;
-        throw new Error("Delivery monitoring failed with a non-Error value");
-      }
-      const failedEventWrite = eventResults.find(
-        (event): event is PromiseRejectedResult => event.status === "rejected",
-      );
-      if (failedEventWrite) {
-        const reason: unknown = failedEventWrite.reason;
-        if (reason instanceof Error) throw reason;
-        throw new Error("Delivery event persistence failed");
-      }
+      await Promise.all(eventWrites);
       const linkedIssueState =
         pullRequest.state === "merged" &&
         target.kind === "github_issue" &&
         target.number
-          ? await adapter.getIssueState(
-              target.repository,
-              target.number,
-              options.signal,
-            )
+          ? await adapter.getIssueState(target.repository, target.number)
           : undefined;
       result = DeliveryResultSchema.parse({
         version: 1,

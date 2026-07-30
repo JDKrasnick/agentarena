@@ -3,7 +3,7 @@ import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { ArtifactStore } from "../artifacts/store.js";
 import { stableId } from "../core/ids.js";
-import type { ContestantId, ReviewPrompt, RunState } from "../core/types.js";
+import type { AgentId, ReviewPrompt, RunState } from "../core/types.js";
 import { collectPatchQualityFacts } from "../quality/collect-facts.js";
 import {
   ApprovalContextSchema,
@@ -49,30 +49,21 @@ async function ensureReviewFacts(
   store: ArtifactStore,
   state: RunState,
 ): Promise<void> {
-  let changed = false;
   for (const contestant of Object.values(state.contestants)) {
+    if (state.patchQualityFacts[contestant.agent]) continue;
     if (!contestant.finalPatchPath) continue;
     const patchPath = await trustedPatchPath(
       state,
-      contestant.id,
+      contestant.agent,
       store.runDirectory,
     );
-    const patchBytes = await readFile(patchPath);
-    const digest = createHash("sha256").update(patchBytes).digest("hex");
-    if (state.patchQualityFacts[contestant.id]?.patchSha256 === digest)
-      continue;
-    state.patchQualityFacts[contestant.id] = collectPatchQualityFacts({
-      contestantId: contestant.id,
-      patch: patchBytes.toString("utf8"),
-      patchBytes,
+    const patch = await readFile(patchPath, "utf8");
+    state.patchQualityFacts[contestant.agent] = collectPatchQualityFacts({
+      contestantId: contestant.agent,
+      patch,
     });
-    changed = true;
   }
-  if (!state.reviewPrompt || changed) {
-    state.reviewPrompt = buildReviewPrompt(state);
-    changed = true;
-  }
-  if (changed) await store.writeState(state);
+  if (!state.reviewPrompt) state.reviewPrompt = buildReviewPrompt(state);
 }
 
 export async function reviewRun(options: RunLocation): Promise<ReviewPrompt> {
@@ -85,7 +76,7 @@ export async function reviewRun(options: RunLocation): Promise<ReviewPrompt> {
 
 export async function inspectPatch(
   options: RunLocation & {
-    contestantId: ContestantId;
+    contestantId: AgentId;
     view: "summary" | "diff" | "tests" | "quality";
   },
 ): Promise<unknown> {
@@ -115,7 +106,7 @@ export async function recordReviewDecision(
   options: RunLocation & {
     promptId: string;
     decision: "accept" | "reject";
-    selection?: "recommended" | "champion" | ContestantId;
+    selection?: "recommended" | "champion" | AgentId;
     expectedPatchSha256?: string;
     expectedBaseCommit: string;
     approval: ApprovalContext;
@@ -209,7 +200,7 @@ export async function recordReviewDecision(
     ...(approval.userMessageRef
       ? { userMessageRef: approval.userMessageRef }
       : {}),
-    attestationHash: hashValue(`${verified.attestationHash}\0${payloadHash}`),
+    attestationHash: verified.attestationHash,
     idempotencyKeyHash: hashValue(options.idempotencyKey),
     decidedAt,
   });
@@ -242,7 +233,7 @@ export async function currentReviewDecision(
 
 export async function trustedPatchPath(
   state: RunState,
-  contestantId: ContestantId,
+  contestantId: AgentId,
   expectedRunDirectory = state.artifacts.runDirectory ?? "",
 ): Promise<string> {
   const patchPath = state.contestants[contestantId]?.finalPatchPath;
