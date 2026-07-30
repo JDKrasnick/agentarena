@@ -12,8 +12,9 @@ import {
   RuleBasedVerifier,
 } from "../../src/agents/adapter.js";
 import { Arena } from "../../src/core/arena.js";
-import { applyResult } from "../../src/commands/apply.js";
+import { applyAcceptedPatch } from "../../src/commands/apply.js";
 import { FightConfigSchema } from "../../src/core/types.js";
+import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
 import type { IssueResolver } from "../../src/task/task-contract.js";
 import { createSlugRepository } from "../helpers/repository.js";
 
@@ -22,6 +23,144 @@ const fixtureAgent = fileURLToPath(
 );
 
 describe("fake-adapter fight on a mocked real issue", () => {
+  it("isolates two slots that use the same provider", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      task: "Normalize slug whitespace.",
+      acceptanceCriteria: ["Collapse whitespace."],
+      specPaths: [],
+      issueReferences: [],
+      agents: ["codex", "codex"],
+      attackVerifier: "codex",
+      harnessMaintainer: "codex",
+      rounds: 3,
+      maxAttacksPerRound: 3,
+      infrastructureRecoveryRound: true,
+      maxHeldOutCasesPerDefect: 0,
+      testCommand: "node --test",
+      repositoryRoot,
+      artifactRoot: path.join(repositoryRoot, ".agent-arena", "runs"),
+      permissionMode: "confirm",
+      permissionAllow: {},
+      permissionDeny: [],
+      reducedValidationAccepted: false,
+      nonInteractiveApproval: true,
+      keepWorktrees: false,
+      limits: {
+        implementationMs: 10_000,
+        attackMs: 10_000,
+        verifierMs: 10_000,
+        repairMs: 10_000,
+      },
+    });
+    const adapter = new CommandAgentAdapter({
+      id: "codex",
+      executable: process.execPath,
+      args: [fixtureAgent],
+    });
+    const outcome = await new Arena({
+      adapters: { codex: adapter },
+      verifier: new RuleBasedVerifier("codex"),
+    }).fight(config);
+
+    expect(outcome.state.config.contestants).toMatchObject([
+      { id: "a", provider: "codex" },
+      { id: "b", provider: "codex" },
+    ]);
+    const a = outcome.state.contestants.a;
+    const b = outcome.state.contestants.b;
+    expect(a?.implementation?.promptPath).not.toBe(
+      b?.implementation?.promptPath,
+    );
+    expect(a?.implementation?.transcriptPath).not.toBe(
+      b?.implementation?.transcriptPath,
+    );
+    expect(a?.currentPatchPath).not.toBe(b?.currentPatchPath);
+    expect(await readFile(a!.currentPatchPath!, "utf8")).not.toBe(
+      await readFile(b!.currentPatchPath!, "utf8"),
+    );
+    const attackBy = (slot: "a" | "b") =>
+      outcome.state.attacks.find(
+        (attack) =>
+          attack.origin.kind === "contestant" &&
+          attack.origin.contestant === slot,
+      );
+    const attackA = attackBy("a");
+    const attackB = attackBy("b");
+    if (!attackA || !attackB)
+      throw new Error("both mirror attacks are required");
+    expect(attackA.origin).toMatchObject({
+      contestant: "a",
+      provider: "codex",
+    });
+    expect(attackA.targets).toEqual(["b"]);
+    expect(attackB.origin).toMatchObject({
+      contestant: "b",
+      provider: "codex",
+    });
+    expect(attackB.targets).toEqual(["a"]);
+  });
+
+  it("completes when one implementation times out without a patch", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      task: "Normalize slug whitespace.",
+      acceptanceCriteria: ["Collapse whitespace."],
+      specPaths: [],
+      issueReferences: [],
+      agents: ["codex", "claude"],
+      attackVerifier: "claude",
+      harnessMaintainer: "claude",
+      rounds: 3,
+      maxAttacksPerRound: 3,
+      infrastructureRecoveryRound: true,
+      maxHeldOutCasesPerDefect: 0,
+      testCommand: "node --test",
+      repositoryRoot,
+      artifactRoot: path.join(repositoryRoot, ".agent-arena", "runs"),
+      permissionMode: "confirm",
+      permissionAllow: {},
+      permissionDeny: [],
+      reducedValidationAccepted: false,
+      nonInteractiveApproval: true,
+      keepWorktrees: false,
+      limits: {
+        implementationMs: 10_000,
+        attackMs: 10_000,
+        verifierMs: 10_000,
+        repairMs: 10_000,
+      },
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_EMPTY_IMPLEMENTATION: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+
+    expect(outcome.state.status).toBe("complete");
+    expect(outcome.state.contestants.a).toMatchObject({
+      status: "failed",
+      finalHealth: 0,
+      patchSize: 0,
+    });
+    expect(outcome.state.contestants.b).toMatchObject({
+      status: "survived",
+      finalHealth: 100,
+    });
+    expect(outcome.state.attacks).toEqual([]);
+  });
+
   it("runs three rounds, lands and heals evidence, recoils a miss, and writes replayable artifacts", async () => {
     const repositoryRoot = await createSlugRepository();
     const issueResolver: IssueResolver = {
@@ -121,6 +260,23 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(outcome.state.attacks.map((attack) => attack.status)).toEqual(
       expect.arrayContaining(["landed", "blocked"]),
     );
+    expect(outcome.state.attackInvocations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          attacker: "a",
+          target: "b",
+          submissionStatus: "submitted",
+          attackCount: 1,
+        }),
+        expect.objectContaining({
+          attacker: "b",
+          target: "a",
+          round: 2,
+          submissionStatus: "not_submitted",
+          attackCount: 0,
+        }),
+      ]),
+    );
     const landed = outcome.state.attacks.find(
       (attack) => attack.status === "landed",
     );
@@ -140,24 +296,19 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(house).toMatchObject({
       status: "landed",
       severity: "medium",
-      targets: ["codex", "claude"],
+      targets: ["b"],
     });
     expect(house?.rank).toBeUndefined();
     expect(
-      outcome.state.contestants.claude?.healthEvents.map((event) => event.type),
+      outcome.state.contestants.b?.healthEvents.map((event) => event.type),
     ).toEqual(expect.arrayContaining(["target_damage", "recoil", "heal"]));
-    expect(
-      outcome.state.contestants.codex?.healthEvents
-        .filter((event) => event.attackId === house?.id)
-        .map((event) => event.type),
-    ).toEqual(["target_damage", "heal"]);
-    expect(outcome.state.contestants.claude?.finalHealth).toBe(95);
-    expect(outcome.state.contestants.claude?.rounds[0]).toMatchObject({
+    expect(outcome.state.contestants.b?.finalHealth).toBe(95);
+    expect(outcome.state.contestants.b?.rounds[0]).toMatchObject({
       endingHealth: 65,
     });
-    expect(outcome.state.ranking?.winner).toBe("codex");
+    expect(outcome.state.ranking?.winner).toBe("a");
     expect(
-      outcome.state.contestants.codex?.checks.filter(
+      outcome.state.contestants.a?.checks.filter(
         (check) => check.kind === "service_health",
       ),
     ).toHaveLength(6);
@@ -168,12 +319,14 @@ describe("fake-adapter fight on a mocked real issue", () => {
         "utf8",
       ),
     ) as { schemaVersion: number; stage: string };
-    expect(result).toMatchObject({ schemaVersion: 1, stage: "complete" });
+    expect(result).toMatchObject({ schemaVersion: 3, stage: "complete" });
     const report = await readFile(
       path.join(outcome.state.artifacts.runDirectory!, "BATTLE.md"),
       "utf8",
     );
-    expect(report).toContain("Winner: **codex**");
+    expect(report).toContain("Winner: **a**");
+    expect(report).toContain("### Generation activity");
+    expect(report).toContain("not_submitted");
     expect(report).toContain("Repeated whitespace is not collapsed");
     const taskContract = JSON.parse(
       await readFile(
@@ -188,16 +341,39 @@ describe("fake-adapter fight on a mocked real issue", () => {
       "service-maintainer",
     );
 
+    const prompt = await reviewRun({
+      runId: outcome.state.runId,
+      repositoryRoot,
+    });
+    const selected = prompt.choices.find(
+      (choice) => choice.contestantId === "a",
+    )!;
+    await recordReviewDecision({
+      runId: outcome.state.runId,
+      repositoryRoot,
+      promptId: prompt.promptId,
+      decision: "accept",
+      selection: "a",
+      expectedPatchSha256: selected.patchSha256,
+      expectedBaseCommit: prompt.baseCommit,
+      approval: {
+        channel: "api",
+        promptId: prompt.promptId,
+        provenance: {
+          kind: "direct_tty",
+          confirmedPatchSha256: selected.patchSha256,
+        },
+      },
+      idempotencyKey: "integration-review",
+    });
     await expect(
-      applyResult({
+      applyAcceptedPatch({
         runId: outcome.state.runId,
-        agent: "codex",
         repositoryRoot,
+        expectedPatchSha256: selected.patchSha256,
+        idempotencyKey: "integration-apply",
       }),
-    ).resolves.toContain("node --test");
-    expect(
-      await readFile(path.join(repositoryRoot, "src", "slug.mjs"), "utf8"),
-    ).toContain('throw new Error("Blank title")');
+    ).resolves.toMatchObject({ testCommand: "node --test" });
     expect(
       (await execa("node", ["--test"], { cwd: repositoryRoot })).exitCode,
     ).toBe(0);
@@ -266,14 +442,12 @@ describe("fake-adapter fight on a mocked real issue", () => {
         args: [fixtureAgent],
       }),
     }).fight(config);
-    const credit = outcome.state.contestants.codex?.replacementCredits[0];
+    const credit = outcome.state.contestants.a?.replacementCredits[0];
     expect(credit).toMatchObject({
       reason: "accepted_infrastructure",
       status: "spent",
     });
-    expect(outcome.state.contestants.codex?.rounds.at(-1)?.round).toBe(
-      "recovery",
-    );
+    expect(outcome.state.contestants.a?.rounds.at(-1)?.round).toBe("recovery");
     expect(
       outcome.state.attacks.find(
         (attack) => attack.id === credit?.sourceAttackId,

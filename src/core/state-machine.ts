@@ -2,10 +2,11 @@ import type { Stage } from "./types.js";
 
 const TRANSITIONS: Readonly<Record<Stage, readonly Stage[]>> = {
   preflight: ["resolve_permissions", "failed", "cancelled"],
-  resolve_permissions: ["implement", "failed", "cancelled"],
+  resolve_permissions: ["implement", "initial_validate", "failed", "cancelled"],
   implement: ["initial_validate", "inconclusive", "failed", "cancelled"],
   initial_validate: [
     "collect_attacks",
+    "implement",
     "repair",
     "inconclusive",
     "failed",

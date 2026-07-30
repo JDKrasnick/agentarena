@@ -6,6 +6,7 @@ import {
   AgentIdSchema,
   FightConfigSchema,
   type FightConfig,
+  type TaskReference,
 } from "../core/types.js";
 
 const DurationLimitsSchema = z
@@ -42,8 +43,16 @@ const PermissionEntrySchema = z
 const FileConfigSchema = z
   .object({
     test: z.string().optional(),
+    base_from_pr: z.union([z.string(), z.number()]).optional(),
+    mode: z.enum(["duel", "siege", "catch_up"]).optional(),
+    incumbent: AgentIdSchema.optional(),
+    attacker: AgentIdSchema.optional(),
+    defender: AgentIdSchema.optional(),
+    challenger: AgentIdSchema.optional(),
     agents: z.array(AgentIdSchema).length(2).optional(),
+    models: z.array(z.string().trim().min(1)).length(2).optional(),
     attack_verifier: AgentIdSchema.optional(),
+    quality_verifier: AgentIdSchema.optional(),
     harness_maintainer: AgentIdSchema.optional(),
     acceptance_criteria: z.array(z.string()).default([]),
     specs: z.array(z.string()).default([]),
@@ -51,9 +60,20 @@ const FileConfigSchema = z
       .array(
         z.union([
           z
-            .object({ github_issue: z.union([z.string(), z.number()]) })
+            .object({
+              github_issue: z.union([z.string(), z.number()]),
+              primary: z.boolean().optional(),
+            })
             .strict(),
-          z.object({ spec: z.string() }).strict(),
+          z
+            .object({
+              github_pr: z.union([z.string(), z.number()]),
+              primary: z.boolean().optional(),
+            })
+            .strict(),
+          z
+            .object({ spec: z.string(), primary: z.boolean().optional() })
+            .strict(),
         ]),
       )
       .default([]),
@@ -94,6 +114,21 @@ const FileConfigSchema = z
         reduced_validation_accepted: false,
       }),
     limits: DurationLimitsSchema,
+    selection: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .default({ enabled: true }),
+    review: z
+      .object({ required_for_apply: z.boolean().default(true) })
+      .strict()
+      .default({ required_for_apply: true }),
+    delivery: z
+      .object({
+        enabled: z.boolean().default(false),
+        merge_enabled: z.boolean().default(false),
+      })
+      .strict()
+      .default({ enabled: false, merge_enabled: false }),
   })
   .strict();
 
@@ -104,11 +139,20 @@ export interface CliConfigOverrides {
   configPath?: string;
   testCommand?: string;
   agents?: string;
+  models?: string;
   verifier?: string;
+  qualityVerifier?: string;
   maintainer?: string;
   permissionMode?: "auto" | "confirm" | "deny";
   specPaths?: string[];
   issueReferences?: string[];
+  pullRequestReferences?: string[];
+  baseFromPullRequest?: string;
+  mode?: "duel" | "siege" | "catch_up";
+  incumbent?: string;
+  attacker?: string;
+  defender?: string;
+  challenger?: string;
   acceptanceCriteria?: string[];
   nonInteractiveApproval?: boolean;
   reducedValidationAccepted?: boolean;
@@ -129,6 +173,21 @@ function parseAgents(
   if (agents.length !== 2)
     throw new Error("Exactly two comma-separated agents are required");
   return [agents[0] ?? "", agents[1] ?? ""];
+}
+
+function parseModels(
+  value: string | undefined,
+  fallback: readonly string[] | undefined,
+): [string, string] | undefined {
+  if (value === undefined && fallback === undefined) return undefined;
+  const models = value
+    ? value.split(",").map((model) => model.trim())
+    : [...(fallback ?? [])];
+  if (models.length !== 2 || models.some((model) => model.length === 0))
+    throw new Error(
+      "Exactly two non-empty comma-separated models are required",
+    );
+  return [models[0] ?? "", models[1] ?? ""];
 }
 
 export async function loadFightConfig(
@@ -154,9 +213,21 @@ export async function loadFightConfig(
   const sourceIssues = file.sources.flatMap((source) =>
     "github_issue" in source ? [String(source.github_issue)] : [],
   );
+  const sourcePullRequests = file.sources.flatMap((source) =>
+    "github_pr" in source ? [String(source.github_pr)] : [],
+  );
   const explicitIssues = [
     ...sourceIssues,
     ...(overrides.issueReferences ?? []),
+  ];
+  const explicitPullRequests = [
+    ...new Set([
+      ...sourcePullRequests,
+      ...(overrides.pullRequestReferences ?? []),
+      ...((overrides.baseFromPullRequest ?? file.base_from_pr)
+        ? [String(overrides.baseFromPullRequest ?? file.base_from_pr)]
+        : []),
+    ]),
   ];
   const inferredIssues =
     explicitIssues.length === 0
@@ -164,10 +235,79 @@ export async function loadFightConfig(
           (match) => (match[1] ? [match[1]] : []),
         )
       : [];
+  const mode = overrides.mode ?? file.mode ?? "duel";
   const agents = parseAgents(
     overrides.agents,
     file.agents ?? ["codex", "claude"],
   );
+  const models = parseModels(overrides.models, file.models);
+  const challenger = overrides.challenger ?? file.challenger;
+  const attacker = overrides.attacker ?? file.attacker;
+  const defender = overrides.defender ?? file.defender;
+  const incumbent = overrides.incumbent ?? file.incumbent;
+  if (mode === "catch_up" && !challenger)
+    throw new Error("Catch-up mode requires --challenger <agent>");
+  if (mode === "siege" && (!attacker || !defender))
+    throw new Error(
+      "Siege mode requires --attacker <agent> and --defender <agent>",
+    );
+  if (mode !== "duel" && explicitPullRequests.length !== 1)
+    throw new Error(
+      `${mode === "siege" ? "Siege" : "Catch-up"} mode requires exactly one --pr <reference>`,
+    );
+  const contestants =
+    mode === "catch_up"
+      ? [
+          {
+            id: "a" as const,
+            // The arena replaces this provisional value with either --incumbent
+            // or confirmed frozen-PR attribution before an invocation occurs.
+            provider: incumbent ?? challenger ?? agents[0],
+            ...(models?.[0] ? { model: models[0] } : {}),
+            role: "incumbent" as const,
+            startingPatch: "pull_request" as const,
+          },
+          {
+            id: "b" as const,
+            provider: challenger ?? agents[1],
+            ...(models?.[1] ? { model: models[1] } : {}),
+            role: "challenger" as const,
+            startingPatch: "none" as const,
+          },
+        ]
+      : mode === "siege"
+        ? [
+            {
+              id: "a" as const,
+              provider: attacker ?? agents[0],
+              ...(models?.[0] ? { model: models[0] } : {}),
+              role: "attacker" as const,
+              startingPatch: "none" as const,
+            },
+            {
+              id: "b" as const,
+              provider: defender ?? agents[1],
+              ...(models?.[1] ? { model: models[1] } : {}),
+              role: "defender" as const,
+              startingPatch: "pull_request" as const,
+            },
+          ]
+        : [
+            {
+              id: "a" as const,
+              provider: agents[0],
+              ...(models?.[0] ? { model: models[0] } : {}),
+              role: "solver" as const,
+              startingPatch: "none" as const,
+            },
+            {
+              id: "b" as const,
+              provider: agents[1],
+              ...(models?.[1] ? { model: models[1] } : {}),
+              role: "solver" as const,
+              startingPatch: "none" as const,
+            },
+          ];
   const permissionAllow = Object.fromEntries(
     Object.entries(file.permissions.allow).map(([id, entry]) => [
       id,
@@ -181,12 +321,78 @@ export async function loadFightConfig(
 
   return FightConfigSchema.parse({
     task: overrides.task,
+    mode,
+    contestants,
+    ...(incumbent ? { incumbentProvider: incumbent } : {}),
     acceptanceCriteria:
       overrides.acceptanceCriteria ?? file.acceptance_criteria,
     specPaths: [...file.specs, ...sourceSpecs, ...(overrides.specPaths ?? [])],
     issueReferences: [...explicitIssues, ...inferredIssues],
+    pullRequestReferences: explicitPullRequests,
+    ...((overrides.baseFromPullRequest ?? file.base_from_pr)
+      ? {
+          baseFromPullRequest: String(
+            overrides.baseFromPullRequest ?? file.base_from_pr,
+          ),
+        }
+      : {}),
+    taskReferences: [
+      ...file.sources.flatMap((source): TaskReference[] =>
+        "github_issue" in source
+          ? [
+              {
+                kind: "github_issue" as const,
+                reference: String(source.github_issue),
+                ...(source.primary !== undefined
+                  ? { primary: source.primary }
+                  : {}),
+              },
+            ]
+          : "github_pr" in source
+            ? [
+                {
+                  kind: "github_pull_request" as const,
+                  reference: String(source.github_pr),
+                  ...(source.primary !== undefined
+                    ? { primary: source.primary }
+                    : {}),
+                },
+              ]
+            : [
+                {
+                  kind: "repo_spec" as const,
+                  path: source.spec,
+                  ...(source.primary !== undefined
+                    ? { primary: source.primary }
+                    : {}),
+                },
+              ],
+      ),
+      ...[...(overrides.issueReferences ?? []), ...inferredIssues].map(
+        (reference) => ({
+          kind: "github_issue" as const,
+          reference,
+        }),
+      ),
+      ...explicitPullRequests
+        .filter((reference) => !sourcePullRequests.includes(reference))
+        .map((reference) => ({
+          kind: "github_pull_request" as const,
+          reference,
+        })),
+      ...[...file.specs, ...(overrides.specPaths ?? [])].map((path) => ({
+        kind: "repo_spec" as const,
+        path,
+      })),
+    ],
     agents,
     attackVerifier: overrides.verifier ?? file.attack_verifier ?? agents[0],
+    qualityVerifier:
+      overrides.qualityVerifier ??
+      file.quality_verifier ??
+      overrides.verifier ??
+      file.attack_verifier ??
+      agents[0],
     harnessMaintainer:
       overrides.maintainer ?? file.harness_maintainer ?? agents[0],
     rounds: 3,
@@ -220,6 +426,10 @@ export async function loadFightConfig(
       file.permissions.reduced_validation_accepted,
     nonInteractiveApproval: overrides.nonInteractiveApproval ?? false,
     keepWorktrees: overrides.keepWorktrees ?? false,
+    selectionEnabled: file.selection.enabled,
+    reviewRequiredForApply: file.review.required_for_apply,
+    deliveryEnabled: file.delivery.enabled,
+    mergeEnabled: file.delivery.merge_enabled,
     limits: {
       implementationMs: minutes(file.limits.implementation_minutes),
       attackMs: minutes(file.limits.attack_minutes),
