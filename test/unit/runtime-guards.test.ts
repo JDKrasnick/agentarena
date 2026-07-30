@@ -141,6 +141,11 @@ describe("runtime guards and deterministic prompts", () => {
       "test/slug.test.ts",
       "src/slug.ts",
     ]);
+    expect(
+      changedPathsFromPatch(
+        'diff --git "a/test/space name.test.ts" "b/test/space name.test.ts"\n',
+      ),
+    ).toEqual(["test/space name.test.ts"]);
     expect(isAllowedAttackPath("test/slug.test.ts")).toBe(true);
     expect(isAllowedAttackPath("src/slug.ts")).toBe(false);
   });

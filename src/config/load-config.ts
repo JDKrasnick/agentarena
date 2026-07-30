@@ -6,6 +6,7 @@ import {
   AgentIdSchema,
   FightConfigSchema,
   type FightConfig,
+  type TaskReference,
 } from "../core/types.js";
 
 const DurationLimitsSchema = z
@@ -42,8 +43,10 @@ const PermissionEntrySchema = z
 const FileConfigSchema = z
   .object({
     test: z.string().optional(),
+    base_from_pr: z.union([z.string(), z.number()]).optional(),
     agents: z.array(AgentIdSchema).length(2).optional(),
     attack_verifier: AgentIdSchema.optional(),
+    quality_verifier: AgentIdSchema.optional(),
     harness_maintainer: AgentIdSchema.optional(),
     acceptance_criteria: z.array(z.string()).default([]),
     specs: z.array(z.string()).default([]),
@@ -51,9 +54,20 @@ const FileConfigSchema = z
       .array(
         z.union([
           z
-            .object({ github_issue: z.union([z.string(), z.number()]) })
+            .object({
+              github_issue: z.union([z.string(), z.number()]),
+              primary: z.boolean().optional(),
+            })
             .strict(),
-          z.object({ spec: z.string() }).strict(),
+          z
+            .object({
+              github_pr: z.union([z.string(), z.number()]),
+              primary: z.boolean().optional(),
+            })
+            .strict(),
+          z
+            .object({ spec: z.string(), primary: z.boolean().optional() })
+            .strict(),
         ]),
       )
       .default([]),
@@ -94,6 +108,21 @@ const FileConfigSchema = z
         reduced_validation_accepted: false,
       }),
     limits: DurationLimitsSchema,
+    selection: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .default({ enabled: true }),
+    review: z
+      .object({ required_for_apply: z.boolean().default(true) })
+      .strict()
+      .default({ required_for_apply: true }),
+    delivery: z
+      .object({
+        enabled: z.boolean().default(false),
+        merge_enabled: z.boolean().default(false),
+      })
+      .strict()
+      .default({ enabled: false, merge_enabled: false }),
   })
   .strict();
 
@@ -105,10 +134,13 @@ export interface CliConfigOverrides {
   testCommand?: string;
   agents?: string;
   verifier?: string;
+  qualityVerifier?: string;
   maintainer?: string;
   permissionMode?: "auto" | "confirm" | "deny";
   specPaths?: string[];
   issueReferences?: string[];
+  pullRequestReferences?: string[];
+  baseFromPullRequest?: string;
   acceptanceCriteria?: string[];
   nonInteractiveApproval?: boolean;
   reducedValidationAccepted?: boolean;
@@ -154,9 +186,21 @@ export async function loadFightConfig(
   const sourceIssues = file.sources.flatMap((source) =>
     "github_issue" in source ? [String(source.github_issue)] : [],
   );
+  const sourcePullRequests = file.sources.flatMap((source) =>
+    "github_pr" in source ? [String(source.github_pr)] : [],
+  );
   const explicitIssues = [
     ...sourceIssues,
     ...(overrides.issueReferences ?? []),
+  ];
+  const explicitPullRequests = [
+    ...new Set([
+      ...sourcePullRequests,
+      ...(overrides.pullRequestReferences ?? []),
+      ...((overrides.baseFromPullRequest ?? file.base_from_pr)
+        ? [String(overrides.baseFromPullRequest ?? file.base_from_pr)]
+        : []),
+    ]),
   ];
   const inferredIssues =
     explicitIssues.length === 0
@@ -185,8 +229,71 @@ export async function loadFightConfig(
       overrides.acceptanceCriteria ?? file.acceptance_criteria,
     specPaths: [...file.specs, ...sourceSpecs, ...(overrides.specPaths ?? [])],
     issueReferences: [...explicitIssues, ...inferredIssues],
+    pullRequestReferences: explicitPullRequests,
+    ...((overrides.baseFromPullRequest ?? file.base_from_pr)
+      ? {
+          baseFromPullRequest: String(
+            overrides.baseFromPullRequest ?? file.base_from_pr,
+          ),
+        }
+      : {}),
+    taskReferences: [
+      ...file.sources.flatMap((source): TaskReference[] =>
+        "github_issue" in source
+          ? [
+              {
+                kind: "github_issue" as const,
+                reference: String(source.github_issue),
+                ...(source.primary !== undefined
+                  ? { primary: source.primary }
+                  : {}),
+              },
+            ]
+          : "github_pr" in source
+            ? [
+                {
+                  kind: "github_pull_request" as const,
+                  reference: String(source.github_pr),
+                  ...(source.primary !== undefined
+                    ? { primary: source.primary }
+                    : {}),
+                },
+              ]
+            : [
+                {
+                  kind: "repo_spec" as const,
+                  path: source.spec,
+                  ...(source.primary !== undefined
+                    ? { primary: source.primary }
+                    : {}),
+                },
+              ],
+      ),
+      ...[...(overrides.issueReferences ?? []), ...inferredIssues].map(
+        (reference) => ({
+          kind: "github_issue" as const,
+          reference,
+        }),
+      ),
+      ...explicitPullRequests
+        .filter((reference) => !sourcePullRequests.includes(reference))
+        .map((reference) => ({
+          kind: "github_pull_request" as const,
+          reference,
+        })),
+      ...[...file.specs, ...(overrides.specPaths ?? [])].map((path) => ({
+        kind: "repo_spec" as const,
+        path,
+      })),
+    ],
     agents,
     attackVerifier: overrides.verifier ?? file.attack_verifier ?? agents[0],
+    qualityVerifier:
+      overrides.qualityVerifier ??
+      file.quality_verifier ??
+      overrides.verifier ??
+      file.attack_verifier ??
+      agents[0],
     harnessMaintainer:
       overrides.maintainer ?? file.harness_maintainer ?? agents[0],
     rounds: 3,
@@ -220,6 +327,10 @@ export async function loadFightConfig(
       file.permissions.reduced_validation_accepted,
     nonInteractiveApproval: overrides.nonInteractiveApproval ?? false,
     keepWorktrees: overrides.keepWorktrees ?? false,
+    selectionEnabled: file.selection.enabled,
+    reviewRequiredForApply: file.review.required_for_apply,
+    deliveryEnabled: file.delivery.enabled,
+    mergeEnabled: file.delivery.merge_enabled,
     limits: {
       implementationMs: minutes(file.limits.implementation_minutes),
       attackMs: minutes(file.limits.attack_minutes),

@@ -111,8 +111,39 @@ export const TaskSourceSchema = z.object({
   contentHash: z.string(),
   snapshotPath: z.string(),
   visibility: z.enum(["shared", "judge_only"]),
+  primary: z.boolean().optional(),
+  github: z
+    .object({
+      repository: z.string(),
+      number: z.number().int().positive(),
+      url: z.string().url(),
+      baseBranch: z.string().optional(),
+      headBranch: z.string().optional(),
+      headRepository: z.string().optional(),
+      headCommit: z.string().optional(),
+    })
+    .optional(),
 });
 export type TaskSource = z.infer<typeof TaskSourceSchema>;
+
+export const TaskReferenceSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("github_issue"),
+    reference: z.string(),
+    primary: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal("github_pull_request"),
+    reference: z.string(),
+    primary: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal("repo_spec"),
+    path: z.string(),
+    primary: z.boolean().optional(),
+  }),
+]);
+export type TaskReference = z.infer<typeof TaskReferenceSchema>;
 
 export const TaskContractSchema = z.object({
   version: z.literal(1),
@@ -378,49 +409,83 @@ export const IntegrationProfileSchema = z.object({
 });
 export type IntegrationProfile = z.infer<typeof IntegrationProfileSchema>;
 
-export const FightConfigSchema = z.object({
-  task: z.string().min(1),
-  acceptanceCriteria: z.array(z.string()).default([]),
-  specPaths: z.array(z.string()).default([]),
-  issueReferences: z.array(z.string()).default([]),
-  agents: z
-    .tuple([AgentIdSchema, AgentIdSchema])
-    .refine(([left, right]) => left !== right, {
-      message: "Contestants must be different agents",
-    }),
-  attackVerifier: AgentIdSchema,
-  harnessMaintainer: AgentIdSchema,
-  rounds: z.literal(3),
-  maxAttacksPerRound: z.literal(3),
-  infrastructureRecoveryRound: z.literal(true),
-  maxHeldOutCasesPerDefect: z.number().int().min(0).max(2),
-  testCommand: z.string().min(1),
-  integrationProfile: IntegrationProfileSchema.optional(),
-  repositoryRoot: z.string(),
-  artifactRoot: z.string(),
-  baseCommit: z.string().optional(),
-  permissionMode: z.enum(["auto", "confirm", "deny"]),
-  permissionAllow: z
-    .record(
-      z.string(),
-      z.object({
-        mode: z.enum(["auto", "confirm", "deny"]).default("confirm"),
-        scopes: z.array(z.string()).default([]),
-        role: z.enum(["agent", "harness_only", "both"]).default("both"),
+export const FightConfigSchema = z
+  .object({
+    task: z.string().min(1),
+    acceptanceCriteria: z.array(z.string()).default([]),
+    specPaths: z.array(z.string()).default([]),
+    issueReferences: z.array(z.string()).default([]),
+    pullRequestReferences: z.array(z.string()).default([]),
+    taskReferences: z.array(TaskReferenceSchema).default([]),
+    agents: z
+      .tuple([AgentIdSchema, AgentIdSchema])
+      .refine(([left, right]) => left !== right, {
+        message: "Contestants must be different agents",
       }),
-    )
-    .default({}),
-  permissionDeny: z.array(z.string()).default([]),
-  reducedValidationAccepted: z.boolean().default(false),
-  nonInteractiveApproval: z.boolean().default(false),
-  keepWorktrees: z.boolean().default(false),
-  limits: z.object({
-    implementationMs: z.number().int().positive(),
-    attackMs: z.number().int().positive(),
-    verifierMs: z.number().int().positive(),
-    repairMs: z.number().int().positive(),
-  }),
-});
+    attackVerifier: AgentIdSchema,
+    qualityVerifier: AgentIdSchema.optional(),
+    harnessMaintainer: AgentIdSchema,
+    rounds: z.literal(3),
+    maxAttacksPerRound: z.literal(3),
+    infrastructureRecoveryRound: z.literal(true),
+    maxHeldOutCasesPerDefect: z.number().int().min(0).max(2),
+    testCommand: z.string().min(1),
+    integrationProfile: IntegrationProfileSchema.optional(),
+    repositoryRoot: z.string(),
+    artifactRoot: z.string(),
+    baseCommit: z.string().optional(),
+    baseFromPullRequest: z.string().optional(),
+    permissionMode: z.enum(["auto", "confirm", "deny"]),
+    permissionAllow: z
+      .record(
+        z.string(),
+        z.object({
+          mode: z.enum(["auto", "confirm", "deny"]).default("confirm"),
+          scopes: z.array(z.string()).default([]),
+          role: z.enum(["agent", "harness_only", "both"]).default("both"),
+        }),
+      )
+      .default({}),
+    permissionDeny: z.array(z.string()).default([]),
+    reducedValidationAccepted: z.boolean().default(false),
+    nonInteractiveApproval: z.boolean().default(false),
+    keepWorktrees: z.boolean().default(false),
+    selectionEnabled: z.boolean().default(true),
+    reviewRequiredForApply: z.boolean().default(true),
+    deliveryEnabled: z.boolean().default(false),
+    mergeEnabled: z.boolean().default(false),
+    limits: z.object({
+      implementationMs: z.number().int().positive(),
+      attackMs: z.number().int().positive(),
+      verifierMs: z.number().int().positive(),
+      repairMs: z.number().int().positive(),
+    }),
+  })
+  .superRefine((value, context) => {
+    if (
+      value.taskReferences.filter((reference) => reference.primary).length > 1
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["taskReferences"],
+        message: "At most one task reference may be primary",
+      });
+    }
+    if (value.mergeEnabled && !value.deliveryEnabled) {
+      context.addIssue({
+        code: "custom",
+        path: ["mergeEnabled"],
+        message: "Merge cannot be enabled while delivery is disabled",
+      });
+    }
+    if (value.baseCommit && value.baseFromPullRequest) {
+      context.addIssue({
+        code: "custom",
+        path: ["baseFromPullRequest"],
+        message: "Choose either an explicit base commit or a pull request head",
+      });
+    }
+  });
 export type FightConfig = z.infer<typeof FightConfigSchema>;
 
 export const RankingSchema = z.object({
@@ -431,7 +496,160 @@ export const RankingSchema = z.object({
 });
 export type Ranking = z.infer<typeof RankingSchema>;
 
-export const RunStateSchema = z.object({
+export const MarginClassSchema = z.enum([
+  "tied",
+  "razor_thin",
+  "narrow",
+  "clear",
+]);
+export type MarginClass = z.infer<typeof MarginClassSchema>;
+
+export const ArenaContestantOutcomeSchema = z.object({
+  contestantId: AgentIdSchema,
+  initialHealth: z.number().int().min(0).max(100),
+  finalHealth: z.number().int().min(0).max(100),
+  grossDamageReceived: z.number().int().nonnegative(),
+  grossHealing: z.number().int().nonnegative(),
+  activeDefectDamage: z.number().int().nonnegative(),
+  permanentRecoil: z.number().int().nonnegative(),
+  eliminatedByRequiredCheck: z.boolean(),
+});
+
+export const ArenaOutcomeSchema = z.object({
+  championId: AgentIdSchema.optional(),
+  contestants: z.partialRecord(AgentIdSchema, ArenaContestantOutcomeSchema),
+  marginHp: z.number().int().nonnegative(),
+  marginClass: MarginClassSchema,
+  decidingFactors: z.array(
+    z.enum(["unresolved_defects", "recoil", "elimination", "tie_breaker"]),
+  ),
+});
+export type ArenaOutcome = z.infer<typeof ArenaOutcomeSchema>;
+
+export const EvidenceValueSchema = z.object({
+  status: z.enum(["known", "unknown"]),
+  values: z.array(z.string()),
+  evidencePaths: z.array(z.string()),
+});
+
+export const ManifestDeltaSchema = z.object({
+  path: z.string(),
+  ecosystem: z.string(),
+  status: z.enum(["known", "unknown"]),
+  runtimeAdded: z.array(z.string()),
+  developmentAdded: z.array(z.string()),
+  optionalAdded: z.array(z.string()),
+  evidence: z.array(z.string()),
+});
+export type ManifestDelta = z.infer<typeof ManifestDeltaSchema>;
+
+export const PatchQualityFactsSchema = z.object({
+  version: z.literal(1),
+  contestantId: AgentIdSchema,
+  patchSha256: z.string().length(64),
+  changedPaths: z.array(z.string()),
+  binaryPaths: z.array(z.string()),
+  productionFilesChanged: z.number().int().nonnegative(),
+  testFilesChanged: z.number().int().nonnegative(),
+  generatedFilesChanged: z.number().int().nonnegative(),
+  vendorFilesChanged: z.number().int().nonnegative(),
+  lockfilesChanged: z.number().int().nonnegative(),
+  documentationFilesChanged: z.number().int().nonnegative(),
+  addedLines: z.number().int().nonnegative(),
+  deletedLines: z.number().int().nonnegative(),
+  normalizedProductionLines: z.number().int().nonnegative(),
+  formattingOnly: z.boolean(),
+  manifestDeltas: z.array(ManifestDeltaSchema),
+  publicSurfaceChanges: EvidenceValueSchema,
+  operationalRequirementsAdded: EvidenceValueSchema,
+  verificationEvidence: z.array(z.string()),
+  observabilityChanges: z.array(z.string()),
+  observabilityRisks: z.array(z.string()),
+  evidence: z.array(z.string()),
+});
+export type PatchQualityFacts = z.infer<typeof PatchQualityFactsSchema>;
+
+export const PatchQualityVerdictSchema = z.object({
+  version: z.literal(1),
+  verdict: z.enum(["patch_a", "patch_b", "equivalent", "inconclusive"]),
+  criteria: z.array(
+    z.object({
+      name: z.string(),
+      verdict: z.enum(["patch_a", "patch_b", "equivalent", "unknown"]),
+      evidence: z.array(z.string()),
+      rationale: z.string(),
+    }),
+  ),
+  rationale: z.array(z.string()),
+});
+export type PatchQualityVerdict = z.infer<typeof PatchQualityVerdictSchema>;
+
+export const PatchRecommendationSchema = z.object({
+  contestantId: AgentIdSchema.optional(),
+  reason: z.enum([
+    "correctness",
+    "implementation_quality",
+    "arena_fallback",
+    "draw",
+    "inconclusive",
+  ]),
+  qualityVerdict: z
+    .enum(["patch_a", "patch_b", "equivalent", "inconclusive"])
+    .optional(),
+  rationale: z.array(z.string()),
+  comparison: z.array(
+    z.object({
+      contestantId: AgentIdSchema,
+      eligible: z.boolean(),
+      activeDefectDamage: z.number().int().nonnegative(),
+      requiredValidationPassed: z.boolean(),
+      finalApplicabilityPassed: z.boolean(),
+    }),
+  ),
+});
+export type PatchRecommendation = z.infer<typeof PatchRecommendationSchema>;
+
+export const PatchChoiceSchema = z.object({
+  contestantId: AgentIdSchema,
+  eligible: z.boolean(),
+  badges: z.array(z.enum(["recommended", "arena_champion"])),
+  summary: z.string(),
+  patchSha256: z.string().length(64),
+  disabledReason: z.string().optional(),
+});
+export type PatchChoice = z.infer<typeof PatchChoiceSchema>;
+
+export const ReviewPromptSchema = z.object({
+  version: z.literal(1),
+  runId: z.string(),
+  promptId: z.string(),
+  baseCommit: z.string(),
+  choices: z.array(PatchChoiceSchema),
+  actions: z.array(
+    z.enum(["inspect", "compare", "reject_all", "leave_pending"]),
+  ),
+});
+export type ReviewPrompt = z.infer<typeof ReviewPromptSchema>;
+
+export const DeliveryTargetSchema = z.object({
+  kind: z.enum([
+    "local_task",
+    "github_issue",
+    "github_pull_request",
+    "repo_spec",
+  ]),
+  repository: z.string().optional(),
+  number: z.number().int().positive().optional(),
+  url: z.string().url().optional(),
+  baseBranch: z.string().optional(),
+  headBranch: z.string().optional(),
+  headRepository: z.string().optional(),
+  headCommit: z.string().optional(),
+  sourceId: z.string().optional(),
+});
+export type DeliveryTarget = z.infer<typeof DeliveryTargetSchema>;
+
+const RunStateBaseSchema = z.object({
   schemaVersion: z.literal(1),
   runId: z.string(),
   harnessVersion: z.string(),
@@ -457,7 +675,30 @@ export const RunStateSchema = z.object({
   artifacts: z.record(z.string(), z.string()),
   warnings: z.array(z.string()),
 });
-export type RunState = z.infer<typeof RunStateSchema>;
+
+export const RunStateV1Schema = RunStateBaseSchema;
+export type RunStateV1 = z.infer<typeof RunStateV1Schema>;
+
+export const RunStateV2Schema = RunStateBaseSchema.omit({
+  schemaVersion: true,
+}).extend({
+  schemaVersion: z.literal(2),
+  arenaOutcome: ArenaOutcomeSchema.optional(),
+  patchQualityFacts: z
+    .partialRecord(AgentIdSchema, PatchQualityFactsSchema)
+    .default({}),
+  patchQualityVerdict: PatchQualityVerdictSchema.optional(),
+  patchRecommendation: PatchRecommendationSchema.optional(),
+  reviewPrompt: ReviewPromptSchema.optional(),
+  deliveryTarget: DeliveryTargetSchema.optional(),
+});
+export const RunStateSchema = RunStateV2Schema;
+export const AnyRunStateSchema = z.discriminatedUnion("schemaVersion", [
+  RunStateV1Schema,
+  RunStateV2Schema,
+]);
+export type RunState = z.infer<typeof RunStateV2Schema>;
+export type AnyRunState = z.infer<typeof AnyRunStateSchema>;
 
 export const AttackSubmissionEntrySchema = z.object({
   rank: z.union([z.literal(1), z.literal(2), z.literal(3)]),

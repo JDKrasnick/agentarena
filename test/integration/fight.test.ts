@@ -12,8 +12,9 @@ import {
   RuleBasedVerifier,
 } from "../../src/agents/adapter.js";
 import { Arena } from "../../src/core/arena.js";
-import { applyResult } from "../../src/commands/apply.js";
+import { applyAcceptedPatch } from "../../src/commands/apply.js";
 import { FightConfigSchema } from "../../src/core/types.js";
+import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
 import type { IssueResolver } from "../../src/task/task-contract.js";
 import { createSlugRepository } from "../helpers/repository.js";
 
@@ -168,7 +169,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         "utf8",
       ),
     ) as { schemaVersion: number; stage: string };
-    expect(result).toMatchObject({ schemaVersion: 1, stage: "complete" });
+    expect(result).toMatchObject({ schemaVersion: 2, stage: "complete" });
     const report = await readFile(
       path.join(outcome.state.artifacts.runDirectory!, "BATTLE.md"),
       "utf8",
@@ -188,13 +189,39 @@ describe("fake-adapter fight on a mocked real issue", () => {
       "service-maintainer",
     );
 
+    const prompt = await reviewRun({
+      runId: outcome.state.runId,
+      repositoryRoot,
+    });
+    const selected = prompt.choices.find(
+      (choice) => choice.contestantId === "codex",
+    )!;
+    await recordReviewDecision({
+      runId: outcome.state.runId,
+      repositoryRoot,
+      promptId: prompt.promptId,
+      decision: "accept",
+      selection: "codex",
+      expectedPatchSha256: selected.patchSha256,
+      expectedBaseCommit: prompt.baseCommit,
+      approval: {
+        channel: "api",
+        promptId: prompt.promptId,
+        provenance: {
+          kind: "direct_tty",
+          confirmedPatchSha256: selected.patchSha256,
+        },
+      },
+      idempotencyKey: "integration-review",
+    });
     await expect(
-      applyResult({
+      applyAcceptedPatch({
         runId: outcome.state.runId,
-        agent: "codex",
         repositoryRoot,
+        expectedPatchSha256: selected.patchSha256,
+        idempotencyKey: "integration-apply",
       }),
-    ).resolves.toContain("node --test");
+    ).resolves.toMatchObject({ testCommand: "node --test" });
     expect(
       await readFile(path.join(repositoryRoot, "src", "slug.mjs"), "utf8"),
     ).toContain('throw new Error("Blank title")');
