@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { AttackVerifier } from "../agents/adapter.js";
+import {
+  anonymizeAttackForVerifier,
+  type AttackVerifier,
+} from "../agents/adapter.js";
 import { DAMAGE_BY_SEVERITY } from "../core/scoring.js";
 import type {
   Attack,
@@ -317,7 +320,7 @@ export async function validateAttack(
     }
 
     const verdict = await options.verifier.assess({
-      attack,
+      attack: anonymizeAttackForVerifier(attack),
       taskContract: options.taskContract,
       authorPassed: true,
       targetFailed: true,
@@ -477,7 +480,7 @@ export async function validateHouseAttack(
       );
     if (!verifierTree) throw new Error("Missing house verifier worktree");
     const verdict = await options.verifier.assess({
-      attack,
+      attack: anonymizeAttackForVerifier(attack),
       taskContract: options.taskContract,
       authorPassed: true,
       targetFailed: true,

@@ -8,6 +8,7 @@ import {
   CommandInfrastructureReviewer,
   createProviderAdapter,
 } from "../agents/adapter.js";
+import { CommandPatchQualityVerifier } from "../quality/verifier.js";
 import {
   loadFightConfig,
   type CliConfigOverrides,
@@ -46,11 +47,19 @@ async function approvePermissionPlan(
 export async function runFight(overrides: CliConfigOverrides): Promise<string> {
   const config = await approvePermissionPlan(await loadFightConfig(overrides));
   const adapters = Object.fromEntries(
-    config.agents.map((agent) => [agent, createProviderAdapter(agent)]),
+    config.contestants.map((contestant) => [
+      contestant.provider,
+      createProviderAdapter(contestant.provider, contestant.model),
+    ]),
   );
   const arena = new Arena({
     adapters,
+    adapterFactory: (contestant) =>
+      createProviderAdapter(contestant.provider, contestant.model),
     verifier: new CommandAttackVerifier(config.attackVerifier),
+    qualityVerifier: new CommandPatchQualityVerifier(
+      config.qualityVerifier ?? config.attackVerifier,
+    ),
     houseScout: new CommandHouseScout(config.attackVerifier),
     caseBuilder: new CommandCaseBuilder(config.attackVerifier),
     infrastructureReviewer: new CommandInfrastructureReviewer(),

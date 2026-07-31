@@ -31,6 +31,7 @@ From the root of a clean Git repository, the developer runs:
 ```bash
 agent-arena fight "fix the refresh-token race condition" \
   --agents codex,claude \
+  --models gpt-5.2-codex,claude-opus-4-6 \
   --rounds 3 \
   --permissions confirm \
   --test "npm test"
@@ -91,6 +92,28 @@ Apply: agent-arena apply 2026-07-29T142200Z --agent codex
 
 The language can be playful, but the recommendation must always be explained in
 plain engineering terms.
+
+## Battle modes
+
+The MVP exposes three battle modes over the same three-round adjudication loop:
+
+- `duel` is the default. Two contestant slots independently implement and
+  attack. Duplicate providers are valid mirror matches; each slot still has a
+  separate worktree, prompt, process, transcript, timeout, and artifact path.
+- `catch_up` freezes a referenced PR at its base and head commits, gives the
+  incumbent the frozen patch, and lets the challenger implement from the base
+  using requirements that exclude the incumbent diff. The PR patch must be
+  non-empty, apply cleanly, and pass required validation before the challenger
+  spends an implementation budget.
+- `siege` freezes a referenced PR for a defender and gives an attacker a
+  test-only evidence role. Landed defects damage the defender, successful
+  repairs heal it, and misses recoil against the attacker. Only the defender
+  owns a production patch and can be reviewed, applied, or delivered.
+
+All persisted records use stable contestant IDs (`a` and `b`) independently of
+provider identity. PR authorship evidence is recorded as confirmed, likely, or
+unknown provenance and never changes health or attack validity. Catch-up
+requires an explicit incumbent provider when attribution is unknown.
 
 ## Final round structure and bug coverage
 
@@ -183,6 +206,8 @@ unscored report finding.
 - One user-supplied required validation command and at most one optional
   declared integration profile.
 - Two contestants selected from Codex CLI, Claude Code, and Gemini CLI.
+- Optional provider-specific model selection for each contestant. Omission uses
+  the provider CLI default; explicit selections are recorded in run artifacts.
 - A provider adapter boundary, even if only two adapters are release-ready.
 - One anonymized verifier invocation per mechanically landed candidate.
 - One isolated harness-maintainer role for validated run accommodations.
@@ -216,7 +241,8 @@ unscored report finding.
 - Arena-generated container environments, network sandboxes, GPU workloads,
   and mobile builds. Running a user-supplied Compose profile is allowed.
 - Production credentials or enterprise-grade secret management.
-- Automated pull requests or merges.
+- Deployment, package release, or GitHub writes without a separately
+  authenticated, patch-bound delivery decision.
 - Elo ratings, persistent leaderboards, GIFs, and polished HTML replays.
 - A verifier-agent debate. Attack validity is decided by deterministic execution;
   the verifier only checks the cited oracle, relevance, root-defect identity, and
@@ -594,9 +620,19 @@ the published damage and recoil tables determine its numeric effect.
 
 ### The user owns the merge
 
-Agent Arena recommends and exports a patch; it never merges or commits a winner
-automatically. `agent-arena apply` refuses to run over a dirty worktree unless
-the user explicitly overrides the guard.
+Agent Arena distinguishes the health-ledger arena champion from the
+correctness-first recommended patch. A patch cannot be applied until a human
+accepts an exact contestant, base commit, prompt, and full patch digest.
+`agent-arena apply` refuses pending, rejected, stale, or mismatched decisions
+and retains the clean-tree and `git apply --check` guards.
+
+Acceptance is not delivery permission. Optional GitHub branch, pull-request,
+issue-linkage, and merge operations require a second authenticated decision for
+the exact repository and action. Delivery is idempotent, never force-pushes,
+stops when a reviewed PR head moves, and monitors an authorized
+merge-after-checks request until success or terminal failure. GitHub delivery
+and merge are independently disabled by default; release and deployment are
+not part of the MVP.
 
 ## Configuration
 
@@ -618,6 +654,7 @@ agents:
   - codex
   - claude
 attack_verifier: codex
+quality_verifier: codex
 harness_maintainer: codex
 permissions:
   default: confirm
@@ -633,6 +670,8 @@ permissions:
     - production_deploy
 sources:
   - github_issue: 241
+    primary: true
+  # - github_pr: 87
   - spec: docs/session-refresh.md
 limits:
   rounds: 3
@@ -642,6 +681,13 @@ limits:
   attack_minutes: 8
   verifier_minutes: 2
   repair_minutes: 8
+selection:
+  enabled: true
+review:
+  required_for_apply: true
+delivery:
+  enabled: false
+  merge_enabled: false
 ```
 
 Explicit CLI flags override the file. The MVP recognizes common repository
@@ -650,6 +696,9 @@ instruction files such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and
 service discovery. The verifier may use any installed supported adapter,
 including one of the contestants, but always receives anonymized evidence in a
 fresh invocation; the report identifies which provider performed the rating.
+Pull-request sources are requirements-only by default. `--base-from-pr` or
+`base_from_pr` is the explicit choice that freezes and fetches the reviewed PR
+head as the identical contestant base; no reference diff is shared by default.
 
 ### Round prompts
 

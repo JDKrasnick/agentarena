@@ -16,6 +16,12 @@ agent-arena fight "fix issue #241"
 
 Agent Arena launches Claude Code, Codex, Gemini CLI, OpenCode, or other supported agents in separate Git worktrees. Each agent independently explores the repository, implements a solution, adds tests, and submits a patch.
 
+Contestants may optionally pin provider-specific model IDs. Model selection is
+per contestant, including mirror matches that use the same provider twice. When
+a contestant model is omitted, Agent Arena leaves model selection to that
+provider CLI's configured default. The selected model is persisted with the
+battle configuration and invocation metadata.
+
 The agents then receive their opponents’ solutions and attempt to break them. A credible attack must include evidence such as a failing test, reproducible command, integration failure, security issue, benchmark, or static-analysis result.
 
 Contestants may defend their solution by disproving the attack, repairing their patch, or conceding the defect. The harness reruns all valid tests and produces an evidence-backed winner.
@@ -30,6 +36,25 @@ The user receives:
 * A command to apply the winning solution.
 
 The project is intended to be both useful and entertaining. The adversarial testing provides engineering value, while the competition format creates a memorable and shareable GitHub project.
+
+### Battle modes
+
+The same evidence and health system supports three topologies:
+
+- **Duel:** two contestant slots independently implement the task and attack
+  each other. Slots may use different providers or isolated invocations of the
+  same provider.
+- **Catch-up:** an incumbent starts from a frozen pull-request patch while a
+  challenger independently implements from the PR base without seeing that
+  patch. The normal duel begins only after both patches pass initial validation.
+- **Siege:** an attacker submits test-only evidence against a frozen
+  pull-request patch and a defender owns its production lineage and repairs.
+  Only the defender's final patch is reviewable or deliverable.
+
+Pull-request authorship is provenance metadata, not proof of who wrote the
+code. Explicit bot, co-author, generator, title, or branch signals may select a
+provider only under published attribution rules; conflicts remain unknown and
+attribution never changes scoring.
 
 ---
 
@@ -302,6 +327,28 @@ Health is calculated from a ledger: `100 - permanent recoil - active distinct de
 Attackers may propose a severity, but they do not control damage. A neutral verifier should apply the published rubric to anonymized executable evidence, choose the lowest level fully supported, and provide a saved rationale. Ambiguous High or Critical ratings should be capped at Medium. The harness then calculates health deterministically from landed tests, persisted severity verdicts, recoil, and repair results.
 
 After three normal attack–repair rounds and any required infrastructure recovery round, the surviving contestant with the most HP wins. Patch simplicity may break an HP tie; otherwise the result is a draw. If only one contestant survives earlier and no downed opponent holds replacement credits, the fight ends early. Cost and duration are reported but do not change health.
+
+The **arena champion** remains this health-ledger result. After final
+validation, Agent Arena separately derives deterministic patch-quality facts
+and may ask a neutral, identity-blind verifier to compare equally correct
+patches. The resulting **recommended patch** is correctness-first: failed or
+inapplicable patches are removed, less active defect damage always wins, quality
+may decide only equal-correctness patches, and an equivalent or inconclusive
+quality verdict falls back to the arena champion. Quality never changes HP,
+damage, healing, recoil, or the champion.
+
+Every completed run produces a stable review prompt with all eligible patch
+choices and full SHA-256 digests. Applying a patch requires a current human
+decision bound to the run, prompt, contestant, base commit, and exact digest.
+Acceptance does not authorize commits, pushes, pull-request writes, issue
+closure, or merge.
+
+Optional GitHub delivery is a separately authorized, least-privilege
+post-fight operation. It uses deterministic branches and append-only
+idempotency records, refuses moved pull-request heads and force pushes, honors
+repository checks and protection, and monitors merge-after-checks requests to a
+terminal result. GitHub writes and merge are independently gated and disabled
+by default. Deployment and release remain outside Agent Arena.
 
 The final report should include a patch-versus-test matrix:
 

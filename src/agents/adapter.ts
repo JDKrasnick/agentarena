@@ -12,6 +12,7 @@ import {
   type AgentId,
   type AgentInvocation,
   type Attack,
+  type ContestantId,
   type AttackSubmission,
   type CaseSubmission,
   type HouseSubmission,
@@ -31,6 +32,7 @@ export interface Availability {
 
 interface InvocationInput {
   worktree: string;
+  contestantId?: ContestantId;
   prompt: string;
   promptPath: string;
   transcriptPrefix: string;
@@ -42,7 +44,7 @@ interface InvocationInput {
 export type ImplementInput = InvocationInput;
 
 export interface AttackInput extends InvocationInput {
-  opponent: AgentId;
+  opponent: ContestantId;
 }
 
 export interface RepairInput extends InvocationInput {
@@ -66,8 +68,31 @@ export interface AttackVerdict {
   rationale: string;
 }
 
+export type AnonymizedAttack = Pick<
+  Attack,
+  | "claim"
+  | "impact"
+  | "oracle"
+  | "assertionFingerprint"
+  | "patchPath"
+  | "proposedSeverity"
+>;
+
+export function anonymizeAttackForVerifier(attack: Attack): AnonymizedAttack {
+  return {
+    claim: attack.claim,
+    impact: attack.impact,
+    oracle: attack.oracle,
+    assertionFingerprint: attack.assertionFingerprint,
+    patchPath: attack.patchPath,
+    ...(attack.proposedSeverity
+      ? { proposedSeverity: attack.proposedSeverity }
+      : {}),
+  };
+}
+
 export interface AnonymizedAttackInput {
-  attack: Attack;
+  attack: AnonymizedAttack;
   taskContract: TaskContract;
   authorPassed: boolean;
   targetFailed: boolean;
@@ -175,15 +200,31 @@ export interface CommandAdapterOptions {
   id: AgentId;
   executable: string;
   args: string[];
+  model?: string;
   environment?: Record<string, string>;
 }
 
-function providerCommand(id: AgentId): Omit<CommandAdapterOptions, "id"> {
+export function providerCommand(
+  id: AgentId,
+  model?: string,
+): Omit<CommandAdapterOptions, "id"> {
+  // `gpt-5.6` is the default-family name, while ChatGPT-authenticated Codex
+  // CLI expects the concrete flagship model identifier.
+  const resolvedModel =
+    id === "codex" && model === "gpt-5.6" ? "gpt-5.6-sol" : model;
+  const modelArgs = resolvedModel ? ["--model", resolvedModel] : [];
   switch (id) {
     case "codex":
       return {
         executable: "codex",
-        args: ["exec", "--full-auto", "--skip-git-repo-check", "-"],
+        args: [
+          "exec",
+          ...modelArgs,
+          "--full-auto",
+          "--skip-git-repo-check",
+          "-",
+        ],
+        ...(resolvedModel ? { model: resolvedModel } : {}),
       };
     case "claude":
       return {
@@ -194,12 +235,15 @@ function providerCommand(id: AgentId): Omit<CommandAdapterOptions, "id"> {
           "bypassPermissions",
           "--output-format",
           "text",
+          ...modelArgs,
         ],
+        ...(resolvedModel ? { model: resolvedModel } : {}),
       };
     case "gemini":
       return {
         executable: "gemini",
-        args: ["--yolo"],
+        args: ["--yolo", ...modelArgs],
+        ...(resolvedModel ? { model: resolvedModel } : {}),
       };
   }
 }
@@ -267,6 +311,7 @@ export class CommandAgentAdapter implements AgentAdapter {
       env: {
         ...this.options.environment,
         AGENT_ARENA_AGENT: this.id,
+        AGENT_ARENA_CONTESTANT: input.contestantId ?? "",
         AGENT_ARENA_STAGE: stage,
         AGENT_ARENA_ROUND: input.round === undefined ? "" : String(input.round),
         AGENT_ARENA_SUBMISSION: path.join(
@@ -290,6 +335,7 @@ export class CommandAgentAdapter implements AgentAdapter {
     );
     return AgentInvocationSchema.parse({
       agent: this.id,
+      ...(this.options.model ? { model: this.options.model } : {}),
       stage,
       startedAt: started.toISOString(),
       finishedAt: finished.toISOString(),
@@ -311,8 +357,11 @@ export class CommandAgentAdapter implements AgentAdapter {
   }
 }
 
-export function createProviderAdapter(id: AgentId): CommandAgentAdapter {
-  return new CommandAgentAdapter({ id, ...providerCommand(id) });
+export function createProviderAdapter(
+  id: AgentId,
+  model?: string,
+): CommandAgentAdapter {
+  return new CommandAgentAdapter({ id, ...providerCommand(id, model) });
 }
 
 const AttackVerdictSchema = z.object({
@@ -544,8 +593,7 @@ export class RuleBasedVerifier implements AttackVerifier {
         (source) => source.id === input.attack.oracle.sourceId,
       ),
       oracleRationale: `Citation ${input.attack.oracle.sourceId} exists in the immutable task contract`,
-      rootDefectId:
-        input.attack.rootDefectId ?? input.attack.assertionFingerprint,
+      rootDefectId: input.attack.assertionFingerprint,
       severity,
       rationale: `Mechanically reproduced against the target and not the author; rated ${severity} using the submitted impact and fixed rubric.`,
     });

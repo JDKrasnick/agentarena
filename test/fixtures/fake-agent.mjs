@@ -16,6 +16,7 @@ const prompt = await new Promise((resolve) => {
 });
 
 const agent = process.env.AGENT_ARENA_AGENT;
+const contestant = process.env.AGENT_ARENA_CONTESTANT;
 const stage = process.env.AGENT_ARENA_STAGE;
 const round = process.env.AGENT_ARENA_ROUND;
 const submission = process.env.AGENT_ARENA_SUBMISSION;
@@ -25,8 +26,15 @@ if (!agent || !stage || !submission)
 const sourcePath = path.join(process.cwd(), "src", "slug.mjs");
 
 if (stage === "implement") {
+  if (process.env.AGENT_ARENA_EMPTY_IMPLEMENTATION === "1") {
+    await writeFile(
+      submission,
+      JSON.stringify({ version: 1, explanation: "intentionally empty" }),
+    );
+    process.exit(0);
+  }
   const implementation =
-    agent === "codex"
+    (contestant ?? agent) === "a"
       ? `export function slug(value) {\n  return value.trim().toLowerCase().replace(/\\s+/g, "-");\n}\n`
       : `export function slug(value) {\n  return value.trim().toLowerCase().replaceAll(" ", "-");\n}\n`;
   await writeFile(sourcePath, implementation);
@@ -35,7 +43,7 @@ if (stage === "implement") {
     JSON.stringify({ version: 1, explanation: `${agent} implementation` }),
   );
 } else if (stage === "house") {
-  if (round !== "2") {
+  if (round !== "2" || !prompt.includes("Candidate 2")) {
     await writeFile(
       submission,
       JSON.stringify({ version: 1, hypotheses: [], attacks: [] }),
@@ -123,12 +131,17 @@ if (stage === "implement") {
     await writeFile(submission, JSON.stringify({ version: 1, cases: [] }));
   }
 } else if (stage === "collect_attacks") {
-  if (round !== "1") {
+  if (round === "2" && agent === "claude") {
+    process.exit(0);
+  } else if (round !== "1") {
     await writeFile(
       submission,
       JSON.stringify({ version: 1, hypotheses: [], attacks: [] }),
     );
-  } else if (agent === "codex") {
+  } else if (
+    agent === "codex" &&
+    (await readFile(sourcePath, "utf8")).includes('replaceAll(" ", "-")')
+  ) {
     const testPath = "test/arena-repeated-whitespace.test.mjs";
     await writeFile(
       path.join(process.cwd(), testPath),
@@ -212,6 +225,7 @@ if (stage === "implement") {
 } else if (stage === "repair") {
   if (
     agent === "claude" &&
+    process.env.AGENT_ARENA_FAKE_SKIP_REPAIR !== "1" &&
     prompt.includes("Repeated whitespace is not collapsed")
   ) {
     const current = await readFile(sourcePath, "utf8");

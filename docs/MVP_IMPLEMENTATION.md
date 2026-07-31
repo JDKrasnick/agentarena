@@ -23,6 +23,44 @@ Recommended foundation:
 Dependencies should remain small. Git is invoked through its CLI so behavior
 matches the developer's repository.
 
+### Implemented battle topology
+
+The persisted schema is version 3. It separates stable contestant identity from
+provider identity and normalizes all input into two slots:
+
+```ts
+type ContestantId = "a" | "b";
+type BattleMode = "duel" | "siege" | "catch_up";
+type ContestantRole =
+  | "solver"
+  | "attacker"
+  | "defender"
+  | "incumbent"
+  | "challenger";
+
+interface ContestantConfig {
+  id: ContestantId;
+  provider: AgentId;
+  model?: string;
+  role: ContestantRole;
+  startingPatch: "none" | "pull_request";
+}
+```
+
+Legacy `agents: [provider, provider]` input remains accepted for duels, but new
+run artifacts persist normalized contestants. Versions 1 and 2 are migrated
+from provider-keyed records into `a` and `b` slots when read.
+
+- Duel invokes two isolated solver slots, including duplicate-provider mirror
+  matches.
+- Catch-up freezes a pull request, initializes the incumbent from its patch,
+  and invokes only the challenger during implementation. The challenger prompt
+  excludes the incumbent diff.
+- Siege initializes the defender from the frozen patch, validates attacker
+  submissions through the asymmetric test-only path, invokes only the defender
+  during repair, disables patch recommendation, and exposes only the defender
+  to review and delivery.
+
 ## Repository layout
 
 ```text
@@ -110,6 +148,14 @@ Use stable IDs and version every persisted schema from the start.
 
 ```ts
 type AgentId = "codex" | "claude" | "gemini";
+type ContestantId = "a" | "b";
+type BattleMode = "duel" | "siege" | "catch_up";
+type ContestantRole =
+  | "solver"
+  | "attacker"
+  | "defender"
+  | "incumbent"
+  | "challenger";
 type Severity = "critical" | "high" | "medium" | "low";
 type BugCategory =
   | "contract_logic"
@@ -135,7 +181,11 @@ type RoundNumber = 1 | 2 | 3;
 type RoundId = RoundNumber | "recovery";
 type AttackRank = 1 | 2 | 3;
 type AttackOrigin =
-  | { kind: "contestant"; agent: AgentId }
+  | {
+      kind: "contestant";
+      contestant: ContestantId;
+      provider: AgentId;
+    }
   | { kind: "house"; methodPackId: string };
 type PermissionMode = "auto" | "confirm" | "deny";
 type CapabilityRole = "agent" | "harness_only" | "both";
@@ -165,7 +215,23 @@ interface FightConfig {
   task: string;
   taskContract: TaskContract;
   permissionPolicy: PermissionPolicy;
-  agents: [AgentId, AgentId];
+  mode: BattleMode;
+  contestants: [
+    {
+      id: ContestantId;
+      provider: AgentId;
+      model?: string;
+      role: ContestantRole;
+      startingPatch: "none" | "pull_request";
+    },
+    {
+      id: ContestantId;
+      provider: AgentId;
+      model?: string;
+      role: ContestantRole;
+      startingPatch: "none" | "pull_request";
+    },
+  ];
   attackVerifier: AgentId;
   harnessMaintainer: AgentId;
   rounds: 3;
@@ -200,7 +266,10 @@ interface CommandResult {
 }
 
 interface ContestantResult {
-  agent: AgentId;
+  id: ContestantId;
+  provider: AgentId;
+  model?: string;
+  role: ContestantRole;
   status: "pending" | "survived" | "eliminated" | "failed";
   initialHealth: 100;
   finalHealth: number;
@@ -220,7 +289,7 @@ interface Attack {
   round: RoundId;
   origin: AttackOrigin;
   rank?: AttackRank;
-  targets: AgentId[];
+  targets: ContestantId[];
   claim: string;
   oracle: OracleCitation;
   assertionFingerprint: string;
@@ -1345,6 +1414,11 @@ miss, a repair or elimination, and an accurate health timeline in the report.
 
 - `apply` command, cancellation cleanup, clear error messages, package build.
 - Gemini adapter if it meets the same contract; otherwise document it as next.
+- Duel, mirror, catch-up, and siege CLI documentation.
+- Frozen-PR provenance, schema-v3 artifact, and mode-specific security
+  documentation.
+- Controlled live validation for the battle-mode matrix under explicit
+  authorization and cost bounds.
 - Installation guide and one polished reproducible demo.
 
 Exit criterion: a new user can complete the definition of done in `docs/MVP.md`
