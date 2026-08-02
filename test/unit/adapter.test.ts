@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { providerCommand } from "../../src/agents/adapter.js";
+import {
+  infrastructureReviewCommand,
+  providerCommand,
+} from "../../src/agents/adapter.js";
 
 describe("provider model selection", () => {
   it.each([
@@ -23,5 +26,13 @@ describe("provider model selection", () => {
       expect.arrayContaining(["--model", "gpt-5.6-sol"]),
     );
     expect(command.model).toBe("gpt-5.6-sol");
+  });
+
+  it("keeps mirror-match infrastructure reviews on each contestant model", () => {
+    const first = infrastructureReviewCommand({ agent: "codex", model: "gpt-first" });
+    const second = infrastructureReviewCommand({ agent: "codex", model: "gpt-second" });
+
+    expect(first.args).toEqual(expect.arrayContaining(["--model", "gpt-first"]));
+    expect(second.args).toEqual(expect.arrayContaining(["--model", "gpt-second"]));
   });
 });

@@ -654,8 +654,11 @@ agents:
   - codex
   - claude
 attack_verifier: codex
+attack_verifier_model: gpt-5.2-codex
 quality_verifier: codex
+quality_verifier_model: gpt-5.2-codex
 harness_maintainer: codex
+harness_maintainer_model: gpt-5.2-codex
 permissions:
   default: confirm
   allow:

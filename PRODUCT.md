@@ -22,6 +22,10 @@ a contestant model is omitted, Agent Arena leaves model selection to that
 provider CLI's configured default. The selected model is persisted with the
 battle configuration and invocation metadata.
 
+Verifier, patch-quality, and harness-maintainer roles may also pin their own
+provider-specific models. When omitted, each internal role uses its provider
+CLI's configured default; models are never inferred from contestant names.
+
 The agents then receive their opponents’ solutions and attempt to break them. A credible attack must include evidence such as a failing test, reproducible command, integration failure, security issue, benchmark, or static-analysis result.
 
 Contestants may defend their solution by disproving the attack, repairing their patch, or conceding the defect. The harness reruns all valid tests and produces an evidence-backed winner.

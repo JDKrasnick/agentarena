@@ -13,6 +13,9 @@ describe("configuration", () => {
         "test: npm test",
         "agents: [claude, gemini]",
         "models: [claude-sonnet, gemini-flash]",
+        "attack_verifier_model: verifier-from-yaml",
+        "quality_verifier_model: quality-from-yaml",
+        "harness_maintainer_model: maintainer-from-yaml",
         "limits:",
         "  implementation_minutes: 1",
         "permissions:",
@@ -26,6 +29,7 @@ describe("configuration", () => {
       agents: "codex,claude",
       models: "gpt-arena,claude-opus",
       permissionMode: "confirm",
+      verifierModel: "verifier-from-cli",
     });
     expect(config.testCommand).toBe("pnpm test");
     expect(config.contestants).toMatchObject([
@@ -34,6 +38,11 @@ describe("configuration", () => {
     ]);
     expect(config.limits.implementationMs).toBe(60_000);
     expect(config.permissionMode).toBe("confirm");
+    expect(config).toMatchObject({
+      attackVerifierModel: "verifier-from-cli",
+      qualityVerifierModel: "quality-from-yaml",
+      harnessMaintainerModel: "maintainer-from-yaml",
+    });
   });
 
   it("leaves models unset when neither CLI nor YAML selects them", async () => {
@@ -48,6 +57,20 @@ describe("configuration", () => {
       undefined,
       undefined,
     ]);
+    expect(config.attackVerifierModel).toBeUndefined();
+    expect(config.qualityVerifierModel).toBeUndefined();
+    expect(config.harnessMaintainerModel).toBeUndefined();
+  });
+
+  it("rejects blank internal role models", async () => {
+    await expect(
+      loadFightConfig({
+        task: "do work",
+        repositoryRoot: process.cwd(),
+        testCommand: "true",
+        verifierModel: "   ",
+      }),
+    ).rejects.toThrow();
   });
 
   it("rejects partial model selections", async () => {
