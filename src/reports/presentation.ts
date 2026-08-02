@@ -8,7 +8,8 @@ import type {
   RunState,
 } from "../core/types.js";
 
-export type ReportCheckStatus = "PASS" | "FAIL" | "INFRA" | "SKIPPED" | "NOT RUN";
+export type ReportCheckStatus =
+  "PASS" | "FAIL" | "INFRA" | "SKIPPED" | "NOT RUN";
 
 export interface ReportDefect {
   id: string;
@@ -78,7 +79,8 @@ export function reportDefects(state: RunState): ReportDefect[] {
   }
   return [...grouped.entries()].map(([id, attacks]) => {
     const representative = attacks.at(-1) ?? attacks[0];
-    if (!representative) throw new Error(`Missing representative for defect ${id}`);
+    if (!representative)
+      throw new Error(`Missing representative for defect ${id}`);
     return {
       id,
       representative,
@@ -94,7 +96,9 @@ export function reportRounds(state: RunState): ReportRound[] {
   const ids: RoundId[] = [1, 2, 3];
   if (
     state.attacks.some((attack) => attack.round === "recovery") ||
-    contestants.some((contestant) => contestant.rounds.some((round) => round.round === "recovery"))
+    contestants.some((contestant) =>
+      contestant.rounds.some((round) => round.round === "recovery"),
+    )
   ) {
     ids.push("recovery");
   }
@@ -119,7 +123,8 @@ export function recordedArtifactPaths(state: RunState): Set<string> {
     ]) {
       if (artifact) paths.add(artifact);
     }
-    for (const artifact of invocationPaths(contestant.implementation)) paths.add(artifact);
+    for (const artifact of invocationPaths(contestant.implementation))
+      paths.add(artifact);
     for (const round of contestant.rounds) {
       for (const artifact of invocationPaths(round.repair)) paths.add(artifact);
     }
@@ -132,10 +137,12 @@ export function recordedArtifactPaths(state: RunState): Set<string> {
     for (const check of attack.checks) {
       for (const artifact of checkPaths(check)) paths.add(artifact);
     }
-    for (const entry of attack.caseBundle?.cases ?? []) paths.add(entry.patchPath);
+    for (const entry of attack.caseBundle?.cases ?? [])
+      paths.add(entry.patchPath);
   }
   for (const record of state.attackInvocations) {
-    for (const artifact of invocationPaths(record.invocation)) paths.add(artifact);
+    for (const artifact of invocationPaths(record.invocation))
+      paths.add(artifact);
   }
   return paths;
 }
@@ -145,10 +152,15 @@ export function resolveArtifactHref(
   artifact?: string,
 ): string | undefined {
   const runDirectory = state.artifacts.runDirectory;
-  if (!artifact || !runDirectory || !path.isAbsolute(artifact)) return undefined;
+  if (!artifact || !runDirectory || !path.isAbsolute(artifact))
+    return undefined;
   if (!recordedArtifactPaths(state).has(artifact)) return undefined;
   const relative = path.relative(runDirectory, artifact);
-  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+  if (
+    !relative ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  )
     return undefined;
   return `./${relative.split(path.sep).join("/")}`;
 }

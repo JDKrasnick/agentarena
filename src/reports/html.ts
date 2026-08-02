@@ -1,4 +1,9 @@
-import type { Attack, CheckResult, ContestantResult, RunState } from "../core/types.js";
+import type {
+  Attack,
+  CheckResult,
+  ContestantResult,
+  RunState,
+} from "../core/types.js";
 import { contestantLabel } from "../core/labels.js";
 import {
   latestCheck,
@@ -10,8 +15,12 @@ import {
 } from "./presentation.js";
 
 function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/gu, (character) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] ?? character,
+  return value.replace(
+    /[&<>"']/gu,
+    (character) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        character
+      ] ?? character,
   );
 }
 
@@ -21,7 +30,9 @@ function artifactHref(state: RunState, artifact?: string): string | undefined {
 
 function link(state: RunState, label: string, artifact?: string): string {
   const href = artifactHref(state, artifact);
-  return href ? `<a href="${escapeHtml(href)}">${escapeHtml(label)}</a>` : escapeHtml(label);
+  return href
+    ? `<a href="${escapeHtml(href)}">${escapeHtml(label)}</a>`
+    : escapeHtml(label);
 }
 
 function chip(value: string, tone = "muted"): string {
@@ -30,13 +41,23 @@ function chip(value: string, tone = "muted"): string {
 
 function checkStatus(state: RunState, check?: CheckResult): string {
   if (!check) return chip("Not run", "muted");
-  const tone = check.status === "passed" ? "pass" : check.status === "failed" ? "fail" : "warn";
-  const duration = check.command ? ` · ${(check.command.durationMs / 1000).toFixed(1)}s` : "";
+  const tone =
+    check.status === "passed"
+      ? "pass"
+      : check.status === "failed"
+        ? "fail"
+        : "warn";
+  const duration = check.command
+    ? ` · ${(check.command.durationMs / 1000).toFixed(1)}s`
+    : "";
   return `${chip(`${reportCheckStatus(check)}${duration}`, tone)}${check.command ? ` <span class="log-links">${link(state, "stdout", check.command.stdoutPath)} ${link(state, "stderr", check.command.stderrPath)}</span>` : ""}`;
 }
 
 function latestChecks(contestant: ContestantResult): Map<string, CheckResult> {
-  return contestant.checks.reduce((checks, check) => checks.set(check.id, check), new Map<string, CheckResult>());
+  return contestant.checks.reduce(
+    (checks, check) => checks.set(check.id, check),
+    new Map<string, CheckResult>(),
+  );
 }
 
 function attackAuthor(state: RunState, attack: Attack): string {
@@ -47,78 +68,166 @@ function attackAuthor(state: RunState, attack: Attack): string {
 
 function attackEffect(attack: Attack): string {
   if (attack.status === "landed")
-    return attack.damageActive ? `${String(attack.damage ?? 0)} HP remains active` : `${String(attack.damage ?? 0)} HP repaired`;
+    return attack.damageActive
+      ? `${String(attack.damage ?? 0)} HP remains active`
+      : `${String(attack.damage ?? 0)} HP repaired`;
   if (attack.recoil) return `${String(attack.recoil)} HP recoil`;
   return "No health change";
 }
 
 function attackNarrative(attack: Attack): string {
-  return attack.outcomeReason ?? attack.impact ?? "No adjudication detail was recorded.";
+  return (
+    attack.outcomeReason ??
+    attack.impact ??
+    "No adjudication detail was recorded."
+  );
 }
 
 /** A deterministic, self-contained, clickable battle dossier for local review. */
 export function renderBattleHtml(state: RunState): string {
   const contestants = reportContestants(state);
   const winnerId = state.ranking?.draw ? undefined : state.ranking?.winner;
-  const winner = winnerId ? contestantLabel(state.config.contestants, winnerId) : "Draw";
+  const winner = winnerId
+    ? contestantLabel(state.config.contestants, winnerId)
+    : "Draw";
   const defects = reportDefects(state);
   const unresolved = defects.filter((defect) => defect.active);
   const repaired = defects.filter((defect) => !defect.active);
-  const checkIds = [...new Set(contestants.flatMap((contestant) => contestant.checks.map((check) => check.id)))];
+  const checkIds = [
+    ...new Set(
+      contestants.flatMap((contestant) =>
+        contestant.checks.map((check) => check.id),
+      ),
+    ),
+  ];
   const checkMaps = contestants.map(latestChecks);
   const requiredPassed = contestants.every(
-    (contestant) => reportCheckStatus(latestCheck(contestant, "required")) === "PASS",
+    (contestant) =>
+      reportCheckStatus(latestCheck(contestant, "required")) === "PASS",
   );
-  const contestantCards = contestants.map((contestant) => {
-    const outcome = state.arenaOutcome?.contestants[contestant.id];
-    const isWinner = contestant.id === winnerId;
-    return `<article class="contestant ${isWinner ? "winner" : ""}">
-      <div class="contestant-name">${escapeHtml(contestantLabel(state.config.contestants, contestant.id))}${isWinner ? " <span class=\"winner-mark\">Winner</span>" : ""}</div>
+  const contestantCards = contestants
+    .map((contestant) => {
+      const outcome = state.arenaOutcome?.contestants[contestant.id];
+      const isWinner = contestant.id === winnerId;
+      return `<article class="contestant ${isWinner ? "winner" : ""}">
+      <div class="contestant-name">${escapeHtml(contestantLabel(state.config.contestants, contestant.id))}${isWinner ? ' <span class="winner-mark">Winner</span>' : ""}</div>
       <div class="model">${escapeHtml(contestant.model ?? `${contestant.provider} default`)}</div>
       <div class="hp">${String(contestant.finalHealth)} <small>HP</small></div>
       <div class="ledger">100 − ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil)} recoil − ${String(outcome?.activeDefectDamage ?? 0)} unresolved damage</div>
       <div class="card-links">${link(state, "Final patch", contestant.finalPatchPath)} · ${contestant.status}</div>
     </article>`;
-  }).join("\n");
+    })
+    .join("\n");
   const coverageRows = checkIds.length
-    ? checkIds.map((id) => {
-        const sample = checkMaps.map((checks) => checks.get(id)).find(Boolean);
-        const command = sample?.command?.command ?? sample?.reason ?? "Harness check";
-        return `<tr><th><code>${escapeHtml(id)}</code><span class="command">${escapeHtml(command)}</span></th>${checkMaps.map((checks) => `<td>${checkStatus(state, checks.get(id))}</td>`).join("")}</tr>`;
-      }).join("\n")
+    ? checkIds
+        .map((id) => {
+          const sample = checkMaps
+            .map((checks) => checks.get(id))
+            .find(Boolean);
+          const command =
+            sample?.command?.command ?? sample?.reason ?? "Harness check";
+          return `<tr><th><code>${escapeHtml(id)}</code><span class="command">${escapeHtml(command)}</span></th>${checkMaps.map((checks) => `<td>${checkStatus(state, checks.get(id))}</td>`).join("")}</tr>`;
+        })
+        .join("\n")
     : `<tr><td colspan="3">No validation checks were recorded.</td></tr>`;
   const attacks = state.attacks.length
-    ? state.attacks.map((attack) => {
-        const statusTone = attack.status === "landed" ? (attack.damageActive ? "fail" : "pass") : attack.recoil ? "warn" : "muted";
-        const target = attack.targets.map((id) => contestantLabel(state.config.contestants, id)).join(", ");
-        const evidence = [link(state, "attack", attack.patchPath), ...attack.checks.flatMap((check) => check.command ? [link(state, "stdout", check.command.stdoutPath), link(state, "stderr", check.command.stderrPath)] : [])].join(" · ");
-        return `<tr><td>R${String(attack.round)}</td><td>${escapeHtml(attackAuthor(state, attack))}</td><td>${escapeHtml(target)}</td><td>${chip(attack.status.replaceAll("_", " "), statusTone)}</td><td><strong>${escapeHtml(attack.claim)}</strong><span class="subtle">${escapeHtml(attackNarrative(attack))}</span></td><td>${escapeHtml(attack.severity ?? "—")}<span class="subtle">${escapeHtml(attackEffect(attack))}</span></td><td>${evidence}</td></tr>`;
-      }).join("\n")
+    ? state.attacks
+        .map((attack) => {
+          const statusTone =
+            attack.status === "landed"
+              ? attack.damageActive
+                ? "fail"
+                : "pass"
+              : attack.recoil
+                ? "warn"
+                : "muted";
+          const target = attack.targets
+            .map((id) => contestantLabel(state.config.contestants, id))
+            .join(", ");
+          const evidence = [
+            link(state, "attack", attack.patchPath),
+            ...attack.checks.flatMap((check) =>
+              check.command
+                ? [
+                    link(state, "stdout", check.command.stdoutPath),
+                    link(state, "stderr", check.command.stderrPath),
+                  ]
+                : [],
+            ),
+          ].join(" · ");
+          return `<tr><td>R${String(attack.round)}</td><td>${escapeHtml(attackAuthor(state, attack))}</td><td>${escapeHtml(target)}</td><td>${chip(attack.status.replaceAll("_", " "), statusTone)}</td><td><strong>${escapeHtml(attack.claim)}</strong><span class="subtle">${escapeHtml(attackNarrative(attack))}</span></td><td>${escapeHtml(attack.severity ?? "—")}<span class="subtle">${escapeHtml(attackEffect(attack))}</span></td><td>${evidence}</td></tr>`;
+        })
+        .join("\n")
     : `<tr><td colspan="7">No attacks were submitted.</td></tr>`;
   const rounds = reportRounds(state);
-  const roundRows = rounds.map((round) => {
-    const attacksForRound = round.attacks;
-    const landedForRound = attacksForRound.filter((attack) => attack.status === "landed");
-    const recoil = attacksForRound.reduce((sum, attack) => sum + (attack.recoil ?? 0), 0);
-    const health = contestants.map((contestant) => {
-      const result = contestant.rounds.find((entry) => entry.round === round.id);
-      return result ? `${contestantLabel(state.config.contestants, contestant.id)} ${String(result.startingHealth)} → ${String(result.endingHealth)}` : `${contestantLabel(state.config.contestants, contestant.id)} —`;
-    }).join(" · ");
-    const focus = round.id === 1 ? "Contract & local correctness" : round.id === 2 ? "State, boundaries & systematic probes" : round.id === 3 ? "Integration, resilience & security" : "Infrastructure recovery";
-    return `<tr><th>${round.id === "recovery" ? "Recovery" : `Round ${String(round.id)}`}<span class="subtle">${focus}</span></th><td>${String(attacksForRound.length)} submitted · ${String(landedForRound.length)} proven · ${String(recoil)} HP recoil</td><td>${escapeHtml(health)} HP</td><td>${link(state, "Open report", state.artifacts.battle)}</td></tr>`;
-  }).join("\n");
-  const phaseReplay = rounds.map((round) => {
-    const title = round.id === "recovery" ? "Recovery round" : `Round ${String(round.id)}`;
-    const submissions = state.attackInvocations.filter((record) => record.round === round.id);
-    const attackItems = round.attacks.length
-      ? round.attacks.map((attack) => `<li><strong>${escapeHtml(attack.claim)}</strong><span class="subtle">${escapeHtml(attack.status.toUpperCase())}: observed ${escapeHtml(attack.outcomeReason ?? "no adjudication detail recorded")}; expected ${escapeHtml(attack.oracle.expectedBehavior)}.</span></li>`).join("")
-      : "<li>No attacks submitted.</li>";
-    const repairItems = round.contestants.map(({ contestant, result }) => `<li><strong>${escapeHtml(contestantLabel(state.config.contestants, contestant.id))}</strong><span class="subtle">${result?.repair ? `${escapeHtml(result.repair.status.toUpperCase())} · ${link(state, "transcript", result.repair.transcriptPath)}` : "No repair invocation recorded"}</span></li>`).join("");
-    const ledger = round.contestants.map(({ contestant, result }) => `${contestantLabel(state.config.contestants, contestant.id)} ${result ? `${String(result.startingHealth)} → ${String(result.postAttackHealth)} → ${String(result.endingHealth)} HP` : "not run"}`).join(" · ");
-    return `<article class="round-replay"><h3>${title}</h3><div class="phase-grid"><div><h4>Attack submissions</h4><p>${submissions.length ? `${String(submissions.length)} invocation(s), ${String(submissions.reduce((sum, entry) => sum + entry.attackCount, 0))} attack(s)` : "None recorded"}</p></div><div><h4>Adjudication</h4><ul>${attackItems}</ul></div><div><h4>Repair</h4><ul>${repairItems}</ul></div><div><h4>Validation & health</h4><p>${escapeHtml(ledger)}</p></div></div></article>`;
-  }).join("\n");
+  const roundRows = rounds
+    .map((round) => {
+      const attacksForRound = round.attacks;
+      const landedForRound = attacksForRound.filter(
+        (attack) => attack.status === "landed",
+      );
+      const recoil = attacksForRound.reduce(
+        (sum, attack) => sum + (attack.recoil ?? 0),
+        0,
+      );
+      const health = contestants
+        .map((contestant) => {
+          const result = contestant.rounds.find(
+            (entry) => entry.round === round.id,
+          );
+          return result
+            ? `${contestantLabel(state.config.contestants, contestant.id)} ${String(result.startingHealth)} → ${String(result.endingHealth)}`
+            : `${contestantLabel(state.config.contestants, contestant.id)} —`;
+        })
+        .join(" · ");
+      const focus =
+        round.id === 1
+          ? "Contract & local correctness"
+          : round.id === 2
+            ? "State, boundaries & systematic probes"
+            : round.id === 3
+              ? "Integration, resilience & security"
+              : "Infrastructure recovery";
+      return `<tr><th>${round.id === "recovery" ? "Recovery" : `Round ${String(round.id)}`}<span class="subtle">${focus}</span></th><td>${String(attacksForRound.length)} submitted · ${String(landedForRound.length)} proven · ${String(recoil)} HP recoil</td><td>${escapeHtml(health)} HP</td><td>${link(state, "Open report", state.artifacts.battle)}</td></tr>`;
+    })
+    .join("\n");
+  const phaseReplay = rounds
+    .map((round) => {
+      const title =
+        round.id === "recovery"
+          ? "Recovery round"
+          : `Round ${String(round.id)}`;
+      const submissions = state.attackInvocations.filter(
+        (record) => record.round === round.id,
+      );
+      const attackItems = round.attacks.length
+        ? round.attacks
+            .map(
+              (attack) =>
+                `<li><strong>${escapeHtml(attack.claim)}</strong><span class="subtle">${escapeHtml(attack.status.toUpperCase())}: observed ${escapeHtml(attack.outcomeReason ?? "no adjudication detail recorded")}; expected ${escapeHtml(attack.oracle.expectedBehavior)}.</span></li>`,
+            )
+            .join("")
+        : "<li>No attacks submitted.</li>";
+      const repairItems = round.contestants
+        .map(
+          ({ contestant, result }) =>
+            `<li><strong>${escapeHtml(contestantLabel(state.config.contestants, contestant.id))}</strong><span class="subtle">${result?.repair ? `${escapeHtml(result.repair.status.toUpperCase())} · ${link(state, "transcript", result.repair.transcriptPath)}` : "No repair invocation recorded"}</span></li>`,
+        )
+        .join("");
+      const ledger = round.contestants
+        .map(
+          ({ contestant, result }) =>
+            `${contestantLabel(state.config.contestants, contestant.id)} ${result ? `${String(result.startingHealth)} → ${String(result.postAttackHealth)} → ${String(result.endingHealth)} HP` : "not run"}`,
+        )
+        .join(" · ");
+      return `<article class="round-replay"><h3>${title}</h3><div class="phase-grid"><div><h4>Attack submissions</h4><p>${submissions.length ? `${String(submissions.length)} invocation(s), ${String(submissions.reduce((sum, entry) => sum + entry.attackCount, 0))} attack(s)` : "None recorded"}</p></div><div><h4>Adjudication</h4><ul>${attackItems}</ul></div><div><h4>Repair</h4><ul>${repairItems}</ul></div><div><h4>Validation & health</h4><p>${escapeHtml(ledger)}</p></div></div></article>`;
+    })
+    .join("\n");
   const recommendation = state.patchRecommendation?.contestantId
-    ? contestantLabel(state.config.contestants, state.patchRecommendation.contestantId)
+    ? contestantLabel(
+        state.config.contestants,
+        state.patchRecommendation.contestantId,
+      )
     : "No patch recommendation";
 
   return `<!doctype html>

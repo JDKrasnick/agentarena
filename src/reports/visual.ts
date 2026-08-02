@@ -10,8 +10,16 @@ import {
 } from "./presentation.js";
 
 function escapeXml(value: string): string {
-  return value.replace(/[<>&"']/gu, (character) =>
-    ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[character] ?? character,
+  return value.replace(
+    /[<>&"']/gu,
+    (character) =>
+      ({
+        "<": "&lt;",
+        ">": "&gt;",
+        "&": "&amp;",
+        '"': "&quot;",
+        "'": "&apos;",
+      })[character] ?? character,
   );
 }
 
@@ -22,25 +30,40 @@ function latestRequired(contestant: ContestantResult): string {
 /** A deterministic, self-contained visual companion to BATTLE.md. */
 export function renderBattleVisual(state: RunState): string {
   const contestants = reportContestants(state);
-  const blocks = contestants.map((contestant, index) => {
-    const outcome = state.arenaOutcome?.contestants[contestant.id];
-    const x = 54 + index * 570;
-    return `<rect x="${x}" y="158" width="520" height="180" rx="16" fill="#121b26" stroke="#294056"/>
+  const blocks = contestants
+    .map((contestant, index) => {
+      const outcome = state.arenaOutcome?.contestants[contestant.id];
+      const x = 54 + index * 570;
+      return `<rect x="${x}" y="158" width="520" height="180" rx="16" fill="#121b26" stroke="#294056"/>
       <text x="${x + 28}" y="202" class="label">${escapeXml(contestantLabel(state.config.contestants, contestant.id).toUpperCase())}</text>
       <text x="${x + 28}" y="256" class="hp">${String(contestant.finalHealth)} HP</text>
       <text x="${x + 28}" y="292" class="body">Required suite: <tspan class="${latestRequired(contestant) === "PASS" ? "pass" : latestRequired(contestant) === "FAIL" ? "fail" : "warn"}">${latestRequired(contestant)}</tspan></text>
       <text x="${x + 28}" y="316" class="body">Recoil: ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil)} HP</text>
       <text x="${x + 250}" y="316" class="body">Active damage: ${String(outcome?.activeDefectDamage ?? 0)} HP</text>`;
-  }).join("\n");
+    })
+    .join("\n");
   const defects = reportDefects(state);
   const defectLines = defects.length
-    ? defects.slice(0, 3).map((defect, index) => `<text x="76" y="${520 + index * 42}" class="body"><tspan class="${defect.active ? "fail" : "pass"}">${escapeXml(defect.active ? "UNRESOLVED" : "REPAIRED")}</tspan> · ${escapeXml(defect.representative.severity ?? "unrated")} · ${escapeXml(truncateReportText(defect.representative.claim, 88))}</text>`).join("\n")
+    ? defects
+        .slice(0, 3)
+        .map(
+          (defect, index) =>
+            `<text x="76" y="${520 + index * 42}" class="body"><tspan class="${defect.active ? "fail" : "pass"}">${escapeXml(defect.active ? "UNRESOLVED" : "REPAIRED")}</tspan> · ${escapeXml(defect.representative.severity ?? "unrated")} · ${escapeXml(truncateReportText(defect.representative.claim, 88))}</text>`,
+        )
+        .join("\n")
     : `<text x="76" y="520" class="body">No proven defects beyond declared validation.</text>`;
-  const rounds = reportRounds(state).slice(0, 3).map((round, index) => {
-    const count = round.attacks.filter((attack) => attack.status === "landed").length;
-    return `<rect x="${54 + index * 380}" y="690" width="340" height="112" rx="12" fill="#121b26" stroke="#294056"/><text x="${78 + index * 380}" y="730" class="label">${round.id === "recovery" ? "RECOVERY" : `ROUND ${String(round.id)}`}</text><text x="${78 + index * 380}" y="766" class="body">${count ? `${String(count)} proven attack(s)` : "No proven attacks"}</text>`;
-  }).join("\n");
-  const winner = state.ranking?.draw ? "DRAW" : contestantLabel(state.config.contestants, state.ranking?.winner ?? "a");
+  const rounds = reportRounds(state)
+    .slice(0, 3)
+    .map((round, index) => {
+      const count = round.attacks.filter(
+        (attack) => attack.status === "landed",
+      ).length;
+      return `<rect x="${54 + index * 380}" y="690" width="340" height="112" rx="12" fill="#121b26" stroke="#294056"/><text x="${78 + index * 380}" y="730" class="label">${round.id === "recovery" ? "RECOVERY" : `ROUND ${String(round.id)}`}</text><text x="${78 + index * 380}" y="766" class="body">${count ? `${String(count)} proven attack(s)` : "No proven attacks"}</text>`;
+    })
+    .join("\n");
+  const winner = state.ranking?.draw
+    ? "DRAW"
+    : contestantLabel(state.config.contestants, state.ranking?.winner ?? "a");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1240" height="860" viewBox="0 0 1240 860" role="img" aria-label="Agent Arena battle result">
 <style>.title{font:700 28px ui-monospace,Menlo,monospace;fill:#f5f7fa}.label{font:700 18px ui-monospace,Menlo,monospace;fill:#9ac0ff}.hp{font:700 38px ui-monospace,Menlo,monospace;fill:#72df90}.body{font:16px ui-monospace,Menlo,monospace;fill:#d7e0ea}.pass{fill:#72df90}.fail{fill:#ff8b84}.warn{fill:#f5c979}.muted{font:15px ui-monospace,Menlo,monospace;fill:#b4c1cd}</style>

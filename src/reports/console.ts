@@ -26,7 +26,11 @@ function style(value: string, code: string, enabled: boolean): string {
   return enabled ? `${code}${value}${ANSI.reset}` : value;
 }
 
-function terminalLink(label: string, artifact: string | undefined, enabled: boolean): string {
+function terminalLink(
+  label: string,
+  artifact: string | undefined,
+  enabled: boolean,
+): string {
   if (!artifact) return label;
   if (!enabled) return `${label}: ${artifact}`;
   return `\u001b]8;;${pathToFileURL(artifact).href}\u0007${label}\u001b]8;;\u0007`;
@@ -53,7 +57,10 @@ export function renderConsoleSummary(
     ? `Draw: ${state.ranking.reason}`
     : `Arena champion: ${state.ranking?.winner ? contestantLabel(state.config.contestants, state.ranking.winner) : "none"} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`;
   const recommendation = state.patchRecommendation?.contestantId
-    ? contestantLabel(state.config.contestants, state.patchRecommendation.contestantId)
+    ? contestantLabel(
+        state.config.contestants,
+        state.patchRecommendation.contestantId,
+      )
     : "none";
 
   return [
@@ -73,7 +80,13 @@ export function renderConsoleSummary(
       const required = reportCheckStatus(latestCheck(contestant, "required"));
       const requiredDisplay = style(
         required,
-        required === "PASS" ? ANSI.green : required === "INFRA" || required === "SKIPPED" || required === "NOT RUN" ? ANSI.yellow : ANSI.red,
+        required === "PASS"
+          ? ANSI.green
+          : required === "INFRA" ||
+              required === "SKIPPED" ||
+              required === "NOT RUN"
+            ? ANSI.yellow
+            : ANSI.red,
         color,
       );
       return `${contestantLabel(state.config.contestants, contestant.id).padEnd(12)} ${requiredDisplay.padEnd(14 + (color ? ANSI.green.length + ANSI.reset.length : 0))} ${String(contestant.finalHealth).padStart(3)} HP  ${String(outcome?.activeDefectDamage ?? 0).padStart(3)} HP  ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil).padStart(3)} HP`;
@@ -90,7 +103,11 @@ export function renderConsoleSummary(
       ? `Decisive defects: ${defects.map((defect) => `${defect.representative.severity ?? "unrated"} ${truncateReportText(defect.representative.claim, 80)} (${defect.active ? "UNRESOLVED" : "REPAIRED"})`).join("; ")}`
       : "Decisive defects: no proven defects beyond declared validation",
     unresolved.length
-      ? style(`Still needed: review ${String(unresolved.length)} unresolved defect(s) before applying a patch`, ANSI.red, color)
+      ? style(
+          `Still needed: review ${String(unresolved.length)} unresolved defect(s) before applying a patch`,
+          ANSI.red,
+          color,
+        )
       : "Still needed: choose a patch for human review",
     "Human review: pending",
     terminalLink("Open HTML dossier", state.artifacts.battleHtml, hyperlinks),

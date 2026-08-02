@@ -507,7 +507,10 @@ export class Arena {
       await this.transition(context, "complete");
       return {
         state: context.state,
-        summary: renderConsoleSummary(context.state, this.dependencies.consoleOptions),
+        summary: renderConsoleSummary(
+          context.state,
+          this.dependencies.consoleOptions,
+        ),
       };
     } catch (error) {
       if (context) {
@@ -1007,7 +1010,9 @@ export class Arena {
         const worktree = await context.worktrees.create(
           `round-${String(round)}-attack-house-${target}`,
         );
-        this.dependencies.onProgress?.(`Round ${String(round)}: house scout ${String(candidateIndex + 1)}/2 started for ${target}`);
+        this.dependencies.onProgress?.(
+          `Round ${String(round)}: house scout ${String(candidateIndex + 1)}/2 started for ${target}`,
+        );
         await this.persist(context);
         try {
           await context.worktrees.applyPatch(worktree, targetPatchPath);
@@ -1072,7 +1077,9 @@ export class Arena {
           );
         } finally {
           await context.worktrees.remove(worktree);
-          this.dependencies.onProgress?.(`Round ${String(round)}: house scout ${String(candidateIndex + 1)}/2 finished for ${target}`);
+          this.dependencies.onProgress?.(
+            `Round ${String(round)}: house scout ${String(candidateIndex + 1)}/2 finished for ${target}`,
+          );
           await this.persist(context);
         }
       }

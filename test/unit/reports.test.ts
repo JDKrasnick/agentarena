@@ -14,10 +14,7 @@ import {
 } from "../../src/reports/presentation.js";
 import { makeRunState } from "../helpers/run-state.js";
 
-function attack(
-  state: RunState,
-  overrides: Partial<Attack> = {},
-): Attack {
+function attack(state: RunState, overrides: Partial<Attack> = {}): Attack {
   return {
     id: "attack-1",
     round: 1,
@@ -83,7 +80,9 @@ describe("battle reports", () => {
     const report = renderBattleReport(state);
 
     expect(report).toContain("## Verified test coverage — final patches");
-    expect(report).toContain("| Check / exact command | Scope | Codex | Claude |");
+    expect(report).toContain(
+      "| Check / exact command | Scope | Codex | Claude |",
+    );
     expect(report).toContain("PASS · 1.2s [stdout](./logs/a.out)");
     expect(report).toContain("FAIL");
     expect(report).toContain("## Round digest");
@@ -93,7 +92,9 @@ describe("battle reports", () => {
   });
 
   it("keeps the terminal verdict tied to validation and unresolved defects", () => {
-    const summary = renderConsoleSummary(makeRunState({ claudeDamage: 30, claudeHealth: 65 }));
+    const summary = renderConsoleSummary(
+      makeRunState({ claudeDamage: 30, claudeHealth: 65 }),
+    );
 
     expect(summary).toContain("evidence-backed final result");
     expect(summary).toContain("Required suite");
@@ -132,7 +133,11 @@ describe("battle reports", () => {
     expect([
       reportCheckStatus({ id: "pass", kind: "required", status: "passed" }),
       reportCheckStatus({ id: "fail", kind: "required", status: "failed" }),
-      reportCheckStatus({ id: "infra", kind: "required", status: "infrastructure_error" }),
+      reportCheckStatus({
+        id: "infra",
+        kind: "required",
+        status: "infrastructure_error",
+      }),
       reportCheckStatus({ id: "skip", kind: "required", status: "skipped" }),
       reportCheckStatus(),
     ]).toMatchInlineSnapshot(`
@@ -163,7 +168,13 @@ describe("battle reports", () => {
 
   it("renders implementation, round phases, infrastructure, and review in causal order", () => {
     const state = makeRunState();
-    state.attacks = [attack(state, { status: "infrastructure_error", damage: undefined, damageActive: undefined })];
+    state.attacks = [
+      attack(state, {
+        status: "infrastructure_error",
+        damage: undefined,
+        damageActive: undefined,
+      }),
+    ];
     const report = renderBattleReport(state);
     const headings = [
       "## Implementation and baseline",
@@ -181,7 +192,12 @@ describe("battle reports", () => {
 
   it("renders draw, elimination, no-attack, recovery, and siege language", () => {
     const draw = makeRunState();
-    draw.ranking = { winner: null, draw: true, order: ["a", "b"], reason: "equal evidence" };
+    draw.ranking = {
+      winner: null,
+      draw: true,
+      order: ["a", "b"],
+      reason: "equal evidence",
+    };
     expect(renderConsoleSummary(draw)).toContain("Draw: equal evidence");
     expect(renderBattleHtml(draw)).toContain("Draw result");
 
@@ -202,10 +218,14 @@ describe("battle reports", () => {
     catchUp.config.mode = "catch_up";
     expect(renderConsoleSummary(catchUp)).toContain("Mode: catch_up");
 
-    expect(renderBattleHtml(makeRunState())).toContain("Recommended patch</dt><dd>Claude");
+    expect(renderBattleHtml(makeRunState())).toContain(
+      "Recommended patch</dt><dd>Claude",
+    );
 
     const recovery = makeRunState();
-    recovery.attacks = [attack(recovery, { id: "recovery-1", round: "recovery" })];
+    recovery.attacks = [
+      attack(recovery, { id: "recovery-1", round: "recovery" }),
+    ];
     expect(renderBattleReport(recovery)).toContain("## Recovery round");
     expect(renderBattleHtml(recovery)).toContain("Recovery round");
   });
@@ -229,13 +249,19 @@ describe("battle reports", () => {
     ]);
 
     expect(resolveArtifactHref(state, reportPath)).toBe("./BATTLE.md");
-    expect(resolveArtifactHref(state, path.join(runDirectory, "not-recorded.txt"))).toBeUndefined();
-    expect(resolveArtifactHref(state, path.join(runDirectory, "..", "outside.txt"))).toBeUndefined();
-    const hrefs = [...renderBattleHtml(state).matchAll(/href="\.\/([^"#]+)"/gu)].map(
-      (match) => match[1],
-    );
+    expect(
+      resolveArtifactHref(state, path.join(runDirectory, "not-recorded.txt")),
+    ).toBeUndefined();
+    expect(
+      resolveArtifactHref(state, path.join(runDirectory, "..", "outside.txt")),
+    ).toBeUndefined();
+    const hrefs = [
+      ...renderBattleHtml(state).matchAll(/href="\.\/([^"#]+)"/gu),
+    ].map((match) => match[1]);
     await expect(
-      Promise.all(hrefs.map((href) => access(path.join(runDirectory, href ?? "")))),
+      Promise.all(
+        hrefs.map((href) => access(path.join(runDirectory, href ?? ""))),
+      ),
     ).resolves.toBeDefined();
   });
 });

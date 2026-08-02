@@ -115,9 +115,9 @@ the same report rather than competing with the decision.
    the latest outcome first and retains every command/artifact for drill-down.
    The top-level **Verified test coverage** panel lists the actual command or
    test profile and environment—e.g. `npm test` (local worktree) or `AWS
-   integration profile` (approved ephemeral test account)—so a developer can
+integration profile` (approved ephemeral test account)—so a developer can
    rely on a successful harness run without rerunning it. It also lists `NOT
-   RUN`, `SKIPPED`, and `INFRA` explicitly; absence never implies verification.
+RUN`, `SKIPPED`, and `INFRA` explicitly; absence never implies verification.
    Results are always contestant-scoped: show adjacent `Codex A` and `Claude B`
    outcome cells for a candidate-specific check, and label a genuinely shared
    preflight result as `Shared baseline` rather than implying either patch passed.
@@ -126,26 +126,26 @@ the same report rather than competing with the decision.
    verified, remaining defects, and links). Follow it with **Already done** and
    **Still needed** checklists that distinguish completed harness work from
    required human review or unresolved engineering risk.
-5. **Patch review.** Existing quality facts become a small comparison table:
+7. **Patch review.** Existing quality facts become a small comparison table:
    production and test footprint, manifests, observability changes, and final
    patch locations.
-6. **Operational appendix.** Invocation metadata, recovery credits, overlays,
+8. **Operational appendix.** Invocation metadata, recovery credits, overlays,
    provenance, transcripts, and raw commands remain replayable but no longer
    interrupt the narrative.
 
 ## Content model and rules
 
-| Surface | Must answer | Source data |
-| --- | --- | --- |
-| CLI finale | What won, why, what next? | ranking, recommendation, final checks, outcome, decisive attacks |
-| Report verdict | Is this safe to review/apply? | final validation, champion/recommendation, outcome margin |
-| Battle value | What did adversarial testing add beyond the baseline? | baseline checks, landed defects, repairs, final checks |
-| Verified test coverage | Which exact checks passed for which final patch, where, and with what evidence? | contestant checks, commands, integration profile, command artifacts |
-| Handoff | What is complete and what action remains? | final checks, repair state, recommendation, review prompt |
-| Defect ledger | What did the battle prove? | attacks, root defects, case bundles, repair health events |
-| Phase timeline | Which implementation, attack, repair, and review action changed the result? | contestant round results, attacks, invocations, checks, health events |
-| Validation matrix | Which evidence passed or failed? | all check results and command artifacts |
-| Patch review | What changed and where? | patch-quality facts and final patch artifacts |
+| Surface                | Must answer                                                                     | Source data                                                           |
+| ---------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| CLI finale             | What won, why, what next?                                                       | ranking, recommendation, final checks, outcome, decisive attacks      |
+| Report verdict         | Is this safe to review/apply?                                                   | final validation, champion/recommendation, outcome margin             |
+| Battle value           | What did adversarial testing add beyond the baseline?                           | baseline checks, landed defects, repairs, final checks                |
+| Verified test coverage | Which exact checks passed for which final patch, where, and with what evidence? | contestant checks, commands, integration profile, command artifacts   |
+| Handoff                | What is complete and what action remains?                                       | final checks, repair state, recommendation, review prompt             |
+| Defect ledger          | What did the battle prove?                                                      | attacks, root defects, case bundles, repair health events             |
+| Phase timeline         | Which implementation, attack, repair, and review action changed the result?     | contestant round results, attacks, invocations, checks, health events |
+| Validation matrix      | Which evidence passed or failed?                                                | all check results and command artifacts                               |
+| Patch review           | What changed and where?                                                         | patch-quality facts and final patch artifacts                         |
 
 - A defect appears once in the ledger, keyed by `rootDefectId`; additional cases
   are evidence for that same defect rather than separate score events.
@@ -196,9 +196,9 @@ the same report rather than competing with the decision.
   (the attacker's penalty for an invalid, duplicate, self-defeating, unproven,
   blocked, or otherwise unsuccessful ranked attack).
 - Add a score explainer beside the scorecard: `final health = 100 − permanent
-  recoil − active distinct defect damage`, clamped to `0–100`. Show the actual
+recoil − active distinct defect damage`, clamped to `0–100`. Show the actual
   ledger for each contestant—for example, `100 − 0 recoil − 0 active damage =
-  100 HP` versus `100 − 5 recoil − 30 active damage = 65 HP`. A landed defect's
+100 HP` versus `100 − 5 recoil − 30 active damage = 65 HP`. A landed defect's
   severity determines its potential damage (50/30/15/5), but a successful
   repair removes that active damage; repeated evidence for the same root defect
   never stacks. Failed required validation eliminates a patch to 0 HP regardless
@@ -251,7 +251,7 @@ the same report rather than competing with the decision.
   immutable task capture, implementation/attack/repair work, and every verified
   check. **Still needed** includes only unresolved defects, an unexecuted
   required profile, or a human review/apply decision; show `Nothing required
-  before review` when that list is empty. Do not list an optional, unrequested
+before review` when that list is empty. Do not list an optional, unrequested
   environment (such as AWS integration) as remaining work merely because it
   exists.
 - In each round recap, replace bare outcome labels with an **Observed result**

@@ -41,7 +41,10 @@ export interface PatchQualityVerifier {
 export class CommandPatchQualityVerifier implements PatchQualityVerifier {
   readonly id: string;
 
-  constructor(private readonly provider: AgentId, private readonly model?: string) {
+  constructor(
+    private readonly provider: AgentId,
+    private readonly model?: string,
+  ) {
     this.id = `quality-${provider}`;
   }
 
