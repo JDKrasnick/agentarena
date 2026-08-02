@@ -98,6 +98,8 @@ export function makeRunState(
   );
   const repositoryRoot = options.repositoryRoot ?? "/tmp/repository";
   const runDirectory = options.runDirectory ?? "/tmp/run";
+  codex.finalPatchPath = `${runDirectory}/patches/a.diff`;
+  claude.finalPatchPath = `${runDirectory}/patches/b.diff`;
   const state = RunStateSchema.parse({
     schemaVersion: 3,
     runId: "run-12345678",
@@ -139,7 +141,13 @@ export function makeRunState(
       order: ["a", "b"],
       reason: "higher health",
     },
-    artifacts: { runDirectory },
+    artifacts: {
+      runDirectory,
+      battle: `${runDirectory}/BATTLE.md`,
+      battleHtml: `${runDirectory}/BATTLE.html`,
+      battleVisual: `${runDirectory}/BATTLE.svg`,
+      result: `${runDirectory}/result.json`,
+    },
     warnings: [],
     patchQualityFacts: {
       a: collectPatchQualityFacts({
