@@ -7,7 +7,6 @@ import {
   type PatchQualityVerdict,
   type TaskContract,
 } from "../core/types.js";
-import { providerCommand } from "../agents/adapter.js";
 import { runProcess } from "../runner/process-runner.js";
 
 export interface PatchQualityVerifierInput {
@@ -38,13 +37,33 @@ export interface PatchQualityVerifier {
   compare(input: PatchQualityVerifierInput): Promise<PatchQualityVerdict>;
 }
 
+function providerCommand(id: AgentId): { executable: string; args: string[] } {
+  switch (id) {
+    case "codex":
+      return {
+        executable: "codex",
+        args: ["exec", "--full-auto", "--skip-git-repo-check", "-"],
+      };
+    case "claude":
+      return {
+        executable: "claude",
+        args: [
+          "--print",
+          "--permission-mode",
+          "bypassPermissions",
+          "--output-format",
+          "text",
+        ],
+      };
+    case "gemini":
+      return { executable: "gemini", args: ["--yolo"] };
+  }
+}
+
 export class CommandPatchQualityVerifier implements PatchQualityVerifier {
   readonly id: string;
 
-  constructor(
-    private readonly provider: AgentId,
-    private readonly model?: string,
-  ) {
+  constructor(private readonly provider: AgentId) {
     this.id = `quality-${provider}`;
   }
 
@@ -53,7 +72,7 @@ export class CommandPatchQualityVerifier implements PatchQualityVerifier {
   ): Promise<PatchQualityVerdict> {
     const outputPath = path.join(input.worktree, "quality-verdict.json");
     await rm(outputPath, { force: true });
-    const command = providerCommand(this.provider, this.model);
+    const command = providerCommand(this.provider);
     const prompt = [
       "You are a neutral implementation-quality verifier.",
       "Correctness has already been adjudicated. Compare only the anonymized patches using scope precision, dependency/operational footprint, change surface, structural simplicity, verification/observability, and normalized patch size (last).",

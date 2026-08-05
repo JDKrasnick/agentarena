@@ -1566,10 +1566,8 @@ export class Arena {
         "",
         `Write an accept/challenge response to ${path.join(worktree, ".agent-arena-infrastructure-review.json")}.`,
       ].join("\n");
-      const reviewContestant = getContestant(context.state, author);
       const review = await this.dependencies.infrastructureReviewer.review({
-        agent: reviewContestant.provider,
-        ...(reviewContestant.model ? { model: reviewContestant.model } : {}),
+        agent: getContestant(context.state, author).provider,
         attack: provisional,
         redactedEvidence:
           provisional.outcomeReason ?? "ambiguous infrastructure",

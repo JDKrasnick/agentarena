@@ -156,7 +156,6 @@ export interface CaseBuilder {
 
 export interface InfrastructureReviewInput extends StructuredGeneratorInput {
   agent: AgentId;
-  model?: string;
   attack: Attack;
   redactedEvidence: string;
 }
@@ -165,13 +164,6 @@ export interface InfrastructureReviewer {
   review(
     input: InfrastructureReviewInput,
   ): Promise<InfrastructureReviewSubmission>;
-}
-
-export function infrastructureReviewCommand(
-  input: Pick<InfrastructureReviewInput, "agent" | "model">,
-  overrides: Partial<Record<AgentId, Omit<CommandAdapterOptions, "id">>> = {},
-): Omit<CommandAdapterOptions, "id"> {
-  return overrides[input.agent] ?? providerCommand(input.agent, input.model);
 }
 
 export async function readAttackSubmission(
@@ -384,11 +376,8 @@ const AttackVerdictSchema = z.object({
 export class CommandAttackVerifier implements AttackVerifier {
   private readonly command: Omit<CommandAdapterOptions, "id">;
 
-  constructor(
-    readonly id: AgentId,
-    model?: string,
-  ) {
-    this.command = providerCommand(id, model);
+  constructor(readonly id: AgentId) {
+    this.command = providerCommand(id);
   }
 
   async assess(input: AnonymizedAttackInput): Promise<AttackVerdict> {
@@ -537,7 +526,7 @@ export class CommandInfrastructureReviewer implements InfrastructureReviewer {
         "infrastructure_review",
         input,
         ".agent-arena-infrastructure-review.json",
-        infrastructureReviewCommand(input, this.commandOverrides),
+        this.commandOverrides[input.agent],
       ),
     );
   }

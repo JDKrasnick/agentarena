@@ -58,11 +58,8 @@ test: npm test
 agents: [codex, claude]
 models: [gpt-5.2-codex, claude-opus-4-6]
 attack_verifier: codex
-attack_verifier_model: gpt-5.2-codex
 quality_verifier: codex
-quality_verifier_model: gpt-5.2-codex
 harness_maintainer: codex
-harness_maintainer_model: gpt-5.2-codex
 sources:
   - github_issue: 241
   # - github_pr: 87
@@ -183,10 +180,6 @@ Each run is persisted atomically under `.agent-arena/runs/<run-id>/`:
 - deterministic quality facts, anonymized verifier input/output, and a
   chat-ready review prompt
 - append-only `reviews/`, `delivery/events/`, and idempotent `operations/`
-
-Internal verifier and maintainer models are optional. Configure them with
-`--verifier-model`, `--quality-verifier-model`, and `--maintainer-model` (or
-the matching YAML keys above); omission preserves each provider CLI's default.
 
 See [the artifact reference](docs/ARTIFACTS.md), [review and delivery
 security](docs/SECURITY.md), and [the live release

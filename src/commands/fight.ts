@@ -7,7 +7,6 @@ import {
   CommandHarnessMaintainer,
   CommandInfrastructureReviewer,
   createProviderAdapter,
-  providerCommand,
 } from "../agents/adapter.js";
 import { CommandPatchQualityVerifier } from "../quality/verifier.js";
 import {
@@ -47,10 +46,6 @@ async function approvePermissionPlan(
 
 export async function runFight(overrides: CliConfigOverrides): Promise<string> {
   const config = await approvePermissionPlan(await loadFightConfig(overrides));
-  const attackVerifierCommand = providerCommand(
-    config.attackVerifier,
-    config.attackVerifierModel,
-  );
   const adapters = Object.fromEntries(
     config.contestants.map((contestant) => [
       contestant.provider,
@@ -61,40 +56,15 @@ export async function runFight(overrides: CliConfigOverrides): Promise<string> {
     adapters,
     adapterFactory: (contestant) =>
       createProviderAdapter(contestant.provider, contestant.model),
-    verifier: new CommandAttackVerifier(
-      config.attackVerifier,
-      config.attackVerifierModel,
-    ),
+    verifier: new CommandAttackVerifier(config.attackVerifier),
     qualityVerifier: new CommandPatchQualityVerifier(
       config.qualityVerifier ?? config.attackVerifier,
-      config.qualityVerifierModel,
     ),
-    houseScout: new CommandHouseScout(
-      config.attackVerifier,
-      attackVerifierCommand,
-    ),
-    caseBuilder: new CommandCaseBuilder(
-      config.attackVerifier,
-      attackVerifierCommand,
-    ),
+    houseScout: new CommandHouseScout(config.attackVerifier),
+    caseBuilder: new CommandCaseBuilder(config.attackVerifier),
     infrastructureReviewer: new CommandInfrastructureReviewer(),
-    harnessMaintainer: new CommandHarnessMaintainer(
-      config.harnessMaintainer,
-      providerCommand(config.harnessMaintainer, config.harnessMaintainerModel),
-    ),
+    harnessMaintainer: new CommandHarnessMaintainer(config.harnessMaintainer),
     onProgress: (message) => stdout.write(`${message}\n`),
-    consoleOptions: {
-      color: Boolean(
-        stdout.isTTY &&
-        process.env.NO_COLOR === undefined &&
-        process.env.TERM !== "dumb",
-      ),
-      hyperlinks: Boolean(
-        stdout.isTTY &&
-        process.env.CI === undefined &&
-        process.env.TERM !== "dumb",
-      ),
-    },
   });
   const controller = new AbortController();
   const cancel = (): void => controller.abort(new Error("Interrupted"));

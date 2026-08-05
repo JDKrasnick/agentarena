@@ -51,17 +51,11 @@ program
       .default("confirm"),
   )
   .option("--verifier <agent>", "Neutral verifier provider")
-  .option("--verifier-model <model>", "Optional neutral verifier model")
   .option(
     "--quality-verifier <agent>",
     "Neutral patch-quality verifier provider",
   )
-  .option(
-    "--quality-verifier-model <model>",
-    "Optional patch-quality verifier model",
-  )
   .option("--maintainer <agent>", "Harness-maintainer provider")
-  .option("--maintainer-model <model>", "Optional harness-maintainer model")
   .option("--yes", "Approve the displayed confirm-mode plan noninteractively")
   .option("--accept-reduced-validation", "Allow required capability denials")
   .option("--keep-worktrees", "Preserve temporary worktrees for debugging")
@@ -84,11 +78,8 @@ program
         acceptance?: string[];
         permissions: "auto" | "confirm" | "deny";
         verifier?: string;
-        verifierModel?: string;
         qualityVerifier?: string;
-        qualityVerifierModel?: string;
         maintainer?: string;
-        maintainerModel?: string;
         yes?: boolean;
         acceptReducedValidation?: boolean;
         keepWorktrees?: boolean;
@@ -117,19 +108,10 @@ program
           : {}),
         permissionMode: options.permissions,
         ...(options.verifier ? { verifier: options.verifier } : {}),
-        ...(options.verifierModel
-          ? { verifierModel: options.verifierModel }
-          : {}),
         ...(options.qualityVerifier
           ? { qualityVerifier: options.qualityVerifier }
           : {}),
-        ...(options.qualityVerifierModel
-          ? { qualityVerifierModel: options.qualityVerifierModel }
-          : {}),
         ...(options.maintainer ? { maintainer: options.maintainer } : {}),
-        ...(options.maintainerModel
-          ? { maintainerModel: options.maintainerModel }
-          : {}),
         nonInteractiveApproval: options.yes ?? false,
         reducedValidationAccepted: options.acceptReducedValidation ?? false,
         keepWorktrees: options.keepWorktrees ?? false,
@@ -167,17 +149,11 @@ program
       .default("confirm"),
   )
   .option("--verifier <agent>", "Neutral verifier provider")
-  .option("--verifier-model <model>", "Optional neutral verifier model")
   .option(
     "--quality-verifier <agent>",
     "Ignored in siege mode; retained for shared config",
   )
-  .option(
-    "--quality-verifier-model <model>",
-    "Ignored in siege mode; retained for shared config",
-  )
   .option("--maintainer <agent>", "Harness-maintainer provider")
-  .option("--maintainer-model <model>", "Optional harness-maintainer model")
   .option("--yes", "Approve the displayed confirm-mode plan noninteractively")
   .option("--accept-reduced-validation", "Allow required capability denials")
   .option("--keep-worktrees", "Preserve temporary worktrees for debugging")
@@ -194,11 +170,8 @@ program
       acceptance?: string[];
       permissions: "auto" | "confirm" | "deny";
       verifier?: string;
-      verifierModel?: string;
       qualityVerifier?: string;
-      qualityVerifierModel?: string;
       maintainer?: string;
-      maintainerModel?: string;
       yes?: boolean;
       acceptReducedValidation?: boolean;
       keepWorktrees?: boolean;
@@ -219,19 +192,10 @@ program
           : {}),
         permissionMode: options.permissions,
         ...(options.verifier ? { verifier: options.verifier } : {}),
-        ...(options.verifierModel
-          ? { verifierModel: options.verifierModel }
-          : {}),
         ...(options.qualityVerifier
           ? { qualityVerifier: options.qualityVerifier }
           : {}),
-        ...(options.qualityVerifierModel
-          ? { qualityVerifierModel: options.qualityVerifierModel }
-          : {}),
         ...(options.maintainer ? { maintainer: options.maintainer } : {}),
-        ...(options.maintainerModel
-          ? { maintainerModel: options.maintainerModel }
-          : {}),
         nonInteractiveApproval: options.yes ?? false,
         reducedValidationAccepted: options.acceptReducedValidation ?? false,
         keepWorktrees: options.keepWorktrees ?? false,

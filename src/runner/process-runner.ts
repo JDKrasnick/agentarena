@@ -78,11 +78,7 @@ export async function runProcess(
       env: minimalEnvironment(request.env),
       reject: false,
       timeout: request.timeoutMs,
-      // Claude Code can keep an active print session alive after SIGTERM. A
-      // battle budget is a hard limit, so terminate the agent process at the
-      // deadline rather than allowing a stalled submission to block a round.
-      killSignal: "SIGKILL",
-      forceKillAfterDelay: false,
+      forceKillAfterDelay: 1_000,
       all: false,
       ...(request.input === undefined ? {} : { input: request.input }),
       ...(request.signal === undefined ? {} : { cancelSignal: request.signal }),
