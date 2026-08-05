@@ -1,5 +1,17 @@
-import type { Attack, ContestantResult, RunState } from "../core/types.js";
+import type {
+  Attack,
+  CheckResult,
+  ContestantResult,
+  RunState,
+} from "../core/types.js";
 import { contestantLabel } from "../core/labels.js";
+import {
+  reportCheckStatus,
+  reportContestants,
+  reportDefects,
+  reportRounds,
+  resolveArtifactHref,
+} from "./presentation.js";
 
 function attackOwner(attack: Attack): string {
   return attack.origin.kind === "house" ? "House" : attack.origin.contestant;
@@ -13,6 +25,192 @@ function attackEffect(attack: Attack): string {
 
 function tableCell(value: string): string {
   return value.replaceAll("|", "\\|").replaceAll(/\r?\n/gu, " ");
+}
+
+function artifactLink(
+  state: RunState,
+  label: string,
+  artifact?: string,
+): string {
+  const href = resolveArtifactHref(state, artifact);
+  return href ? `[${label}](${href})` : `\`${label}\``;
+}
+
+function checkCell(state: RunState, check?: CheckResult): string {
+  if (!check) return "NOT RUN";
+  const duration = check.command
+    ? ` · ${(check.command.durationMs / 1000).toFixed(1)}s`
+    : "";
+  const logs = check.command
+    ? ` ${artifactLink(state, "stdout", check.command.stdoutPath)} ${artifactLink(state, "stderr", check.command.stderrPath)}`
+    : "";
+  return `${reportCheckStatus(check)}${duration}${logs}`;
+}
+
+function coverageRows(
+  state: RunState,
+  contestants: ContestantResult[],
+): string[] {
+  const byId = new Map<string, Partial<Record<"a" | "b", CheckResult>>>();
+  for (const contestant of contestants) {
+    for (const check of contestant.checks) {
+      const row = byId.get(check.id) ?? {};
+      row[contestant.id] = check;
+      byId.set(check.id, row);
+    }
+  }
+  return [...byId.entries()].map(([id, checks]) => {
+    const first = checks.a ?? checks.b;
+    const command = first?.command?.command ?? first?.reason ?? "harness check";
+    return `| ${tableCell(id)} — \`${tableCell(command)}\` | ${first?.kind ?? "unknown"} | ${checkCell(state, checks.a)} | ${checkCell(state, checks.b)} |`;
+  });
+}
+
+function roundDigest(
+  state: RunState,
+  contestants: ContestantResult[],
+): string[] {
+  return reportRounds(state).map((round) => {
+    const attacks = round.attacks;
+    const landed = attacks.filter((attack) => attack.status === "landed");
+    const summary = landed.length
+      ? landed
+          .map((attack) => `${attack.severity ?? "unrated"} ${attack.claim}`)
+          .join("; ")
+      : attacks.length
+        ? `${String(attacks.length)} attack(s), none landed`
+        : "No submitted attacks";
+    const health = contestants
+      .map((contestant) => {
+        const result = contestant.rounds.find(
+          (entry) => entry.round === round.id,
+        );
+        return `${contestantLabel(state.config.contestants, contestant.id)} ${result ? `${String(result.startingHealth)} → ${String(result.endingHealth)} HP` : "not run"}`;
+      })
+      .join("; ");
+    return `| ${round.id === "recovery" ? "Recovery" : `R${String(round.id)}`} | ${tableCell(summary)} | ${health} | ${artifactLink(state, "open round evidence", state.artifacts.battle)} |`;
+  });
+}
+
+function decisiveDefects(state: RunState): string[] {
+  const defects = reportDefects(state);
+  return defects.length
+    ? defects.map((defect) => {
+        const attack = defect.representative;
+        const cases = attack.caseBundle?.cases ?? [];
+        const observed = attack.outcomeReason ?? attack.impact;
+        const evidence = [
+          artifactLink(state, "attack patch", attack.patchPath),
+          ...cases.map((entry) =>
+            artifactLink(
+              state,
+              entry.visibility === "visible" ? "reproducer" : "held-out case",
+              entry.patchPath,
+            ),
+          ),
+        ].join(" ");
+        return `| ${tableCell(attack.claim)} | ${tableCell(attack.oracle.expectedBehavior)} | ${tableCell(observed)} | ${tableCell(attack.impact)} | ${attack.severity ?? "unrated"} — ${String(defect.damage)} HP | ${defect.active ? "UNRESOLVED" : "REPAIRED"} | ${evidence} |`;
+      })
+    : ["| No proven defects | — | — | — | — | — | — |"];
+}
+
+function invocationEvidence(
+  state: RunState,
+  invocation: ContestantResult["implementation"],
+): string {
+  if (!invocation) return "not run";
+  return [
+    invocation.status.toUpperCase(),
+    artifactLink(state, "prompt", invocation.promptPath),
+    artifactLink(state, "transcript", invocation.transcriptPath),
+    ...(invocation.submissionPath
+      ? [artifactLink(state, "submission", invocation.submissionPath)]
+      : []),
+  ].join(" · ");
+}
+
+function implementationReplay(
+  state: RunState,
+  contestants: ContestantResult[],
+): string[] {
+  return [
+    "## Implementation and baseline",
+    "",
+    "| Contestant | Implementation | Initial patch | Baseline / required evidence |",
+    "| --- | --- | --- | --- |",
+    ...contestants.map((contestant) => {
+      const checks = contestant.checks.filter(
+        (check) => check.kind === "baseline",
+      );
+      return `| ${contestantLabel(state.config.contestants, contestant.id)} | ${invocationEvidence(state, contestant.implementation)} | ${artifactLink(state, "initial patch", contestant.initialPatchPath)} | ${checks.length ? checks.map((check) => checkCell(state, check)).join("<br>") : "NOT RUN"} |`;
+    }),
+    "",
+  ];
+}
+
+function roundReplay(state: RunState): string[] {
+  return reportRounds(state).flatMap((round) => {
+    const title =
+      round.id === "recovery" ? "Recovery round" : `Round ${String(round.id)}`;
+    const goal =
+      round.id === 1
+        ? "Contract and local correctness"
+        : round.id === 2
+          ? "Systematic exploration of state, boundaries, and concurrency"
+          : round.id === 3
+            ? "Integration, resilience, and security"
+            : "Replacement attacks for confirmed infrastructure losses";
+    const invocations = state.attackInvocations.filter(
+      (record) => record.round === round.id,
+    );
+    return [
+      `## ${title}`,
+      "",
+      `**Goal:** ${goal}.`,
+      "",
+      "### Attack submissions",
+      "",
+      ...(invocations.length
+        ? invocations.map(
+            (record) =>
+              `- ${contestantLabel(state.config.contestants, record.attacker)} → ${contestantLabel(state.config.contestants, record.target)}: ${record.submissionStatus}, ${String(record.attackCount)} attack(s); ${invocationEvidence(state, record.invocation)}.`,
+          )
+        : ["- No contestant attack invocation was recorded."]),
+      "",
+      "### Adjudication",
+      "",
+      ...(round.attacks.length
+        ? round.attacks.map((attack) => {
+            const observed =
+              attack.outcomeReason ?? "No adjudication detail was recorded.";
+            return `- **${tableCell(attack.claim)}** — ${attack.status.toUpperCase()}. Observed result: ${tableCell(observed)} Expected: ${tableCell(attack.oracle.expectedBehavior)} Why it matters: ${tableCell(attack.impact)} Evidence: ${artifactLink(state, "attack patch", attack.patchPath)}.`;
+          })
+        : ["- No attacks were submitted."]),
+      "",
+      "### Repair",
+      "",
+      ...round.contestants.map(
+        ({ contestant, result }) =>
+          `- ${contestantLabel(state.config.contestants, contestant.id)}: ${result?.repair ? invocationEvidence(state, result.repair) : "no repair invocation recorded"}.`,
+      ),
+      "",
+      "### Validation",
+      "",
+      ...(round.attacks.flatMap((attack) => attack.checks).length
+        ? round.attacks
+            .flatMap((attack) => attack.checks)
+            .map((check) => `- ${check.id}: ${checkCell(state, check)}.`)
+        : ["- No round-scoped check result was recorded."]),
+      "",
+      "### Health ledger",
+      "",
+      ...round.contestants.map(
+        ({ contestant, result }) =>
+          `- ${contestantLabel(state.config.contestants, contestant.id)}: ${result ? `${String(result.startingHealth)} → ${String(result.postAttackHealth)} after attacks → ${String(result.endingHealth)} HP after repair (${result.endingStatus})` : "round not run"}.`,
+      ),
+      "",
+    ];
+  });
 }
 
 function pullRequestProvenance(state: RunState): string[] {
@@ -68,7 +266,8 @@ function contestantSection(contestant: ContestantResult): string[] {
 }
 
 export function renderBattleReport(state: RunState): string {
-  const contestants = Object.values(state.contestants);
+  const contestants = reportContestants(state);
+  const defects = reportDefects(state);
   const lines = [
     "# Agent Arena Battle Report",
     "",
@@ -114,6 +313,60 @@ export function renderBattleReport(state: RunState): string {
     "",
     `Deciding factors: ${state.arenaOutcome?.decidingFactors.join(", ") || "none"}`,
     "",
+    "## Developer takeaway",
+    "",
+    `- **Who won:** ${state.ranking?.draw ? "Draw" : `${contestantLabel(state.config.contestants, state.ranking?.winner ?? "a")} — ${state.ranking?.reason ?? "run incomplete"}`}.`,
+    `- **Why:** ${contestants
+      .map((contestant) => {
+        const outcome = state.arenaOutcome?.contestants[contestant.id];
+        return `${contestantLabel(state.config.contestants, contestant.id)} ${String(contestant.finalHealth)} HP (recoil ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil)}, active damage ${String(outcome?.activeDefectDamage ?? 0)})`;
+      })
+      .join("; ")}.`,
+    `- **Bugs found:** ${String(defects.length)} proven; ${String(defects.filter((defect) => !defect.active).length)} repaired; ${String(defects.filter((defect) => defect.active).length)} unresolved.`,
+    `- **Battle value:** ${defects.length ? "Executable adversarial evidence was captured and every landed defect received a repair opportunity." : "No additional defect beyond declared validation was proven."}`,
+    "",
+    "## Verified test coverage — final patches",
+    "",
+    "A result applies only to the named contestant, patch revision, and harness environment. `NOT RUN` is not a pass.",
+    "",
+    `| Check / exact command | Scope | ${contestantLabel(state.config.contestants, "a")} | ${contestantLabel(state.config.contestants, "b")} |`,
+    "| --- | --- | --- | --- |",
+    ...coverageRows(state, contestants),
+    "",
+    "## Decisive defects",
+    "",
+    "| Defect | Expected / invariant | Observed failure | Why it matters | Severity | State | Evidence |",
+    "| --- | --- | --- | --- | --- | --- |",
+    ...decisiveDefects(state),
+    "",
+    "## Round digest",
+    "",
+    "| Round | Meaningful outcome | Health movement | Evidence |",
+    "| --- | --- | --- | --- |",
+    ...roundDigest(state, contestants),
+    "",
+    "## Handoff",
+    "",
+    "### Already done",
+    "",
+    `- Required validation ran for ${contestants.map((contestant) => contestantLabel(state.config.contestants, contestant.id)).join(" and ")}.`,
+    `- ${String(defects.length)} proven defect(s) were adjudicated with executable evidence.`,
+    `- Final patch artifacts: ${contestants.map((contestant) => artifactLink(state, contestantLabel(state.config.contestants, contestant.id), contestant.finalPatchPath)).join(", ")}.`,
+    "",
+    "### Still needed",
+    "",
+    ...(defects.some((defect) => defect.active)
+      ? defects
+          .filter((defect) => defect.active)
+          .map(
+            (defect) =>
+              `- Review unresolved ${defect.representative.severity ?? "unrated"} defect: ${defect.representative.claim}.`,
+          )
+      : ["- Nothing required before review."]),
+    state.config.mode === "siege"
+      ? "- Review the defender patch before delivery."
+      : `- Review and choose a patch: \`agent-arena review ${state.runId}\`.`,
+    "",
     state.config.mode === "siege"
       ? "## Defender artifact"
       : "## Patch recommendation",
@@ -140,6 +393,8 @@ export function renderBattleReport(state: RunState): string {
         `- ${choice.contestantId}${choice.badges.length ? ` (${choice.badges.join(", ")})` : ""}: ${choice.eligible ? choice.summary : choice.disabledReason}`,
     ) ?? []),
     "",
+    ...implementationReplay(state, contestants),
+    ...roundReplay(state),
     "## Attacks",
     "",
     "### Generation activity",

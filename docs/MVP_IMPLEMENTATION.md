@@ -1220,8 +1220,8 @@ again or produce different HP.
 
 ### 7. Report and cleanup
 
-Render `BATTLE.md` and `result.json`, copy final patches and relevant logs, and
-print the recommendation. The report must show each attack's severity rationale,
+Render `BATTLE.md`, `BATTLE.html`, `BATTLE.svg`, and `result.json`, copy final
+patches and relevant logs, and print the recommendation. The reports must show each attack's severity rationale,
 rank, infrastructure self-review, replacement credit, evidence revision, final
 outcome, target damage or recoil, heals, eliminations, recovery round, and each
 contestant's round-by-round HP timeline. Identify neutral house attacks and
@@ -1298,7 +1298,7 @@ explicit `--patch` mode is added.
   capability is an invalid miss.
 - Damage de-duplication, regression reactivation, healing, elimination, ranking,
   and draw cases.
-- Markdown/JSON rendering with stable snapshots.
+- Markdown, HTML, SVG, and JSON rendering with stable snapshots and link checks.
 
 ### Integration tests
 

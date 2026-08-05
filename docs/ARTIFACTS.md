@@ -11,8 +11,12 @@ Completed runs live under `.agent-arena/runs/<run-id>/`.
   receive an explicit arena-fallback recommendation and must be reviewed again
   before application.
 - `task-contract.json`, source snapshots, final patches, prompts, attack cases,
-  logs, `quality/*`, `review-prompt.json`, and `BATTLE.md` are frozen battle
-  evidence.
+  logs, `quality/*`, `review-prompt.json`, `BATTLE.md`, `BATTLE.html`, and
+  `BATTLE.svg` are frozen battle evidence.
+- `BATTLE.html` is the clickable evidence dossier, `BATTLE.md` is the complete
+  text replay and handoff, and `BATTLE.svg` is a deterministic share image.
+  Links are relative to the run directory and only reference recorded artifacts
+  contained by that directory.
 - `pull-request/pull-request.json` and `pull-request/incumbent.patch` freeze the
   binary-safe base-to-head change,
   repository identity, metadata, hashes, and authorship evidence used by

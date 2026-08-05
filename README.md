@@ -171,7 +171,8 @@ Round 3 executes an approved integration profile symmetrically against both froz
 
 Each run is persisted atomically under `.agent-arena/runs/<run-id>/`:
 
-- `BATTLE.md` and versioned `result.json`
+- `BATTLE.md`, the clickable `BATTLE.html` dossier, deterministic `BATTLE.svg`,
+  and versioned `result.json`
 - immutable `task-contract.json` and source snapshots
 - redacted `permissions.json`
 - implementation, attack, revision, held-out case, and final patches

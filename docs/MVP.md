@@ -68,7 +68,8 @@ Agent Arena then:
 9. Runs every final patch against the original suite and every visible and
    held-out case for all landed contestant and house defects.
 10. Produces a recommendation, health timeline, test matrix, replayable run data,
-   and a patch the developer can inspect or apply.
+   a clickable HTML dossier with linked evidence, and a patch the developer can
+   inspect or apply.
 
 The command prints progress while the fight is running and ends with a compact
 summary:
@@ -227,7 +228,7 @@ unscored report finding.
 - One repair opportunity per agent in each round.
 - Process timeout and an optional per-agent spend hint.
 - Captured stdout, stderr, exit codes, durations, prompts, and agent transcripts.
-- Markdown and JSON reports.
+- Markdown, JSON, and a deterministic SVG battle replay generated from the same run data.
 - Exported final patches.
 - A guarded command that applies a selected patch to the current repository.
 
@@ -243,7 +244,8 @@ unscored report finding.
 - Production credentials or enterprise-grade secret management.
 - Deployment, package release, or GitHub writes without a separately
   authenticated, patch-bound delivery decision.
-- Elo ratings, persistent leaderboards, GIFs, and polished HTML replays.
+- Elo ratings, persistent leaderboards, GIFs, and hosted or interactive replay
+  applications beyond the self-contained HTML dossier.
 - A verifier-agent debate. Attack validity is decided by deterministic execution;
   the verifier only checks the cited oracle, relevance, root-defect identity, and
   severity against published rules.
@@ -730,7 +732,10 @@ attacker's confidence or reasoning.
 Every fight creates a self-contained directory under `.agent-arena/runs/<run-id>/`
 containing:
 
-- `BATTLE.md`: readable narrative, decisions, and final test matrix.
+- `BATTLE.md`: complete evidence-linked narrative, phase replay, decisions, and
+  final test matrix.
+- `BATTLE.html`: responsive, clickable dossier generated from the same run data.
+- `BATTLE.svg`: deterministic share image with the result and round digest.
 - `task-contract.json`: snapshotted authoritative sources and acceptance criteria.
 - `permissions.json`: requested scopes, user decisions, leases, omitted checks,
   and redacted provisioning results.
@@ -854,7 +859,7 @@ The MVP is ready when a new user can:
 9. See integration discovery select the simplest sufficient environment and
    record any escalation.
 10. Receive a deterministic final matrix, recommendation or draw, and complete
-   Markdown/JSON artifacts.
+   Markdown, HTML, SVG, and JSON artifacts.
 11. See every harness accommodation applied symmetrically, validated, and
    recorded without affecting health.
 12. Apply the recommended patch with a command and independently rerun the

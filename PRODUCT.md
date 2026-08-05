@@ -33,6 +33,9 @@ The user receives:
 * A recommended patch.
 * Cost and duration comparisons.
 * A replayable battle report.
+* A deterministic visual battle replay generated from the recorded evidence,
+  including a clickable HTML dossier with test coverage, attack evidence,
+  scoring, and handoff.
 * A command to apply the winning solution.
 
 The project is intended to be both useful and entertaining. The adversarial testing provides engineering value, while the competition format creates a memorable and shareable GitHub project.

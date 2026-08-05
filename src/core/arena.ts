@@ -37,8 +37,13 @@ import {
   resolveRepositoryRoot,
   WorktreeManager,
 } from "../repo/git.js";
-import { renderConsoleSummary } from "../reports/console.js";
+import {
+  renderConsoleSummary,
+  type ConsoleRenderOptions,
+} from "../reports/console.js";
+import { renderBattleHtml } from "../reports/html.js";
 import { renderBattleReport } from "../reports/markdown.js";
+import { renderBattleVisual } from "../reports/visual.js";
 import { deriveArenaOutcome } from "../outcomes/derive-outcome.js";
 import { collectPatchQualityFacts } from "../quality/collect-facts.js";
 import { isManifestPath } from "../quality/manifest-adapters.js";
@@ -106,6 +111,7 @@ export interface ArenaDependencies {
   ) => Promise<PullRequestFixture>;
   now?: () => Date;
   onProgress?: (message: string) => void;
+  consoleOptions?: ConsoleRenderOptions;
 }
 
 export interface FightOutcome {
@@ -407,6 +413,8 @@ export class Arena {
           permissions: store.resolve("permissions.json"),
           result: store.resolve("result.json"),
           battle: store.resolve("BATTLE.md"),
+          battleHtml: store.resolve("BATTLE.html"),
+          battleVisual: store.resolve("BATTLE.svg"),
         },
         warnings: [
           "Worktrees isolate accidental changes; they are not a hostile-code security sandbox.",
@@ -492,12 +500,17 @@ export class Arena {
       await this.transition(context, "report");
       const report = renderBattleReport(context.state);
       await store.writeText("BATTLE.md", report);
+      await store.writeText("BATTLE.html", renderBattleHtml(context.state));
+      await store.writeText("BATTLE.svg", renderBattleVisual(context.state));
       context.state.status = "complete";
       context.state.completedAt = this.now().toISOString();
       await this.transition(context, "complete");
       return {
         state: context.state,
-        summary: renderConsoleSummary(context.state),
+        summary: renderConsoleSummary(
+          context.state,
+          this.dependencies.consoleOptions,
+        ),
       };
     } catch (error) {
       if (context) {
@@ -511,6 +524,12 @@ export class Arena {
         await context.store.writeState(context.state).catch(() => undefined);
         await context.store
           .writeText("BATTLE.md", renderBattleReport(context.state))
+          .catch(() => undefined);
+        await context.store
+          .writeText("BATTLE.html", renderBattleHtml(context.state))
+          .catch(() => undefined);
+        await context.store
+          .writeText("BATTLE.svg", renderBattleVisual(context.state))
           .catch(() => undefined);
       }
       throw error;
@@ -991,6 +1010,10 @@ export class Arena {
         const worktree = await context.worktrees.create(
           `round-${String(round)}-attack-house-${target}`,
         );
+        this.dependencies.onProgress?.(
+          `Round ${String(round)}: house scout ${String(candidateIndex + 1)}/2 started for ${target}`,
+        );
+        await this.persist(context);
         try {
           await context.worktrees.applyPatch(worktree, targetPatchPath);
           const patch = await readFile(targetPatchPath, "utf8");
@@ -1054,6 +1077,10 @@ export class Arena {
           );
         } finally {
           await context.worktrees.remove(worktree);
+          this.dependencies.onProgress?.(
+            `Round ${String(round)}: house scout ${String(candidateIndex + 1)}/2 finished for ${target}`,
+          );
+          await this.persist(context);
         }
       }
     }
