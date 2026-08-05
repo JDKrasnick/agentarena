@@ -5,6 +5,7 @@ import {
   reportCheckStatus,
   reportContestants,
   reportDefects,
+  reportOutcome,
   reportRounds,
   truncateReportText,
 } from "./presentation.js";
@@ -61,13 +62,17 @@ export function renderBattleVisual(state: RunState): string {
       return `<rect x="${54 + index * 380}" y="690" width="340" height="112" rx="12" fill="#121b26" stroke="#294056"/><text x="${78 + index * 380}" y="730" class="label">${round.id === "recovery" ? "RECOVERY" : `ROUND ${String(round.id)}`}</text><text x="${78 + index * 380}" y="766" class="body">${count ? `${String(count)} proven attack(s)` : "No proven attacks"}</text>`;
     })
     .join("\n");
-  const winner = state.ranking?.draw
-    ? "DRAW"
-    : contestantLabel(state.config.contestants, state.ranking?.winner ?? "a");
+  const outcome = reportOutcome(state);
+  const verdict =
+    outcome.kind === "winner"
+      ? `Winner: ${contestantLabel(state.config.contestants, outcome.winner)}`
+      : outcome.kind === "draw"
+        ? "Result: DRAW"
+        : "Result: INCOMPLETE";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1240" height="860" viewBox="0 0 1240 860" role="img" aria-label="Agent Arena battle result">
 <style>.title{font:700 28px ui-monospace,Menlo,monospace;fill:#f5f7fa}.label{font:700 18px ui-monospace,Menlo,monospace;fill:#9ac0ff}.hp{font:700 38px ui-monospace,Menlo,monospace;fill:#72df90}.body{font:16px ui-monospace,Menlo,monospace;fill:#d7e0ea}.pass{fill:#72df90}.fail{fill:#ff8b84}.warn{fill:#f5c979}.muted{font:15px ui-monospace,Menlo,monospace;fill:#b4c1cd}</style>
-<rect width="1240" height="860" fill="#070c12"/><text x="54" y="72" class="title">AGENT ARENA — EVIDENCE-LINKED BATTLE REPLAY</text><text x="54" y="112" class="muted">Winner: ${escapeXml(winner)} · ${escapeXml(state.ranking?.reason ?? "run incomplete")}</text>
+<rect width="1240" height="860" fill="#070c12"/><text x="54" y="72" class="title">AGENT ARENA — EVIDENCE-LINKED BATTLE REPLAY</text><text x="54" y="112" class="muted">${escapeXml(verdict)} · ${escapeXml(state.ranking?.reason ?? "run incomplete")}</text>
 ${blocks}
 <text x="54" y="410" class="title">DECISIVE DEFECTS</text><rect x="54" y="438" width="1132" height="${defects.length ? 56 + Math.min(defects.length, 3) * 42 : 98}" rx="16" fill="#121b26" stroke="#294056"/>${defectLines}
 <text x="54" y="650" class="title">ROUND DIGEST</text>${rounds}

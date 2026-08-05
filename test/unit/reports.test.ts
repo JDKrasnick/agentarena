@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Attack, RunState } from "../../src/core/types.js";
+import { healDefect } from "../../src/core/scoring.js";
 import { renderConsoleSummary } from "../../src/reports/console.js";
 import { renderBattleHtml } from "../../src/reports/html.js";
 import { renderBattleReport } from "../../src/reports/markdown.js";
@@ -151,19 +152,44 @@ describe("battle reports", () => {
     `);
   });
 
-  it("deduplicates root defects and escapes untrusted report content", () => {
+  it("deduplicates root defects, derives repair state, and escapes content", () => {
     const state = makeRunState();
     state.attacks = [
       attack(state, { claim: "<script>alert('x')</script>" }),
-      attack(state, { id: "attack-2", round: 2, damageActive: false }),
+      attack(state, { id: "attack-2", round: 2 }),
     ];
+    const target = state.contestants.b;
+    if (!target) throw new Error("Fixture target is missing");
+    target.healthLedger.activeDefects = [
+      { rootDefectId: "logout-defect", attackId: "attack-1", damage: 30 },
+    ];
+    expect(reportDefects(state)).toMatchObject([{ active: true }]);
+    state.contestants.b = healDefect(target, "logout-defect", 2);
 
     expect(reportDefects(state)).toHaveLength(1);
+    expect(reportDefects(state)).toMatchObject([{ active: false }]);
     const html = renderBattleHtml(state);
     expect(html).toContain("1 (0 unresolved, 1 repaired)");
     expect(html).toContain("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;");
     expect(html).not.toContain("<script>alert");
     expect(renderBattleVisual(state)).not.toContain("<script>alert");
+  });
+
+  it("renders an incomplete outcome without inventing a draw or winner", () => {
+    const state = makeRunState();
+    state.status = "inconclusive";
+    state.stage = "inconclusive";
+    state.ranking = undefined;
+    state.arenaOutcome = undefined;
+
+    const html = renderBattleHtml(state);
+    const visual = renderBattleVisual(state);
+
+    expect(html).toContain("<h1>Battle incomplete</h1>");
+    expect(html).toContain("Why the battle is incomplete");
+    expect(html).not.toContain("Draw result");
+    expect(visual).toContain("Result: INCOMPLETE · run incomplete");
+    expect(visual).not.toContain("Winner:");
   });
 
   it("renders implementation, round phases, infrastructure, and review in causal order", () => {

@@ -3,6 +3,7 @@ import type {
   AgentInvocation,
   Attack,
   CheckResult,
+  ContestantId,
   ContestantResult,
   RoundId,
   RunState,
@@ -27,6 +28,11 @@ export interface ReportRound {
     result: ContestantResult["rounds"][number] | undefined;
   }>;
 }
+
+export type ReportOutcome =
+  | { kind: "winner"; winner: ContestantId }
+  | { kind: "draw" }
+  | { kind: "incomplete" };
 
 function invocationPaths(invocation: AgentInvocation | undefined): string[] {
   if (!invocation) return [];
@@ -70,6 +76,14 @@ export function reportCheckStatus(check?: CheckResult): ReportCheckStatus {
   }[check.status] as ReportCheckStatus;
 }
 
+export function reportOutcome(state: RunState): ReportOutcome {
+  if (!state.ranking) return { kind: "incomplete" };
+  if (state.ranking.draw) return { kind: "draw" };
+  return state.ranking.winner
+    ? { kind: "winner", winner: state.ranking.winner }
+    : { kind: "incomplete" };
+}
+
 export function reportDefects(state: RunState): ReportDefect[] {
   const grouped = new Map<string, Attack[]>();
   for (const attack of state.attacks) {
@@ -86,7 +100,11 @@ export function reportDefects(state: RunState): ReportDefect[] {
       representative,
       attacks,
       damage: Math.max(...attacks.map((attack) => attack.damage ?? 0)),
-      active: representative.damageActive === true,
+      active: reportContestants(state).some((contestant) =>
+        contestant.healthLedger.activeDefects.some(
+          (defect) => defect.rootDefectId === id,
+        ),
+      ),
     };
   });
 }
