@@ -60,6 +60,28 @@ function classifySpawnError(error: unknown): FailureClass | undefined {
     : undefined;
 }
 
+interface GroupedSubprocess {
+  pid?: number;
+}
+
+function scheduleProcessGroupKill(
+  subprocess: GroupedSubprocess,
+  timeoutMs: number,
+): NodeJS.Timeout | undefined {
+  if (process.platform === "win32" || subprocess.pid === undefined) {
+    return undefined;
+  }
+  const processGroupId = subprocess.pid;
+  return setTimeout(() => {
+    try {
+      process.kill(-processGroupId, "SIGKILL");
+    } catch {
+      // The command may have exited between the deadline firing and the group
+      // signal. Execa still owns direct-child timeout handling and reporting.
+    }
+  }, timeoutMs);
+}
+
 export async function runProcess(
   request: ProcessRequest,
 ): Promise<CommandResult> {
@@ -71,18 +93,26 @@ export async function runProcess(
   let signal: string | null = null;
   let timedOut = false;
   let failureClass: FailureClass | undefined;
+  let processGroupTimer: NodeJS.Timeout | undefined;
 
   try {
-    const result = await execa(request.executable, request.args ?? [], {
+    const subprocess = execa(request.executable, request.args ?? [], {
       cwd: request.cwd,
       env: minimalEnvironment(request.env),
       reject: false,
       timeout: request.timeoutMs,
-      forceKillAfterDelay: 1_000,
+      detached: process.platform !== "win32",
+      // Claude Code can keep an active print session alive after SIGTERM. A
+      // battle budget is a hard limit, so terminate the agent process at the
+      // deadline rather than allowing a stalled submission to block a round.
+      killSignal: "SIGKILL",
+      forceKillAfterDelay: false,
       all: false,
       ...(request.input === undefined ? {} : { input: request.input }),
       ...(request.signal === undefined ? {} : { cancelSignal: request.signal }),
     });
+    processGroupTimer = scheduleProcessGroupKill(subprocess, request.timeoutMs);
+    const result = await subprocess;
     stdout = result.stdout;
     stderr = result.stderr;
     exitCode = result.exitCode ?? null;
@@ -93,6 +123,8 @@ export async function runProcess(
     stderr =
       error instanceof Error ? (error.stack ?? error.message) : String(error);
     failureClass = classifySpawnError(error) ?? "arena_infrastructure";
+  } finally {
+    if (processGroupTimer !== undefined) clearTimeout(processGroupTimer);
   }
 
   const stdoutPath = `${request.logPrefix}.stdout.log`;
@@ -134,16 +166,20 @@ export async function runShellCommand(
   let signal: string | null = null;
   let timedOut = false;
   let failureClass: FailureClass | undefined;
+  let processGroupTimer: NodeJS.Timeout | undefined;
   try {
-    const result = await execaCommand(command, {
+    const subprocess = execaCommand(command, {
       cwd: options.cwd,
       env: minimalEnvironment(options.env),
       reject: false,
       timeout: options.timeoutMs,
+      detached: process.platform !== "win32",
       forceKillAfterDelay: 1_000,
       shell: true,
       ...(options.signal === undefined ? {} : { cancelSignal: options.signal }),
     });
+    processGroupTimer = scheduleProcessGroupKill(subprocess, options.timeoutMs);
+    const result = await subprocess;
     stdout = result.stdout;
     stderr = result.stderr;
     exitCode = result.exitCode ?? null;
@@ -153,6 +189,8 @@ export async function runShellCommand(
     stderr =
       error instanceof Error ? (error.stack ?? error.message) : String(error);
     failureClass = classifySpawnError(error) ?? "arena_infrastructure";
+  } finally {
+    if (processGroupTimer !== undefined) clearTimeout(processGroupTimer);
   }
   const stdoutPath = `${options.logPrefix}.stdout.log`;
   const stderrPath = `${options.logPrefix}.stderr.log`;

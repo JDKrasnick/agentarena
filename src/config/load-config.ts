@@ -52,8 +52,11 @@ const FileConfigSchema = z
     agents: z.array(AgentIdSchema).length(2).optional(),
     models: z.array(z.string().trim().min(1)).length(2).optional(),
     attack_verifier: AgentIdSchema.optional(),
+    attack_verifier_model: z.string().trim().min(1).optional(),
     quality_verifier: AgentIdSchema.optional(),
+    quality_verifier_model: z.string().trim().min(1).optional(),
     harness_maintainer: AgentIdSchema.optional(),
+    harness_maintainer_model: z.string().trim().min(1).optional(),
     acceptance_criteria: z.array(z.string()).default([]),
     specs: z.array(z.string()).default([]),
     sources: z
@@ -141,8 +144,11 @@ export interface CliConfigOverrides {
   agents?: string;
   models?: string;
   verifier?: string;
+  verifierModel?: string;
   qualityVerifier?: string;
+  qualityVerifierModel?: string;
   maintainer?: string;
+  maintainerModel?: string;
   permissionMode?: "auto" | "confirm" | "deny";
   specPaths?: string[];
   issueReferences?: string[];
@@ -387,14 +393,32 @@ export async function loadFightConfig(
     ],
     agents,
     attackVerifier: overrides.verifier ?? file.attack_verifier ?? agents[0],
+    ...((overrides.verifierModel ?? file.attack_verifier_model)
+      ? {
+          attackVerifierModel:
+            overrides.verifierModel ?? file.attack_verifier_model,
+        }
+      : {}),
     qualityVerifier:
       overrides.qualityVerifier ??
       file.quality_verifier ??
       overrides.verifier ??
       file.attack_verifier ??
       agents[0],
+    ...((overrides.qualityVerifierModel ?? file.quality_verifier_model)
+      ? {
+          qualityVerifierModel:
+            overrides.qualityVerifierModel ?? file.quality_verifier_model,
+        }
+      : {}),
     harnessMaintainer:
       overrides.maintainer ?? file.harness_maintainer ?? agents[0],
+    ...((overrides.maintainerModel ?? file.harness_maintainer_model)
+      ? {
+          harnessMaintainerModel:
+            overrides.maintainerModel ?? file.harness_maintainer_model,
+        }
+      : {}),
     rounds: 3,
     maxAttacksPerRound: 3,
     infrastructureRecoveryRound: true,
