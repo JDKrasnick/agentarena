@@ -177,6 +177,54 @@ export class WorktreeManager {
     );
   }
 
+  async applyEvidencePatch(worktree: string, patchPath: string): Promise<void> {
+    const content = await readFile(patchPath, "utf8");
+    const evidencePaths = changedPathsFromPatch(content);
+    if (
+      evidencePaths.length === 0 ||
+      evidencePaths.some((filePath) => !isAllowedAttackPath(filePath))
+    ) {
+      throw new Error(`Evidence patch has invalid paths: ${patchPath}`);
+    }
+
+    await git(
+      this.repositoryRoot,
+      [
+        "--literal-pathspecs",
+        "rm",
+        "-f",
+        "--ignore-unmatch",
+        "--",
+        ...evidencePaths,
+      ],
+      worktree,
+    );
+    const basePaths = [];
+    for (const filePath of evidencePaths) {
+      const match = await git(
+        this.repositoryRoot,
+        [
+          "--literal-pathspecs",
+          "ls-tree",
+          "--name-only",
+          "HEAD",
+          "--",
+          filePath,
+        ],
+        worktree,
+      );
+      if (match === filePath) basePaths.push(filePath);
+    }
+    if (basePaths.length > 0) {
+      await git(
+        this.repositoryRoot,
+        ["--literal-pathspecs", "checkout", "HEAD", "--", ...basePaths],
+        worktree,
+      );
+    }
+    await this.applyPatch(worktree, patchPath);
+  }
+
   async capturePatch(
     worktree: string,
     targetPath: string,

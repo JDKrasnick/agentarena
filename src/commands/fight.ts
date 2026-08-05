@@ -69,18 +69,20 @@ export async function runFight(overrides: CliConfigOverrides): Promise<string> {
       config.qualityVerifier ?? config.attackVerifier,
       config.qualityVerifierModel,
     ),
-    houseScout: new CommandHouseScout(config.attackVerifier, attackVerifierCommand),
-    caseBuilder: new CommandCaseBuilder(config.attackVerifier, attackVerifierCommand),
+    houseScout: new CommandHouseScout(
+      config.attackVerifier,
+      attackVerifierCommand,
+    ),
+    caseBuilder: new CommandCaseBuilder(
+      config.attackVerifier,
+      attackVerifierCommand,
+    ),
     infrastructureReviewer: new CommandInfrastructureReviewer(),
     harnessMaintainer: new CommandHarnessMaintainer(
       config.harnessMaintainer,
       providerCommand(config.harnessMaintainer, config.harnessMaintainerModel),
     ),
     onProgress: (message) => stdout.write(`${message}\n`),
-    consoleOptions: {
-      color: Boolean(stdout.isTTY && process.env.NO_COLOR === undefined && process.env.TERM !== "dumb"),
-      hyperlinks: Boolean(stdout.isTTY && process.env.CI === undefined && process.env.TERM !== "dumb"),
-    },
   });
   const controller = new AbortController();
   const cancel = (): void => controller.abort(new Error("Interrupted"));

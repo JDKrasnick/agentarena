@@ -29,10 +29,20 @@ describe("provider model selection", () => {
   });
 
   it("keeps mirror-match infrastructure reviews on each contestant model", () => {
-    const first = infrastructureReviewCommand({ agent: "codex", model: "gpt-first" });
-    const second = infrastructureReviewCommand({ agent: "codex", model: "gpt-second" });
+    const first = infrastructureReviewCommand({
+      agent: "codex",
+      model: "gpt-first",
+    });
+    const second = infrastructureReviewCommand({
+      agent: "codex",
+      model: "gpt-second",
+    });
 
-    expect(first.args).toEqual(expect.arrayContaining(["--model", "gpt-first"]));
-    expect(second.args).toEqual(expect.arrayContaining(["--model", "gpt-second"]));
+    expect(first.args).toEqual(
+      expect.arrayContaining(["--model", "gpt-first"]),
+    );
+    expect(second.args).toEqual(
+      expect.arrayContaining(["--model", "gpt-second"]),
+    );
   });
 });

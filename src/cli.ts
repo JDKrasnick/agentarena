@@ -56,7 +56,10 @@ program
     "--quality-verifier <agent>",
     "Neutral patch-quality verifier provider",
   )
-  .option("--quality-verifier-model <model>", "Optional patch-quality verifier model")
+  .option(
+    "--quality-verifier-model <model>",
+    "Optional patch-quality verifier model",
+  )
   .option("--maintainer <agent>", "Harness-maintainer provider")
   .option("--maintainer-model <model>", "Optional harness-maintainer model")
   .option("--yes", "Approve the displayed confirm-mode plan noninteractively")
@@ -114,7 +117,9 @@ program
           : {}),
         permissionMode: options.permissions,
         ...(options.verifier ? { verifier: options.verifier } : {}),
-        ...(options.verifierModel ? { verifierModel: options.verifierModel } : {}),
+        ...(options.verifierModel
+          ? { verifierModel: options.verifierModel }
+          : {}),
         ...(options.qualityVerifier
           ? { qualityVerifier: options.qualityVerifier }
           : {}),
@@ -122,7 +127,9 @@ program
           ? { qualityVerifierModel: options.qualityVerifierModel }
           : {}),
         ...(options.maintainer ? { maintainer: options.maintainer } : {}),
-        ...(options.maintainerModel ? { maintainerModel: options.maintainerModel } : {}),
+        ...(options.maintainerModel
+          ? { maintainerModel: options.maintainerModel }
+          : {}),
         nonInteractiveApproval: options.yes ?? false,
         reducedValidationAccepted: options.acceptReducedValidation ?? false,
         keepWorktrees: options.keepWorktrees ?? false,
@@ -165,7 +172,10 @@ program
     "--quality-verifier <agent>",
     "Ignored in siege mode; retained for shared config",
   )
-  .option("--quality-verifier-model <model>", "Ignored in siege mode; retained for shared config")
+  .option(
+    "--quality-verifier-model <model>",
+    "Ignored in siege mode; retained for shared config",
+  )
   .option("--maintainer <agent>", "Harness-maintainer provider")
   .option("--maintainer-model <model>", "Optional harness-maintainer model")
   .option("--yes", "Approve the displayed confirm-mode plan noninteractively")
@@ -209,7 +219,9 @@ program
           : {}),
         permissionMode: options.permissions,
         ...(options.verifier ? { verifier: options.verifier } : {}),
-        ...(options.verifierModel ? { verifierModel: options.verifierModel } : {}),
+        ...(options.verifierModel
+          ? { verifierModel: options.verifierModel }
+          : {}),
         ...(options.qualityVerifier
           ? { qualityVerifier: options.qualityVerifier }
           : {}),
@@ -217,7 +229,9 @@ program
           ? { qualityVerifierModel: options.qualityVerifierModel }
           : {}),
         ...(options.maintainer ? { maintainer: options.maintainer } : {}),
-        ...(options.maintainerModel ? { maintainerModel: options.maintainerModel } : {}),
+        ...(options.maintainerModel
+          ? { maintainerModel: options.maintainerModel }
+          : {}),
         nonInteractiveApproval: options.yes ?? false,
         reducedValidationAccepted: options.acceptReducedValidation ?? false,
         keepWorktrees: options.keepWorktrees ?? false,

@@ -384,7 +384,10 @@ const AttackVerdictSchema = z.object({
 export class CommandAttackVerifier implements AttackVerifier {
   private readonly command: Omit<CommandAdapterOptions, "id">;
 
-  constructor(readonly id: AgentId, model?: string) {
+  constructor(
+    readonly id: AgentId,
+    model?: string,
+  ) {
     this.command = providerCommand(id, model);
   }
 

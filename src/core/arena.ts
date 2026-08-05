@@ -1416,7 +1416,10 @@ export class Arena {
             );
             try {
               await context.worktrees.applyPatch(caseTree, currentPatch);
-              await context.worktrees.applyPatch(caseTree, caseEntry.patchPath);
+              await context.worktrees.applyEvidencePatch(
+                caseTree,
+                caseEntry.patchPath,
+              );
               const checks = [];
               for (const attempt of [1, 2]) {
                 checks.push(
@@ -1926,7 +1929,7 @@ export class Arena {
               );
               try {
                 await context.worktrees.applyPatch(caseTree, currentPatch);
-                await context.worktrees.applyPatch(
+                await context.worktrees.applyEvidencePatch(
                   caseTree,
                   caseEntry.patchPath,
                 );

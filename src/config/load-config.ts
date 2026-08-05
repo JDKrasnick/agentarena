@@ -393,8 +393,11 @@ export async function loadFightConfig(
     ],
     agents,
     attackVerifier: overrides.verifier ?? file.attack_verifier ?? agents[0],
-    ...(overrides.verifierModel ?? file.attack_verifier_model
-      ? { attackVerifierModel: overrides.verifierModel ?? file.attack_verifier_model }
+    ...((overrides.verifierModel ?? file.attack_verifier_model)
+      ? {
+          attackVerifierModel:
+            overrides.verifierModel ?? file.attack_verifier_model,
+        }
       : {}),
     qualityVerifier:
       overrides.qualityVerifier ??
@@ -402,13 +405,19 @@ export async function loadFightConfig(
       overrides.verifier ??
       file.attack_verifier ??
       agents[0],
-    ...(overrides.qualityVerifierModel ?? file.quality_verifier_model
-      ? { qualityVerifierModel: overrides.qualityVerifierModel ?? file.quality_verifier_model }
+    ...((overrides.qualityVerifierModel ?? file.quality_verifier_model)
+      ? {
+          qualityVerifierModel:
+            overrides.qualityVerifierModel ?? file.quality_verifier_model,
+        }
       : {}),
     harnessMaintainer:
       overrides.maintainer ?? file.harness_maintainer ?? agents[0],
-    ...(overrides.maintainerModel ?? file.harness_maintainer_model
-      ? { harnessMaintainerModel: overrides.maintainerModel ?? file.harness_maintainer_model }
+    ...((overrides.maintainerModel ?? file.harness_maintainer_model)
+      ? {
+          harnessMaintainerModel:
+            overrides.maintainerModel ?? file.harness_maintainer_model,
+        }
       : {}),
     rounds: 3,
     maxAttacksPerRound: 3,
