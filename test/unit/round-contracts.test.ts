@@ -95,6 +95,7 @@ function contestant(contestantId: "a" | "b") {
     health: 100,
     permanentRecoil: 0,
     activeDefects: [],
+    replacementCredits: [],
     status: "active" as const,
   };
 }
@@ -222,6 +223,128 @@ describe("round boundary contracts", () => {
         replay: replay(),
       }),
     ).toThrow(/identities/);
+    expect(() =>
+      RoundSnapshotSchema.parse({
+        ...snapshot(),
+        contestants: [contestant("b"), contestant("a")],
+      }),
+    ).toThrow(/topology order/);
+    expect(() =>
+      RoundResultSchema.parse({
+        version: 1,
+        runId: "run-1",
+        roundId: 1,
+        status: "completed",
+        resultingContestants: [contestant("b"), contestant("a")],
+        replay: replay(),
+      }),
+    ).toThrow(/ordered a then b/);
+  });
+
+  it("rejects unsupported or misordered battle topologies", () => {
+    const base = runSpec();
+    expect(() =>
+      RunSpecSchema.parse({
+        ...base,
+        topology: {
+          ...base.topology,
+          contestants: [...base.topology.contestants].reverse(),
+        },
+      }),
+    ).toThrow(/ordered a then b/);
+    expect(() =>
+      RunSpecSchema.parse({
+        ...base,
+        topology: {
+          mode: "siege",
+          contestants: base.topology.contestants,
+        },
+      }),
+    ).toThrow(/must match siege topology/);
+  });
+
+  it("represents a siege attacker without a production patch", () => {
+    const base = snapshot();
+    const siege = {
+      ...base,
+      runSpec: {
+        ...base.runSpec,
+        topology: {
+          mode: "siege" as const,
+          contestants: [
+            {
+              id: "a" as const,
+              provider: "codex",
+              role: "attacker" as const,
+              startingPatch: "none" as const,
+            },
+            {
+              id: "b" as const,
+              provider: "claude",
+              role: "defender" as const,
+              startingPatch: "pull_request" as const,
+            },
+          ] as const,
+        },
+      },
+      contestants: [
+        { ...contestant("a"), patch: null },
+        contestant("b"),
+      ] as const,
+    };
+    expect(() => RoundSnapshotSchema.parse(siege)).not.toThrow();
+    expect(() =>
+      RoundSnapshotSchema.parse({
+        ...siege,
+        contestants: [contestant("a"), contestant("b")],
+      }),
+    ).toThrow(/test-only attacker/);
+    expect(() =>
+      RoundSnapshotSchema.parse({
+        ...siege,
+        contestants: [
+          { ...contestant("a"), patch: null },
+          { ...contestant("b"), patch: null },
+        ],
+      }),
+    ).toThrow(/production-owning contestant/);
+  });
+
+  it("requires available replacement-credit state for recovery rounds", () => {
+    expect(() =>
+      RoundSnapshotSchema.parse({ ...snapshot(), roundId: "recovery" }),
+    ).toThrow(/available credit/);
+    const recovery = {
+      ...snapshot(),
+      roundId: "recovery" as const,
+      contestants: [
+        {
+          ...contestant("a"),
+          status: "downed" as const,
+          replacementCredits: [
+            {
+              id: "credit-1",
+              sourceAttackId: "attack-1",
+              issuedRound: 3 as const,
+              reason: "final_infrastructure" as const,
+              status: "available" as const,
+            },
+          ],
+        },
+        contestant("b"),
+      ] as const,
+    };
+    expect(() => RoundSnapshotSchema.parse(recovery)).not.toThrow();
+    expect(roundTrip(RoundSnapshotSchema, recovery).roundId).toBe("recovery");
+    expect(() =>
+      RoundSnapshotSchema.parse({
+        ...recovery,
+        contestants: [
+          { ...recovery.contestants[0], status: "eliminated" },
+          recovery.contestants[1],
+        ],
+      }),
+    ).toThrow(/available credit/);
   });
 
   it("requires every outcome to include a replay and failure diagnostics", () => {
@@ -271,5 +394,70 @@ describe("round boundary contracts", () => {
         [privateField]: ["private"],
       }),
     ).toThrow();
+  });
+
+  it("requires canonical defect IDs for landed and duplicate own attacks", () => {
+    const base = feedback();
+    expect(() =>
+      ContestantFeedbackSchema.parse({
+        ...base,
+        ownAttackOutcomes: [
+          {
+            ...base.ownAttackOutcomes[0],
+            status: "landed",
+            recoil: 0,
+          },
+        ],
+      }),
+    ).toThrow(/canonical defect ID/);
+    expect(() =>
+      ContestantFeedbackSchema.parse({
+        ...base,
+        ownAttackOutcomes: [
+          {
+            ...base.ownAttackOutcomes[0],
+            status: "landed",
+            recoil: 0,
+            defectId: "defect-2",
+          },
+        ],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      ContestantFeedbackSchema.parse({
+        ...base,
+        ownAttackOutcomes: [
+          {
+            ...base.ownAttackOutcomes[0],
+            status: "duplicate",
+            recoil: 10,
+          },
+        ],
+      }),
+    ).toThrow(/canonical defect ID/);
+    expect(() =>
+      ContestantFeedbackSchema.parse({
+        ...base,
+        ownAttackOutcomes: [
+          {
+            ...base.ownAttackOutcomes[0],
+            status: "duplicate",
+            recoil: 10,
+            defectId: "defect-2",
+          },
+        ],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      ContestantFeedbackSchema.parse({
+        ...base,
+        ownAttackOutcomes: [
+          {
+            ...base.ownAttackOutcomes[0],
+            defectId: "defect-2",
+          },
+        ],
+      }),
+    ).toThrow(/Only a landed or duplicate/);
   });
 });

@@ -59,12 +59,36 @@ const BattleTopologySchema = z
     contestants: z.tuple([TopologyContestantSchema, TopologyContestantSchema]),
   })
   .strict()
-  .superRefine(({ contestants }, context) => {
-    if (contestants[0].id === contestants[1].id) {
+  .superRefine(({ mode, contestants }, context) => {
+    const [first, second] = contestants;
+    if (first.id !== "a" || second.id !== "b") {
       context.addIssue({
         code: "custom",
-        path: ["contestants", 1, "id"],
-        message: "Battle topology must contain distinct contestant IDs",
+        path: ["contestants"],
+        message: "Battle topology contestants must be ordered a then b",
+      });
+    }
+    const validRoles =
+      (mode === "duel" &&
+        first.role === "solver" &&
+        first.startingPatch === "none" &&
+        second.role === "solver" &&
+        second.startingPatch === "none") ||
+      (mode === "catch_up" &&
+        first.role === "incumbent" &&
+        first.startingPatch === "pull_request" &&
+        second.role === "challenger" &&
+        second.startingPatch === "none") ||
+      (mode === "siege" &&
+        first.role === "attacker" &&
+        first.startingPatch === "none" &&
+        second.role === "defender" &&
+        second.startingPatch === "pull_request");
+    if (!validRoles) {
+      context.addIssue({
+        code: "custom",
+        path: ["contestants"],
+        message: `Contestant roles and starting patches must match ${mode} topology`,
       });
     }
   });
@@ -150,13 +174,29 @@ const ActiveDefectSchema = z
   })
   .strict();
 
+const ReplacementCreditStateSchema = z
+  .object({
+    id: IdentifierSchema,
+    sourceAttackId: IdentifierSchema,
+    issuedRound: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    reason: z.enum([
+      "accepted_infrastructure",
+      "final_infrastructure",
+      "inconclusive",
+    ]),
+    status: z.enum(["available", "spent", "void"]),
+    replacementAttackId: IdentifierSchema.optional(),
+  })
+  .strict();
+
 export const RoundContestantStateSchema = z
   .object({
     contestantId: ContestantIdSchema,
-    patch: PatchStateSchema,
+    patch: PatchStateSchema.nullable(),
     health: z.number().int().min(0).max(100),
     permanentRecoil: z.number().int().nonnegative(),
     activeDefects: z.array(ActiveDefectSchema),
+    replacementCredits: z.array(ReplacementCreditStateSchema),
     status: z.enum(["active", "downed", "eliminated"]),
   })
   .strict();
@@ -198,14 +238,43 @@ export const RoundSnapshotSchema = z
         message: "Snapshot runId must match runSpec.runId",
       });
     }
+    snapshot.contestants.forEach((contestant, index) => {
+      const topologyContestant = snapshot.runSpec.topology.contestants[index]!;
+      if (contestant.contestantId !== topologyContestant.id) {
+        context.addIssue({
+          code: "custom",
+          path: ["contestants", index, "contestantId"],
+          message: "Round snapshot contestants must match topology order",
+        });
+      }
+      const ownsProductionPatch = topologyContestant.role !== "attacker";
+      const patchOwnershipMismatch = ownsProductionPatch
+        ? contestant.patch === null
+        : contestant.patch !== null;
+      if (patchOwnershipMismatch) {
+        context.addIssue({
+          code: "custom",
+          path: ["contestants", index, "patch"],
+          message: ownsProductionPatch
+            ? "A production-owning contestant requires a patch"
+            : "A test-only attacker must not have a production patch",
+        });
+      }
+    });
     if (
-      snapshot.contestants[0].contestantId ===
-      snapshot.contestants[1].contestantId
+      snapshot.roundId === "recovery" &&
+      !snapshot.contestants.some(
+        (contestant) =>
+          contestant.status !== "eliminated" &&
+          contestant.replacementCredits.some(
+            (credit) => credit.status === "available",
+          ),
+      )
     ) {
       context.addIssue({
         code: "custom",
-        path: ["contestants", 1, "contestantId"],
-        message: "Round snapshot must contain distinct contestant IDs",
+        path: ["contestants"],
+        message: "A recovery round requires at least one available credit",
       });
     }
   })
@@ -383,13 +452,13 @@ export const RoundResultSchema = z
       });
     }
     if (
-      result.resultingContestants[0].contestantId ===
-      result.resultingContestants[1].contestantId
+      result.resultingContestants[0].contestantId !== "a" ||
+      result.resultingContestants[1].contestantId !== "b"
     ) {
       context.addIssue({
         code: "custom",
-        path: ["resultingContestants", 1, "contestantId"],
-        message: "Round result must contain distinct contestant IDs",
+        path: ["resultingContestants"],
+        message: "Round result contestants must be ordered a then b",
       });
     }
   })
@@ -421,6 +490,7 @@ const OwnAttackOutcomeSchema = z
     target: ContestantIdSchema,
     status: z.enum([
       "landed",
+      "duplicate",
       "missed",
       "capability_denied",
       "infrastructure_error",
@@ -428,8 +498,29 @@ const OwnAttackOutcomeSchema = z
     ]),
     reason: z.string().min(1),
     recoil: z.number().int().nonnegative(),
+    defectId: IdentifierSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((outcome, context) => {
+    const hasCanonicalDefect =
+      outcome.status === "landed" || outcome.status === "duplicate";
+    if (hasCanonicalDefect && !outcome.defectId) {
+      context.addIssue({
+        code: "custom",
+        path: ["defectId"],
+        message:
+          "A landed or duplicate own attack must expose its canonical defect ID",
+      });
+    }
+    if (!hasCanonicalDefect && outcome.defectId) {
+      context.addIssue({
+        code: "custom",
+        path: ["defectId"],
+        message:
+          "Only a landed or duplicate own attack may expose a canonical defect ID",
+      });
+    }
+  });
 
 /** Deliberately narrow, contestant-visible projection of round evidence. */
 export const ContestantFeedbackSchema = z
