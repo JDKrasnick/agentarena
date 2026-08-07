@@ -18,6 +18,7 @@ import {
 } from "../agents/adapter.js";
 import {
   composeAttackReviewPrompt,
+  composeNeutralCasePrompt,
   composePrompt,
   createPromptManifest,
 } from "../agents/prompts.js";
@@ -33,6 +34,7 @@ import { assertEvidenceIdentityPreserved } from "../attacks/evidence-revision.js
 import { validateHarnessOverlay } from "../maintenance/overlays.js";
 import { selectMethods } from "../methods/catalog.js";
 import {
+  assertDirectCapabilitiesAllowed,
   discoverCapabilities,
   resolvePermissionPolicy,
 } from "../permissions/policy.js";
@@ -939,7 +941,14 @@ export class Arena {
     entry: AttackSubmission["attacks"][number],
     round: RoundId,
     attacker: ContestantId,
-  ): Promise<{ focusedCommand: string; patchPath: string } | undefined> {
+  ): Promise<
+    | {
+        focusedCommand: string;
+        patchPath: string;
+        requiredCapabilities: string[];
+      }
+    | undefined
+  > {
     if (!this.dependencies.caseBuilder) {
       context.state.warnings.push(
         `No neutral case judge is configured; description from ${attacker} was not executed`,
@@ -951,20 +960,12 @@ export class Arena {
     );
     try {
       const snapshot = await context.worktrees.snapshot(worktree);
-      const prompt = [
-        "# Neutral case judge",
-        "Independently create one deterministic, test-only regression case for this anonymized failure description.",
-        "Use only the immutable task contract and the public reproduction. Do not inspect either contestant patch, infer contestant identity, modify production code, or broaden the cited requirement.",
-        "The harness will run your case against both frozen patches and separately adjudicate the oracle.",
-        "",
-        "# Immutable task contract",
-        JSON.stringify(context.contract, null, 2),
-        "",
-        "# Failure description",
-        JSON.stringify(entry, null, 2),
-        "",
-        `Write {"version":1,"cases":[{"category":"boundary","focusedCommand":"...","paths":["test/..."]}]} to ${path.join(worktree, ".agent-arena-cases.json")}. Return cases: [] only when the description cannot be turned into a contract-supported deterministic test.`,
-      ].join("\n");
+      const prompt = composeNeutralCasePrompt({
+        contract: context.contract,
+        permissions: context.permissions,
+        failure: entry,
+        outputPath: path.join(worktree, ".agent-arena-cases.json"),
+      });
       const submission = await this.dependencies.caseBuilder.build({
         worktree,
         prompt,
@@ -977,6 +978,11 @@ export class Arena {
       });
       const proposal = submission.cases[0];
       if (!proposal) return undefined;
+      assertDirectCapabilitiesAllowed(
+        context.permissions,
+        entry.requiredCapabilities,
+        proposal.requiredCapabilities,
+      );
       const patchPath = context.store.resolve(
         `cases/round-${String(round)}/${attacker}/${String(entry.rank)}.diff`,
       );
@@ -986,7 +992,16 @@ export class Arena {
         snapshot,
         proposal.paths,
       );
-      return { focusedCommand: proposal.focusedCommand, patchPath };
+      return {
+        focusedCommand: proposal.focusedCommand,
+        patchPath,
+        requiredCapabilities: [
+          ...new Set([
+            ...entry.requiredCapabilities,
+            ...proposal.requiredCapabilities,
+          ]),
+        ],
+      };
     } catch (error) {
       context.state.warnings.push(
         `Neutral case judge could not verify ${attacker}'s rank ${String(entry.rank)} description: ${error instanceof Error ? error.message : String(error)}`,
@@ -1216,7 +1231,11 @@ export class Arena {
             }
             collected.push(
               await materializeAttack(
-                { ...entry, focusedCommand: neutralCase.focusedCommand },
+                {
+                  ...entry,
+                  focusedCommand: neutralCase.focusedCommand,
+                  requiredCapabilities: neutralCase.requiredCapabilities,
+                },
                 {
                   author: agent,
                   authorProvider: contestant.provider,

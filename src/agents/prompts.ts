@@ -2,6 +2,7 @@ import { sha256 } from "../core/ids.js";
 import type {
   AgentId,
   AttackReviewArtifact,
+  AttackSubmission,
   ContestantId,
   FightConfig,
   PermissionPolicy,
@@ -73,7 +74,7 @@ function executionArchitecture(
   );
 }
 
-function permissionContext(permissions: PermissionPolicy): string {
+export function permissionContext(permissions: PermissionPolicy): string {
   return [
     JSON.stringify(permissions, null, 2),
     "",
@@ -233,6 +234,32 @@ export function composeAttackReviewPrompt(
     "",
     "# Frozen target patch",
     context.opponentPatch,
+  ].join("\n")}\n`;
+}
+
+export function composeNeutralCasePrompt(input: {
+  contract: TaskContract;
+  permissions: PermissionPolicy;
+  failure: AttackSubmission["attacks"][number];
+  outputPath: string;
+}): string {
+  return `${[
+    "# Neutral case judge",
+    "Independently create one deterministic, test-only regression case for this anonymized failure description.",
+    "Use only the immutable task contract and the public reproduction. Do not inspect either contestant patch, infer contestant identity, modify production code, or broaden the cited requirement.",
+    "The harness will run your case against both frozen patches and separately adjudicate the oracle.",
+    "",
+    "# Immutable task contract",
+    JSON.stringify(input.contract, null, 2),
+    "",
+    "# Available permissions and enforcement",
+    permissionContext(input.permissions),
+    "",
+    "# Failure description",
+    JSON.stringify(input.failure, null, 2),
+    "",
+    "Use only directly available capabilities that the failure description declares. Do not introduce a new capability or directly use a harness_only capability.",
+    `Write {"version":1,"cases":[{"category":"boundary","focusedCommand":"...","paths":["test/..."],"requiredCapabilities":[]}]} to ${input.outputPath}. Return cases: [] only when the description cannot be turned into a contract-supported deterministic test.`,
   ].join("\n")}\n`;
 }
 

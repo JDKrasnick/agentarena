@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { AttackSubmissionSchema } from "../../src/core/types.js";
+import {
+  AttackSubmissionSchema,
+  CaseSubmissionSchema,
+} from "../../src/core/types.js";
 import { validateAttackOrdering } from "../../src/attacks/submission.js";
 
 function entry(rank: 1 | 2 | 3) {
@@ -37,5 +40,23 @@ describe("ordered attack sets", () => {
       attacks: [entry(2)],
     });
     expect(() => validateAttackOrdering(gap)).toThrow(/contiguous/);
+  });
+
+  it("records capabilities selected by the neutral case judge", () => {
+    const submission = CaseSubmissionSchema.parse({
+      version: 1,
+      cases: [
+        {
+          category: "integration",
+          focusedCommand: "npm test -- test/integration.test.ts",
+          paths: ["test/integration.test.ts"],
+          requiredCapabilities: ["postgres_test"],
+        },
+      ],
+    });
+
+    expect(submission.cases[0]?.requiredCapabilities).toEqual([
+      "postgres_test",
+    ]);
   });
 });

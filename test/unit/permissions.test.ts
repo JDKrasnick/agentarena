@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FightConfigSchema } from "../../src/core/types.js";
 import {
+  assertDirectCapabilitiesAllowed,
   resolvePermissionPolicy,
   type CapabilityRequest,
 } from "../../src/permissions/policy.js";
@@ -78,5 +79,41 @@ describe("permission policy", () => {
     expect(
       resolvePermissionPolicy(config, [brokered]).capabilities[0]?.status,
     ).toBe("approved");
+  });
+
+  it("allows neutral cases to use only declared direct capabilities", () => {
+    const policy = {
+      defaultMode: "confirm" as const,
+      reducedValidationAccepted: false,
+      capabilities: [
+        {
+          ...advisory,
+          mode: "confirm" as const,
+          status: "approved" as const,
+        },
+        {
+          ...advisory,
+          id: "postgres_test",
+          role: "harness_only" as const,
+          enforcement: "brokered" as const,
+          mode: "confirm" as const,
+          status: "approved" as const,
+        },
+      ],
+    };
+
+    expect(() =>
+      assertDirectCapabilitiesAllowed(policy, ["shell"], ["shell"]),
+    ).not.toThrow();
+    expect(() =>
+      assertDirectCapabilitiesAllowed(policy, [], ["shell"]),
+    ).toThrow(/undeclared capability shell/);
+    expect(() =>
+      assertDirectCapabilitiesAllowed(
+        policy,
+        ["postgres_test"],
+        ["postgres_test"],
+      ),
+    ).toThrow(/cannot directly use capability postgres_test/);
   });
 });
