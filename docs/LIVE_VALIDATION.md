@@ -4,6 +4,27 @@ Core duel and GitHub delivery status: complete as of 2026-07-30.
 
 Battle-mode release matrix status: pending explicit authorization.
 
+## 2026-07-31 stopped GPT-5.4 mirror attempt
+
+One explicitly authorized local hard-task run used the disposable
+`.context/bank-ledger-arena` fixture with Codex CLI `0.146.0`, model
+`gpt-5.4` in both contestant slots, eight-minute implementation and review
+budgets, and four-minute attack and repair budgets. The saved run is
+`2026-07-31T015903802Z-4a595ee3`.
+
+The attempt stopped without further experimentation because neither contestant
+produced an implementation patch, so the redesigned review and regression-test
+phases had no eligible target and generated no review or attack invocations.
+Contestant A failed during repeated ChatGPT transport/DNS errors. Contestant B
+was reported as timed out, but its recorded duration was 3,047,292 ms despite
+the configured 480,000 ms implementation budget. The harness then reported a
+completed 0-HP draw rather than an inconclusive provider/infrastructure run.
+
+This attempt provides no evidence for the battle-mode release matrix and checks
+none of the items below. Before another paid run, investigate provider
+connectivity, hard timeout enforcement for the Codex subprocess tree, and
+inconclusive classification when both implementations fail before review.
+
 The GitHub delivery boundary was validated against the explicitly authorized
 `JDKrasnick/agentarena` repository. Draft PR
 [#4](https://github.com/JDKrasnick/agentarena/pull/4) covered idempotent

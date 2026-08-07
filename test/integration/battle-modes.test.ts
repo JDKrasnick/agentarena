@@ -5,6 +5,7 @@ import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import {
   CommandAgentAdapter,
+  CommandCaseBuilder,
   RuleBasedVerifier,
 } from "../../src/agents/adapter.js";
 import { applyAcceptedPatch } from "../../src/commands/apply.js";
@@ -149,6 +150,10 @@ describe("PR battle modes", () => {
     const outcome = await new Arena({
       adapters: adapters(),
       verifier: new RuleBasedVerifier("codex"),
+      caseBuilder: new CommandCaseBuilder("codex", {
+        executable: process.execPath,
+        args: [fixtureAgent],
+      }),
       pullRequestResolver,
       freezePullRequest: (options) =>
         freezePullRequest({
@@ -181,6 +186,10 @@ describe("PR battle modes", () => {
     const outcome = await new Arena({
       adapters: adapters(),
       verifier: new RuleBasedVerifier("codex"),
+      caseBuilder: new CommandCaseBuilder("codex", {
+        executable: process.execPath,
+        args: [fixtureAgent],
+      }),
       pullRequestResolver,
       freezePullRequest: (options) =>
         freezePullRequest({
@@ -254,6 +263,10 @@ describe("PR battle modes", () => {
     const outcome = await new Arena({
       adapters: adapters({ skipDefenderRepair: true }),
       verifier: new RuleBasedVerifier("codex"),
+      caseBuilder: new CommandCaseBuilder("codex", {
+        executable: process.execPath,
+        args: [fixtureAgent],
+      }),
       pullRequestResolver,
       freezePullRequest: (options) =>
         freezePullRequest({
@@ -282,6 +295,10 @@ describe("PR battle modes", () => {
     const outcome = await new Arena({
       adapters: adapters(),
       verifier: new RuleBasedVerifier("codex"),
+      caseBuilder: new CommandCaseBuilder("codex", {
+        executable: process.execPath,
+        args: [fixtureAgent],
+      }),
       pullRequestResolver,
       freezePullRequest: (options) =>
         freezePullRequest({

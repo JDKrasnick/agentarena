@@ -15,14 +15,12 @@ export function validateAttackOrdering(submission: AttackSubmission): void {
   if (ranks.some((rank, index) => rank !== expected[index])) {
     throw new Error("Attack ranks must be unique and contiguous from rank 1");
   }
-  const paths = submission.attacks.flatMap((attack) => attack.paths);
-  if (new Set(paths).size !== paths.length) {
-    throw new Error("Attacks in one set must use disjoint paths");
-  }
 }
 
 export async function materializeAttack(
-  submission: AttackSubmission["attacks"][number],
+  submission: AttackSubmission["attacks"][number] & {
+    focusedCommand: string;
+  },
   options: {
     author: ContestantId;
     authorProvider: AgentId;

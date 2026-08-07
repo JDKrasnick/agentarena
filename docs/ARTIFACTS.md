@@ -10,9 +10,12 @@ Completed runs live under `.agent-arena/runs/<run-id>/`.
   provider-keyed contestants into stable `a` and `b` slots. Migrated runs
   receive an explicit arena-fallback recommendation and must be reviewed again
   before application.
-- `task-contract.json`, source snapshots, final patches, prompts, attack cases,
-  logs, `quality/*`, `review-prompt.json`, `BATTLE.md`, `BATTLE.html`, and
-  `BATTLE.svg` are frozen battle evidence.
+- `task-contract.json`, source snapshots, final patches, prompts,
+  `attack-reviews/round-*/`, attack cases, logs, `quality/*`,
+  `review-prompt.json`, `BATTLE.md`, `BATTLE.html`, and `BATTLE.svg` are frozen
+  battle evidence. Attack review artifacts contain structured findings and the
+  frozen target-patch digest, but repair prompts receive only
+  verifier-confirmed regression tests.
 - `BATTLE.html` is the clickable evidence dossier, `BATTLE.md` is the complete
   text replay and handoff, and `BATTLE.svg` is a deterministic share image.
   Links are relative to the run directory and only reference recorded artifacts

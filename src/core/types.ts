@@ -77,6 +77,7 @@ export const StageSchema = z.enum([
   "resolve_permissions",
   "implement",
   "initial_validate",
+  "review_attacks",
   "collect_attacks",
   "validate_attacks",
   "review_infrastructure",
@@ -311,6 +312,51 @@ export const AttackInvocationRecordSchema = z.object({
 });
 export type AttackInvocationRecord = z.infer<
   typeof AttackInvocationRecordSchema
+>;
+
+export const ReviewFindingSchema = z.object({
+  invariant: z.string().min(1),
+  codeLocation: z.string().min(1),
+  triggerSequence: z.array(z.string().min(1)).min(1),
+  expectedBehavior: z.string().min(1),
+  confidence: z.number().int().min(0).max(100),
+  suggestedMinimalRegressionTest: z.string().min(1),
+});
+export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
+
+export const ReviewSubmissionSchema = z.object({
+  version: z.literal(1),
+  findings: z.array(ReviewFindingSchema).max(12),
+});
+export type ReviewSubmission = z.infer<typeof ReviewSubmissionSchema>;
+
+export const AttackReviewArtifactSchema = z.object({
+  version: z.literal(1),
+  round: RoundIdSchema,
+  reviewer: ContestantIdSchema,
+  target: ContestantIdSchema,
+  targetPatchSha256: z.string().min(1),
+  findings: z.array(ReviewFindingSchema),
+});
+export type AttackReviewArtifact = z.infer<typeof AttackReviewArtifactSchema>;
+
+export const ReviewInvocationRecordSchema = z.object({
+  round: RoundIdSchema,
+  reviewer: ContestantIdSchema,
+  target: ContestantIdSchema,
+  invocation: AgentInvocationSchema,
+  submissionStatus: z.enum([
+    "submitted",
+    "invalid_submission",
+    "not_submitted",
+    "not_run",
+  ]),
+  findingCount: z.number().int().nonnegative(),
+  artifactPath: z.string().optional(),
+  detail: z.string().optional(),
+});
+export type ReviewInvocationRecord = z.infer<
+  typeof ReviewInvocationRecordSchema
 >;
 
 export const AttackHypothesisSchema = z.object({
@@ -595,6 +641,11 @@ const FightConfigBaseSchema = z
     mergeEnabled: z.boolean().default(false),
     limits: z.object({
       implementationMs: z.number().int().positive(),
+      reviewMs: z
+        .number()
+        .int()
+        .positive()
+        .default(8 * 60 * 1000),
       attackMs: z.number().int().positive(),
       verifierMs: z.number().int().positive(),
       repairMs: z.number().int().positive(),
@@ -885,6 +936,7 @@ export const RunStateV3Schema = RunStateCoreSchema.extend({
   schemaVersion: z.literal(3),
   contestants: z.partialRecord(ContestantIdSchema, ContestantResultSchema),
   attacks: z.array(AttackSchema),
+  reviewInvocations: z.array(ReviewInvocationRecordSchema).default([]),
   attackInvocations: z.array(AttackInvocationRecordSchema).default([]),
   ranking: RankingSchema.optional(),
   arenaOutcome: ArenaOutcomeSchema.optional(),
@@ -1016,22 +1068,23 @@ export const AttackSubmissionEntrySchema = z.object({
   oracle: OracleCitationSchema,
   proposedSeverity: SeveritySchema,
   confidence: z.number().int().min(0).max(100),
-  focusedCommand: z.string().min(1),
+  reproduction: z.string().min(1),
   requiredCapabilities: z.array(z.string()).default([]),
-  paths: z.array(z.string().min(1)).min(1),
 });
 
 export const AttackSubmissionSchema = z.object({
   version: z.literal(1),
-  hypotheses: z.array(
-    z.object({
-      category: BugCategorySchema,
-      invariant: z.string(),
-      probe: z.string(),
-      requiredCapabilities: z.array(z.string()).default([]),
-      confidence: z.number().int().min(0).max(100),
-    }),
-  ),
+  hypotheses: z
+    .array(
+      z.object({
+        category: BugCategorySchema,
+        invariant: z.string(),
+        probe: z.string(),
+        requiredCapabilities: z.array(z.string()).default([]),
+        confidence: z.number().int().min(0).max(100),
+      }),
+    )
+    .default([]),
   attacks: z.array(AttackSubmissionEntrySchema).max(3),
 });
 export type AttackSubmission = z.infer<typeof AttackSubmissionSchema>;
@@ -1056,6 +1109,7 @@ export const HouseSubmissionSchema = z.object({
   attacks: z
     .array(
       AttackSubmissionEntrySchema.omit({ rank: true }).extend({
+        focusedCommand: z.string().min(1),
         paths: z.array(z.string().min(1)).min(1),
       }),
     )

@@ -79,6 +79,8 @@ if (stage === "implement") {
             },
             proposedSeverity: "medium",
             confidence: 95,
+            reproduction:
+              "Call slug with a whitespace-only title and expect an explicit rejection.",
             focusedCommand: "node --test test/arena-blank-title.test.mjs",
             requiredCapabilities: [],
             paths: [testPath],
@@ -108,7 +110,30 @@ if (stage === "implement") {
     }),
   );
 } else if (stage === "case_builder") {
-  if (prompt.includes("Repeated whitespace is not collapsed")) {
+  if (
+    prompt.includes("# Neutral case judge") &&
+    prompt.includes("Repeated whitespace is not collapsed")
+  ) {
+    const testPath = "test/arena-repeated-whitespace.test.mjs";
+    await writeFile(
+      path.join(process.cwd(), testPath),
+      `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { slug } from "../src/slug.mjs";\ntest("collapses repeated whitespace", () => assert.equal(slug("Alpha   Beta"), "alpha-beta"));\n`,
+    );
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 1,
+        cases: [
+          {
+            category: "repeated_whitespace",
+            focusedCommand:
+              "node --test test/arena-repeated-whitespace.test.mjs",
+            paths: [testPath],
+          },
+        ],
+      }),
+    );
+  } else if (prompt.includes("Repeated whitespace is not collapsed")) {
     const testPath = "test/arena-tab-whitespace.test.mjs";
     await writeFile(
       path.join(process.cwd(), testPath),
@@ -127,9 +152,80 @@ if (stage === "implement") {
         ],
       }),
     );
+  } else if (prompt.includes("Uppercase input is not normalized")) {
+    const testPath = "test/arena-uppercase.test.mjs";
+    await writeFile(
+      path.join(process.cwd(), testPath),
+      `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { slug } from "../src/slug.mjs";\ntest("normalizes case", () => assert.equal(slug("Alpha Beta"), "alpha-beta"));\n`,
+    );
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 1,
+        cases: [
+          {
+            category: "case_normalization",
+            focusedCommand: "node --test test/arena-uppercase.test.mjs",
+            paths: [testPath],
+          },
+        ],
+      }),
+    );
   } else {
-    await writeFile(submission, JSON.stringify({ version: 1, cases: [] }));
+    const testPath = "test/arena-case-judge.test.mjs";
+    await writeFile(
+      path.join(process.cwd(), testPath),
+      `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { slug } from "../src/slug.mjs";\ntest("case judge preserves slug contract", () => assert.equal(slug("Alpha Beta"), "alpha-beta"));\n`,
+    );
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 1,
+        cases: [
+          {
+            category: "contract_case",
+            focusedCommand: "node --test test/arena-case-judge.test.mjs",
+            paths: [testPath],
+          },
+        ],
+      }),
+    );
   }
+} else if (stage === "review_attacks") {
+  const source = await readFile(sourcePath, "utf8");
+  const repeatedWhitespaceFinding = source.includes('replaceAll(" ", "-")')
+    ? [
+        {
+          invariant: "Every run of whitespace becomes one separator",
+          codeLocation: "src/slug.mjs:slug",
+          triggerSequence: [
+            "Call slug with a title containing three consecutive spaces",
+            "Observe the generated slug",
+          ],
+          expectedBehavior: "The whitespace run becomes one hyphen",
+          confidence: 98,
+          suggestedMinimalRegressionTest:
+            "Add test/arena-repeated-whitespace.test.mjs with a three-space title",
+        },
+      ]
+    : [
+        {
+          invariant: "Slugs are lowercase",
+          codeLocation: "src/slug.mjs:slug",
+          triggerSequence: [
+            "Call slug with uppercase characters",
+            "Observe the generated slug",
+          ],
+          expectedBehavior: "The result is lowercase",
+          confidence: 70,
+          suggestedMinimalRegressionTest:
+            "Add test/arena-uppercase.test.mjs with mixed-case input",
+        },
+      ];
+  await writeFile(
+    submission,
+    JSON.stringify({ version: 1, findings: repeatedWhitespaceFinding }),
+  );
 } else if (stage === "collect_attacks") {
   if (round === "2" && agent === "claude") {
     process.exit(0);
@@ -174,6 +270,8 @@ if (stage === "implement") {
             },
             proposedSeverity: "high",
             confidence: 98,
+            reproduction:
+              "Call slug with Alpha followed by three spaces and Beta; expect alpha-beta.",
             focusedCommand:
               "node --test test/arena-repeated-whitespace.test.mjs",
             requiredCapabilities: [],
@@ -214,6 +312,8 @@ if (stage === "implement") {
             },
             proposedSeverity: "medium",
             confidence: 70,
+            reproduction:
+              "Call slug with Alpha Beta; expect a lowercase alpha-beta slug.",
             focusedCommand: "node --test test/arena-uppercase.test.mjs",
             requiredCapabilities: [],
             paths: [testPath],

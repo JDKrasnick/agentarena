@@ -11,8 +11,16 @@ import type {
   IssueResolver,
   PullRequestResolver,
 } from "../index-internal.js";
-import { readAttackSubmission, removeSubmission } from "../agents/adapter.js";
-import { composePrompt, createPromptManifest } from "../agents/prompts.js";
+import {
+  readAttackSubmission,
+  readReviewSubmission,
+  removeSubmission,
+} from "../agents/adapter.js";
+import {
+  composeAttackReviewPrompt,
+  composePrompt,
+  createPromptManifest,
+} from "../agents/prompts.js";
 import { ArtifactStore } from "../artifacts/store.js";
 import {
   materializeAttack,
@@ -78,6 +86,8 @@ import {
   type AgentId,
   type AgentInvocation,
   type Attack,
+  type AttackReviewArtifact,
+  type AttackSubmission,
   type CheckResult,
   type ContestantResult,
   type ContestantConfig,
@@ -400,6 +410,7 @@ export class Arena {
           ]),
         ),
         attacks: [],
+        reviewInvocations: [],
         attackInvocations: [],
         promptManifests: [],
         harnessOverlays: [],
@@ -752,8 +763,242 @@ export class Arena {
     return active.length <= 1;
   }
 
+  private async collectAttackReviews(
+    context: ArenaContext,
+    round: RoundId,
+    selection: ReturnType<typeof selectMethods>,
+    reviewers: readonly ContestantId[],
+    siegeDefender: ContestantId | undefined,
+  ): Promise<
+    Map<ContestantId, Omit<AttackReviewArtifact, "reviewer" | "target">>
+  > {
+    const packets = new Map<
+      ContestantId,
+      Omit<AttackReviewArtifact, "reviewer" | "target">
+    >();
+    for (const reviewer of reviewers) {
+      const contestant = getContestant(context.state, reviewer);
+      const isSiegeAttacker =
+        context.config.mode === "siege" && contestant.role === "attacker";
+      if (
+        !isSiegeAttacker &&
+        (contestant.patchSize === 0 ||
+          !latestRequiredPass(contestant) ||
+          contestant.status === "eliminated" ||
+          contestant.status === "failed")
+      )
+        continue;
+      const target = isSiegeAttacker
+        ? siegeDefender
+        : opponentOf(context.config, reviewer);
+      if (!target) throw new Error("Siege is missing its defender");
+      const targetContestant = getContestant(context.state, target);
+      const targetPatchPath = targetContestant.currentPatchPath;
+      if (
+        !targetPatchPath ||
+        targetContestant.patchSize === 0 ||
+        targetContestant.status === "failed"
+      )
+        continue;
+      const targetPatch = await readFile(targetPatchPath);
+      const emptyPacket: Omit<AttackReviewArtifact, "reviewer" | "target"> = {
+        version: 1,
+        round,
+        targetPatchSha256: sha256(targetPatch),
+        findings: [],
+      };
+      packets.set(reviewer, emptyPacket);
+      const worktree = await context.worktrees.create(
+        `round-${String(round)}-review-${reviewer}`,
+      );
+      try {
+        await context.worktrees.applyPatch(worktree, targetPatchPath);
+        const targetSnapshot = await context.worktrees.snapshot(worktree);
+        const prompt = composeAttackReviewPrompt({
+          agent: reviewer,
+          target,
+          round,
+          contract: context.contract,
+          config: context.config,
+          permissions: context.permissions,
+          methodSelection: selection,
+          opponentPatch: targetPatch.toString("utf8"),
+          priorOutcomes: JSON.stringify(
+            context.state.attacks.map((attack) => ({
+              id: attack.id,
+              claim: attack.claim,
+              status: attack.status,
+              rootDefectId: attack.rootDefectId,
+            })),
+          ),
+        });
+        const promptPath = await context.store.writeText(
+          `prompts/round-${String(round)}-review-${reviewer}.md`,
+          prompt,
+        );
+        const invocation = await this.adapterFor(context, reviewer).review({
+          worktree,
+          contestantId: reviewer,
+          prompt,
+          promptPath,
+          transcriptPrefix: context.store.resolve(
+            `logs/round-${String(round)}-review-${reviewer}`,
+          ),
+          timeoutMs: context.config.limits.reviewMs,
+          signal: context.controller.signal,
+          round,
+          opponent: target,
+        });
+        invocation.contestantId = reviewer;
+        invocation.role = contestant.role;
+        if (invocation.status !== "succeeded") {
+          context.state.reviewInvocations.push({
+            round,
+            reviewer,
+            target,
+            invocation,
+            submissionStatus: "not_run",
+            findingCount: 0,
+            detail: `Review generation ${invocation.status}`,
+          });
+          context.state.warnings.push(
+            `Review generation ${invocation.status} for ${reviewer} against ${target}; test generation received an empty review packet`,
+          );
+          continue;
+        }
+        try {
+          const submission = await readReviewSubmission(worktree);
+          await removeSubmission(worktree);
+          const changedPaths =
+            await context.worktrees.changedPathsSinceSnapshot(
+              worktree,
+              targetSnapshot,
+            );
+          if (changedPaths.length > 0) {
+            throw new Error(
+              `Read-only review changed worktree paths: ${changedPaths.join(", ")}`,
+            );
+          }
+          const artifact: AttackReviewArtifact = {
+            ...emptyPacket,
+            reviewer,
+            target,
+            findings: submission.findings,
+          };
+          const artifactPath = await context.store.writeJson(
+            `attack-reviews/round-${String(round)}/${reviewer}-against-${target}.json`,
+            artifact,
+          );
+          packets.set(reviewer, {
+            version: artifact.version,
+            round: artifact.round,
+            targetPatchSha256: artifact.targetPatchSha256,
+            findings: artifact.findings,
+          });
+          context.state.reviewInvocations.push({
+            round,
+            reviewer,
+            target,
+            invocation,
+            submissionStatus: "submitted",
+            findingCount: artifact.findings.length,
+            artifactPath,
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          context.state.reviewInvocations.push({
+            round,
+            reviewer,
+            target,
+            invocation,
+            submissionStatus:
+              (error as NodeJS.ErrnoException).code === "ENOENT"
+                ? "not_submitted"
+                : "invalid_submission",
+            findingCount: 0,
+            detail,
+          });
+          context.state.warnings.push(
+            `Review submission from ${reviewer} against ${target} was not usable: ${detail}; test generation received an empty review packet`,
+          );
+        }
+      } catch (error) {
+        context.state.warnings.push(
+          `Review collection failed for ${reviewer}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } finally {
+        await context.worktrees.remove(worktree);
+      }
+    }
+    await this.persist(context);
+    return packets;
+  }
+
+  private async buildNeutralCase(
+    context: ArenaContext,
+    entry: AttackSubmission["attacks"][number],
+    round: RoundId,
+    attacker: ContestantId,
+  ): Promise<{ focusedCommand: string; patchPath: string } | undefined> {
+    if (!this.dependencies.caseBuilder) {
+      context.state.warnings.push(
+        `No neutral case judge is configured; description from ${attacker} was not executed`,
+      );
+      return undefined;
+    }
+    const worktree = await context.worktrees.create(
+      `case-judge-${String(round)}-${attacker}-${String(entry.rank)}`,
+    );
+    try {
+      const snapshot = await context.worktrees.snapshot(worktree);
+      const prompt = [
+        "# Neutral case judge",
+        "Independently create one deterministic, test-only regression case for this anonymized failure description.",
+        "Use only the immutable task contract and the public reproduction. Do not inspect either contestant patch, infer contestant identity, modify production code, or broaden the cited requirement.",
+        "The harness will run your case against both frozen patches and separately adjudicate the oracle.",
+        "",
+        "# Immutable task contract",
+        JSON.stringify(context.contract, null, 2),
+        "",
+        "# Failure description",
+        JSON.stringify(entry, null, 2),
+        "",
+        `Write {"version":1,"cases":[{"category":"boundary","focusedCommand":"...","paths":["test/..."]}]} to ${path.join(worktree, ".agent-arena-cases.json")}. Return cases: [] only when the description cannot be turned into a contract-supported deterministic test.`,
+      ].join("\n");
+      const submission = await this.dependencies.caseBuilder.build({
+        worktree,
+        prompt,
+        timeoutMs: context.config.limits.attackMs,
+        transcriptPrefix: context.store.resolve(
+          `logs/case-judge-${String(round)}-${attacker}-${String(entry.rank)}`,
+        ),
+        signal: context.controller.signal,
+        round: round === "recovery" ? 3 : round,
+      });
+      const proposal = submission.cases[0];
+      if (!proposal) return undefined;
+      const patchPath = context.store.resolve(
+        `cases/round-${String(round)}/${attacker}/${String(entry.rank)}.diff`,
+      );
+      await context.worktrees.capturePatchAgainstSnapshot(
+        worktree,
+        patchPath,
+        snapshot,
+        proposal.paths,
+      );
+      return { focusedCommand: proposal.focusedCommand, patchPath };
+    } catch (error) {
+      context.state.warnings.push(
+        `Neutral case judge could not verify ${attacker}'s rank ${String(entry.rank)} description: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
+    } finally {
+      await context.worktrees.remove(worktree);
+    }
+  }
+
   private async runRound(context: ArenaContext, round: RoundId): Promise<void> {
-    await this.transition(context, "collect_attacks", round);
+    await this.transition(context, "review_attacks", round);
     if (round === 3) {
       const integrationCapabilities =
         context.config.integrationProfile?.capabilityIds ?? [];
@@ -841,6 +1086,14 @@ export class Arena {
       context.config.mode === "siege" && siegeAttacker
         ? [siegeAttacker.id]
         : context.config.agents;
+    const reviewPackets = await this.collectAttackReviews(
+      context,
+      round,
+      selection,
+      collectingAgents,
+      siegeDefender?.id,
+    );
+    await this.transition(context, "collect_attacks", round);
     for (const agent of collectingAgents) {
       const contestant = getContestant(context.state, agent);
       const isSiegeAttacker =
@@ -877,6 +1130,7 @@ export class Arena {
         const opponentPatch = await readFile(targetPatchPath, "utf8");
         const prompt = composePrompt({
           agent,
+          target,
           stage: "attack",
           round,
           contract: context.contract,
@@ -884,6 +1138,9 @@ export class Arena {
           permissions: context.permissions,
           methodSelection: selection,
           opponentPatch,
+          ...(reviewPackets.get(agent)
+            ? { reviewPacket: reviewPackets.get(agent)! }
+            : {}),
           currentHealth: contestant.finalHealth,
           priorOutcomes: JSON.stringify(
             context.state.attacks.map((attack) => ({
@@ -910,7 +1167,11 @@ export class Arena {
           round,
           opponent: target,
         });
-        if (invocation.status !== "succeeded") {
+        // A timed-out model can still have written a complete, schema-valid
+        // submission before its CLI wrapper finishes shutting down. Preserve
+        // that work; failed/infrastructure invocations remain ineligible.
+        const salvagingTimedOutSubmission = invocation.status === "timed_out";
+        if (invocation.status !== "succeeded" && !salvagingTimedOutSubmission) {
           context.state.attackInvocations.push({
             round,
             attacker: agent,
@@ -941,22 +1202,29 @@ export class Arena {
           );
           await removeSubmission(worktree);
           for (const entry of accepted) {
-            const patchPath = context.store.resolve(
-              `attacks/round-${String(round)}/${agent}/${String(entry.rank)}.diff`,
+            const neutralCase = await this.buildNeutralCase(
+              context,
+              entry,
+              round,
+              agent,
             );
-            await context.worktrees.capturePatch(
-              worktree,
-              patchPath,
-              entry.paths,
-            );
+            if (!neutralCase) {
+              context.state.warnings.push(
+                `No executable neutral case was produced for ${agent}'s rank ${String(entry.rank)} description`,
+              );
+              continue;
+            }
             collected.push(
-              await materializeAttack(entry, {
-                author: agent,
-                authorProvider: contestant.provider,
-                target,
-                round,
-                patchPath,
-              }),
+              await materializeAttack(
+                { ...entry, focusedCommand: neutralCase.focusedCommand },
+                {
+                  author: agent,
+                  authorProvider: contestant.provider,
+                  target,
+                  round,
+                  patchPath: neutralCase.patchPath,
+                },
+              ),
             );
           }
           context.state.attackInvocations.push({
@@ -966,7 +1234,15 @@ export class Arena {
             invocation,
             submissionStatus: "submitted",
             attackCount: accepted.length,
+            ...(salvagingTimedOutSubmission
+              ? { detail: "Valid submission salvaged after timeout" }
+              : {}),
           });
+          if (salvagingTimedOutSubmission) {
+            context.state.warnings.push(
+              `Attack submission from ${agent} against ${target} was salvaged after timeout; inspect the invocation duration before relying on the configured limit`,
+            );
+          }
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
           context.state.attackInvocations.push({
@@ -1016,6 +1292,7 @@ export class Arena {
         await this.persist(context);
         try {
           await context.worktrees.applyPatch(worktree, targetPatchPath);
+          const targetSnapshot = await context.worktrees.snapshot(worktree);
           const patch = await readFile(targetPatchPath, "utf8");
           const prompt = [
             "# Neutral house scout",
@@ -1056,9 +1333,10 @@ export class Arena {
             const patchPath = context.store.resolve(
               `attacks/round-${String(round)}/house-${target}.diff`,
             );
-            await context.worktrees.capturePatch(
+            await context.worktrees.capturePatchAgainstSnapshot(
               worktree,
               patchPath,
+              targetSnapshot,
               entry.paths,
             );
             collected.push(
@@ -1817,7 +2095,6 @@ export class Arena {
           ),
           signal: context.controller.signal,
           round,
-          attack,
         });
         await rm(path.join(worktree, ".agent-arena-cases.json"), {
           force: true,

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AttackSubmissionSchema } from "../../src/core/types.js";
 import { validateAttackOrdering } from "../../src/attacks/submission.js";
 
-function entry(rank: 1 | 2 | 3, file: string) {
+function entry(rank: 1 | 2 | 3) {
   return {
     rank,
     claim: "claim",
@@ -15,34 +15,27 @@ function entry(rank: 1 | 2 | 3, file: string) {
     },
     proposedSeverity: "low" as const,
     confidence: 80,
-    focusedCommand: "npm test",
+    reproduction: "Call slug with repeated whitespace and expect one hyphen",
     requiredCapabilities: [],
-    paths: [file],
   };
 }
 
 describe("ordered attack sets", () => {
-  it("accepts zero to three contiguous disjoint attacks", () => {
+  it("accepts zero to three contiguous failure descriptions", () => {
     const submission = AttackSubmissionSchema.parse({
       version: 1,
       hypotheses: [],
-      attacks: [entry(1, "test/a.test.ts"), entry(2, "test/b.test.ts")],
+      attacks: [entry(1), entry(2)],
     });
     expect(() => validateAttackOrdering(submission)).not.toThrow();
   });
 
-  it("rejects gaps and shared paths", () => {
+  it("rejects gaps", () => {
     const gap = AttackSubmissionSchema.parse({
       version: 1,
       hypotheses: [],
-      attacks: [entry(2, "test/a.test.ts")],
+      attacks: [entry(2)],
     });
     expect(() => validateAttackOrdering(gap)).toThrow(/contiguous/);
-    const shared = AttackSubmissionSchema.parse({
-      version: 1,
-      hypotheses: [],
-      attacks: [entry(1, "test/a.test.ts"), entry(2, "test/a.test.ts")],
-    });
-    expect(() => validateAttackOrdering(shared)).toThrow(/disjoint/);
   });
 });
