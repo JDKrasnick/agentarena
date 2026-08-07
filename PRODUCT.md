@@ -40,6 +40,46 @@ The user receives:
 
 The project is intended to be both useful and entertaining. The adversarial testing provides engineering value, while the competition format creates a memorable and shareable GitHub project.
 
+### Execution architecture
+
+The current implementation is intentionally still monolithic: `Arena` owns the
+battle lifecycle and directly coordinates implementation, review, attack,
+validation, repair, scoring, worktrees, processes, and artifacts. This remains
+the live fight path while the round boundary is introduced incrementally.
+
+The approved target has three layers:
+
+```text
+Arena -> RoundEngine -> mechanisms
+```
+
+- `Arena` owns preflight and the battle lifecycle: immutable run creation,
+  worktree and service lifetime, round sequencing, final validation, reporting,
+  and cancellation of the overall battle.
+- `RoundEngine` owns one transactional round. Its sole operation accepts a
+  self-contained `RoundSnapshot` and returns a typed `RoundResult` with a
+  required immutable `RoundReplay`.
+- Mechanisms perform narrow operations such as review, case generation,
+  validation, repair, and scoring. They do not depend upward on `RoundEngine` or
+  `Arena`.
+
+Only versioned, strict, serializable data crosses the Arena–RoundEngine
+boundary. Runtime services, callbacks, worktree objects, abort controllers, and
+mutable `RunState` stay outside it. `ContestantFeedback` is a deliberately
+limited projection: a lane sees its health, accepted attacks and visible
+reproducers, its own attack outcomes, and healed or unresolved defect IDs, but
+not opponent transcripts, held-out cases, verifier reasoning, or private repair
+details. Expected execution failures are returned as `inconclusive`,
+`cancelled`, or `failed` results; exceptions are reserved for invalid
+configuration, invalid schemas, and programming invariants.
+
+Issue #35 establishes these contracts and import direction without changing the
+live fight path. Issue #30 moves round execution from `Arena` into
+`RoundEngine` and removes the temporary direct-mechanism import allowlist. Issue
+#34 adopts `RunSpec` in run creation, while #32 persists replay envelopes,
+implements digest chaining and crash recovery, and produces the production
+feedback projection.
+
 ### Battle modes
 
 The same evidence and health system supports three topologies:
