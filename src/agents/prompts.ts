@@ -1,6 +1,8 @@
 import { sha256 } from "../core/ids.js";
 import type {
   AgentId,
+  AttackReviewArtifact,
+  AttackSubmission,
   ContestantId,
   FightConfig,
   PermissionPolicy,
@@ -26,6 +28,65 @@ const OVERLAYS: Record<RoundId, string> = {
     "Use replacement credits only for new attacks against the post-round-3 patches. Another infrastructure failure makes the run inconclusive.",
 };
 
+function executionArchitecture(
+  context: Pick<PromptContext, "agent" | "config" | "stage">,
+  target?: ContestantId,
+  phaseOverride?: "read_only_repository_review",
+): string {
+  const contestant = context.config.contestants.find(
+    (candidate) => candidate.id === context.agent,
+  );
+  const worktreeState =
+    phaseOverride === "read_only_repository_review"
+      ? "clean battle base plus the opponent's frozen target patch; repository inspection and permitted diagnostics are allowed, but only the structured submission may change"
+      : context.stage === "implement"
+        ? "clean battle base; this contestant owns the implementation produced here"
+        : context.stage === "attack"
+          ? "clean battle base plus the opponent's frozen target patch; capture only a target-relative test overlay"
+          : "this contestant's current implementation plus verifier-confirmed regression evidence";
+  return JSON.stringify(
+    {
+      battleMode: context.config.mode,
+      contestantSlot: context.agent,
+      contestantRole: contestant?.role ?? "stage participant",
+      ...(target ? { targetSlot: target } : {}),
+      currentPhase: phaseOverride ?? context.stage,
+      phaseSequence: [
+        "freeze implementations",
+        "read-only repository review",
+        "focused regression-test generation",
+        "deterministic execution and anonymized verifier assessment",
+        "validated-evidence repair",
+      ],
+      worktreeState,
+      repositoryContext:
+        "The complete assigned repository is available in the current worktree. Read applicable AGENTS.md and provider instruction files, manifests, specifications, source, and existing tests before relying on architectural assumptions.",
+      validationAuthority:
+        "The harness owns execution and the verifier owns oracle, relevance, root-defect, and severity assessment.",
+      informationBoundary:
+        "Private implementation transcripts and raw reviewer reasoning never cross contestant lanes. Repair receives only verifier-confirmed regression evidence.",
+      requiredValidationCommand: context.config.testCommand,
+      declaredIntegrationTopology:
+        context.config.integrationProfile ?? "none declared",
+    },
+    null,
+    2,
+  );
+}
+
+export function permissionContext(permissions: PermissionPolicy): string {
+  return [
+    JSON.stringify(permissions, null, 2),
+    "",
+    "Permission interpretation:",
+    "- Use a capability only when status is approved and role is agent or both.",
+    "- A harness_only capability is not directly available to this agent; request its harness-mediated check by capability ID.",
+    "- denied, unavailable, and provisioning_failed capabilities are unavailable. Do not probe around the decision.",
+    "- enforced means an external boundary applies; brokered means the harness mediates access; advisory is a disclosed policy boundary rather than an OS sandbox.",
+    "- Never request, expose, or persist raw credentials. Request additional optional authority by capability ID and explain the task-relevant need.",
+  ].join("\n");
+}
+
 export interface PromptContext {
   agent: AgentId | ContestantId;
   stage: "implement" | "attack" | "repair";
@@ -34,7 +95,9 @@ export interface PromptContext {
   config: FightConfig;
   permissions: PermissionPolicy;
   methodSelection?: MethodSelection;
+  target?: ContestantId;
   opponentPatch?: string;
+  reviewPacket?: Omit<AttackReviewArtifact, "reviewer" | "target">;
   evidence?: string;
   currentHealth?: number;
   priorOutcomes?: string;
@@ -52,8 +115,11 @@ export function composePrompt(context: PromptContext): string {
     `Required validation command: ${context.config.testCommand}`,
     `Time limit: ${String(context.config.limits[`${context.stage === "implement" ? "implementation" : context.stage}Ms`])} ms`,
     "",
-    "# Capability manifest",
-    JSON.stringify(context.permissions.capabilities, null, 2),
+    "# Arena and repository execution architecture",
+    executionArchitecture(context, context.target),
+    "",
+    "# Available permissions and enforcement",
+    permissionContext(context.permissions),
     "",
     "Edit only the assigned worktree. Do not commit. Do not access production credentials or unrelated files.",
     "Never request or print raw secrets; request capabilities by ID.",
@@ -70,9 +136,11 @@ export function composePrompt(context: PromptContext): string {
     common.push(
       "",
       "# Submission schema",
-      '{"version":1,"hypotheses":[{"category":"contract_logic","invariant":"...","probe":"...","requiredCapabilities":[],"confidence":90}],"attacks":[{"rank":1,"claim":"...","impact":"...","oracle":{"expectedBehavior":"...","sourceId":"task-user","sourceLocation":"task text","rationale":"..."},"proposedSeverity":"high","confidence":90,"focusedCommand":"npm test -- test/file.test.ts","requiredCapabilities":[],"paths":["test/file.test.ts"]}]}',
-      "Attack ranks must be unique and contiguous. Attacks cannot share paths. Production code changes are forbidden.",
-      "The assigned worktree already contains the target patch. Run every probe against that code. Once a defect reproduces, write the structured submission and focused test before exploring further; an empty submission is valid when no defect reproduces.",
+      '{"version":1,"attacks":[{"rank":1,"claim":"...","impact":"...","oracle":{"expectedBehavior":"...","sourceId":"task-user","sourceLocation":"task text","rationale":"..."},"proposedSeverity":"high","confidence":90,"reproduction":"Public API call, concrete input, and expected observable result","requiredCapabilities":[]}]}',
+      "Attack ranks must be unique and contiguous. Submit a precise failure description; do not create or edit test files or production code.",
+      'Immediately write {"version":1,"attacks":[]} to .agent-arena-submission.json before doing any other work, so a bounded phase always has an explicit result.',
+      "The assigned worktree contains the frozen target patch. Start from the review packet, inspect the cited code and nearby tests as needed, and describe a deterministic public reproducer. Do not restart broad repository review.",
+      "A neutral case judge will independently write and execute any regression test. As soon as a defect is described, update the structured submission before investigating another. Leaving attacks: [] is the correct result when no reviewed finding reproduces.",
     );
   }
   if (context.round !== undefined) {
@@ -96,6 +164,13 @@ export function composePrompt(context: PromptContext): string {
   }
   if (context.opponentPatch)
     common.push("", "# Frozen opponent patch", context.opponentPatch);
+  if (context.reviewPacket) {
+    common.push(
+      "",
+      "# Compact target-specific review packet",
+      JSON.stringify(context.reviewPacket, null, 2),
+    );
+  }
   if (context.evidence)
     common.push("", "# Validated evidence", context.evidence);
   if (context.currentHealth !== undefined) {
@@ -104,6 +179,88 @@ export function composePrompt(context: PromptContext): string {
   if (context.priorOutcomes)
     common.push("", "# Prior outcomes", context.priorOutcomes);
   return `${common.join("\n")}\n`;
+}
+
+export function composeAttackReviewPrompt(
+  context: Omit<PromptContext, "stage" | "reviewPacket" | "evidence"> & {
+    opponentPatch: string;
+    target: ContestantId;
+  },
+): string {
+  const architectureContext = {
+    ...context,
+    stage: "attack" as const,
+  };
+  return `${[
+    "# Agent Arena read-only attack review",
+    `Reviewer slot: ${context.agent}`,
+    `Target slot: ${context.target}`,
+    "",
+    "# Immutable task contract",
+    JSON.stringify(context.contract, null, 2),
+    "",
+    `Required validation command: ${context.config.testCommand}`,
+    `Time limit: ${String(context.config.limits.reviewMs)} ms`,
+    "",
+    "# Arena and repository execution architecture",
+    executionArchitecture(
+      architectureContext,
+      context.target,
+      "read_only_repository_review",
+    ),
+    "",
+    "# Available permissions and enforcement",
+    permissionContext(context.permissions),
+    "",
+    "# Public review rules",
+    "Use this phase for repository-wide investigation of the frozen target implementation. Read the relevant architecture, source, tests, specifications, manifests, and repository instructions.",
+    "Run existing tests and read-only diagnostic commands when useful and permitted. Do not implement production changes or executable attacks in this phase.",
+    "Do not expose or infer provider identity. Do not include private implementation-generation transcripts or raw chain-of-thought.",
+    "Return concise, independently derived findings grounded in observable behavior and the public task contract.",
+    "Write only .agent-arena-submission.json. Any other worktree change invalidates the review artifact.",
+    "",
+    "# Submission schema",
+    '{"version":1,"findings":[{"invariant":"...","codeLocation":"src/file.ts:42 or symbol","triggerSequence":["first event","second event"],"expectedBehavior":"...","confidence":85,"suggestedMinimalRegressionTest":"Add test/arena-... exercising ..."}]}',
+    "Zero findings is valid. Rank findings by confidence and keep the packet compact (at most 12).",
+    "",
+    `# Round ${String(context.round)} review brief`,
+    context.round === undefined ? "" : OVERLAYS[context.round],
+    "",
+    "# Deterministic method pack",
+    JSON.stringify(context.methodSelection ?? {}, null, 2),
+    ...(context.priorOutcomes
+      ? ["", "# Previously adjudicated defects", context.priorOutcomes]
+      : []),
+    "",
+    "# Frozen target patch",
+    context.opponentPatch,
+  ].join("\n")}\n`;
+}
+
+export function composeNeutralCasePrompt(input: {
+  contract: TaskContract;
+  permissions: PermissionPolicy;
+  failure: AttackSubmission["attacks"][number];
+  outputPath: string;
+}): string {
+  return `${[
+    "# Neutral case judge",
+    "Independently create one deterministic, test-only regression case for this anonymized failure description.",
+    "Use only the immutable task contract and the public reproduction. Do not inspect either contestant patch, infer contestant identity, modify production code, or broaden the cited requirement.",
+    "The harness will run your case against both frozen patches and separately adjudicate the oracle.",
+    "",
+    "# Immutable task contract",
+    JSON.stringify(input.contract, null, 2),
+    "",
+    "# Available permissions and enforcement",
+    permissionContext(input.permissions),
+    "",
+    "# Failure description",
+    JSON.stringify(input.failure, null, 2),
+    "",
+    "Use only directly available capabilities that the failure description declares. Do not introduce a new capability or directly use a harness_only capability.",
+    `Write {"version":1,"cases":[{"category":"boundary","focusedCommand":"...","paths":["test/..."],"requiredCapabilities":[]}]} to ${input.outputPath}. Return cases: [] only when the description cannot be turned into a contract-supported deterministic test.`,
+  ].join("\n")}\n`;
 }
 
 export function createPromptManifest(

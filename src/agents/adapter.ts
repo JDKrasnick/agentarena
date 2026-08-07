@@ -7,6 +7,7 @@ import {
   CaseSubmissionSchema,
   HouseSubmissionSchema,
   InfrastructureReviewSubmissionSchema,
+  ReviewSubmissionSchema,
   SeveritySchema,
   StageSubmissionSchema,
   type AgentId,
@@ -18,6 +19,7 @@ import {
   type HouseSubmission,
   type InfrastructureReviewSubmission,
   type PermissionPolicy,
+  type ReviewSubmission,
   type Severity,
   type TaskContract,
 } from "../core/types.js";
@@ -43,6 +45,10 @@ interface InvocationInput {
 
 export type ImplementInput = InvocationInput;
 
+export interface ReviewInput extends InvocationInput {
+  opponent: ContestantId;
+}
+
 export interface AttackInput extends InvocationInput {
   opponent: ContestantId;
 }
@@ -55,6 +61,7 @@ export interface AgentAdapter {
   readonly id: AgentId;
   checkAvailability(): Promise<Availability>;
   implement(input: ImplementInput): Promise<AgentInvocation>;
+  review(input: ReviewInput): Promise<AgentInvocation>;
   attack(input: AttackInput): Promise<AgentInvocation>;
   repair(input: RepairInput): Promise<AgentInvocation>;
 }
@@ -149,9 +156,7 @@ export interface HouseScout {
 
 export interface CaseBuilder {
   readonly id: AgentId;
-  build(
-    input: StructuredGeneratorInput & { attack: Attack },
-  ): Promise<CaseSubmission>;
+  build(input: StructuredGeneratorInput): Promise<CaseSubmission>;
 }
 
 export interface InfrastructureReviewInput extends StructuredGeneratorInput {
@@ -170,8 +175,19 @@ export async function readAttackSubmission(
   worktree: string,
 ): Promise<AttackSubmission> {
   const submissionPath = path.join(worktree, ".agent-arena-submission.json");
-  return AttackSubmissionSchema.parse(
-    JSON.parse(await readFile(submissionPath, "utf8")),
+  return parseModelSubmission(
+    AttackSubmissionSchema,
+    await readFile(submissionPath, "utf8"),
+  );
+}
+
+export async function readReviewSubmission(
+  worktree: string,
+): Promise<ReviewSubmission> {
+  const submissionPath = path.join(worktree, ".agent-arena-submission.json");
+  return parseModelSubmission(
+    ReviewSubmissionSchema,
+    await readFile(submissionPath, "utf8"),
   );
 }
 
@@ -180,14 +196,68 @@ export async function readStageSubmission(
 ): Promise<{ explanation: string }> {
   const submissionPath = path.join(worktree, ".agent-arena-submission.json");
   try {
-    return StageSubmissionSchema.parse(
-      JSON.parse(await readFile(submissionPath, "utf8")),
+    return parseModelSubmission(
+      StageSubmissionSchema,
+      await readFile(submissionPath, "utf8"),
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
       return { explanation: "" };
     throw error;
   }
+}
+
+/**
+ * Model output is usually a JSON file, but it may contain a fenced object or
+ * harmless presentation differences such as `"Medium"`.  Recover those
+ * unambiguous cases before treating a submission as malformed.  We do not
+ * invent missing facts: anything that still fails the authoritative schema is
+ * rejected (and structured callers can request a repair from the model).
+ */
+export function parseModelSubmission<T>(
+  schema: z.ZodType<T>,
+  source: string,
+): T {
+  return schema.parse(normalizeModelJson(extractJson(source)));
+}
+
+function extractJson(source: string): unknown {
+  try {
+    return JSON.parse(source);
+  } catch {
+    const fenced = source.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1];
+    if (fenced) return JSON.parse(fenced);
+    const start = source.search(/[[{]/);
+    const end = Math.max(source.lastIndexOf("}"), source.lastIndexOf("]"));
+    if (start >= 0 && end > start)
+      return JSON.parse(source.slice(start, end + 1));
+    throw new Error("Submission did not contain a JSON object or array");
+  }
+}
+
+function normalizeModelJson(value: unknown, key?: string): unknown {
+  if (Array.isArray(value))
+    return value.map((entry) => normalizeModelJson(entry));
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value).map(([entryKey, entryValue]) => [
+        entryKey,
+        normalizeModelJson(entryValue, entryKey),
+      ]),
+    );
+  if (typeof value !== "string") return value;
+
+  const normalized = value.trim();
+  if (key === "severity") {
+    const severity = normalized.toLowerCase();
+    if (["critical", "high", "medium", "low"].includes(severity))
+      return severity;
+  }
+  if (["relevant", "oracleSupported"].includes(key ?? "")) {
+    if (["true", "yes"].includes(normalized.toLowerCase())) return true;
+    if (["false", "no"].includes(normalized.toLowerCase())) return false;
+  }
+  return value;
 }
 
 export async function removeSubmission(worktree: string): Promise<void> {
@@ -288,6 +358,10 @@ export class CommandAgentAdapter implements AgentAdapter {
     return this.invoke("implement", input);
   }
 
+  review(input: ReviewInput): Promise<AgentInvocation> {
+    return this.invoke("review_attacks", input);
+  }
+
   attack(input: AttackInput): Promise<AgentInvocation> {
     return this.invoke("collect_attacks", input);
   }
@@ -297,7 +371,7 @@ export class CommandAgentAdapter implements AgentAdapter {
   }
 
   private async invoke(
-    stage: "implement" | "collect_attacks" | "repair",
+    stage: "implement" | "review_attacks" | "collect_attacks" | "repair",
     input: InvocationInput,
   ): Promise<AgentInvocation> {
     const started = new Date();
@@ -410,11 +484,12 @@ export class CommandAttackVerifier implements AttackVerifier {
     ].join("\n");
     await rm(outputPath, { force: true });
     let lastError: unknown;
+    let attemptPrompt = prompt;
     for (const attempt of [1, 2]) {
       const result = await runProcess({
         executable: this.command.executable,
         args: this.command.args,
-        input: prompt,
+        input: attemptPrompt,
         cwd: input.worktree,
         timeoutMs: input.timeoutMs,
         logPrefix: `${input.transcriptPrefix}-attempt-${String(attempt)}`,
@@ -425,11 +500,22 @@ export class CommandAttackVerifier implements AttackVerifier {
         continue;
       }
       try {
-        return AttackVerdictSchema.parse(
-          JSON.parse(await readFile(outputPath, "utf8")),
+        return parseModelSubmission(
+          AttackVerdictSchema,
+          await readFile(outputPath, "utf8"),
         );
       } catch (error) {
         lastError = error;
+        // Only ask again after local recovery has exhausted unambiguous fixes.
+        // This is intentionally short: it is a formatting repair, not a new
+        // adjudication that could change the evidence or outcome.
+        attemptPrompt = [
+          prompt,
+          "",
+          "Your prior submission could not be validated.",
+          `Validation problem: ${error instanceof Error ? error.message : String(error)}`,
+          `Rewrite ${outputPath} now as one JSON object using the exact requested keys and severity values: critical, high, medium, or low.`,
+        ].join("\n");
       }
     }
     throw new Error(
@@ -467,7 +553,7 @@ async function invokeStructuredGenerator(
   if (result.exitCode !== 0 || result.failureClass) {
     throw new Error(`${stage} invocation failed`);
   }
-  return JSON.parse(await readFile(outputPath, "utf8")) as unknown;
+  return extractJson(await readFile(outputPath, "utf8"));
 }
 
 export class CommandHouseScout implements HouseScout {
@@ -478,12 +564,14 @@ export class CommandHouseScout implements HouseScout {
 
   async scout(input: StructuredGeneratorInput): Promise<HouseSubmission> {
     return HouseSubmissionSchema.parse(
-      await invokeStructuredGenerator(
-        this.id,
-        "house",
-        input,
-        ".agent-arena-house.json",
-        this.commandOverride,
+      normalizeModelJson(
+        await invokeStructuredGenerator(
+          this.id,
+          "house",
+          input,
+          ".agent-arena-house.json",
+          this.commandOverride,
+        ),
       ),
     );
   }
@@ -495,16 +583,16 @@ export class CommandCaseBuilder implements CaseBuilder {
     private readonly commandOverride?: Omit<CommandAdapterOptions, "id">,
   ) {}
 
-  async build(
-    input: StructuredGeneratorInput & { attack: Attack },
-  ): Promise<CaseSubmission> {
+  async build(input: StructuredGeneratorInput): Promise<CaseSubmission> {
     return CaseSubmissionSchema.parse(
-      await invokeStructuredGenerator(
-        this.id,
-        "case_builder",
-        input,
-        ".agent-arena-cases.json",
-        this.commandOverride,
+      normalizeModelJson(
+        await invokeStructuredGenerator(
+          this.id,
+          "case_builder",
+          input,
+          ".agent-arena-cases.json",
+          this.commandOverride,
+        ),
       ),
     );
   }
@@ -521,12 +609,14 @@ export class CommandInfrastructureReviewer implements InfrastructureReviewer {
     input: InfrastructureReviewInput,
   ): Promise<InfrastructureReviewSubmission> {
     return InfrastructureReviewSubmissionSchema.parse(
-      await invokeStructuredGenerator(
-        input.agent,
-        "infrastructure_review",
-        input,
-        ".agent-arena-infrastructure-review.json",
-        this.commandOverrides[input.agent],
+      normalizeModelJson(
+        await invokeStructuredGenerator(
+          input.agent,
+          "infrastructure_review",
+          input,
+          ".agent-arena-infrastructure-review.json",
+          this.commandOverrides[input.agent],
+        ),
       ),
     );
   }
@@ -557,19 +647,21 @@ export class CommandHarnessMaintainer implements HarnessMaintainer {
     signal: AbortSignal,
   ): Promise<HarnessOverlayProposal> {
     const value = HarnessOverlayProposalSchema.parse(
-      await invokeStructuredGenerator(
-        this.id,
-        "harness_maintainer",
-        {
-          worktree: packet.worktree,
-          prompt: packet.prompt,
-          timeoutMs: packet.timeoutMs,
-          transcriptPrefix: packet.transcriptPrefix,
-          signal,
-          round: packet.round,
-        },
-        ".agent-arena-overlay.json",
-        this.commandOverride,
+      normalizeModelJson(
+        await invokeStructuredGenerator(
+          this.id,
+          "harness_maintainer",
+          {
+            worktree: packet.worktree,
+            prompt: packet.prompt,
+            timeoutMs: packet.timeoutMs,
+            transcriptPrefix: packet.transcriptPrefix,
+            signal,
+            round: packet.round,
+          },
+          ".agent-arena-overlay.json",
+          this.commandOverride,
+        ),
       ),
     );
     return {

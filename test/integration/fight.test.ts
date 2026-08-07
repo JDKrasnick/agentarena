@@ -61,6 +61,10 @@ describe("fake-adapter fight on a mocked real issue", () => {
     const outcome = await new Arena({
       adapters: { codex: adapter },
       verifier: new RuleBasedVerifier("codex"),
+      caseBuilder: new CommandCaseBuilder("codex", {
+        executable: process.execPath,
+        args: [fixtureAgent],
+      }),
     }).fight(config);
 
     expect(outcome.state.config.contestants).toMatchObject([
@@ -277,6 +281,58 @@ describe("fake-adapter fight on a mocked real issue", () => {
         }),
       ]),
     );
+    expect(outcome.state.reviewInvocations).toHaveLength(6);
+    expect(outcome.state.reviewInvocations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reviewer: "a",
+          target: "b",
+          round: 1,
+          submissionStatus: "submitted",
+          findingCount: 1,
+        }),
+      ]),
+    );
+    const reviewArtifactPath = outcome.state.reviewInvocations.find(
+      (invocation) => invocation.reviewer === "a" && invocation.round === 1,
+    )?.artifactPath;
+    const reviewArtifact = JSON.parse(
+      await readFile(reviewArtifactPath!, "utf8"),
+    ) as {
+      targetPatchSha256: string;
+      findings: Array<{ invariant: string }>;
+    };
+    expect(reviewArtifact.targetPatchSha256).toHaveLength(64);
+    expect(reviewArtifact.findings[0]?.invariant).toContain(
+      "run of whitespace",
+    );
+    const attackPrompt = await readFile(
+      path.join(
+        outcome.state.artifacts.runDirectory!,
+        "prompts",
+        "round-1-a.md",
+      ),
+      "utf8",
+    );
+    expect(attackPrompt).toContain("Compact target-specific review packet");
+    expect(attackPrompt).toContain("run of whitespace");
+    const repairPrompt = await readFile(
+      path.join(
+        outcome.state.artifacts.runDirectory!,
+        "prompts",
+        "round-1-repair-b.md",
+      ),
+      "utf8",
+    );
+    expect(repairPrompt).not.toContain("suggestedMinimalRegressionTest");
+    expect(
+      outcome.state.attackInvocations.find(
+        (invocation) => invocation.attacker === "a" && invocation.round === 3,
+      ),
+    ).toMatchObject({
+      submissionStatus: "submitted",
+      attackCount: 0,
+    });
     const landed = outcome.state.attacks.find(
       (attack) => attack.status === "landed",
     );
@@ -433,6 +489,10 @@ describe("fake-adapter fight on a mocked real issue", () => {
           return fallback.assess(input);
         },
       },
+      caseBuilder: new CommandCaseBuilder("codex", {
+        executable: process.execPath,
+        args: [fixtureAgent],
+      }),
       infrastructureReviewer: new CommandInfrastructureReviewer({
         codex: { executable: process.execPath, args: [fixtureAgent] },
         claude: { executable: process.execPath, args: [fixtureAgent] },

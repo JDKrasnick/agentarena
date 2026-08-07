@@ -177,6 +177,37 @@ export class WorktreeManager {
     );
   }
 
+  /**
+   * Freeze the worktree's current tracked state as a Git tree. Unlike HEAD or
+   * the mutable index, this remains a stable target-relative baseline even if
+   * an agent stages files while building an attack.
+   */
+  async snapshot(worktree: string): Promise<string> {
+    await git(this.repositoryRoot, ["add", "-A"], worktree);
+    return git(this.repositoryRoot, ["write-tree"], worktree);
+  }
+
+  async changedPathsSinceSnapshot(
+    worktree: string,
+    snapshot: string,
+  ): Promise<string[]> {
+    const tracked = await git(
+      this.repositoryRoot,
+      ["diff", "--name-only", snapshot, "--"],
+      worktree,
+    );
+    const untracked = await git(
+      this.repositoryRoot,
+      ["ls-files", "--others", "--exclude-standard"],
+      worktree,
+    );
+    return [
+      ...new Set(
+        [...tracked.split("\n"), ...untracked.split("\n")].filter(Boolean),
+      ),
+    ];
+  }
+
   async capturePatch(
     worktree: string,
     targetPath: string,
@@ -192,6 +223,27 @@ export class WorktreeManager {
     if (againstHead) args.push("HEAD");
     if (paths && paths.length > 0) args.push("--", ...paths);
     const patch = await git(this.repositoryRoot, args, worktree);
+    await mkdir(path.dirname(targetPath), { recursive: true });
+    await writeFile(targetPath, patch.length === 0 ? "" : `${patch}\n`, "utf8");
+    return Buffer.byteLength(patch);
+  }
+
+  async capturePatchAgainstSnapshot(
+    worktree: string,
+    targetPath: string,
+    snapshot: string,
+    paths: readonly string[],
+  ): Promise<number> {
+    if (paths.length === 0)
+      throw new Error("A target-relative overlay requires at least one path");
+    // Intent-to-add makes untracked test files visible to `git diff` without
+    // replacing any content an agent may already have staged.
+    await git(this.repositoryRoot, ["add", "-N", "--", ...paths], worktree);
+    const patch = await git(
+      this.repositoryRoot,
+      ["diff", "--binary", "--full-index", snapshot, "--", ...paths],
+      worktree,
+    );
     await mkdir(path.dirname(targetPath), { recursive: true });
     await writeFile(targetPath, patch.length === 0 ? "" : `${patch}\n`, "utf8");
     return Buffer.byteLength(patch);

@@ -86,6 +86,7 @@ limits:
   attacks_per_round: 3
   infrastructure_recovery_round: true
   implementation_minutes: 15
+  review_minutes: 8
   attack_minutes: 8
   verifier_minutes: 2
   repair_minutes: 8

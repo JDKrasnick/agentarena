@@ -55,8 +55,14 @@ Agent Arena then:
    - Round 3 attacks real integrations, configuration, security boundaries,
      partial failure, recovery, and resource behavior.
    In each round:
-   - Both agents inspect the opponent's current patch and submit zero to three
-     executable attacks, ordered from strongest to weakest.
+   - The harness freezes both current patches.
+   - Both agents get an extended read-only review phase and produce structured
+     target-specific findings.
+   - Each agent receives its compact review packet in a separate focused phase
+     and submits zero to three ranked failure descriptions with concrete public
+     reproduction steps and a contract citation. A neutral case judge writes
+     and executes the regression test; `attacks: []` explicitly records that
+     no reviewed hypothesis is credible.
    - The harness validates every attack and resolves damage or recoil
      simultaneously.
    - Both agents receive the new evidence and one bounded opportunity to repair
@@ -139,12 +145,23 @@ repair, and an agent may submit a well-supported integration attack in any
 round. Round 3 adds the provisioned test environment and a focused search for
 cross-component failures. It does not grant production access.
 
-Before committing ranked attacks, an agent may perform a free scouting phase and
-write a concise hypothesis portfolio. Each hypothesis names a bug category,
-observable invariant, proposed probe, required capability, and confidence. This
-is not hidden chain-of-thought and does not affect health. Only the zero to three
-attacks the agent actually ranks and submits can land or recoil. This preserves
-creative exploration while making speculative submissions costly.
+Before focused failure analysis, each agent receives a separate
+`review_minutes` budget for read-only inspection of the opponent's frozen patch.
+The resulting packet records the checked invariant, code location, trigger
+sequence, expected behavior, confidence, and a suggested minimal regression
+test. It is not hidden chain-of-thought and excludes private implementation
+transcripts. Only the reviewer that produced the packet receives it before
+adjudication; repair prompts contain verifier-confirmed tests rather than raw
+findings. Only committed attacks can land or recoil.
+
+Both review and focused failure analysis receive a standardized execution
+architecture: battle mode and contestant role, phase sequence, exact worktree
+state, validation authority, information boundaries, declared integration
+topology, and prior adjudicated root defects. They also receive the full
+capability policy. Prompts distinguish directly usable approved `agent`/`both`
+capabilities from harness-mediated `harness_only` capabilities and unavailable
+denied or failed capabilities, and explain whether each boundary is enforced,
+brokered, or advisory.
 
 The MVP uses this cross-cutting bug taxonomy:
 
@@ -401,7 +418,8 @@ impact and confidence.
 
 An attack lands only when:
 
-- The test patch applies cleanly to a fresh copy of the starting commit.
+- The test overlay was captured relative to a frozen target-patched Git tree and
+  applies cleanly after the same target patch in the verifier worktree.
 - The attack runs consistently twice.
 - It passes against the attacker's current implementation and fails against the
   targeted opponent's current implementation.
@@ -409,9 +427,10 @@ An attack lands only when:
 - It proves a new root defect that has not already dealt damage.
 - Its expected output or invariant is supported by a cited task-contract source.
 
-The baseline result is recorded but is not itself an acceptance gate: a useful
-regression test will often fail on the starting commit because it reproduces the
-bug in the user's task. These checks still do not prove that a test is
+When the target-relative overlay also applies to the starting commit, the
+baseline result is recorded but is not itself an acceptance gate: a useful
+regression test will often fail there because it reproduces the bug in the
+user's task. These checks still do not prove that a test is
 semantically correct. The attack verifier must confirm the cited oracle before
 damage is applied. Unsupported or genuinely ambiguous expected behavior is
 `unproven`, misses, and deals recoil. The report must label landed attacks as

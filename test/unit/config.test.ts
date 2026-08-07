@@ -15,6 +15,7 @@ describe("configuration", () => {
         "models: [claude-sonnet, gemini-flash]",
         "limits:",
         "  implementation_minutes: 1",
+        "  review_minutes: 6",
         "permissions:",
         "  default: deny",
       ].join("\n"),
@@ -33,6 +34,7 @@ describe("configuration", () => {
       { id: "b", provider: "claude", model: "claude-opus" },
     ]);
     expect(config.limits.implementationMs).toBe(60_000);
+    expect(config.limits.reviewMs).toBe(360_000);
     expect(config.permissionMode).toBe("confirm");
   });
 

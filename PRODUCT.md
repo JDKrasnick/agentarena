@@ -162,7 +162,30 @@ Patches that fail essential checks may be eliminated immediately or allowed into
 
 Each surviving agent receives anonymized opponent patches and changes roles from solver to attacker.
 
-The MVP runs three attack–repair rounds after the initial implementation. In each round, an agent may submit up to three executable attacks ranked from most important and most likely to land to weakest and most speculative. Submitting fewer than three is valid.
+The MVP runs three review–attack–repair rounds after the initial implementation.
+In each round, the harness first freezes both current implementation patches.
+Each eligible reviewer then gets a dedicated read-only budget, configured by
+`review_minutes` separately from the focused test-generation budget. The review
+produces a compact target-specific packet whose findings name the invariant or
+requirement, relevant code location, trigger sequence, expected behavior,
+confidence, and suggested minimal regression test.
+
+The review prompt also describes the arena execution architecture, the
+reviewer's place in the freeze–review–test–verify–repair sequence, the assigned
+worktree state, the declared integration topology, and previously adjudicated
+root defects. It includes the complete approved/denied capability policy with
+scope, execution role, and `enforced`, `brokered`, or `advisory` semantics.
+Agents may use only approved `agent` or `both` capabilities directly;
+`harness_only` checks remain mediated by the harness.
+
+The same contestant then receives that packet alongside the standardized public
+context and frozen target patch during focused failure analysis. It may submit up
+to three ranked, structured failure descriptions with concrete public inputs,
+expected behavior, and a task-contract citation. It must create an early
+structured submission, and `attacks: []` is the explicit successful result when
+none of the reviewed hypotheses is credible. Submitting fewer than three is valid.
+The neutral case judge independently turns a description into an executable
+regression test; contestant-authored tests are not scoring evidence.
 
 Each round has its own symmetric, versioned prompt and investigation brief:
 
@@ -177,11 +200,12 @@ repair, and agents may submit integration attacks in any round. Round 3 is the
 proactive deep-integration pass with the approved test topology; it is not the
 first time integrations are exercised and it never grants production access.
 
-Before ranking attacks, each agent gets a no-score scouting phase in which it
-records a concise hypothesis portfolio: bug category, invariant, proposed
-probe, required capability, and confidence. Only the zero to three committed
-attacks can land or recoil. This encourages breadth without rewarding
-unexecutable speculation.
+The read-only findings packet is engineering evidence rather than hidden
+chain-of-thought. It excludes private implementation-generation transcripts and
+provider identity. Raw findings are available to the same contestant's focused
+failure-description phase, but implementation owners receive only
+verifier-confirmed regression tests during repair. Only the zero to three
+committed attacks can land or recoil.
 
 The shared taxonomy covers contract and logic, inputs and errors, state and
 lifecycle, data integrity, concurrency and time, integration and configuration,
@@ -226,6 +250,13 @@ Purely rhetorical or stylistic criticism should not affect the result unless it 
 
 Both agents submit their ranked attack sets before any result is revealed. The harness resolves all target damage and attacker recoil simultaneously so process order cannot influence the fight.
 
+Case-judge worktrees start from the frozen base implementation. The case judge
+receives an anonymized failure description and immutable task contract, snapshots
+that tree before generation, captures its test-only overlay, and replays it in
+verifier worktrees that contain the same target patch. Isolated files such as
+`test/arena-*.mjs` are preferred so target-owned test changes are not rewritten
+unless necessary.
+
 Every attack prompt is composed from a fixed common contract, the round brief,
 and a deterministic repository method pack. The common portion includes the
 immutable task sources, frozen patches, prior attacks and root defects, current
@@ -236,7 +267,8 @@ because they have different allowed actions.
 
 ### 5. Attack validation
 
-Opponent-generated tests cannot automatically be trusted.
+Contestant failure descriptions and neutral case-judge tests cannot automatically
+be trusted.
 
 An attack should be rejected when it is:
 
@@ -248,7 +280,7 @@ An attack should be rejected when it is:
 * Designed specifically to favor the attacker’s implementation.
 * Based on unrealistic or impossible behavior.
 
-A valid test should generally reproduce consistently and evaluate meaningful external behavior. To land, it must pass against the attacker's current patch and fail against the target's current patch.
+A valid neutral test should generally reproduce consistently and evaluate meaningful external behavior. To land, it must pass against the attacker's current patch and fail against the target's current patch.
 
 That differential is necessary but not sufficient: it does not prove that the attacker's expected output is correct. Each attack must cite an oracle in the immutable task contract. A neutral attack verifier checks whether the claimed output or invariant is actually supported by the official task, issue or PR acceptance criteria, repository specification, public contract, or documented domain invariant. Unsupported or ambiguous expectations are `unproven`, deal no target damage, and count as a miss.
 

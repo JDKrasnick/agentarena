@@ -142,3 +142,26 @@ export function capabilityStatus(
     (capability) => capability.id === capabilityId,
   );
 }
+
+export function assertDirectCapabilitiesAllowed(
+  policy: PermissionPolicy,
+  declaredCapabilityIds: readonly string[],
+  requestedCapabilityIds: readonly string[],
+): void {
+  for (const capabilityId of requestedCapabilityIds) {
+    if (!declaredCapabilityIds.includes(capabilityId)) {
+      throw new Error(
+        `Neutral case requested undeclared capability ${capabilityId}`,
+      );
+    }
+    const capability = capabilityStatus(policy, capabilityId);
+    if (
+      capability?.status !== "approved" ||
+      (capability.role !== "agent" && capability.role !== "both")
+    ) {
+      throw new Error(
+        `Neutral case cannot directly use capability ${capabilityId}`,
+      );
+    }
+  }
+}

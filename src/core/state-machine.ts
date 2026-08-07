@@ -5,6 +5,7 @@ const TRANSITIONS: Readonly<Record<Stage, readonly Stage[]>> = {
   resolve_permissions: ["implement", "initial_validate", "failed", "cancelled"],
   implement: ["initial_validate", "inconclusive", "failed", "cancelled"],
   initial_validate: [
+    "review_attacks",
     "collect_attacks",
     "implement",
     "repair",
@@ -12,6 +13,7 @@ const TRANSITIONS: Readonly<Record<Stage, readonly Stage[]>> = {
     "failed",
     "cancelled",
   ],
+  review_attacks: ["collect_attacks", "inconclusive", "cancelled"],
   collect_attacks: ["validate_attacks", "repair", "inconclusive", "cancelled"],
   validate_attacks: [
     "review_infrastructure",
@@ -30,6 +32,7 @@ const TRANSITIONS: Readonly<Record<Stage, readonly Stage[]>> = {
   resolve_damage: ["repair", "inconclusive", "cancelled"],
   repair: ["validate_repairs", "inconclusive", "cancelled"],
   validate_repairs: [
+    "review_attacks",
     "collect_attacks",
     "recovery_round",
     "final_validate",
@@ -37,6 +40,7 @@ const TRANSITIONS: Readonly<Record<Stage, readonly Stage[]>> = {
     "cancelled",
   ],
   recovery_round: [
+    "review_attacks",
     "collect_attacks",
     "final_validate",
     "inconclusive",

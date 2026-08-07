@@ -945,18 +945,41 @@ repository already requires them and therefore run at baseline and after every
 repair. Round 3 adds focused provisioned exploration; it does not postpone
 integration correctness.
 
-#### 4.1 Collect ordered attacks
+#### 4.1 Review frozen targets
 
 At the start of a round, freeze both current implementation patches. Launch all
-eligible attack invocations concurrently and reveal no results until every
-submission is captured. A contestant whose current patch does not pass required
-validation cannot attack, but still participates in repair.
+eligible read-only review invocations with the separate `review_minutes` budget.
+Each invocation receives the public task contract, round brief, deterministic
+method pack, and one opponent's frozen patch. It writes a compact findings
+artifact containing the invariant, code location, trigger sequence, expected
+behavior, confidence, and suggested minimal regression test. Reject the artifact
+if the reviewer changes any worktree file other than its structured submission.
 
-Each agent receives the opponent's current patch, the task, all prior landed and
-missed attacks, the current health timeline, and the rendered round prompt. It
-first writes one `hypotheses.json` portfolio, then one `attack-set.json`
-containing zero to three entries in rank order. Portfolio entries are not
-scored. Each committed attack contains:
+Do not include provider identity, private implementation-generation transcripts,
+or internal model deliberations. Persist review invocation telemetry and the
+target patch digest. Raw findings flow only to the same contestant's focused
+test-generation phase; repair receives only verifier-confirmed evidence.
+
+Render the same standardized execution-architecture section for every
+contestant: mode, stable slot and role, target slot, phase sequence, worktree
+state, validation authority, information boundary, required command, declared
+integration topology, and previously adjudicated root defects. Include the
+complete permission policy rather than only capability names. State explicitly
+that approved `agent` and `both` capabilities are directly usable,
+`harness_only` capabilities require harness mediation, denied or failed
+capabilities are unavailable, and enforcement may be `enforced`, `brokered`, or
+`advisory`.
+
+#### 4.2 Generate and collect ordered regression tests
+
+Create a fresh worktree, apply the frozen target patch, and snapshot the
+resulting Git tree before invoking the test generator. Give the generator the
+compact target-specific review packet rather than asking it to repeat broad
+inspection. Require it to write `{"version":1,"attacks":[]}` immediately and
+replace that result only when a reviewed hypothesis becomes a deterministic
+regression test. Prefer isolated `test/arena-*` files.
+
+Each committed attack contains:
 
 - Rank `1`, `2`, or `3`.
 - A claim and user-impact statement.
@@ -969,8 +992,12 @@ scored. Each committed attack contains:
 
 Ranks must be contiguous and unique: `[]`, `[1]`, `[1, 2]`, or `[1, 2, 3]`.
 Attacks may not share changed paths. The harness captures each attack as its own
-path-limited binary diff. A malformed set is treated as a miss for every entry
-that can be identified safely; harness failures are never charged to an agent.
+path-limited binary diff relative to the frozen target snapshot. Undeclared
+worktree changes or declared paths with no changes invalidate the submission.
+The verifier first applies the same target implementation patch, then applies
+the overlay and executes the focused command. A malformed set is treated as a
+miss for every entry that can be identified safely; harness failures are never
+charged to an agent.
 
 After both contestant sets are frozen in rounds 2 and 3, run the neutral house
 scout once. It may submit zero or one attack with no rank. Reject additional
@@ -978,7 +1005,7 @@ entries. The house scout can inspect both anonymized patches to search for a
 shared failure, but it receives no contestant identity, confidence history, or
 health information.
 
-#### 4.2 Validate and classify attacks
+#### 4.3 Validate and classify attacks
 
 Validate every contestant attack against the frozen, pre-repair patches without
 trusting the author:
@@ -1026,7 +1053,7 @@ unaffected. If both pass, the house attack is blocked. It has no
 inconclusive execution discards the house attack with no health effect and
 records the finding for harness maintenance.
 
-#### 4.3 Let the attacker review provisional infrastructure
+#### 4.4 Let the attacker review provisional infrastructure
 
 Before severity or health resolution, give the contestant author of each
 `provisional_infrastructure` attack its logs, redacted control results, allowed
@@ -1049,7 +1076,7 @@ credit.
 All provisional attacks in the round complete this stage before any damage or
 recoil is committed, preserving simultaneous resolution.
 
-#### 4.4 Adjudicate landed candidates and assign severity
+#### 4.5 Adjudicate landed candidates and assign severity
 
 Only mechanically landed candidates reach the neutral verifier. Its anonymized
 prompt includes the original task, attack claim and impact statement, test diff,
@@ -1103,7 +1130,7 @@ for each contestant on which it reproduces. Reject a sibling without rejecting
 the original visible attack. Siblings inherit severity and never create their
 own damage entry.
 
-#### 4.5 Resolve the round simultaneously
+#### 4.6 Resolve the round simultaneously
 
 Do not mutate health while individual attacks are being validated. After every
 submission has an outcome:
@@ -1134,7 +1161,7 @@ health = clamp(
 This ensures healing removes exactly the damage for that defect without
 accidentally restoring recoil.
 
-#### 4.6 Repair
+#### 4.7 Repair
 
 Each contestant receives:
 
@@ -1153,7 +1180,7 @@ opponent-authored files do not silently become part of the winner.
 Skip the repair invocation only when the required suite passes and no landed
 attack currently fails against the contestant.
 
-#### 4.7 Validate repairs, heal, and eliminate
+#### 4.8 Validate repairs, heal, and eliminate
 
 For each repaired patch, use clean worktrees to run the required command, every
 visible landed attack, and every accepted held-out sibling from all rounds:

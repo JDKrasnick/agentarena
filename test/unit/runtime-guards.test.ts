@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  composeAttackReviewPrompt,
+  composeNeutralCasePrompt,
   composePrompt,
   createPromptManifest,
 } from "../../src/agents/prompts.js";
@@ -133,6 +135,136 @@ describe("runtime guards and deterministic prompts", () => {
     ).not.toBe(
       createPromptManifest(2, roundTwo, "seed", "two.md", second).promptHash,
     );
+  });
+
+  it("injects execution architecture and enforceable permission semantics into review", () => {
+    const reviewPermissions = {
+      defaultMode: "confirm" as const,
+      reducedValidationAccepted: false,
+      capabilities: [
+        {
+          id: "local_test_execution",
+          reason: "Run repository tests",
+          risk: "medium" as const,
+          requirement: "required" as const,
+          role: "agent" as const,
+          enforcement: "advisory" as const,
+          mode: "confirm" as const,
+          scopes: ["assigned worktree"],
+          status: "approved" as const,
+        },
+        {
+          id: "postgres_test",
+          reason: "Validate transaction boundaries",
+          risk: "medium" as const,
+          requirement: "optional" as const,
+          role: "harness_only" as const,
+          enforcement: "brokered" as const,
+          mode: "confirm" as const,
+          scopes: ["run-owned database"],
+          status: "approved" as const,
+        },
+        {
+          id: "production_credentials",
+          reason: "Production access is outside the battle contract",
+          risk: "critical" as const,
+          requirement: "optional" as const,
+          role: "agent" as const,
+          enforcement: "enforced" as const,
+          mode: "deny" as const,
+          scopes: [],
+          status: "denied" as const,
+        },
+      ],
+    };
+    const prompt = composeAttackReviewPrompt({
+      agent: "a",
+      target: "b",
+      round: 2,
+      contract,
+      config,
+      permissions: reviewPermissions,
+      methodSelection: selectMethods(
+        2,
+        ["typescript"],
+        ["local_test_execution"],
+      ),
+      opponentPatch: "diff --git a/src/service.ts b/src/service.ts",
+      priorOutcomes:
+        '[{"id":"attack-1","status":"landed","rootDefectId":"atomicity"}]',
+    });
+
+    expect(prompt).toContain('"battleMode": "duel"');
+    expect(prompt).toContain('"currentPhase": "read_only_repository_review"');
+    expect(prompt).toContain('"targetSlot": "b"');
+    expect(prompt).toContain('"id": "postgres_test"');
+    expect(prompt).toContain('"role": "harness_only"');
+    expect(prompt).toContain(
+      "A harness_only capability is not directly available",
+    );
+    expect(prompt).toContain('"id": "production_credentials"');
+    expect(prompt).toContain('"status": "denied"');
+    expect(prompt).toContain("Do not probe around the decision");
+    expect(prompt).toContain("# Previously adjudicated defects");
+    expect(prompt).toContain('"rootDefectId":"atomicity"');
+  });
+
+  it("binds neutral case generation to declared direct capabilities", () => {
+    const prompt = composeNeutralCasePrompt({
+      contract,
+      permissions: {
+        defaultMode: "confirm",
+        reducedValidationAccepted: false,
+        capabilities: [
+          {
+            id: "local_test_execution",
+            reason: "Run repository tests",
+            risk: "medium",
+            requirement: "required",
+            role: "agent",
+            enforcement: "advisory",
+            mode: "confirm",
+            scopes: ["assigned worktree"],
+            status: "approved",
+          },
+          {
+            id: "postgres_test",
+            reason: "Harness-managed database",
+            risk: "medium",
+            requirement: "optional",
+            role: "harness_only",
+            enforcement: "brokered",
+            mode: "confirm",
+            scopes: ["run-owned database"],
+            status: "approved",
+          },
+        ],
+      },
+      failure: {
+        rank: 1,
+        claim: "Repeated whitespace produces repeated separators",
+        impact: "Generated slugs violate the task contract",
+        oracle: {
+          expectedBehavior: "Whitespace runs collapse to one separator",
+          sourceId: "task-user",
+          sourceLocation: "task",
+          rationale: "The task requires normalized slugs",
+        },
+        proposedSeverity: "medium",
+        confidence: 90,
+        reproduction: "Call slug with three spaces",
+        requiredCapabilities: ["local_test_execution"],
+      },
+      outputPath: "/tmp/cases.json",
+    });
+
+    expect(prompt).toContain('"id": "local_test_execution"');
+    expect(prompt).toContain('"id": "postgres_test"');
+    expect(prompt).toContain('"role": "harness_only"');
+    expect(prompt).toContain(
+      "Do not introduce a new capability or directly use a harness_only capability",
+    );
+    expect(prompt).toContain('"requiredCapabilities":[]');
   });
 
   it("recognizes test-only patches and rejects production paths", () => {

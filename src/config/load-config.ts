@@ -12,6 +12,7 @@ import {
 const DurationLimitsSchema = z
   .object({
     implementation_minutes: z.number().positive().default(15),
+    review_minutes: z.number().positive().default(8),
     attack_minutes: z.number().positive().default(8),
     verifier_minutes: z.number().positive().default(2),
     repair_minutes: z.number().positive().default(8),
@@ -23,6 +24,7 @@ const DurationLimitsSchema = z
   .strict()
   .default({
     implementation_minutes: 15,
+    review_minutes: 8,
     attack_minutes: 8,
     verifier_minutes: 2,
     repair_minutes: 8,
@@ -432,6 +434,7 @@ export async function loadFightConfig(
     mergeEnabled: file.delivery.merge_enabled,
     limits: {
       implementationMs: minutes(file.limits.implementation_minutes),
+      reviewMs: minutes(file.limits.review_minutes),
       attackMs: minutes(file.limits.attack_minutes),
       verifierMs: minutes(file.limits.verifier_minutes),
       repairMs: minutes(file.limits.repair_minutes),
