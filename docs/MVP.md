@@ -15,6 +15,52 @@ The MVP exists to prove one idea:
 This release is a dependable local demonstration of that loop. It is not a
 general-purpose agent platform.
 
+## Execution architecture and migration
+
+Today, the working fight implementation is monolithic. `Arena` owns the battle
+lifecycle and directly invokes the mechanisms for implementation, review,
+attack, checking, repair, scoring, artifact generation, and worktree/process
+management. The boundary described here is approved architecture, not a claim
+that the operational extraction is already complete.
+
+The target dependency direction is:
+
+```text
+Arena -> RoundEngine -> mechanisms
+```
+
+`Arena` owns preflight, immutable run setup, shared runtime-service lifetime,
+round sequencing, final validation, reporting, and battle-level cancellation.
+`RoundEngine` owns exactly one transactional round through
+`run(snapshot): Promise<RoundResult>`. Lower-level mechanisms perform narrow
+operations and cannot import either orchestration layer.
+
+The boundary carries only strict, versioned, JSON-safe contracts:
+
+- `RunSpec` freezes the task and sources, base commit, battle topology,
+  commands, budgets, permissions, and content hash.
+- `RoundSnapshot` combines that run specification with a round identity,
+  contestant patch and health state, known defects, and the prior replay hash.
+- `RoundReplay` records snapshot identity, invocations, attacks, checks,
+  repairs, score events, diagnostics, artifact references, and its replay hash.
+- `RoundResult` is a completed, inconclusive, cancelled, or failed terminal
+  value. Every outcome carries its replay and resulting contestant state.
+- `ContestantFeedback` exposes only lane-safe evidence: health, accepted
+  incoming attacks and visible reproducers, own-attack outcomes, and healed or
+  unresolved defect IDs.
+
+Runtime services, callbacks, worktree objects, abort controllers, and mutable
+`RunState` never enter these serialized contracts. Expected execution failures
+are terminal result values; throws indicate invalid configuration, schema
+violations, or programming invariants.
+
+Issue #35 defines the seam and freezes `Arena`'s current direct mechanism
+imports as a temporary no-growth allowlist. Issue #30 extracts operational round
+execution and reduces that allowlist to zero. Issue #34 migrates run creation to
+`RunSpec`. Issue #32 adds replay persistence, crash recovery, digest chaining,
+and the production contestant-feedback projection. Until those migrations land,
+the existing `Arena` fight path and `RunState` artifacts remain authoritative.
+
 ## Who it is for
 
 The first user is a developer who:

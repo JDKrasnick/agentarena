@@ -4,6 +4,8 @@ export * from "./core/arena.js";
 export * from "./core/scoring.js";
 export * from "./core/types.js";
 export * from "./core/run-state.js";
+export * from "./core/round-engine.js";
+export * from "./contracts/round.js";
 export * from "./outcomes/derive-outcome.js";
 export * from "./quality/classify-path.js";
 export * from "./quality/collect-facts.js";
