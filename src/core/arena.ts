@@ -66,10 +66,11 @@ import { buildReviewPrompt } from "../review/prompt.js";
 import { runShellCommand } from "../runner/process-runner.js";
 import { provisionIntegrationProfile } from "../runner/integration.js";
 import {
-  buildTaskContract,
+  buildRunSpec,
   GitHubPullRequestResolver,
   type ResolvedPullRequest,
 } from "../task/task-contract.js";
+import type { RunSpec } from "../contracts/round.js";
 import {
   freezePullRequest,
   type PullRequestFixtureOptions,
@@ -101,7 +102,6 @@ import {
   type RoundId,
   type RunState,
   type Stage,
-  type TaskContract,
 } from "./types.js";
 
 export interface ArenaDependencies {
@@ -135,7 +135,7 @@ interface ArenaContext {
   config: FightConfig;
   store: ArtifactStore;
   worktrees: WorktreeManager;
-  contract: TaskContract;
+  runSpec: RunSpec;
   permissions: PermissionPolicy;
   state: RunState;
   controller: AbortController;
@@ -341,15 +341,17 @@ export class Arena {
 
     let context: ArenaContext | undefined;
     try {
-      this.progress("Preflight: snapshotting task contract");
+      this.progress("Preflight: snapshotting run specification");
       const contractWarnings: string[] = [];
-      const contract = await buildTaskContract({
-        task: config.task,
-        acceptanceCriteria: config.acceptanceCriteria,
-        specPaths: config.specPaths,
-        issueReferences: config.issueReferences,
-        pullRequestReferences: config.pullRequestReferences,
-        taskReferences: config.taskReferences,
+      const permissions = resolvePermissionPolicy(
+        config,
+        discoverCapabilities(config),
+      );
+      const runSpec = await buildRunSpec({
+        runId,
+        baseCommit,
+        config,
+        permissions,
         repositoryRoot,
         sourceDirectory: store.resolve("sources"),
         ...(this.dependencies.issueResolver
@@ -382,28 +384,24 @@ export class Arena {
         now: this.now(),
         warnings: contractWarnings,
       });
-      await store.writeJson("task-contract.json", contract);
+      await store.writeImmutableJson("run-spec.json", runSpec);
       const targetResolution = deriveDeliveryTarget(
-        contract,
+        runSpec,
         await resolveGitHubRepositoryIdentity(repositoryRoot),
       );
       if (targetResolution.ambiguous && targetResolution.reason)
         contractWarnings.push(targetResolution.reason);
-      const permissions = resolvePermissionPolicy(
-        config,
-        discoverCapabilities(config),
-      );
       await store.writeJson("permissions.json", permissions);
       const startedAt = this.now().toISOString();
       const state: RunState = {
-        schemaVersion: 3,
+        schemaVersion: 4,
         runId,
         harnessVersion: "0.1.0",
         status: "running",
         startedAt,
         updatedAt: startedAt,
         stage: "preflight",
-        taskContractHash: contract.contractHash,
+        runSpecHash: runSpec.contentHash,
         config,
         contestants: Object.fromEntries(
           config.contestants.map((contestant) => [
@@ -422,7 +420,7 @@ export class Arena {
           : {}),
         artifacts: {
           runDirectory: store.runDirectory,
-          taskContract: store.resolve("task-contract.json"),
+          runSpec: store.resolve("run-spec.json"),
           permissions: store.resolve("permissions.json"),
           result: store.resolve("result.json"),
           battle: store.resolve("BATTLE.md"),
@@ -439,7 +437,7 @@ export class Arena {
         config,
         store,
         worktrees,
-        contract,
+        runSpec,
         permissions,
         state,
         controller,
@@ -646,7 +644,7 @@ export class Arena {
           const prompt = composePrompt({
             agent,
             stage: "implement",
-            contract: context.contract,
+            runSpec: context.runSpec,
             config: context.config,
             permissions: context.permissions,
           });
@@ -820,7 +818,7 @@ export class Arena {
           agent: reviewer,
           target,
           round,
-          contract: context.contract,
+          runSpec: context.runSpec,
           config: context.config,
           permissions: context.permissions,
           methodSelection: selection,
@@ -961,7 +959,7 @@ export class Arena {
     try {
       const snapshot = await context.worktrees.snapshot(worktree);
       const prompt = composeNeutralCasePrompt({
-        contract: context.contract,
+        runSpec: context.runSpec,
         permissions: context.permissions,
         failure: entry,
         outputPath: path.join(worktree, ".agent-arena-cases.json"),
@@ -1071,7 +1069,7 @@ export class Arena {
       agent: context.config.agents[0] ?? "a",
       stage: "attack",
       round,
-      contract: context.contract,
+      runSpec: context.runSpec,
       config: context.config,
       permissions: context.permissions,
       methodSelection: selection,
@@ -1148,7 +1146,7 @@ export class Arena {
           target,
           stage: "attack",
           round,
-          contract: context.contract,
+          runSpec: context.runSpec,
           config: context.config,
           permissions: context.permissions,
           methodSelection: selection,
@@ -1319,8 +1317,8 @@ export class Arena {
             "You may submit zero or one unranked executable test-only attack. You have no health, recoil, or replacement credits.",
             "Use the ordinary oracle and determinism rules. The assigned worktree contains this candidate patch; execute every probe against it. Do not infer contestant identity.",
             "",
-            "# Task contract",
-            JSON.stringify(context.contract, null, 2),
+            "# Immutable run specification",
+            JSON.stringify(context.runSpec, null, 2),
             "",
             "# Method pack",
             JSON.stringify(selection, null, 2),
@@ -1417,7 +1415,7 @@ export class Arena {
               return patchPath ? [[agent, patchPath]] : [];
             }),
           ),
-          taskContract: context.contract,
+          runSpec: context.runSpec,
           permissionPolicy: context.permissions,
           config: context.config,
           worktrees: context.worktrees,
@@ -1447,7 +1445,7 @@ export class Arena {
           ? await validateHouseAttack({
               attack,
               targetPatches: { [target]: targetPatch },
-              taskContract: context.contract,
+              runSpec: context.runSpec,
               permissionPolicy: context.permissions,
               config: context.config,
               worktrees: context.worktrees,
@@ -1463,7 +1461,7 @@ export class Arena {
                 attack,
                 authorPatch,
                 targetPatch,
-                taskContract: context.contract,
+                runSpec: context.runSpec,
                 permissionPolicy: context.permissions,
                 config: context.config,
                 worktrees: context.worktrees,
@@ -1613,7 +1611,7 @@ export class Arena {
           agent,
           stage: "repair",
           round,
-          contract: context.contract,
+          runSpec: context.runSpec,
           config: context.config,
           permissions: context.permissions,
           evidence,
@@ -1920,7 +1918,7 @@ export class Arena {
         attack: revised,
         authorPatch,
         targetPatch,
-        taskContract: context.contract,
+        runSpec: context.runSpec,
         permissionPolicy: context.permissions,
         config: context.config,
         worktrees: context.worktrees,
@@ -2088,7 +2086,7 @@ export class Arena {
         }
         const prompt = [
           "# Held-out sibling case builder",
-          "Generate zero to two deterministic test-only sibling cases for the exact same cited invariant and canonical root defect.",
+          "Generate zero to two deterministic test-only sibling cases for the exact same supported behavior and canonical root defect.",
           "Do not broaden the requirement, severity, claim, or expected behavior. Do not reveal generated paths or inputs to contestants.",
           "",
           "# Attack",
@@ -2147,7 +2145,7 @@ export class Arena {
               }),
             ),
             config: context.config,
-            contract: context.contract,
+            runSpec: context.runSpec,
             worktrees: context.worktrees,
             verifier: this.dependencies.verifier,
             logRoot: context.store.resolve(
@@ -2473,7 +2471,7 @@ export class Arena {
           anonymizationMap,
         );
         const input = {
-          taskContract: context.contract,
+          runSpec: context.runSpec,
           finalValidation: Object.fromEntries(
             context.config.agents.map((agent) => [
               agent === anonymizationMap.patch_a ? "patch_a" : "patch_b",

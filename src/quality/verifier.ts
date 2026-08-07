@@ -5,12 +5,12 @@ import {
   type AgentId,
   type PatchQualityFacts,
   type PatchQualityVerdict,
-  type TaskContract,
 } from "../core/types.js";
+import type { RunSpec } from "../contracts/round.js";
 import { runProcess } from "../runner/process-runner.js";
 
 export interface PatchQualityVerifierInput {
-  taskContract: TaskContract;
+  runSpec: RunSpec;
   patches: readonly [
     {
       label: "patch_a";
@@ -82,7 +82,7 @@ export class CommandPatchQualityVerifier implements PatchQualityVerifier {
       "",
       JSON.stringify(
         {
-          taskContract: input.taskContract,
+          runSpec: input.runSpec,
           finalValidation: input.finalValidation,
           activeDefects: input.activeDefects,
           patches: input.patches,

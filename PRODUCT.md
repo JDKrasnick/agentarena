@@ -107,9 +107,18 @@ attribution never changes scoring.
 
 Before the agents begin, Agent Arena inspects the repository and creates a shared execution contract.
 
-It also creates an immutable task contract from the user's prompt and authoritative references. When a task points to an official issue, pull request, specification, or public standard, Agent Arena snapshots its description, acceptance criteria, maintainer clarifications, origin, retrieval time, and content hash before any agent runs. Every contestant and judge receives the same snapshot.
+It also creates an immutable `RunSpec` from the user's exact prompt, explicitly
+supplied acceptance criteria, and frozen source text. When a task points to an
+issue, pull request, specification, or public standard, Agent Arena snapshots
+the complete resolved text, origin, retrieval time, content hash, and structured
+GitHub provenance before any agent runs. It does not extract or prioritize
+requirements from that text. Every contestant and judge receives the same
+specification.
 
-Requirements from an official PR may be shared, but a reference implementation diff should remain hidden unless the user explicitly makes it part of the task. Known-good tests or outputs may be retained as judge-only oracle evidence with their provenance recorded.
+Pull-request text may be frozen as a source, but a reference implementation diff
+should remain outside the shared task sources unless the user explicitly makes
+it part of the task. Known-good tests or outputs are separate harness evidence,
+with their provenance recorded.
 
 It detects:
 
@@ -163,7 +172,7 @@ Agents may still explore the codebase, but they do not need to rediscover basic 
 
 Each contestant receives:
 
-* The same immutable task contract and official source snapshots.
+* The same immutable RunSpec and frozen source snapshots.
 * The same starting commit.
 * The same time and cost budget.
 * The same repository instructions.
@@ -221,7 +230,8 @@ Agents may use only approved `agent` or `both` capabilities directly;
 The same contestant then receives that packet alongside the standardized public
 context and frozen target patch during focused failure analysis. It may submit up
 to three ranked, structured failure descriptions with concrete public inputs,
-expected behavior, and a task-contract citation. It must create an early
+expected behavior, and a rationale grounded in the frozen text. A source ID and
+location may be included as optional compatibility metadata. It must create an early
 structured submission, and `attacks: []` is the explicit successful result when
 none of the reviewed hypotheses is credible. Submitting fewer than three is valid.
 The neutral case judge independently turns a description into an executable
@@ -291,7 +301,7 @@ Purely rhetorical or stylistic criticism should not affect the result unless it 
 Both agents submit their ranked attack sets before any result is revealed. The harness resolves all target damage and attacker recoil simultaneously so process order cannot influence the fight.
 
 Case-judge worktrees start from the frozen base implementation. The case judge
-receives an anonymized failure description and immutable task contract, snapshots
+receives an anonymized failure description and immutable RunSpec, snapshots
 that tree before generation, captures its test-only overlay, and replays it in
 verifier worktrees that contain the same target patch. Isolated files such as
 `test/arena-*.mjs` are preferred so target-owned test changes are not rewritten
@@ -322,7 +332,12 @@ An attack should be rejected when it is:
 
 A valid neutral test should generally reproduce consistently and evaluate meaningful external behavior. To land, it must pass against the attacker's current patch and fail against the target's current patch.
 
-That differential is necessary but not sufficient: it does not prove that the attacker's expected output is correct. Each attack must cite an oracle in the immutable task contract. A neutral attack verifier checks whether the claimed output or invariant is actually supported by the official task, issue or PR acceptance criteria, repository specification, public contract, or documented domain invariant. Unsupported or ambiguous expectations are `unproven`, deal no target damage, and count as a miss.
+That differential is necessary but not sufficient: it does not prove that the
+attacker's expected output is correct. Each attack states the expected behavior
+and why the frozen task or source text supports it. A neutral attack verifier
+reads that text and decides whether it clearly supports the claim; the presence
+of a source ID is never sufficient by itself. Unsupported or ambiguous
+expectations are `unproven`, deal no target damage, and count as a miss.
 
 A submitted attack that does not land causes recoil damage to its author. Rank 1 costs 5 HP on a miss, rank 2 costs 10 HP, and rank 3 costs 15 HP. Invalid, flaky, unrelated, duplicate, self-defeating, and blocked attacks all miss. Harness infrastructure failures cause no recoil.
 
@@ -332,7 +347,7 @@ The term **harness** should refer to deterministic orchestration and execution: 
 
 For each landed defect, the visible attack is paired with up to two held-out
 sibling cases generated and frozen before repair. The siblings must exercise
-the same cited invariant and root defect, pass the attacker's patch and fail the
+the same supported behavior and root defect, pass the attacker's patch and fail the
 target's frozen patch for a contestant attack, and pass the ordinary
 determinism and verifier checks. House siblings are evaluated independently per
 contestant. The repair prompt reveals the invariant, visible reproducer, and
@@ -523,7 +538,7 @@ Integration discovery always chooses the simplest sufficient environment:
 existing repository commands, fakes, fixtures, and local dependencies first;
 then a run-owned local subprocess; then a user-supplied Compose profile; and
 only then an explicitly approved remote test service. Escalation requires a
-recorded reason that the simpler level cannot exercise the cited invariant and
+recorded reason that the simpler level cannot exercise the stated invariant and
 must be symmetric across patches. The MVP can execute an existing Compose
 profile but does not invent arbitrary container infrastructure.
 
@@ -692,7 +707,7 @@ Duration: 11m 14s
 Each run should generate:
 
 * `BATTLE.md`
-* An immutable task-contract file with official source snapshots and hashes.
+* An immutable `run-spec.json` with frozen source snapshots and reproducibility metadata.
 * A redacted permission manifest with approvals, denials, leases, and omitted checks.
 * A JSON result file.
 * The winning patch.

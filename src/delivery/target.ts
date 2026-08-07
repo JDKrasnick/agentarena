@@ -1,8 +1,5 @@
-import {
-  DeliveryTargetSchema,
-  type DeliveryTarget,
-  type TaskContract,
-} from "../core/types.js";
+import { DeliveryTargetSchema, type DeliveryTarget } from "../core/types.js";
+import type { RunSpec } from "../contracts/round.js";
 
 export interface DeliveryTargetResolution {
   target?: DeliveryTarget;
@@ -12,10 +9,10 @@ export interface DeliveryTargetResolution {
 }
 
 export function deriveDeliveryTarget(
-  contract: TaskContract,
+  runSpec: RunSpec,
   repositoryIdentity?: { repository: string; baseBranch?: string },
 ): DeliveryTargetResolution {
-  const candidates = contract.sources.flatMap((source) => {
+  const candidates = runSpec.task.sources.flatMap((source) => {
     if (source.kind === "issue" && source.github) {
       return [
         DeliveryTargetSchema.parse({
@@ -45,13 +42,6 @@ export function deriveDeliveryTarget(
     }
     return [];
   });
-  const primarySource = contract.sources.find((source) => source.primary);
-  if (primarySource) {
-    const selected = candidates.find(
-      (candidate) => candidate.sourceId === primarySource.id,
-    );
-    if (selected) return { target: selected, ambiguous: false, candidates };
-  }
   if (candidates.length === 1)
     return { target: candidates[0]!, ambiguous: false, candidates };
   if (candidates.length > 1) {
@@ -64,7 +54,7 @@ export function deriveDeliveryTarget(
   }
   if (
     repositoryIdentity &&
-    contract.sources.some(
+    runSpec.task.sources.some(
       (source) => source.kind === "repo_spec" || source.kind === "user_task",
     )
   ) {

@@ -177,7 +177,7 @@ export type TaskReference = z.infer<typeof TaskReferenceSchema>;
 export const TaskContractSchema = z.object({
   version: z.literal(1),
   task: z.string().min(1),
-  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  acceptanceCriteria: z.array(z.string().min(1)),
   sources: z.array(TaskSourceSchema).min(1),
   createdAt: z.string().datetime(),
   contractHash: z.string(),
@@ -245,8 +245,8 @@ export type PullRequestFixture = z.infer<typeof PullRequestFixtureSchema>;
 
 export const OracleCitationSchema = z.object({
   expectedBehavior: z.string().min(1),
-  sourceId: z.string().min(1),
-  sourceLocation: z.string().min(1),
+  sourceId: z.string().min(1).optional(),
+  sourceLocation: z.string().min(1).optional(),
   rationale: z.string().min(1),
 });
 export type OracleCitation = z.infer<typeof OracleCitationSchema>;
@@ -924,7 +924,6 @@ const RunStateCoreSchema = z.object({
   completedAt: z.string().datetime().optional(),
   currentRound: RoundIdSchema.optional(),
   stage: StageSchema,
-  taskContractHash: z.string(),
   config: FightConfigSchema,
   promptManifests: z.array(RoundPromptManifestSchema),
   harnessOverlays: z.array(HarnessOverlaySchema),
@@ -934,6 +933,7 @@ const RunStateCoreSchema = z.object({
 
 export const RunStateV3Schema = RunStateCoreSchema.extend({
   schemaVersion: z.literal(3),
+  taskContractHash: z.string(),
   contestants: z.partialRecord(ContestantIdSchema, ContestantResultSchema),
   attacks: z.array(AttackSchema),
   reviewInvocations: z.array(ReviewInvocationRecordSchema).default([]),
@@ -949,8 +949,29 @@ export const RunStateV3Schema = RunStateCoreSchema.extend({
   deliveryTarget: DeliveryTargetSchema.optional(),
   pullRequestFixture: PullRequestFixtureSchema.optional(),
 });
-export const RunStateSchema = RunStateV3Schema;
-export type RunState = z.infer<typeof RunStateV3Schema>;
+
+export const RunStateV4Schema = RunStateCoreSchema.extend({
+  schemaVersion: z.literal(4),
+  runSpecHash: z.string().length(64),
+  contestants: z.partialRecord(ContestantIdSchema, ContestantResultSchema),
+  attacks: z.array(AttackSchema),
+  reviewInvocations: z.array(ReviewInvocationRecordSchema).default([]),
+  attackInvocations: z.array(AttackInvocationRecordSchema).default([]),
+  ranking: RankingSchema.optional(),
+  arenaOutcome: ArenaOutcomeSchema.optional(),
+  patchQualityFacts: z
+    .partialRecord(ContestantIdSchema, PatchQualityFactsSchema)
+    .default({}),
+  patchQualityVerdict: PatchQualityVerdictSchema.optional(),
+  patchRecommendation: PatchRecommendationSchema.optional(),
+  reviewPrompt: ReviewPromptSchema.optional(),
+  deliveryTarget: DeliveryTargetSchema.optional(),
+  pullRequestFixture: PullRequestFixtureSchema.optional(),
+});
+export const RunStateSchema = RunStateV4Schema;
+export type RunStateV3 = z.infer<typeof RunStateV3Schema>;
+export type RunStateV4 = z.infer<typeof RunStateV4Schema>;
+export type RunState = RunStateV3 | RunStateV4;
 
 // --- Legacy readers: in schema versions 1 and 2 the provider was the
 // contestant identity. They are migrated to contestant slots at load time. ---
@@ -1031,6 +1052,7 @@ const LegacyReviewPromptSchema = ReviewPromptSchema.omit({
 });
 
 const LegacyRunStateCommonSchema = RunStateCoreSchema.extend({
+  taskContractHash: z.string(),
   contestants: z.partialRecord(AgentIdSchema, LegacyContestantResultSchema),
   attacks: z.array(LegacyAttackSchema),
   ranking: LegacyRankingSchema.optional(),
@@ -1058,6 +1080,7 @@ export const AnyRunStateSchema = z.discriminatedUnion("schemaVersion", [
   RunStateV1Schema,
   RunStateV2Schema,
   RunStateV3Schema,
+  RunStateV4Schema,
 ]);
 export type AnyRunState = z.infer<typeof AnyRunStateSchema>;
 

@@ -33,6 +33,16 @@ describe("ordered attack sets", () => {
     expect(() => validateAttackOrdering(submission)).not.toThrow();
   });
 
+  it("accepts expected behavior and rationale without source metadata", () => {
+    const uncited = entry(1);
+    Reflect.deleteProperty(uncited.oracle, "sourceId");
+    Reflect.deleteProperty(uncited.oracle, "sourceLocation");
+    expect(
+      AttackSubmissionSchema.parse({ version: 1, attacks: [uncited] })
+        .attacks[0]?.oracle,
+    ).toEqual({ expectedBehavior: "expected", rationale: "stated" });
+  });
+
   it("rejects gaps", () => {
     const gap = AttackSubmissionSchema.parse({
       version: 1,

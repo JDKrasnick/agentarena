@@ -70,7 +70,7 @@ describe("built CLI smoke flow", () => {
       >;
       reviewPrompt: { choices: unknown[] };
     };
-    expect(result.schemaVersion).toBe(3);
+    expect(result.schemaVersion).toBe(4);
     expect(
       result.config.contestants.map((contestant) => contestant.model),
     ).toEqual(["codex-test-model", "claude-test-model"]);

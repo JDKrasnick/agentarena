@@ -5,11 +5,8 @@ import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import type { AttackVerifier } from "../../src/agents/adapter.js";
 import { validateHouseAttack } from "../../src/attacks/validate.js";
-import {
-  FightConfigSchema,
-  TaskContractSchema,
-  type Attack,
-} from "../../src/core/types.js";
+import { FightConfigSchema, type Attack } from "../../src/core/types.js";
+import { RunSpecSchema } from "../../src/contracts/round.js";
 import { WorktreeManager } from "../../src/repo/git.js";
 import { createSlugRepository } from "../helpers/repository.js";
 
@@ -166,23 +163,42 @@ describe("target-relative test overlays", () => {
           repairMs: 10_000,
         },
       });
-      const taskContract = TaskContractSchema.parse({
+      const runSpec = RunSpecSchema.parse({
         version: 1,
-        task: "Normalize slugs",
-        acceptanceCriteria: ["Collapse every whitespace run"],
-        sources: [
+        runId: "run-1",
+        task: {
+          task: "Normalize slugs",
+          acceptanceCriteria: ["Collapse every whitespace run"],
+          sources: [
+            {
+              id: "task-user",
+              kind: "user_task",
+              origin: "task",
+              retrievedAt: "2026-01-01T00:00:00.000Z",
+              contentHash: "a".repeat(64),
+              snapshotPath: "task.md",
+            },
+          ],
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        baseCommit: "b".repeat(40),
+        topology: { mode: "duel", contestants: config.contestants },
+        commands: [
           {
-            id: "task-user",
-            kind: "user_task",
-            origin: "task",
-            retrievedAt: "2026-01-01T00:00:00.000Z",
-            contentHash: "hash",
-            snapshotPath: "task.md",
-            visibility: "shared",
+            id: "required-test",
+            kind: "required",
+            command: config.testCommand,
+            timeoutMs: config.limits.attackMs,
+            required: true,
           },
         ],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        contractHash: "contract",
+        budgets: config.limits,
+        permissions: {
+          mode: "confirm",
+          reducedValidationAccepted: false,
+          capabilities: [],
+        },
+        contentHash: "c".repeat(64),
       });
       const attack: Attack = {
         id: "house-target-relative",
@@ -221,7 +237,7 @@ describe("target-relative test overlays", () => {
       const result = await validateHouseAttack({
         attack,
         targetPatches: { a: implementationPatch },
-        taskContract,
+        runSpec,
         permissionPolicy: {
           defaultMode: "confirm",
           capabilities: [],

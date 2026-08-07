@@ -153,5 +153,12 @@ export function migrateRunStateV2(state: RunStateV2): RunState {
 
 export function parseRunState(value: unknown): RunState {
   const state: AnyRunState = AnyRunStateSchema.parse(value);
-  return state.schemaVersion === 3 ? state : migrateLegacyRunState(state);
+  switch (state.schemaVersion) {
+    case 1:
+    case 2:
+      return migrateLegacyRunState(state);
+    case 3:
+    case 4:
+      return state;
+  }
 }

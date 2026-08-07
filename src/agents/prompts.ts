@@ -8,8 +8,8 @@ import type {
   PermissionPolicy,
   RoundId,
   RoundPromptManifest,
-  TaskContract,
 } from "../core/types.js";
+import type { RunSpec } from "../contracts/round.js";
 import type { MethodSelection } from "../methods/catalog.js";
 
 const COMMON_VERSION = "common@1";
@@ -91,7 +91,7 @@ export interface PromptContext {
   agent: AgentId | ContestantId;
   stage: "implement" | "attack" | "repair";
   round?: RoundId;
-  contract: TaskContract;
+  runSpec: RunSpec;
   config: FightConfig;
   permissions: PermissionPolicy;
   methodSelection?: MethodSelection;
@@ -109,8 +109,8 @@ export function composePrompt(context: PromptContext): string {
     `Agent: ${context.agent}`,
     `Stage: ${context.stage}`,
     "",
-    "# Immutable task contract",
-    JSON.stringify(context.contract, null, 2),
+    "# Immutable run specification",
+    JSON.stringify(context.runSpec, null, 2),
     "",
     `Required validation command: ${context.config.testCommand}`,
     `Time limit: ${String(context.config.limits[`${context.stage === "implement" ? "implementation" : context.stage}Ms`])} ms`,
@@ -123,7 +123,7 @@ export function composePrompt(context: PromptContext): string {
     "",
     "Edit only the assigned worktree. Do not commit. Do not access production credentials or unrelated files.",
     "Never request or print raw secrets; request capabilities by ID.",
-    "The harness decides whether checks pass. Every expected value must cite a task-contract source.",
+    "The harness decides whether checks pass. State the expected behavior and why the frozen task text supports it; source ID and location are optional compatibility metadata.",
     "Write structured output to .agent-arena-submission.json using the schema in this prompt.",
   ];
   if (context.stage === "implement" || context.stage === "repair") {
@@ -136,7 +136,7 @@ export function composePrompt(context: PromptContext): string {
     common.push(
       "",
       "# Submission schema",
-      '{"version":1,"attacks":[{"rank":1,"claim":"...","impact":"...","oracle":{"expectedBehavior":"...","sourceId":"task-user","sourceLocation":"task text","rationale":"..."},"proposedSeverity":"high","confidence":90,"reproduction":"Public API call, concrete input, and expected observable result","requiredCapabilities":[]}]}',
+      '{"version":1,"attacks":[{"rank":1,"claim":"...","impact":"...","oracle":{"expectedBehavior":"...","rationale":"Explain how the frozen task text supports this behavior"},"proposedSeverity":"high","confidence":90,"reproduction":"Public API call, concrete input, and expected observable result","requiredCapabilities":[]}]}',
       "Attack ranks must be unique and contiguous. Submit a precise failure description; do not create or edit test files or production code.",
       'Immediately write {"version":1,"attacks":[]} to .agent-arena-submission.json before doing any other work, so a bounded phase always has an explicit result.',
       "The assigned worktree contains the frozen target patch. Start from the review packet, inspect the cited code and nearby tests as needed, and describe a deterministic public reproducer. Do not restart broad repository review.",
@@ -196,8 +196,8 @@ export function composeAttackReviewPrompt(
     `Reviewer slot: ${context.agent}`,
     `Target slot: ${context.target}`,
     "",
-    "# Immutable task contract",
-    JSON.stringify(context.contract, null, 2),
+    "# Immutable run specification",
+    JSON.stringify(context.runSpec, null, 2),
     "",
     `Required validation command: ${context.config.testCommand}`,
     `Time limit: ${String(context.config.limits.reviewMs)} ms`,
@@ -216,7 +216,7 @@ export function composeAttackReviewPrompt(
     "Use this phase for repository-wide investigation of the frozen target implementation. Read the relevant architecture, source, tests, specifications, manifests, and repository instructions.",
     "Run existing tests and read-only diagnostic commands when useful and permitted. Do not implement production changes or executable attacks in this phase.",
     "Do not expose or infer provider identity. Do not include private implementation-generation transcripts or raw chain-of-thought.",
-    "Return concise, independently derived findings grounded in observable behavior and the public task contract.",
+    "Return concise, independently derived findings grounded in observable behavior and the frozen run specification.",
     "Write only .agent-arena-submission.json. Any other worktree change invalidates the review artifact.",
     "",
     "# Submission schema",
@@ -238,7 +238,7 @@ export function composeAttackReviewPrompt(
 }
 
 export function composeNeutralCasePrompt(input: {
-  contract: TaskContract;
+  runSpec: RunSpec;
   permissions: PermissionPolicy;
   failure: AttackSubmission["attacks"][number];
   outputPath: string;
@@ -246,11 +246,11 @@ export function composeNeutralCasePrompt(input: {
   return `${[
     "# Neutral case judge",
     "Independently create one deterministic, test-only regression case for this anonymized failure description.",
-    "Use only the immutable task contract and the public reproduction. Do not inspect either contestant patch, infer contestant identity, modify production code, or broaden the cited requirement.",
+    "Use only the immutable run specification and the public reproduction. Do not inspect either contestant patch, infer contestant identity, modify production code, or broaden the stated behavior.",
     "The harness will run your case against both frozen patches and separately adjudicate the oracle.",
     "",
-    "# Immutable task contract",
-    JSON.stringify(input.contract, null, 2),
+    "# Immutable run specification",
+    JSON.stringify(input.runSpec, null, 2),
     "",
     "# Available permissions and enforcement",
     permissionContext(input.permissions),
@@ -259,7 +259,7 @@ export function composeNeutralCasePrompt(input: {
     JSON.stringify(input.failure, null, 2),
     "",
     "Use only directly available capabilities that the failure description declares. Do not introduce a new capability or directly use a harness_only capability.",
-    `Write {"version":1,"cases":[{"category":"boundary","focusedCommand":"...","paths":["test/..."],"requiredCapabilities":[]}]} to ${input.outputPath}. Return cases: [] only when the description cannot be turned into a contract-supported deterministic test.`,
+    `Write {"version":1,"cases":[{"category":"boundary","focusedCommand":"...","paths":["test/..."],"requiredCapabilities":[]}]} to ${input.outputPath}. Return cases: [] only when the description cannot be turned into a clearly supported deterministic test.`,
   ].join("\n")}\n`;
 }
 

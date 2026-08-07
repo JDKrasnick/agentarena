@@ -375,7 +375,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         "utf8",
       ),
     ) as { schemaVersion: number; stage: string };
-    expect(result).toMatchObject({ schemaVersion: 3, stage: "complete" });
+    expect(result).toMatchObject({ schemaVersion: 4, stage: "complete" });
     const report = await readFile(
       path.join(outcome.state.artifacts.runDirectory!, "BATTLE.md"),
       "utf8",
@@ -384,13 +384,19 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(report).toContain("### Generation activity");
     expect(report).toContain("not_submitted");
     expect(report).toContain("Repeated whitespace is not collapsed");
-    const taskContract = JSON.parse(
+    const runSpec = JSON.parse(
       await readFile(
-        path.join(outcome.state.artifacts.runDirectory!, "task-contract.json"),
+        path.join(outcome.state.artifacts.runDirectory!, "run-spec.json"),
         "utf8",
       ),
-    ) as { sources: Array<{ kind: string; snapshotPath: string }> };
-    const issueSnapshot = taskContract.sources.find(
+    ) as {
+      contentHash: string;
+      task: { sources: Array<{ kind: string; snapshotPath: string }> };
+    };
+    expect(outcome.state.schemaVersion).toBe(4);
+    if (outcome.state.schemaVersion !== 4) throw new Error("expected v4 state");
+    expect(outcome.state.runSpecHash).toBe(runSpec.contentHash);
+    const issueSnapshot = runSpec.task.sources.find(
       (source) => source.kind === "issue",
     );
     expect(await readFile(issueSnapshot!.snapshotPath, "utf8")).toContain(

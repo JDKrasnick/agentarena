@@ -2,7 +2,7 @@
 
 Make your coding agents fight for the merge.
 
-Agent Arena is a local Node.js library and CLI that gives two coding agents the same repository task, validates both patches, and runs three attack–repair rounds. Attacks are executable test patches, not critiques. The harness reproduces them twice, checks their task-contract oracle, resolves damage and recoil simultaneously, gives both contestants bounded repair opportunities, and exports the evidence and final patches.
+Agent Arena is a local Node.js library and CLI that gives two coding agents the same immutable run specification, validates both patches, and runs three attack–repair rounds. Attacks are executable test patches, not critiques. The harness reproduces them twice, verifies that their expected behavior is supported by frozen task text, resolves damage and recoil simultaneously, gives both contestants bounded repair opportunities, and exports the evidence and final patches.
 
 Surviving the arena is additional evidence, not a correctness guarantee.
 
@@ -156,7 +156,7 @@ contestants.
 
 ## Evidence and scoring
 
-- Both implementations start from the same immutable commit and task-contract snapshots.
+- Both implementations start from the same immutable commit and RunSpec snapshots.
 - Each agent may submit zero to three test-only attacks with contiguous ranks.
 - A contestant attack must pass twice on its author and fail twice on its target.
 - Ranks 1, 2, and 3 recoil for 5, 10, and 15 HP when they miss.
@@ -174,7 +174,7 @@ Each run is persisted atomically under `.agent-arena/runs/<run-id>/`:
 
 - `BATTLE.md`, the clickable `BATTLE.html` dossier, deterministic `BATTLE.svg`,
   and versioned `result.json`
-- immutable `task-contract.json` and source snapshots
+- immutable `run-spec.json` and source snapshots
 - redacted `permissions.json`
 - implementation, attack, revision, held-out case, and final patches
 - rendered prompts, prompt manifests, method-pack seeds, hypotheses, command logs, and provider transcripts

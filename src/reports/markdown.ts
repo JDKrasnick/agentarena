@@ -277,7 +277,9 @@ export function renderBattleReport(state: RunState): string {
     "",
     `Mode: **${state.config.mode}**`,
     "",
-    `Task contract: \`${state.taskContractHash}\``,
+    state.schemaVersion === 4
+      ? `Run specification: \`${state.runSpecHash}\``
+      : `Legacy task contract: \`${state.taskContractHash}\``,
     "",
     "Surviving the arena is additional evidence, not a correctness guarantee.",
     "",

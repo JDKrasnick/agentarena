@@ -25,11 +25,9 @@ function runSpec() {
           retrievedAt: "2026-08-07T12:00:00.000Z",
           contentHash: HASH,
           snapshotPath: "sources/task.md",
-          visibility: "shared" as const,
         },
       ],
       createdAt: "2026-08-07T12:00:00.000Z",
-      contractHash: HASH,
     },
     baseCommit: "c".repeat(40),
     topology: {
@@ -191,6 +189,16 @@ describe("round boundary contracts", () => {
     expect(roundTrip(ContestantFeedbackSchema, feedback()).contestantId).toBe(
       "a",
     );
+  });
+
+  it("allows no acceptance criteria when none were explicitly supplied", () => {
+    const spec = runSpec();
+    expect(
+      RunSpecSchema.parse({
+        ...spec,
+        task: { ...spec.task, acceptanceCriteria: [] },
+      }).task.acceptanceCriteria,
+    ).toEqual([]);
   });
 
   it("rejects unsupported versions, malformed hashes, and runtime values", () => {

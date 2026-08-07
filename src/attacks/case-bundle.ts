@@ -9,8 +9,8 @@ import type {
   CheckResult,
   ContestantId,
   FightConfig,
-  TaskContract,
 } from "../core/types.js";
+import type { RunSpec } from "../contracts/round.js";
 import type { WorktreeManager } from "../repo/git.js";
 import { runShellCommand } from "../runner/process-runner.js";
 
@@ -26,7 +26,7 @@ interface ValidateSiblingOptions {
   authorPatch?: string;
   targetPatches: Partial<Record<ContestantId, string>>;
   config: FightConfig;
-  contract: TaskContract;
+  runSpec: RunSpec;
   worktrees: WorktreeManager;
   verifier: AttackVerifier;
   logRoot: string;
@@ -162,7 +162,7 @@ export async function validateSiblingCase(
     };
     const verdict = await options.verifier.assess({
       attack: anonymizeAttackForVerifier(siblingAttack),
-      taskContract: options.contract,
+      runSpec: options.runSpec,
       authorPassed: true,
       targetFailed: true,
       worktree: verifierTree,
