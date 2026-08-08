@@ -1,4 +1,44 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
+
+function canonicalize(value: unknown): unknown {
+  if (value === null || typeof value === "string" || typeof value === "boolean")
+    return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value))
+      throw new Error("Canonical JSON requires finite numbers");
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalize(entry)]),
+    );
+  }
+  throw new Error(`Value is not JSON-safe: ${typeof value}`);
+}
+
+/** Stable JSON encoding used for all round-boundary digests. */
+export function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalize(value));
+}
+
+function hashWithout(value: object, field: string): string {
+  const copy = { ...(value as Record<string, unknown>) };
+  delete copy[field];
+  return createHash("sha256").update(canonicalJson(copy)).digest("hex");
+}
+
+export function calculateSnapshotHash(snapshot: object): string {
+  return hashWithout(snapshot, "snapshotHash");
+}
+
+export function calculateReplayHash(replay: object): string {
+  return hashWithout(replay, "replayHash");
+}
 
 const IdentifierSchema = z.string().trim().min(1);
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -211,7 +251,7 @@ export const RoundContestantStateSchema = z
     permanentRecoil: z.number().int().nonnegative(),
     activeDefects: z.array(ActiveDefectSchema),
     replacementCredits: z.array(ReplacementCreditStateSchema),
-    status: z.enum(["active", "downed", "eliminated"]),
+    status: z.enum(["pending", "active", "downed", "eliminated"]),
   })
   .strict();
 export type RoundContestantState = z.infer<typeof RoundContestantStateSchema>;
@@ -262,8 +302,10 @@ export const RoundSnapshotSchema = z
         });
       }
       const ownsProductionPatch = topologyContestant.role !== "attacker";
+      const mayBePendingInitialization =
+        snapshot.roundId === 1 && contestant.status === "pending";
       const patchOwnershipMismatch = ownsProductionPatch
-        ? contestant.patch === null
+        ? contestant.patch === null && !mayBePendingInitialization
         : contestant.patch !== null;
       if (patchOwnershipMismatch) {
         context.addIssue({
@@ -272,6 +314,13 @@ export const RoundSnapshotSchema = z
           message: ownsProductionPatch
             ? "A production-owning contestant requires a patch"
             : "A test-only attacker must not have a production patch",
+        });
+      }
+      if (snapshot.roundId !== 1 && contestant.status === "pending") {
+        context.addIssue({
+          code: "custom",
+          path: ["contestants", index, "status"],
+          message: "Only round 1 may contain pending contestants",
         });
       }
     });
@@ -306,6 +355,7 @@ export const ArtifactReferenceSchema = z
       "check_log",
       "case",
       "diagnostic",
+      "round_state_delta",
     ]),
     path: z.string().min(1),
     sha256: Sha256Schema,
@@ -328,6 +378,7 @@ const ReplayInvocationSchema = z
   .object({
     id: IdentifierSchema,
     kind: z.enum([
+      "implementation",
       "review",
       "attack",
       "case_generation",
@@ -416,9 +467,22 @@ export const RoundReplaySchema = z
     scoreEvents: z.array(ReplayScoreEventSchema),
     diagnostics: z.array(RoundDiagnosticSchema),
     artifacts: z.array(ArtifactReferenceSchema),
+    stateDeltaArtifactId: IdentifierSchema,
     replayHash: Sha256Schema,
   })
   .strict()
+  .superRefine((replay, context) => {
+    const delta = replay.artifacts.find(
+      (artifact) => artifact.id === replay.stateDeltaArtifactId,
+    );
+    if (delta?.kind !== "round_state_delta") {
+      context.addIssue({
+        code: "custom",
+        path: ["stateDeltaArtifactId"],
+        message: "Replay must reference its round-state-delta artifact",
+      });
+    }
+  })
   .readonly();
 export type RoundReplay = z.infer<typeof RoundReplaySchema>;
 
@@ -475,9 +539,79 @@ export const RoundResultSchema = z
         message: "Round result contestants must be ordered a then b",
       });
     }
+    if (
+      result.status === "completed" &&
+      result.resultingContestants.some(
+        (contestant) => contestant.status === "pending",
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["resultingContestants"],
+        message: "A completed round cannot leave a contestant pending",
+      });
+    }
   })
   .readonly();
 export type RoundResult = z.infer<typeof RoundResultSchema>;
+
+/** Parse and verify an immutable snapshot at the engine boundary. */
+export function validateRoundSnapshot(value: unknown): RoundSnapshot {
+  const snapshot = RoundSnapshotSchema.parse(value);
+  if (snapshot.snapshotHash !== calculateSnapshotHash(snapshot))
+    throw new Error("Snapshot hash does not match canonical snapshot JSON");
+  return snapshot;
+}
+
+/** Parse and verify a result and its replay against the accepted snapshot. */
+export function validateRoundResult(
+  value: unknown,
+  snapshot: RoundSnapshot,
+): RoundResult {
+  const result = RoundResultSchema.parse(value);
+  if (
+    result.runId !== snapshot.runId ||
+    result.roundId !== snapshot.roundId ||
+    result.replay.snapshotHash !== snapshot.snapshotHash ||
+    result.replay.priorReplayHash !== snapshot.priorReplayHash
+  )
+    throw new Error("Round result does not match its accepted snapshot");
+  if (result.replay.replayHash !== calculateReplayHash(result.replay))
+    throw new Error("Replay hash does not match canonical replay JSON");
+  return result;
+}
+
+const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.string(),
+    z.number().finite(),
+    z.boolean(),
+    z.array(JsonValueSchema),
+    z.record(z.string(), JsonValueSchema),
+  ]),
+);
+
+/**
+ * Immutable projection used to apply a completed transactional round to the
+ * legacy RunState report without sharing that mutable object with the engine.
+ */
+export const RoundStateDeltaSchema = z
+  .object({
+    version: z.literal(1),
+    runId: IdentifierSchema,
+    roundId: RoundIdSchema,
+    attacks: z.array(JsonValueSchema),
+    invocations: z.array(JsonValueSchema),
+    cases: z.array(JsonValueSchema),
+    promptManifests: z.array(JsonValueSchema),
+    harnessOverlays: z.array(JsonValueSchema),
+    checks: z.array(JsonValueSchema),
+    roundSummaries: z.array(JsonValueSchema),
+  })
+  .strict()
+  .readonly();
+export type RoundStateDelta = z.infer<typeof RoundStateDeltaSchema>;
 
 const VisibleReproducerSchema = z
   .object({

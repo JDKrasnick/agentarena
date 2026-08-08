@@ -17,13 +17,7 @@ general-purpose agent platform.
 
 ## Execution architecture and migration
 
-Today, the working fight implementation is monolithic. `Arena` owns the battle
-lifecycle and directly invokes the mechanisms for implementation, review,
-attack, checking, repair, scoring, artifact generation, and worktree/process
-management. The boundary described here is approved architecture, not a claim
-that the operational extraction is already complete.
-
-The target dependency direction is:
+The live dependency direction is:
 
 ```text
 Arena -> RoundEngine -> mechanisms
@@ -32,8 +26,11 @@ Arena -> RoundEngine -> mechanisms
 `Arena` owns preflight, immutable run setup, shared runtime-service lifetime,
 round sequencing, final validation, reporting, and battle-level cancellation.
 `RoundEngine` owns exactly one transactional round through
-`run(snapshot): Promise<RoundResult>`. Lower-level mechanisms perform narrow
-operations and cannot import either orchestration layer.
+`run(snapshot): Promise<RoundResult>`. For round 1 that transaction first
+validates any frozen PR contestant, generates every missing production patch,
+and runs initial validation; only successful initialization continues into the
+ordinary attack–repair phases. Lower-level mechanisms perform narrow operations
+and cannot import either orchestration layer.
 
 The boundary carries only strict, versioned, JSON-safe contracts:
 
@@ -54,12 +51,12 @@ Runtime services, callbacks, worktree objects, abort controllers, and mutable
 are terminal result values; throws indicate invalid configuration, schema
 violations, or programming invariants.
 
-Issue #35 defines the seam and freezes `Arena`'s current direct mechanism
-imports as a temporary no-growth allowlist. Issue #30 extracts operational round
-execution and reduces that allowlist to zero. Issue #34 migrates run creation to
-`RunSpec`. Issue #32 adds replay persistence, crash recovery, digest chaining,
-and the production contestant-feedback projection. Until those migrations land,
-the existing `Arena` fight path and `RunState` artifacts remain authoritative.
+`Arena`'s direct mechanism import allowlist is empty. Each completed result is
+applied before the next immutable snapshot is created; any inconclusive,
+cancelled, or failed round is terminal and retains its evidence. Issue #32 adds
+durable replay-envelope persistence, crash recovery, exactly-once restart
+semantics, digest chaining across recovery, and the production filtered
+contestant-feedback projection.
 
 ## Who it is for
 

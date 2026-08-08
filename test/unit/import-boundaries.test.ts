@@ -31,36 +31,7 @@ const CORE_MECHANISM_MODULES = new Set([
   "core/state-machine.ts",
 ]);
 
-const ARENA_MECHANISM_IMPORT_ALLOWLIST = new Set([
-  "agents/adapter.ts",
-  "agents/prompts.ts",
-  "artifacts/store.ts",
-  "attacks/case-bundle.ts",
-  "attacks/evidence-revision.ts",
-  "attacks/submission.ts",
-  "attacks/validate.ts",
-  "core/scoring.ts",
-  "core/state-machine.ts",
-  "delivery/target.ts",
-  "maintenance/overlays.ts",
-  "methods/catalog.ts",
-  "outcomes/derive-outcome.ts",
-  "permissions/policy.ts",
-  "quality/collect-facts.ts",
-  "quality/manifest-adapters.ts",
-  "quality/verifier.ts",
-  "recommendation/select-patch.ts",
-  "repo/git.ts",
-  "reports/console.ts",
-  "reports/html.ts",
-  "reports/markdown.ts",
-  "reports/visual.ts",
-  "review/prompt.ts",
-  "runner/integration.ts",
-  "runner/process-runner.ts",
-  "task/pr-fixture.ts",
-  "task/task-contract.ts",
-]);
+const ARENA_MECHANISM_IMPORT_ALLOWLIST = new Set<string>();
 
 function relative(file: string): string {
   return path.relative(SRC_ROOT, file).split(path.sep).join("/");

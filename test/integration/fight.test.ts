@@ -12,6 +12,12 @@ import {
   RuleBasedVerifier,
 } from "../../src/agents/adapter.js";
 import { Arena } from "../../src/core/arena.js";
+import {
+  calculateReplayHash,
+  RoundReplaySchema,
+  RoundSnapshotSchema,
+  RoundStateDeltaSchema,
+} from "../../src/contracts/round.js";
 import { applyAcceptedPatch } from "../../src/commands/apply.js";
 import { FightConfigSchema } from "../../src/core/types.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
@@ -376,6 +382,50 @@ describe("fake-adapter fight on a mocked real issue", () => {
       ),
     ) as { schemaVersion: number; stage: string };
     expect(result).toMatchObject({ schemaVersion: 4, stage: "complete" });
+    const roundDirectory = path.join(
+      outcome.state.artifacts.runDirectory!,
+      "rounds",
+    );
+    const roundOneSnapshot = RoundSnapshotSchema.parse(
+      JSON.parse(
+        await readFile(path.join(roundDirectory, "1", "snapshot.json"), "utf8"),
+      ),
+    );
+    expect(roundOneSnapshot.contestants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ patch: null, status: "pending" }),
+      ]),
+    );
+    const roundOneReplay = RoundReplaySchema.parse(
+      JSON.parse(
+        await readFile(path.join(roundDirectory, "1", "replay.json"), "utf8"),
+      ),
+    );
+    expect(roundOneReplay.replayHash).toBe(calculateReplayHash(roundOneReplay));
+    expect(roundOneReplay.invocations.map((entry) => entry.kind)).toEqual(
+      expect.arrayContaining(["implementation", "review", "attack", "repair"]),
+    );
+    expect(
+      roundOneReplay.artifacts.find(
+        (artifact) => artifact.id === roundOneReplay.stateDeltaArtifactId,
+      ),
+    ).toMatchObject({ kind: "round_state_delta" });
+    const roundOneDelta = RoundStateDeltaSchema.parse(
+      JSON.parse(
+        await readFile(
+          path.join(roundDirectory, "1", "state-delta.json"),
+          "utf8",
+        ),
+      ),
+    );
+    expect(roundOneDelta.attacks.length).toBeGreaterThan(0);
+    expect(roundOneDelta.checks.length).toBeGreaterThan(0);
+    const roundTwoReplay = RoundReplaySchema.parse(
+      JSON.parse(
+        await readFile(path.join(roundDirectory, "2", "replay.json"), "utf8"),
+      ),
+    );
+    expect(roundTwoReplay.priorReplayHash).toBe(roundOneReplay.replayHash);
     const report = await readFile(
       path.join(outcome.state.artifacts.runDirectory!, "BATTLE.md"),
       "utf8",

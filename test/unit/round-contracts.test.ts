@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  calculateReplayHash,
+  calculateSnapshotHash,
+  canonicalJson,
   ContestantFeedbackSchema,
   RoundReplaySchema,
   RoundResultSchema,
   RoundSnapshotSchema,
   RunSpecSchema,
+  validateRoundResult,
+  validateRoundSnapshot,
 } from "../../src/contracts/round.js";
 
 const HASH = "a".repeat(64);
@@ -124,7 +129,15 @@ function replay() {
     repairs: [],
     scoreEvents: [],
     diagnostics: [],
-    artifacts: [],
+    artifacts: [
+      {
+        id: "round-state-delta-1",
+        kind: "round_state_delta" as const,
+        path: "rounds/1/state-delta.json",
+        sha256: HASH,
+      },
+    ],
+    stateDeltaArtifactId: "round-state-delta-1",
     replayHash: OTHER_HASH,
   };
 }
@@ -189,6 +202,112 @@ describe("round boundary contracts", () => {
     expect(roundTrip(ContestantFeedbackSchema, feedback()).contestantId).toBe(
       "a",
     );
+  });
+
+  it("hashes canonical snapshot and replay JSON without their hash fields", () => {
+    expect(canonicalJson({ z: 1, a: { y: 2, x: 3 } })).toBe(
+      '{"a":{"x":3,"y":2},"z":1}',
+    );
+    const snapshotDraft = snapshot();
+    snapshotDraft.snapshotHash = calculateSnapshotHash(snapshotDraft);
+    const accepted = validateRoundSnapshot(snapshotDraft);
+    const replayDraft = {
+      ...replay(),
+      snapshotHash: accepted.snapshotHash,
+      priorReplayHash: accepted.priorReplayHash,
+    };
+    replayDraft.replayHash = calculateReplayHash(replayDraft);
+    expect(
+      validateRoundResult(
+        {
+          version: 1,
+          runId: accepted.runId,
+          roundId: accepted.roundId,
+          status: "completed",
+          resultingContestants: accepted.contestants,
+          replay: replayDraft,
+        },
+        accepted,
+      ).replay.replayHash,
+    ).toBe(replayDraft.replayHash);
+
+    expect(() =>
+      validateRoundSnapshot({
+        ...accepted,
+        contestants: [
+          { ...accepted.contestants[0], health: 99 },
+          accepted.contestants[1],
+        ],
+      }),
+    ).toThrow(/Snapshot hash/);
+    expect(() =>
+      validateRoundResult(
+        {
+          version: 1,
+          runId: accepted.runId,
+          roundId: accepted.roundId,
+          status: "completed",
+          resultingContestants: accepted.contestants,
+          replay: {
+            ...replayDraft,
+            diagnostics: [
+              {
+                code: "tampered",
+                severity: "warning",
+                message: "changed after hashing",
+                artifactIds: [],
+              },
+            ],
+          },
+        },
+        accepted,
+      ),
+    ).toThrow();
+  });
+
+  it("permits pending production owners only in round 1", () => {
+    const firstRound = {
+      ...snapshot(),
+      contestants: [
+        { ...contestant("a"), patch: null, status: "pending" as const },
+        contestant("b"),
+      ] as const,
+    };
+    expect(() => RoundSnapshotSchema.parse(firstRound)).not.toThrow();
+    expect(() =>
+      RoundSnapshotSchema.parse({ ...firstRound, roundId: 2 }),
+    ).toThrow(/Only round 1/);
+    expect(() =>
+      RoundResultSchema.parse({
+        version: 1,
+        runId: "run-1",
+        roundId: 1,
+        status: "completed",
+        resultingContestants: firstRound.contestants,
+        replay: replay(),
+      }),
+    ).toThrow(/cannot leave a contestant pending/);
+  });
+
+  it("records implementation invocations in round replays", () => {
+    const value = replay();
+    const withImplementation = {
+      ...value,
+      invocations: [
+        {
+          id: "implementation-a",
+          kind: "implementation",
+          actor: "contestant_a",
+          status: "succeeded",
+          startedAt: "2026-08-07T12:00:00.000Z",
+          finishedAt: "2026-08-07T12:01:00.000Z",
+          artifactIds: [],
+        },
+      ],
+    };
+    expect(
+      RoundReplaySchema.parse(withImplementation).invocations[0]?.kind,
+    ).toBe("implementation");
   });
 
   it("allows no acceptance criteria when none were explicitly supplied", () => {

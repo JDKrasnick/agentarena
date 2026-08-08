@@ -42,12 +42,7 @@ The project is intended to be both useful and entertaining. The adversarial test
 
 ### Execution architecture
 
-The current implementation is intentionally still monolithic: `Arena` owns the
-battle lifecycle and directly coordinates implementation, review, attack,
-validation, repair, scoring, worktrees, processes, and artifacts. This remains
-the live fight path while the round boundary is introduced incrementally.
-
-The approved target has three layers:
+The live fight path has three layers:
 
 ```text
 Arena -> RoundEngine -> mechanisms
@@ -56,9 +51,11 @@ Arena -> RoundEngine -> mechanisms
 - `Arena` owns preflight and the battle lifecycle: immutable run creation,
   worktree and service lifetime, round sequencing, final validation, reporting,
   and cancellation of the overall battle.
-- `RoundEngine` owns one transactional round. Its sole operation accepts a
-  self-contained `RoundSnapshot` and returns a typed `RoundResult` with a
-  required immutable `RoundReplay`.
+- `RoundEngine` owns one transactional round. Round 1 includes missing
+  implementation generation and initial validation before the normal
+  attack–repair phases. Its operation accepts a self-contained
+  `RoundSnapshot` and returns a typed `RoundResult` with a required immutable
+  `RoundReplay` and round-state delta.
 - Mechanisms perform narrow operations such as review, case generation,
   validation, repair, and scoring. They do not depend upward on `RoundEngine` or
   `Arena`.
@@ -73,12 +70,10 @@ details. Expected execution failures are returned as `inconclusive`,
 `cancelled`, or `failed` results; exceptions are reserved for invalid
 configuration, invalid schemas, and programming invariants.
 
-Issue #35 establishes these contracts and import direction without changing the
-live fight path. Issue #30 moves round execution from `Arena` into
-`RoundEngine` and removes the temporary direct-mechanism import allowlist. Issue
-#34 adopts `RunSpec` in run creation, while #32 persists replay envelopes,
-implements digest chaining and crash recovery, and produces the production
-feedback projection.
+`Arena` has no direct mechanism imports. Durable replay envelopes, restart
+recovery, exactly-once replay persistence, digest chaining across recovered
+processes, and the production filtered `ContestantFeedback` projection remain
+assigned to issue #32.
 
 ### Battle modes
 
