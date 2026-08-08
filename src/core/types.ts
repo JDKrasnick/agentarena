@@ -244,10 +244,10 @@ export const PullRequestFixtureSchema = z.object({
 export type PullRequestFixture = z.infer<typeof PullRequestFixtureSchema>;
 
 export const OracleCitationSchema = z.object({
-  expectedBehavior: z.string().min(1),
-  sourceId: z.string().min(1).optional(),
-  sourceLocation: z.string().min(1).optional(),
-  rationale: z.string().min(1),
+  expectedBehavior: z.string().trim().min(1),
+  sourceId: z.string().trim().min(1).optional(),
+  sourceLocation: z.string().trim().min(1).optional(),
+  rationale: z.string().trim().min(1),
 });
 export type OracleCitation = z.infer<typeof OracleCitationSchema>;
 

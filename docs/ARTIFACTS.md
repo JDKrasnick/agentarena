@@ -4,13 +4,14 @@ Completed runs live under `.agent-arena/runs/<run-id>/`.
 
 ## Immutable battle evidence
 
-- `result.json` uses schema version 3. `RunStateV1Schema`,
-  `RunStateV2Schema`, `RunStateV3Schema`, `AnyRunStateSchema`, and
-  `parseRunState` keep version 1 and 2 runs readable by migrating
-  provider-keyed contestants into stable `a` and `b` slots. Migrated runs
-  receive an explicit arena-fallback recommendation and must be reviewed again
-  before application.
-- `task-contract.json`, source snapshots, final patches, prompts,
+- `result.json` uses schema version 4 and records the immutable RunSpec hash.
+  `RunStateV1Schema`, `RunStateV2Schema`, `RunStateV3Schema`,
+  `RunStateV4Schema`, `AnyRunStateSchema`, and `parseRunState` keep version 1–3
+  runs readable. Version 1 and 2 states migrate provider-keyed contestants into
+  stable `a` and `b` slots; version 3 states retain their task-contract hash
+  without manufacturing RunSpec provenance. Migrated runs receive an explicit
+  arena-fallback recommendation and must be reviewed again before application.
+- `run-spec.json`, source snapshots, final patches, prompts,
   `attack-reviews/round-*/`, attack cases, logs, `quality/*`,
   `review-prompt.json`, `BATTLE.md`, `BATTLE.html`, and `BATTLE.svg` are frozen
   battle evidence. Attack review artifacts contain structured findings and the

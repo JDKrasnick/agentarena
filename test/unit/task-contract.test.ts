@@ -4,7 +4,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildRunSpec, calculateRunSpecHash } from "../../src/task/run-spec.js";
 import type { IssueResolver } from "../../src/task/task-contract.js";
-import { FightConfigSchema } from "../../src/core/types.js";
+import {
+  FightConfigSchema,
+  OracleCitationSchema,
+} from "../../src/core/types.js";
 import { RuleBasedVerifier } from "../../src/agents/adapter.js";
 
 function config(
@@ -148,6 +151,26 @@ describe("run specification", () => {
         })
       ).oracleSupported,
     ).toBe(false);
+    expect(
+      (
+        await verifier.assess({
+          ...verifierInput,
+          attack: {
+            ...verifierInput.attack,
+            oracle: {
+              expectedBehavior: " ",
+              rationale: "No behavior was stated",
+            },
+          },
+        })
+      ).oracleSupported,
+    ).toBe(false);
+    expect(() =>
+      OracleCitationSchema.parse({
+        expectedBehavior: " ",
+        rationale: "No behavior was stated",
+      }),
+    ).toThrow();
   });
 
   it("never invents a missing official issue and retains an explicit task with a warning", async () => {

@@ -694,7 +694,8 @@ export class RuleBasedVerifier implements AttackVerifier {
     const expectedBehavior = input.attack.oracle.expectedBehavior
       .trim()
       .toLocaleLowerCase();
-    const oracleSupported = frozenText.includes(expectedBehavior);
+    const oracleSupported =
+      expectedBehavior.length > 0 && frozenText.includes(expectedBehavior);
     return {
       relevant: input.attack.claim.trim().length > 0,
       oracleSupported,
