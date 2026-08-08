@@ -12,7 +12,8 @@ import {
   isAllowedAttackPath,
 } from "../../src/repo/git.js";
 import { redact } from "../../src/runner/process-runner.js";
-import { FightConfigSchema, TaskContractSchema } from "../../src/core/types.js";
+import { FightConfigSchema } from "../../src/core/types.js";
+import { RunSpecSchema } from "../../src/contracts/round.js";
 
 const config = FightConfigSchema.parse({
   task: "task",
@@ -40,23 +41,42 @@ const config = FightConfigSchema.parse({
   },
 });
 
-const contract = TaskContractSchema.parse({
+const runSpec = RunSpecSchema.parse({
   version: 1,
-  task: "task",
-  acceptanceCriteria: ["works"],
-  sources: [
+  runId: "run-1",
+  task: {
+    task: "task",
+    acceptanceCriteria: ["works"],
+    sources: [
+      {
+        id: "task-user",
+        kind: "user_task",
+        origin: "task",
+        retrievedAt: "2026-01-01T00:00:00.000Z",
+        contentHash: "a".repeat(64),
+        snapshotPath: "task.md",
+      },
+    ],
+    createdAt: "2026-01-01T00:00:00.000Z",
+  },
+  baseCommit: "b".repeat(40),
+  topology: { mode: "duel", contestants: config.contestants },
+  commands: [
     {
-      id: "task-user",
-      kind: "user_task",
-      origin: "task",
-      retrievedAt: "2026-01-01T00:00:00.000Z",
-      contentHash: "hash",
-      snapshotPath: "task.md",
-      visibility: "shared",
+      id: "required-test",
+      kind: "required",
+      command: "npm test",
+      timeoutMs: 1_000,
+      required: true,
     },
   ],
-  createdAt: "2026-01-01T00:00:00.000Z",
-  contractHash: "contract",
+  budgets: config.limits,
+  permissions: {
+    mode: "confirm",
+    reducedValidationAccepted: false,
+    capabilities: [],
+  },
+  contentHash: "c".repeat(64),
 });
 
 const permissions = {
@@ -105,7 +125,7 @@ describe("runtime guards and deterministic prompts", () => {
       agent: "codex",
       stage: "attack",
       round: 1,
-      contract,
+      runSpec,
       config,
       permissions,
       methodSelection: roundOne,
@@ -114,7 +134,7 @@ describe("runtime guards and deterministic prompts", () => {
       agent: "codex",
       stage: "attack",
       round: 1,
-      contract,
+      runSpec,
       config,
       permissions,
       methodSelection: roundOne,
@@ -123,7 +143,7 @@ describe("runtime guards and deterministic prompts", () => {
       agent: "codex",
       stage: "attack",
       round: 2,
-      contract,
+      runSpec,
       config,
       permissions,
       methodSelection: roundTwo,
@@ -181,7 +201,7 @@ describe("runtime guards and deterministic prompts", () => {
       agent: "a",
       target: "b",
       round: 2,
-      contract,
+      runSpec,
       config,
       permissions: reviewPermissions,
       methodSelection: selectMethods(
@@ -211,7 +231,7 @@ describe("runtime guards and deterministic prompts", () => {
 
   it("binds neutral case generation to declared direct capabilities", () => {
     const prompt = composeNeutralCasePrompt({
-      contract,
+      runSpec,
       permissions: {
         defaultMode: "confirm",
         reducedValidationAccepted: false,

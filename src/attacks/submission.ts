@@ -51,7 +51,7 @@ export async function materializeAttack(
     oracle: submission.oracle,
     assertionFingerprint: stableId(
       "assertion",
-      submission.oracle.sourceId,
+      submission.oracle.sourceId ?? "uncited",
       submission.oracle.expectedBehavior,
       submission.claim,
     ),
@@ -85,7 +85,7 @@ export async function materializeHouseAttack(
     oracle: submission.oracle,
     assertionFingerprint: stableId(
       "assertion",
-      submission.oracle.sourceId,
+      submission.oracle.sourceId ?? "uncited",
       submission.oracle.expectedBehavior,
       submission.claim,
     ),

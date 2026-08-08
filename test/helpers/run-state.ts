@@ -101,7 +101,7 @@ export function makeRunState(
   codex.finalPatchPath = `${runDirectory}/patches/a.diff`;
   claude.finalPatchPath = `${runDirectory}/patches/b.diff`;
   const state = RunStateSchema.parse({
-    schemaVersion: 3,
+    schemaVersion: 4,
     runId: "run-12345678",
     harnessVersion: "0.1.0",
     status: "complete",
@@ -109,7 +109,7 @@ export function makeRunState(
     updatedAt: "2026-07-29T00:01:00.000Z",
     completedAt: "2026-07-29T00:01:00.000Z",
     stage: "complete",
-    taskContractHash: "contract",
+    runSpecHash: "a".repeat(64),
     config: FightConfigSchema.parse({
       task: "Implement the fixture",
       agents: ["codex", "claude"],

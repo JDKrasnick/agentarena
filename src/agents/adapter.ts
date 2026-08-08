@@ -21,8 +21,8 @@ import {
   type PermissionPolicy,
   type ReviewSubmission,
   type Severity,
-  type TaskContract,
 } from "../core/types.js";
+import type { RunSpec } from "../contracts/round.js";
 import { runProcess, type ProcessRequest } from "../runner/process-runner.js";
 import { z } from "zod";
 
@@ -100,7 +100,7 @@ export function anonymizeAttackForVerifier(attack: Attack): AnonymizedAttack {
 
 export interface AnonymizedAttackInput {
   attack: AnonymizedAttack;
-  taskContract: TaskContract;
+  runSpec: RunSpec;
   authorPassed: boolean;
   targetFailed: boolean;
   worktree: string;
@@ -460,10 +460,10 @@ export class CommandAttackVerifier implements AttackVerifier {
       "# Neutral Agent Arena attack adjudication",
       "You do not know either contestant's identity. Mechanical execution already established an author-side pass and target-side failure.",
       "Assess only oracle support, task relevance, canonical root-defect identity, and the lowest fully supported severity.",
-      "Do not infer correctness from the test alone. Critical means security bypass/data loss/corruption/catastrophic failure; High means a core criterion, normal crash/hang, or major wrong result; Medium is a realistic edge or secondary requirement; Low is narrow robustness/performance impact. Ambiguous High/Critical must be capped at Medium.",
+      "Do not infer correctness from the test or the presence of a source ID. Read the frozen task and source text and confirm that it clearly supports the claimed expected behavior. Critical means security bypass/data loss/corruption/catastrophic failure; High means a core criterion, normal crash/hang, or major wrong result; Medium is a realistic edge or secondary requirement; Low is narrow robustness/performance impact. Ambiguous High/Critical must be capped at Medium.",
       "",
-      "# Immutable task contract",
-      JSON.stringify(input.taskContract, null, 2),
+      "# Immutable run specification",
+      JSON.stringify(input.runSpec, null, 2),
       "",
       "# Anonymized attack",
       JSON.stringify(
@@ -675,19 +675,36 @@ export class CommandHarnessMaintainer implements HarnessMaintainer {
 export class RuleBasedVerifier implements AttackVerifier {
   constructor(readonly id: AgentId) {}
 
-  assess(input: AnonymizedAttackInput): Promise<AttackVerdict> {
+  async assess(input: AnonymizedAttackInput): Promise<AttackVerdict> {
     const severity = SeveritySchema.parse(
       input.attack.proposedSeverity ?? "medium",
     );
-    return Promise.resolve({
-      relevant: input.attack.claim.trim().length > 0,
-      oracleSupported: input.taskContract.sources.some(
-        (source) => source.id === input.attack.oracle.sourceId,
+    const sourceText = await Promise.all(
+      input.runSpec.task.sources.map((source) =>
+        readFile(source.snapshotPath, "utf8").catch(() => ""),
       ),
-      oracleRationale: `Citation ${input.attack.oracle.sourceId} exists in the immutable task contract`,
+    );
+    const frozenText = [
+      input.runSpec.task.task,
+      ...input.runSpec.task.acceptanceCriteria,
+      ...sourceText,
+    ]
+      .join("\n")
+      .toLocaleLowerCase();
+    const expectedBehavior = input.attack.oracle.expectedBehavior
+      .trim()
+      .toLocaleLowerCase();
+    const oracleSupported =
+      expectedBehavior.length > 0 && frozenText.includes(expectedBehavior);
+    return {
+      relevant: input.attack.claim.trim().length > 0,
+      oracleSupported,
+      oracleRationale: oracleSupported
+        ? "The expected behavior appears explicitly in the frozen task text."
+        : "The expected behavior is not explicitly supported by the frozen task text.",
       rootDefectId: input.attack.assertionFingerprint,
       severity,
       rationale: `Mechanically reproduced against the target and not the author; rated ${severity} using the submitted impact and fixed rubric.`,
-    });
+    };
   }
 }

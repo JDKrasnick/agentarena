@@ -28,18 +28,27 @@ const FrozenSourceSchema = z
     retrievedAt: IsoDateSchema,
     contentHash: Sha256Schema,
     snapshotPath: z.string().min(1),
-    visibility: z.enum(["shared", "judge_only"]),
-    primary: z.boolean().optional(),
+    github: z
+      .object({
+        repository: z.string().min(1),
+        number: z.number().int().positive(),
+        url: z.string().url(),
+        baseBranch: z.string().min(1).optional(),
+        headBranch: z.string().min(1).optional(),
+        headRepository: z.string().min(1).optional(),
+        headCommit: GitCommitSchema.optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
 const ImmutableTaskSchema = z
   .object({
     task: z.string().min(1),
-    acceptanceCriteria: z.array(z.string().min(1)).min(1),
+    acceptanceCriteria: z.array(z.string().min(1)),
     sources: z.array(FrozenSourceSchema).min(1),
     createdAt: IsoDateSchema,
-    contractHash: Sha256Schema,
   })
   .strict();
 
@@ -128,7 +137,12 @@ const CapabilitySchema = z
     requirement: z.enum(["required", "optional"]),
     role: z.enum(["agent", "harness_only", "both"]),
     enforcement: z.enum(["enforced", "brokered", "advisory"]),
-    decision: z.enum(["approved", "denied", "unavailable"]),
+    decision: z.enum([
+      "approved",
+      "denied",
+      "unavailable",
+      "provisioning_failed",
+    ]),
     scopes: z.array(z.string().min(1)),
   })
   .strict();

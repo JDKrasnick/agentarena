@@ -3,6 +3,21 @@ import { parseRunState } from "../../src/core/run-state.js";
 import { makeRunState } from "../helpers/run-state.js";
 
 describe("legacy run-state migration", () => {
+  it("reads v3 state with its task-contract hash without inventing a RunSpec hash", () => {
+    const current = makeRunState();
+    const legacy = {
+      ...current,
+      schemaVersion: 3,
+      taskContractHash: "legacy-contract",
+    };
+    Reflect.deleteProperty(legacy, "runSpecHash");
+    const parsed = parseRunState(legacy);
+    expect(parsed.schemaVersion).toBe(3);
+    if (parsed.schemaVersion !== 3) throw new Error("expected v3 state");
+    expect(parsed.taskContractHash).toBe("legacy-contract");
+    expect(parsed).not.toHaveProperty("runSpecHash");
+  });
+
   it("loads a provider-keyed v1 fixture into stable contestant slots", () => {
     const current = makeRunState();
     const { a, b } = current.contestants;
@@ -17,6 +32,7 @@ describe("legacy run-state migration", () => {
     const legacy = {
       ...current,
       schemaVersion: 1,
+      taskContractHash: "legacy-contract",
       contestants: {
         codex: toLegacy(a, "codex"),
         claude: toLegacy(b, "claude"),
@@ -28,6 +44,7 @@ describe("legacy run-state migration", () => {
         reason: "higher health",
       },
     };
+    Reflect.deleteProperty(legacy, "runSpecHash");
     const migrated = parseRunState(legacy);
     expect(migrated.schemaVersion).toBe(3);
     expect(migrated.contestants.a).toMatchObject({

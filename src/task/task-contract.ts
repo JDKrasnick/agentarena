@@ -3,12 +3,16 @@ import path from "node:path";
 import { execa } from "execa";
 import { sha256, stableId } from "../core/ids.js";
 import {
+  FightConfigSchema,
   TaskContractSchema,
+  type FightConfig,
   type OracleCitation,
+  type PermissionPolicy,
   type TaskContract,
   type TaskSource,
   type TaskReference,
 } from "../core/types.js";
+import { RunSpecSchema, type RunSpec } from "../contracts/round.js";
 import { discoverInstructions } from "../repo/instructions.js";
 
 export interface ResolvedIssue {
@@ -241,13 +245,6 @@ interface BuildTaskContractOptions {
   warnings?: string[];
 }
 
-function extractAcceptanceCriteria(content: string): string[] {
-  return content
-    .split("\n")
-    .map((line) => line.match(/^\s*[-*]\s+\[[ xX]\]\s+(.+?)\s*$/)?.[1])
-    .filter((value): value is string => Boolean(value));
-}
-
 async function snapshotSource(
   sourceDirectory: string,
   source: Omit<TaskSource, "contentHash" | "snapshotPath">,
@@ -270,7 +267,7 @@ export async function buildTaskContract(
     options.localSpecResolver ?? new FileLocalSpecResolver();
   await mkdir(options.sourceDirectory, { recursive: true });
   const sources: TaskSource[] = [];
-  const criteria = new Set(options.acceptanceCriteria);
+  const criteria = [...options.acceptanceCriteria];
 
   sources.push(
     await snapshotSource(
@@ -308,9 +305,6 @@ export async function buildTaskContract(
       ]),
       "",
     ].join("\n");
-    extractAcceptanceCriteria(content).forEach((criterion) =>
-      criteria.add(criterion),
-    );
     sources.push(
       await snapshotSource(
         options.sourceDirectory,
@@ -376,9 +370,6 @@ export async function buildTaskContract(
       ]),
       "",
     ].join("\n");
-    extractAcceptanceCriteria(content).forEach((criterion) =>
-      criteria.add(criterion),
-    );
     sources.push(
       await snapshotSource(
         options.sourceDirectory,
@@ -416,9 +407,6 @@ export async function buildTaskContract(
       options.repositoryRoot,
     );
     const content = resolvedSpec.content;
-    extractAcceptanceCriteria(content).forEach((criterion) =>
-      criteria.add(criterion),
-    );
     sources.push(
       await snapshotSource(
         options.sourceDirectory,
@@ -459,11 +447,10 @@ export async function buildTaskContract(
     );
   }
 
-  if (criteria.size === 0) criteria.add(options.task);
   const base = {
     version: 1 as const,
     task: options.task,
-    acceptanceCriteria: [...criteria],
+    acceptanceCriteria: criteria,
     sources,
     createdAt: now,
   };
@@ -471,9 +458,140 @@ export async function buildTaskContract(
   return TaskContractSchema.parse({ ...base, contractHash });
 }
 
+export interface BuildRunSpecOptions extends Omit<
+  BuildTaskContractOptions,
+  | "task"
+  | "acceptanceCriteria"
+  | "specPaths"
+  | "issueReferences"
+  | "pullRequestReferences"
+  | "taskReferences"
+> {
+  runId: string;
+  baseCommit: string;
+  config: FightConfig;
+  permissions: PermissionPolicy;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalJson(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function calculateRunSpecHash(
+  spec: Omit<RunSpec, "contentHash">,
+): string {
+  return sha256(canonicalJson(spec));
+}
+
+export async function buildRunSpec(
+  options: BuildRunSpecOptions,
+): Promise<RunSpec> {
+  const config = FightConfigSchema.parse(options.config);
+  const snapshot = await buildTaskContract({
+    ...options,
+    task: config.task,
+    acceptanceCriteria: config.acceptanceCriteria,
+    specPaths: config.specPaths,
+    issueReferences: config.issueReferences,
+    pullRequestReferences: config.pullRequestReferences,
+    taskReferences: config.taskReferences,
+  });
+  const commands: RunSpec["commands"] = [
+    {
+      id: "required-test",
+      kind: "required",
+      command: config.testCommand,
+      timeoutMs: config.limits.attackMs,
+      required: true,
+    },
+  ];
+  if (config.integrationProfile) {
+    commands.push(
+      {
+        id: "integration-setup",
+        kind: "integration_setup",
+        command: config.integrationProfile.setupCommand,
+        timeoutMs: config.limits.attackMs,
+        required: false,
+      },
+      {
+        id: "integration-check",
+        kind: "integration_check",
+        command: config.integrationProfile.checkCommand,
+        timeoutMs: config.limits.attackMs,
+        required: false,
+      },
+      {
+        id: "integration-teardown",
+        kind: "integration_teardown",
+        command: config.integrationProfile.teardownCommand,
+        timeoutMs: config.limits.attackMs,
+        required: false,
+      },
+    );
+  }
+  const base = {
+    version: 1 as const,
+    runId: options.runId,
+    task: {
+      task: snapshot.task,
+      acceptanceCriteria: snapshot.acceptanceCriteria,
+      sources: snapshot.sources.map((source) => ({
+        id: source.id,
+        kind: source.kind,
+        origin: source.origin,
+        retrievedAt: source.retrievedAt,
+        contentHash: source.contentHash,
+        snapshotPath: source.snapshotPath,
+        ...(source.github ? { github: source.github } : {}),
+      })),
+      createdAt: snapshot.createdAt,
+    },
+    baseCommit: options.baseCommit,
+    topology: {
+      mode: config.mode,
+      contestants: config.contestants,
+    },
+    commands,
+    budgets: config.limits,
+    permissions: {
+      mode: options.permissions.defaultMode,
+      reducedValidationAccepted: options.permissions.reducedValidationAccepted,
+      capabilities: options.permissions.capabilities.map((capability) => ({
+        id: capability.id,
+        reason: capability.reason,
+        risk: capability.risk,
+        requirement: capability.requirement,
+        role: capability.role,
+        enforcement: capability.enforcement,
+        decision: capability.status,
+        scopes: capability.scopes,
+      })),
+    },
+  } satisfies Omit<RunSpec, "contentHash">;
+  return RunSpecSchema.parse({
+    ...base,
+    contentHash: calculateRunSpecHash(base),
+  });
+}
+
 export function oracleResolves(
   contract: TaskContract,
   citation: OracleCitation,
 ): boolean {
-  return contract.sources.some((source) => source.id === citation.sourceId);
+  return (
+    citation.sourceId !== undefined &&
+    contract.sources.some((source) => source.id === citation.sourceId)
+  );
 }

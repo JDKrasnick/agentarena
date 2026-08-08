@@ -10,18 +10,17 @@ import type {
   CheckResult,
   FightConfig,
   PermissionPolicy,
-  TaskContract,
 } from "../core/types.js";
+import type { RunSpec } from "../contracts/round.js";
 import { changedPathsFromPatch, isAllowedAttackPath } from "../repo/git.js";
 import type { WorktreeManager } from "../repo/git.js";
 import { runShellCommand } from "../runner/process-runner.js";
-import { oracleResolves } from "../task/task-contract.js";
 
 interface ValidateAttackOptions {
   attack: Attack;
   authorPatch: string;
   targetPatch: string;
-  taskContract: TaskContract;
+  runSpec: RunSpec;
   permissionPolicy: PermissionPolicy;
   config: FightConfig;
   worktrees: WorktreeManager;
@@ -158,14 +157,6 @@ export async function validateAttack(
       `Optional capability ${unknown} was not in the approved manifest`,
     );
   }
-  if (!oracleResolves(options.taskContract, attack.oracle)) {
-    return withOutcome(
-      attack,
-      "unproven",
-      "Oracle source is absent from the task contract",
-    );
-  }
-
   const baseName = `${String(attack.round)}-${attack.id}`;
   const created: string[] = [];
   try {
@@ -325,7 +316,7 @@ export async function validateAttack(
 
     const verdict = await options.verifier.assess({
       attack: anonymizeAttackForVerifier(attack),
-      taskContract: options.taskContract,
+      runSpec: options.runSpec,
       authorPassed: true,
       targetFailed: true,
       worktree: target,
@@ -389,14 +380,6 @@ export async function validateHouseAttack(
       "House attack must change only recognized tests or fixtures",
     );
   }
-  if (!oracleResolves(options.taskContract, attack.oracle)) {
-    return withOutcome(
-      attack,
-      "unproven",
-      "House oracle source is absent from the task contract",
-    );
-  }
-
   const created: string[] = [];
   try {
     let baseline: string | undefined;
@@ -493,7 +476,7 @@ export async function validateHouseAttack(
     if (!verifierTree) throw new Error("Missing house verifier worktree");
     const verdict = await options.verifier.assess({
       attack: anonymizeAttackForVerifier(attack),
-      taskContract: options.taskContract,
+      runSpec: options.runSpec,
       authorPassed: true,
       targetFailed: true,
       worktree: verifierTree,

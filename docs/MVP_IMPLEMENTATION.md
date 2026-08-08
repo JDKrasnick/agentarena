@@ -869,13 +869,14 @@ in stable releases.
 1. Load CLI flags and optional YAML, then validate the merged configuration.
 2. Resolve referenced official issues, PRs, local specifications, repository
    instructions, and public contracts into immutable source snapshots.
-3. Derive explicit acceptance criteria, build `task-contract.json`, and require
+3. Preserve only explicitly supplied acceptance criteria and require
    user-provided task text or `--spec` when an authoritative reference cannot be
    retrieved.
 4. Resolve `baseCommit`, inspect configured checks and services, and discover
    their required and optional capabilities.
-5. Render the consolidated permission plan and resolve all `auto`, `confirm`,
-   `deny`, and hard-deny decisions.
+5. Render the consolidated permission plan; resolve all `auto`, `confirm`,
+   `deny`, and hard-deny decisions; and freeze the task, sources, base commit,
+   topology, commands, budgets, and permission decisions in `run-spec.json`.
 6. Authenticate and provision approved required capabilities with run-scoped
    leases; block or record an explicit reduced validation contract for denials.
 7. Check selected agent adapters, attack verifier, harness maintainer, Git/Node

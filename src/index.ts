@@ -25,3 +25,4 @@ export * from "./delivery/types.js";
 export * from "./chat/contracts.js";
 export * from "./commands/apply.js";
 export * from "./task/task-contract.js";
+export * from "./task/run-spec.js";

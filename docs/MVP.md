@@ -85,13 +85,14 @@ agent-arena fight "fix the refresh-token race condition" \
 
 Agent Arena then:
 
-1. Resolves the task's official issue, PR, specification, and repository
-   documentation into an immutable task contract.
+1. Freezes the exact task, explicitly supplied acceptance criteria, referenced
+   issue/PR/specification text, repository instructions, and reproducibility
+   metadata into an immutable RunSpec.
 2. Discovers required capabilities and presents a permission and authentication
    plan for the user to approve, modify, or deny.
 3. Checks the repository, Git state, required executables, and test command.
 4. Creates an isolated Git worktree for each contestant at the same commit.
-5. Gives both agents the same task contract, repository instructions, limits,
+5. Gives both agents the same RunSpec, repository instructions, limits,
    and test command.
 6. Captures each implementation as a patch and runs the configured test command.
 7. Runs three attack–repair rounds with different investigation briefs:
@@ -106,7 +107,8 @@ Agent Arena then:
      target-specific findings.
    - Each agent receives its compact review packet in a separate focused phase
      and submits zero to three ranked failure descriptions with concrete public
-     reproduction steps and a contract citation. A neutral case judge writes
+     reproduction steps and a rationale grounded in the frozen text. Source
+     location metadata is optional. A neutral case judge writes
      and executes the regression test; `attacks: []` explicitly records that
      no reviewed hypothesis is credible.
    - The harness validates every attack and resolves damage or recoil
@@ -178,7 +180,7 @@ symmetrically.
 
 | Stage | Investigation brief | Typical evidence |
 | --- | --- | --- |
-| Implementation | Build the smallest complete patch from the immutable task contract. Reproduce the reported behavior before changing code when practical. | Required repository command and focused implementation tests. |
+| Implementation | Build the smallest complete patch from the immutable RunSpec. Reproduce the reported behavior before changing code when practical. | Required repository command and focused implementation tests. |
 | Round 1 — contract and local correctness | Trace every acceptance criterion through the changed code. Look for wrong results, missing behavior, regressions, error handling, and input or boundary mistakes. | Examples, table tests, boundary tests, negative cases, and API assertions. |
 | Round 2 — systematic exploration | Look beyond obvious examples: state transitions, ordering, persistence, serialization, mutation survivors, generated inputs, concurrency schedules, cancellation, resource cleanup, and patch interactions. | Property-based tests, fuzz or generated cases, mutation-guided tests, schedule tests, static-analysis findings with executable reproducers, and state-machine tests. |
 | Round 3 — integration, resilience, and security | Exercise the patch across its real component boundaries with approved test dependencies. Vary configuration and dependency behavior; test authentication and authorization, retries, idempotency, timeouts, partial failure, recovery, and bounded load. | Ephemeral-service integration tests, protocol assertions, fault injection, security checks, recovery invariants, leak checks, and small deterministic stress tests. |
@@ -310,43 +312,42 @@ unscored report finding.
 - Elo ratings, persistent leaderboards, GIFs, and hosted or interactive replay
   applications beyond the self-contained HTML dossier.
 - A verifier-agent debate. Attack validity is decided by deterministic execution;
-  the verifier only checks the cited oracle, relevance, root-defect identity, and
+  the verifier only checks frozen-text support, relevance, root-defect identity, and
   severity against published rules.
 
 ## Product rules
 
-### Authoritative task contract
+### Immutable run specification
 
-Before implementation begins, the harness builds and snapshots a task contract.
-It should resolve, in priority order:
+Before implementation begins, the harness builds one immutable `RunSpec`. It
+preserves the user's exact task and only acceptance criteria supplied explicitly
+by the user. Referenced issues, pull requests, repository specifications,
+instruction files, comments, and public contracts are frozen as unclassified
+source text; checklist-looking prose is not promoted into requirements and
+sources have no precedence.
 
-1. The user's exact task and explicit acceptance criteria.
-2. An official referenced issue or pull request, including its description,
-   acceptance checklist, and maintainer clarifications.
-3. Repository specifications, documentation, instruction files, and existing
-   tests.
-4. Applicable public API, protocol, or standards contracts.
-5. Clearly stated domain invariants.
+Every source receives a stable ID, origin, retrieval time, content hash, local
+snapshot, and structured GitHub provenance when applicable. The RunSpec also
+freezes the base commit, battle topology, commands, budgets, permission
+decisions, and a deterministic hash over the complete specification except the
+hash field itself. Contestants, repairs, case generation, quality checks, and
+the attack verifier receive that same parsed value and do not rely on live
+content that could change during the fight.
 
-Every source receives a stable ID, origin, retrieval time, content hash, and
-local snapshot. Both contestants, every repair invocation, and the attack
-verifier receive the same contract. They must not rely on live source content
-that could change during the fight.
-
-An official PR may contain a reference implementation. Its requirements and
-maintainer statements can enter the shared contract, but its code diff should
-not be shown to contestants unless the user explicitly requests that. A
-judge-only reference test or known-good output may be used as an oracle when its
-existence and provenance are recorded in the final report.
+A referenced PR may contain a reference implementation. Its text and maintainer
+comments can be frozen as sources, but its code diff should not be shown to
+contestants unless the user explicitly requests that. Reference tests and
+known-good outputs remain separate harness evidence with recorded provenance;
+they are not hidden RunSpec sources.
 
 If an issue or PR cannot be fetched, preflight must not silently invent its
 contents. The user must provide a local specification with `--spec`, supply the
-task text directly, or proceed with a report warning that the task contract is
+task text directly, or proceed with a report warning that the RunSpec sources are
 incomplete.
 
 ### Fair starting conditions
 
-Both agents start from the exact same commit and receive the same task contract,
+Both agents start from the exact same commit and receive the same RunSpec,
 test command, repository instructions, time limit, and available context. They
 cannot read the opponent worktree during implementation.
 
@@ -420,7 +421,7 @@ Capability discovery follows a least-complexity ladder:
 4. Use an explicitly approved remote test service only when local options cannot
    exercise the required contract.
 
-The harness escalates only when the simpler level cannot test a cited invariant,
+The harness escalates only when the simpler level cannot test a stated invariant,
 records the reason, and applies the same level to both patches. Agent Arena does
 not generate an arbitrary container topology or use a production integration in
 the MVP.
@@ -429,7 +430,8 @@ the MVP.
 
 An attack only affects the result when the harness can execute it. In the MVP,
 an attack is a patch containing test or fixture changes, a claim, and an
-expected-behavior oracle citing the task contract. A critique without runnable
+expected behavior with a rationale grounded in the frozen RunSpec text. Source
+ID and location fields are optional compatibility metadata. A critique without runnable
 evidence is recorded in the report but deals no damage to the target and causes
 recoil to its author if it was submitted as an attack.
 
@@ -471,13 +473,13 @@ An attack lands only when:
   targeted opponent's current implementation.
 - It does not modify production code.
 - It proves a new root defect that has not already dealt damage.
-- Its expected output or invariant is supported by a cited task-contract source.
+- Its expected output or invariant is clearly supported by the frozen task or source text.
 
 When the target-relative overlay also applies to the starting commit, the
 baseline result is recorded but is not itself an acceptance gate: a useful
 regression test will often fail there because it reproduces the bug in the
 user's task. These checks still do not prove that a test is
-semantically correct. The attack verifier must confirm the cited oracle before
+semantically correct. The attack verifier must confirm textual support before
 damage is applied. Unsupported or genuinely ambiguous expected behavior is
 `unproven`, misses, and deals recoil. The report must label landed attacks as
 additional evidence, not ground truth.
@@ -535,7 +537,7 @@ An evidence revision may change only:
 - Logging, tracing, probes, and other observability.
 - The focused command needed to execute the same test.
 
-It may not change the claim, expected behavior, cited oracle, target, rank, or
+It may not change the claim, expected behavior, support rationale, target, rank, or
 root defect, and it may not introduce a different attack. The revision does not
 consume another attack slot and causes no immediate recoil.
 
@@ -737,7 +739,6 @@ permissions:
     - production_deploy
 sources:
   - github_issue: 241
-    primary: true
   # - github_pr: 87
   - spec: docs/session-refresh.md
 limits:
@@ -801,7 +802,8 @@ containing:
   final test matrix.
 - `BATTLE.html`: responsive, clickable dossier generated from the same run data.
 - `BATTLE.svg`: deterministic share image with the result and round digest.
-- `task-contract.json`: snapshotted authoritative sources and acceptance criteria.
+- `run-spec.json`: exact task text, explicit acceptance criteria, frozen sources,
+  base commit, topology, commands, budgets, permissions, and deterministic hash.
 - `permissions.json`: requested scopes, user decisions, leases, omitted checks,
   and redacted provisioning results.
 - `result.json`: machine-readable rounds, health ledger, attacks, checks, cost,
@@ -901,7 +903,7 @@ The final structure combines methods that expose different classes of defect:
 The cross-reference is intentionally many-to-many: no single technique covers
 the whole bug taxonomy. The arena uses agent creativity to form hypotheses,
 specialized methods to expose candidates, deterministic execution to reproduce
-behavior, and the official task contract to decide what output is correct.
+behavior, and the frozen RunSpec text to decide what output is supported.
 
 ## Definition of done
 
