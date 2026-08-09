@@ -35,6 +35,18 @@ export type ContestantConfig = z.infer<typeof ContestantConfigSchema>;
 export const SeveritySchema = z.enum(["critical", "high", "medium", "low"]);
 export type Severity = z.infer<typeof SeveritySchema>;
 
+/** Health and score values are persisted in exact half-point increments. */
+export const HealthPointSchema = z.number().min(0).max(100).multipleOf(0.5);
+export const DamageSchema = z.union([
+  z.literal(50),
+  z.literal(30),
+  z.literal(25),
+  z.literal(15),
+  z.literal(7.5),
+  z.literal(5),
+  z.literal(2.5),
+]);
+
 export const BugCategorySchema = z.enum([
   "contract_logic",
   "inputs_errors",
@@ -527,6 +539,8 @@ export const AttackStatusSchema = z.enum([
   "provisional_infrastructure",
   "infrastructure_error",
   "execution_inconclusive",
+  "judge_rejected",
+  "judge_unable",
 ]);
 export type AttackStatus = z.infer<typeof AttackStatusSchema>;
 
@@ -549,10 +563,11 @@ export const AttackSchema = z.object({
   proposedConfidence: z.number().min(0).max(100).optional(),
   rootDefectId: z.string().optional(),
   severity: SeveritySchema.optional(),
-  damage: z
-    .union([z.literal(50), z.literal(30), z.literal(15), z.literal(5)])
-    .optional(),
+  damage: DamageSchema.optional(),
   damageActive: z.boolean().optional(),
+  evidenceProvenance: z
+    .enum(["mechanical", "judge_confirmed", "judge_partial"])
+    .optional(),
   severityRationale: z.string().optional(),
   outcomeReason: z.string().optional(),
   infrastructureReview: z.enum(["accept", "challenge"]).optional(),
@@ -566,23 +581,18 @@ export const HealthEventSchema = z.object({
   attackId: z.string().optional(),
   round: RoundIdSchema,
   type: z.enum(["target_damage", "recoil", "heal", "elimination"]),
-  amount: z.number().int(),
+  amount: z.number().multipleOf(0.5),
   reason: z.string(),
 });
 export type HealthEvent = z.infer<typeof HealthEventSchema>;
 
 export const HealthLedgerSchema = z.object({
-  permanentRecoil: z.number().int().nonnegative(),
+  permanentRecoil: HealthPointSchema,
   activeDefects: z.array(
     z.object({
       rootDefectId: z.string(),
       attackId: z.string(),
-      damage: z.union([
-        z.literal(50),
-        z.literal(30),
-        z.literal(15),
-        z.literal(5),
-      ]),
+      damage: DamageSchema,
     }),
   ),
   eliminatedByRequiredCheck: z.boolean(),
@@ -605,12 +615,13 @@ export type ReplacementCredit = z.infer<typeof ReplacementCreditSchema>;
 
 export const ContestantRoundResultSchema = z.object({
   round: RoundIdSchema,
-  startingHealth: z.number().int(),
+  startingHealth: HealthPointSchema,
   submittedAttackIds: z.array(z.string()),
-  postAttackHealth: z.number().int(),
+  postAttackHealth: HealthPointSchema,
   postAttackStatus: z.enum(["active", "downed"]),
   repair: AgentInvocationSchema.optional(),
-  endingHealth: z.number().int(),
+  repairAttempts: z.array(AgentInvocationSchema).min(1).max(2).optional(),
+  endingHealth: HealthPointSchema,
   endingStatus: z.enum(["active", "eliminated"]),
 });
 export type ContestantRoundResult = z.infer<typeof ContestantRoundResultSchema>;
@@ -622,7 +633,7 @@ export const ContestantResultSchema = z.object({
   role: ContestantRoleSchema,
   status: z.enum(["pending", "survived", "eliminated", "failed"]),
   initialHealth: z.literal(100),
-  finalHealth: z.number().int().min(0).max(100),
+  finalHealth: HealthPointSchema,
   replacementCredits: z.array(ReplacementCreditSchema),
   healthLedger: HealthLedgerSchema,
   healthEvents: z.array(HealthEventSchema),
@@ -863,12 +874,12 @@ export type MarginClass = z.infer<typeof MarginClassSchema>;
 
 export const ArenaContestantOutcomeSchema = z.object({
   contestantId: ContestantIdSchema,
-  initialHealth: z.number().int().min(0).max(100),
-  finalHealth: z.number().int().min(0).max(100),
-  grossDamageReceived: z.number().int().nonnegative(),
-  grossHealing: z.number().int().nonnegative(),
-  activeDefectDamage: z.number().int().nonnegative(),
-  permanentRecoil: z.number().int().nonnegative(),
+  initialHealth: HealthPointSchema,
+  finalHealth: HealthPointSchema,
+  grossDamageReceived: HealthPointSchema,
+  grossHealing: HealthPointSchema,
+  activeDefectDamage: HealthPointSchema,
+  permanentRecoil: HealthPointSchema,
   eliminatedByRequiredCheck: z.boolean(),
 });
 
@@ -878,7 +889,7 @@ export const ArenaOutcomeSchema = z.object({
     ContestantIdSchema,
     ArenaContestantOutcomeSchema,
   ),
-  marginHp: z.number().int().nonnegative(),
+  marginHp: HealthPointSchema,
   marginClass: MarginClassSchema,
   decidingFactors: z.array(
     z.enum(["unresolved_defects", "recoil", "elimination", "tie_breaker"]),
@@ -961,7 +972,7 @@ export const PatchRecommendationSchema = z.object({
     z.object({
       contestantId: ContestantIdSchema,
       eligible: z.boolean(),
-      activeDefectDamage: z.number().int().nonnegative(),
+      activeDefectDamage: HealthPointSchema,
       requiredValidationPassed: z.boolean(),
       finalApplicabilityPassed: z.boolean(),
     }),
@@ -993,6 +1004,94 @@ export const ReviewPromptSchema = z.object({
   ),
 });
 export type ReviewPrompt = z.infer<typeof ReviewPromptSchema>;
+
+export const CoverageStageNameSchema = z.enum([
+  "review",
+  "focused_description",
+  "case_construction",
+  "execution",
+  "semantic_adjudication",
+  "repair",
+]);
+export type CoverageStageName = z.infer<typeof CoverageStageNameSchema>;
+
+export const CoverageAttemptSchema = z.object({
+  attempt: z.union([z.literal(1), z.literal(2)]),
+  state: z.enum(["succeeded", "valid_empty", "failed", "not_applicable"]),
+  reasonCode: z.string().min(1).optional(),
+  evidencePaths: z.array(z.string()),
+});
+export type CoverageAttempt = z.infer<typeof CoverageAttemptSchema>;
+
+export const CoverageStageAssessmentSchema = z.object({
+  stage: CoverageStageNameSchema,
+  finalState: z.enum(["completed", "failed", "not_applicable"]),
+  attempts: z.array(CoverageAttemptSchema).min(1).max(2),
+});
+
+export const CoverageLaneAssessmentSchema = z.object({
+  id: z.string().min(1),
+  round: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  attacker: ContestantIdSchema,
+  target: ContestantIdSchema,
+  required: z.literal(true),
+  finalState: z.enum(["completed", "degraded", "unresolved"]),
+  evidenceBasis: z.enum([
+    "mechanical",
+    "judge_confirmed",
+    "judge_partial",
+    "judge_rejected",
+    "explicit_empty",
+    "none",
+  ]),
+  reasonCodes: z.array(z.string()),
+  stages: z.array(CoverageStageAssessmentSchema).length(6),
+});
+export type CoverageLaneAssessment = z.infer<
+  typeof CoverageLaneAssessmentSchema
+>;
+
+export const CoverageAssessmentSchema = z.object({
+  version: z.literal(1),
+  runId: z.string().min(1),
+  mode: BattleModeSchema,
+  confidence: z.enum(["full_confidence", "reduced_confidence", "provisional"]),
+  requiredLanes: z.array(CoverageLaneAssessmentSchema),
+  counts: z.object({
+    required: z.number().int().nonnegative(),
+    completed: z.number().int().nonnegative(),
+    degraded: z.number().int().nonnegative(),
+    unresolved: z.number().int().nonnegative(),
+  }),
+  evidenceCounts: z.object({
+    mechanical: z.number().int().nonnegative(),
+    judgeConfirmed: z.number().int().nonnegative(),
+    judgePartial: z.number().int().nonnegative(),
+    judgeRejected: z.number().int().nonnegative(),
+    explicitEmpty: z.number().int().nonnegative(),
+  }),
+  reasonCodes: z.array(z.string()),
+  retryHistory: z.array(
+    z.object({
+      laneId: z.string().min(1),
+      stage: CoverageStageNameSchema,
+      result: z.enum(["succeeded", "failed"]),
+      reasonCode: z.string().min(1).optional(),
+    }),
+  ),
+  assessmentDigest: z.string().length(64),
+});
+export type CoverageAssessment = z.infer<typeof CoverageAssessmentSchema>;
+
+export const CoverageDecisionSchema = z.object({
+  version: z.literal(1),
+  runId: z.string().min(1),
+  assessmentDigest: z.string().length(64),
+  decision: z.enum(["accept-reduced", "inconclusive"]),
+  decidedAt: z.string().datetime(),
+  decisionDigest: z.string().length(64),
+});
+export type CoverageDecision = z.infer<typeof CoverageDecisionSchema>;
 
 export const DeliveryTargetSchema = z.object({
   kind: z.enum([
@@ -1034,6 +1133,8 @@ const RunStateCoreSchema = z.object({
   warnings: z.array(z.string()),
   reconciliationQueue: z.array(ReconciliationCandidateSchema).default([]),
   submissionArtifacts: z.array(SubmissionArtifactRecordSchema).default([]),
+  coverageAssessment: CoverageAssessmentSchema.optional(),
+  coverageDecision: CoverageDecisionSchema.optional(),
 });
 
 export const RunStateV3Schema = RunStateCoreSchema.extend({
@@ -1134,7 +1235,7 @@ const LegacyPatchRecommendationSchema = PatchRecommendationSchema.omit({
     z.object({
       contestantId: AgentIdSchema,
       eligible: z.boolean(),
-      activeDefectDamage: z.number().int().nonnegative(),
+      activeDefectDamage: HealthPointSchema,
       requiredValidationPassed: z.boolean(),
       finalApplicabilityPassed: z.boolean(),
     }),

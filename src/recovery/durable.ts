@@ -122,6 +122,7 @@ export async function writeFinalizationRecord(options: {
       patchQualityVerdict: options.state.patchQualityVerdict,
       patchRecommendation: options.state.patchRecommendation,
       reviewPrompt: options.state.reviewPrompt,
+      coverageAssessment: options.state.coverageAssessment,
       contestants: Object.fromEntries(
         (["a", "b"] as const).map((contestantId) => {
           const contestant = options.state.contestants[contestantId];
@@ -392,6 +393,10 @@ export async function reconstructRunState(options: {
     state.arenaOutcome = options.summary.outcome as never;
   if (options.summary.recommendation)
     state.patchRecommendation = options.summary.recommendation as never;
+  if (options.summary.coverageAssessment)
+    state.coverageAssessment = options.summary.coverageAssessment as never;
+  if (options.summary.coverageDecision)
+    state.coverageDecision = options.summary.coverageDecision as never;
   for (const compact of options.summary.contestants) {
     const contestant = state.contestants[compact.id];
     if (!contestant) continue;
@@ -418,6 +423,7 @@ export async function reconstructRunState(options: {
       patchQualityVerdict?: RunState["patchQualityVerdict"];
       patchRecommendation?: RunState["patchRecommendation"];
       reviewPrompt?: RunState["reviewPrompt"];
+      coverageAssessment?: RunState["coverageAssessment"];
       contestants?: Record<
         "a" | "b",
         {
@@ -438,6 +444,8 @@ export async function reconstructRunState(options: {
     if (projection.patchRecommendation)
       state.patchRecommendation = projection.patchRecommendation;
     if (projection.reviewPrompt) state.reviewPrompt = projection.reviewPrompt;
+    if (projection.coverageAssessment)
+      state.coverageAssessment = projection.coverageAssessment;
     for (const contestantId of ["a", "b"] as const) {
       const compact = projection.contestants?.[contestantId];
       const contestant = state.contestants[contestantId];
@@ -553,6 +561,12 @@ export async function buildRunSummary(options: {
       : {}),
     ...(options.state.patchRecommendation
       ? { recommendation: options.state.patchRecommendation }
+      : {}),
+    ...(options.state.coverageAssessment
+      ? { coverageAssessment: options.state.coverageAssessment }
+      : {}),
+    ...(options.state.coverageDecision
+      ? { coverageDecision: options.state.coverageDecision }
       : {}),
     warnings: options.state.warnings,
     artifacts: options.state.artifacts,

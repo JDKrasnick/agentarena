@@ -150,6 +150,10 @@ import {
 } from "../recovery/manifest.js";
 import { appendRecoveryEvent } from "../recovery/events.js";
 import { readEnvelopeChain } from "../recovery/durable.js";
+import {
+  assessBattleCoverage,
+  assertTargetedRetryAllowed,
+} from "../confidence/assessment.js";
 
 export interface ArenaDependencies {
   adapters: Partial<Record<AgentId, AgentAdapter>>;
@@ -1635,11 +1639,13 @@ export class RoundEngine {
         status:
           attack.status === "landed"
             ? ("landed" as const)
-            : attack.status === "capability_denied" ||
-                attack.status === "infrastructure_error" ||
-                attack.status === "execution_inconclusive"
-              ? attack.status
-              : ("missed" as const),
+            : attack.status === "judge_unable"
+              ? ("execution_inconclusive" as const)
+              : attack.status === "capability_denied" ||
+                  attack.status === "infrastructure_error" ||
+                  attack.status === "execution_inconclusive"
+                ? attack.status
+                : ("missed" as const),
         ...(attack.rootDefectId ? { defectId: attack.rootDefectId } : {}),
         artifactIds: artifactIdFor(attack.patchPath),
       })),
@@ -2198,19 +2204,77 @@ export class RoundEngine {
           `prompts/round-${String(round)}-review-${reviewer}.md`,
           prompt,
         );
-        const invocation = await this.adapterFor(context, reviewer).review({
-          worktree,
-          contestantId: reviewer,
-          prompt,
-          promptPath,
-          transcriptPrefix: context.store.resolve(
-            `logs/round-${String(round)}-review-${reviewer}`,
-          ),
-          timeoutMs: context.config.limits.reviewMs,
-          signal: context.controller.signal,
-          round,
-          opponent: target,
-        });
+        let invocation!: AgentInvocation;
+        for (const attemptNumber of [1, 2] as const) {
+          const candidate = await this.adapterFor(context, reviewer).review({
+            worktree,
+            contestantId: reviewer,
+            prompt,
+            promptPath,
+            transcriptPrefix: context.store.resolve(
+              `logs/round-${String(round)}-review-${reviewer}-attempt-${String(attemptNumber)}`,
+            ),
+            timeoutMs: context.config.limits.reviewMs,
+            signal: context.controller.signal,
+            round,
+            opponent: target,
+          });
+          invocation = candidate;
+          let usableSubmission = false;
+          if (candidate.status === "succeeded") {
+            try {
+              const raw = await readFile(
+                path.join(worktree, ".agent-arena-submission.json"),
+                "utf8",
+              );
+              usableSubmission =
+                parseFaultIsolatedSubmission("review", raw).outcome !==
+                "invalid";
+            } catch {
+              usableSubmission = false;
+            }
+          }
+          if (usableSubmission || attemptNumber === 2) break;
+
+          let failedCapture:
+            | {
+                parsed: ParsedSubmission<unknown>;
+                rawPath: string;
+                parsedPath: string;
+              }
+            | undefined;
+          try {
+            failedCapture = await this.persistProviderSubmission(context, {
+              worktree,
+              sourceName: ".agent-arena-submission.json",
+              round,
+              phase: "review",
+              actor: `${reviewer}-attempt-1`,
+              kind: "review",
+            });
+            candidate.submissionPath = failedCapture.parsedPath;
+          } catch {
+            // Missing output is represented by the invocation record below.
+          }
+          context.state.reviewInvocations.push({
+            round,
+            reviewer,
+            target,
+            invocation: candidate,
+            submissionStatus: failedCapture ? "invalid_submission" : "not_run",
+            findingCount: 0,
+            ...(failedCapture
+              ? {
+                  parseOutcome: failedCapture.parsed.outcome,
+                  rawArtifactPath: failedCapture.rawPath,
+                  parsedArtifactPath: failedCapture.parsedPath,
+                }
+              : {}),
+            detail: `Review generation ${candidate.status}; targeted retry followed`,
+          });
+          await removeSubmission(worktree);
+          assertTargetedRetryAllowed(attemptNumber);
+        }
         invocation.contestantId = reviewer;
         invocation.role = contestant.role;
         if (invocation.status !== "succeeded") {
@@ -2376,6 +2440,47 @@ export class RoundEngine {
           throw error;
         }
       },
+      ...(verifier.adjudicate
+        ? {
+            adjudicate: async (input) => {
+              const startedAt = this.now().toISOString();
+              const id = stableId(
+                "invocation",
+                String(round),
+                "judge-fallback",
+                String(context.roundInvocations.length),
+              );
+              try {
+                const verdict = await verifier.adjudicate!(input);
+                context.roundInvocations.push({
+                  id,
+                  kind: "verification",
+                  actor: "verifier",
+                  status: "succeeded",
+                  startedAt,
+                  finishedAt: this.now().toISOString(),
+                  artifactPaths: [input.promptPath, input.transcriptPrefix],
+                });
+                return verdict;
+              } catch (error) {
+                context.roundInvocations.push({
+                  id,
+                  kind: "verification",
+                  actor: "verifier",
+                  status: context.controller.signal.aborted
+                    ? "cancelled"
+                    : this.isInfrastructureError(error)
+                      ? "infrastructure_error"
+                      : "failed",
+                  startedAt,
+                  finishedAt: this.now().toISOString(),
+                  artifactPaths: [input.promptPath, input.transcriptPrefix],
+                });
+                throw error;
+              }
+            },
+          }
+        : {}),
     };
   }
 
@@ -2428,6 +2533,7 @@ export class RoundEngine {
     round: RoundId,
     attacker: ContestantId,
     artifactKey?: string,
+    attemptNumber: 1 | 2 = 1,
   ): Promise<
     | {
         focusedCommand: string;
@@ -2443,8 +2549,9 @@ export class RoundEngine {
       return undefined;
     }
     const worktree = await context.worktrees.create(
-      `case-judge-${String(round)}-${attacker}-${String(entry.rank)}${artifactKey ? `-${artifactKey}` : ""}`,
+      `case-judge-${String(round)}-${attacker}-${String(entry.rank)}${artifactKey ? `-${artifactKey}` : ""}-attempt-${String(attemptNumber)}`,
     );
+    let shouldRetry: boolean;
     try {
       const snapshot = await context.worktrees.snapshot(worktree);
       const prompt = composeNeutralCasePrompt({
@@ -2454,7 +2561,7 @@ export class RoundEngine {
         outputPath: path.join(worktree, ".agent-arena-cases.json"),
       });
       const transcriptPrefix = context.store.resolve(
-        `logs/case-judge-${String(round)}-${attacker}-${String(entry.rank)}${artifactKey ? `-${artifactKey}` : ""}`,
+        `logs/case-judge-${String(round)}-${attacker}-${String(entry.rank)}${artifactKey ? `-${artifactKey}` : ""}-attempt-${String(attemptNumber)}`,
       );
       const caseArtifactPaths = [transcriptPrefix];
       const submission = await this.recordCaseGeneration(
@@ -2475,7 +2582,7 @@ export class RoundEngine {
         submission,
         round,
         phase: "case-generation",
-        actor: `${attacker}-rank-${String(entry.rank)}${artifactKey ? `-${artifactKey}` : ""}`,
+        actor: `${attacker}-rank-${String(entry.rank)}${artifactKey ? `-${artifactKey}` : ""}-attempt-${String(attemptNumber)}`,
         kind: "case",
       });
       caseArtifactPaths.push(captured.rawPath, captured.parsedPath);
@@ -2490,7 +2597,7 @@ export class RoundEngine {
         this.progress(warning);
       }
       const proposal = (captured.parsed.value as CaseSubmission).cases[0];
-      if (!proposal) return undefined;
+      if (!proposal) throw new Error("Neutral case submission was not usable");
       assertDirectCapabilitiesAllowed(
         context.permissions,
         entry.requiredCapabilities,
@@ -2519,10 +2626,22 @@ export class RoundEngine {
       context.state.warnings.push(
         `Neutral case judge could not verify ${attacker}'s rank ${String(entry.rank)} description: ${error instanceof Error ? error.message : String(error)}`,
       );
-      return undefined;
+      shouldRetry = attemptNumber === 1;
     } finally {
       await context.worktrees.remove(worktree);
     }
+    if (shouldRetry) {
+      assertTargetedRetryAllowed(attemptNumber);
+      return this.buildNeutralCase(
+        context,
+        entry,
+        round,
+        attacker,
+        artifactKey,
+        2,
+      );
+    }
+    return undefined;
   }
 
   private async collectReconciledAttacks(
@@ -3057,19 +3176,80 @@ export class RoundEngine {
           `prompts/round-${String(round)}-${agent}.md`,
           prompt,
         );
-        const invocation = await this.adapterFor(context, agent).attack({
-          worktree,
-          contestantId: agent,
-          prompt,
-          promptPath,
-          transcriptPrefix: context.store.resolve(
-            `logs/round-${String(round)}-attack-${agent}`,
-          ),
-          timeoutMs: context.config.limits.attackMs,
-          signal: context.controller.signal,
-          round,
-          opponent: target,
-        });
+        let invocation!: AgentInvocation;
+        for (const attemptNumber of [1, 2] as const) {
+          const candidate = await this.adapterFor(context, agent).attack({
+            worktree,
+            contestantId: agent,
+            prompt,
+            promptPath,
+            transcriptPrefix: context.store.resolve(
+              `logs/round-${String(round)}-attack-${agent}-attempt-${String(attemptNumber)}`,
+            ),
+            timeoutMs: context.config.limits.attackMs,
+            signal: context.controller.signal,
+            round,
+            opponent: target,
+          });
+          invocation = candidate;
+          let usableSubmission = false;
+          if (
+            candidate.status === "succeeded" ||
+            candidate.status === "timed_out"
+          ) {
+            try {
+              const raw = await readFile(
+                path.join(worktree, ".agent-arena-submission.json"),
+                "utf8",
+              );
+              usableSubmission =
+                parseFaultIsolatedSubmission("attack", raw).outcome !==
+                "invalid";
+            } catch {
+              usableSubmission = false;
+            }
+          }
+          if (usableSubmission || attemptNumber === 2) break;
+
+          let failedCapture:
+            | {
+                parsed: ParsedSubmission<unknown>;
+                rawPath: string;
+                parsedPath: string;
+              }
+            | undefined;
+          try {
+            failedCapture = await this.persistProviderSubmission(context, {
+              worktree,
+              sourceName: ".agent-arena-submission.json",
+              round,
+              phase: "attack",
+              actor: `${agent}-attempt-1`,
+              kind: "attack",
+            });
+            candidate.submissionPath = failedCapture.parsedPath;
+          } catch {
+            // Missing output is represented by the invocation record below.
+          }
+          context.state.attackInvocations.push({
+            round,
+            attacker: agent,
+            target,
+            invocation: candidate,
+            submissionStatus: failedCapture ? "invalid_submission" : "not_run",
+            attackCount: 0,
+            ...(failedCapture
+              ? {
+                  parseOutcome: failedCapture.parsed.outcome,
+                  rawArtifactPath: failedCapture.rawPath,
+                  parsedArtifactPath: failedCapture.parsedPath,
+                }
+              : {}),
+            detail: `Attack generation ${candidate.status}; targeted retry followed`,
+          });
+          await removeSubmission(worktree);
+          assertTargetedRetryAllowed(attemptNumber);
+        }
         // A timed-out model can still have written a complete, schema-valid
         // submission before its CLI wrapper finishes shutting down. Preserve
         // that work; failed/infrastructure invocations remain ineligible.
@@ -3506,6 +3686,7 @@ export class RoundEngine {
           "self_defeating",
           "unproven",
           "blocked",
+          "judge_rejected",
         ].includes(attack.status) &&
         attack.rank
       ) {
@@ -3522,6 +3703,7 @@ export class RoundEngine {
 
     await this.transition(context, "repair", round);
     const repairs = new Map<ContestantId, AgentInvocation>();
+    const repairAttempts = new Map<ContestantId, AgentInvocation[]>();
     for (const agent of context.config.agents) {
       const contestant = getContestant(context.state, agent);
       const currentPatch = contestant.currentPatchPath;
@@ -3568,22 +3750,35 @@ export class RoundEngine {
           `prompts/round-${String(round)}-repair-${agent}.md`,
           prompt,
         );
-        const invocation = await this.adapterFor(context, agent).repair({
-          worktree,
-          contestantId: agent,
-          prompt,
-          promptPath,
-          transcriptPrefix: context.store.resolve(
-            `logs/round-${String(round)}-repair-${agent}`,
-          ),
-          timeoutMs: context.config.limits.repairMs,
-          signal: context.controller.signal,
-          round,
-          activeAttacks,
-        });
+        const attempts: AgentInvocation[] = [];
+        let invocation: AgentInvocation;
+        for (const attemptNumber of [1, 2] as const) {
+          invocation = await this.adapterFor(context, agent).repair({
+            worktree,
+            contestantId: agent,
+            prompt,
+            promptPath,
+            transcriptPrefix: context.store.resolve(
+              `logs/round-${String(round)}-repair-${agent}-attempt-${String(attemptNumber)}`,
+            ),
+            timeoutMs: context.config.limits.repairMs,
+            signal: context.controller.signal,
+            round,
+            activeAttacks,
+          });
+          attempts.push(invocation);
+          if (invocation.status === "succeeded") break;
+          if (attemptNumber === 1) assertTargetedRetryAllowed(attemptNumber);
+        }
+        invocation = attempts.at(-1)!;
         invocation.contestantId = agent;
         invocation.role = contestant.role;
+        for (const attempt of attempts) {
+          attempt.contestantId = agent;
+          attempt.role = contestant.role;
+        }
         repairs.set(agent, invocation);
+        repairAttempts.set(agent, attempts);
         await removeSubmission(worktree);
         const patchPath = context.store.resolve(
           `patches/${agent}-round-${String(round)}.diff`,
@@ -3746,6 +3941,9 @@ export class RoundEngine {
         endingStatus:
           contestant.status === "eliminated" ? "eliminated" : "active",
         ...(repairs.has(agent) ? { repair: repairs.get(agent) } : {}),
+        ...(repairAttempts.has(agent)
+          ? { repairAttempts: repairAttempts.get(agent) }
+          : {}),
       };
       contestant.rounds.push(roundResult);
     }
@@ -4379,6 +4577,7 @@ export class RoundEngine {
         "review-prompt.json",
         context.state.reviewPrompt,
       );
+      await this.finalizeCoverage(context);
       await this.persist(context);
       return;
     }
@@ -4534,6 +4733,22 @@ export class RoundEngine {
       "review-prompt.json",
       context.state.reviewPrompt,
     );
+    await this.finalizeCoverage(context);
     await this.persist(context);
+  }
+
+  private async finalizeCoverage(context: ArenaContext): Promise<void> {
+    const assessment = assessBattleCoverage(context.state, context.permissions);
+    context.state.coverageAssessment = assessment;
+    context.state.artifacts.coverageAssessment =
+      await context.store.writeImmutableJson(
+        "coverage/assessment.json",
+        assessment,
+      );
+    if (assessment.confidence !== "provisional") return;
+    if (context.state.arenaOutcome)
+      delete context.state.arenaOutcome.championId;
+    delete context.state.patchRecommendation;
+    delete context.state.reviewPrompt;
   }
 }

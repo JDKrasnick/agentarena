@@ -6,6 +6,7 @@ import { runAcceptCommand } from "./commands/accept.js";
 import { runDeliverCommand } from "./commands/deliver.js";
 import { runFight, runResume } from "./commands/fight.js";
 import { runInspectCommand, runReviewCommand } from "./commands/review.js";
+import { resolveCoverage } from "./commands/resolve-coverage.js";
 import { ContestantIdSchema } from "./core/types.js";
 import { DeliveryActionSchema } from "./delivery/types.js";
 
@@ -13,6 +14,44 @@ const program = new Command()
   .name("agent-arena")
   .description("Make your coding agents fight for the merge.")
   .version("0.1.0");
+
+program
+  .command("resolve-coverage")
+  .description("Finalize a provisional battle's coverage outcome")
+  .argument("<run-id>", "Run ID under .agent-arena/runs")
+  .requiredOption(
+    "--assessment-digest <digest>",
+    "Exact coverage assessment SHA-256",
+  )
+  .addOption(
+    new Option("--decision <decision>").choices([
+      "accept-reduced",
+      "inconclusive",
+    ]),
+  )
+  .option("--json", "Emit the immutable decision as JSON")
+  .action(
+    async (
+      runId: string,
+      options: {
+        assessmentDigest: string;
+        decision: "accept-reduced" | "inconclusive";
+        json?: boolean;
+      },
+    ) => {
+      if (!options.decision) throw new Error("--decision is required");
+      const decision = await resolveCoverage({
+        runId,
+        assessmentDigest: options.assessmentDigest,
+        decision: options.decision,
+      });
+      process.stdout.write(
+        options.json
+          ? `${JSON.stringify(decision, null, 2)}\n`
+          : `Coverage resolved: ${decision.decision} (${decision.assessmentDigest})\n`,
+      );
+    },
+  );
 
 program
   .command("resume")

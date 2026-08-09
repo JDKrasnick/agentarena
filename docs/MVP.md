@@ -12,6 +12,31 @@ The MVP exists to prove one idea:
 > Does an adversarial attack-and-repair round produce a better patch than simply
 > running multiple coding agents and choosing the first patch that passes?
 
+The result is confidence-qualified. Duel and catch-up require both directions
+in all three attack rounds; siege requires attacker-to-defender in all three.
+House scouting and house attacks remain optional and do not affect confidence.
+Every required lane records review, focused description, case construction,
+execution, semantic adjudication, and repair when applicable. A schema-valid
+`attacks: []` is completed coverage with downstream stages not applicable.
+
+Each failed stage or evidence path receives one targeted retry, shared with the
+existing correction, evidence-revision, and recovery mechanisms. Mechanical
+confirmation is preferred. When that path still cannot execute, the neutral
+judge may confirm normal damage, reject the claim with ordinary rank recoil,
+decline to adjudicate with no score change, or award exact half damage only
+when the task clearly supports the expected behavior and available evidence
+points to the defect. Half damage is Critical 25, High 15, Medium 7.5, or Low
+2.5 HP; judge-adjudicated repairs heal the exact original amount.
+
+Unresolved required coverage preserves the health-ledger leader as provisional
+but publishes no champion or recommended patch. `agent-arena
+resolve-coverage` requires the current assessment digest: `accept-reduced`
+promotes the leader with reduced confidence and unlocks ordinary patch review,
+while `inconclusive` finalizes without a winner or recommendation. Legacy runs
+without an assessment are labeled legacy/unknown rather than assigned a new
+confidence claim. Required capability gaps stay visible even when the user
+accepted a reduced validation contract.
+
 This release is a dependable local demonstration of that loop. It is not a
 general-purpose agent platform.
 

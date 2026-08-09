@@ -52,7 +52,7 @@ export function renderBattleVisual(state: RunState): string {
             `<text x="76" y="${520 + index * 42}" class="body"><tspan class="${defect.active ? "fail" : "pass"}">${escapeXml(defect.active ? "UNRESOLVED" : "REPAIRED")}</tspan> · ${escapeXml(defect.representative.severity ?? "unrated")} · ${escapeXml(truncateReportText(defect.representative.claim, 88))}</text>`,
         )
         .join("\n")
-    : `<text x="76" y="520" class="body">No proven defects beyond declared validation.</text>`;
+    : `<text x="76" y="520" class="body">No landed defects recorded; this does not establish correctness.</text>`;
   const rounds = reportRounds(state)
     .slice(0, 3)
     .map((round, index) => {
@@ -70,15 +70,21 @@ export function renderBattleVisual(state: RunState): string {
     .join("\n");
   const outcome = reportOutcome(state);
   const verdict =
-    outcome.kind === "winner"
-      ? `Winner: ${contestantLabel(state.config.contestants, outcome.winner)}`
-      : outcome.kind === "draw"
-        ? "Result: DRAW"
-        : "Result: INCOMPLETE";
+    state.coverageDecision?.decision === "inconclusive"
+      ? `Inconclusive · ledger leader: ${state.ranking?.order[0] ?? "none"}`
+      : state.coverageAssessment?.confidence === "provisional" &&
+          !state.coverageDecision
+        ? `Provisional leader: ${state.ranking?.winner ?? "none"}`
+        : outcome.kind === "winner"
+          ? `${state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Winner"}: ${contestantLabel(state.config.contestants, outcome.winner)}`
+          : outcome.kind === "draw"
+            ? "Result: DRAW"
+            : "Result: INCOMPLETE";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1240" height="860" viewBox="0 0 1240 860" role="img" aria-label="Agent Arena battle result">
 <style>.title{font:700 28px ui-monospace,Menlo,monospace;fill:#f5f7fa}.label{font:700 18px ui-monospace,Menlo,monospace;fill:#9ac0ff}.hp{font:700 38px ui-monospace,Menlo,monospace;fill:#72df90}.body{font:16px ui-monospace,Menlo,monospace;fill:#d7e0ea}.pass{fill:#72df90}.fail{fill:#ff8b84}.warn{fill:#f5c979}.muted{font:15px ui-monospace,Menlo,monospace;fill:#b4c1cd}</style>
 <rect width="1240" height="860" fill="#070c12"/><text x="54" y="72" class="title">AGENT ARENA — EVIDENCE-LINKED BATTLE REPLAY</text><text x="54" y="112" class="muted">${escapeXml(verdict)} · ${escapeXml(state.ranking?.reason ?? "run incomplete")}</text>
+${state.coverageAssessment ? `<text x="54" y="138" class="muted">Coverage ${escapeXml(state.coverageAssessment.confidence)} · ${String(state.coverageAssessment.counts.completed)} completed · ${String(state.coverageAssessment.counts.degraded)} degraded · ${String(state.coverageAssessment.counts.unresolved)} unresolved / ${String(state.coverageAssessment.counts.required)}</text>` : ""}
 ${blocks}
 <text x="54" y="410" class="title">DECISIVE DEFECTS</text><rect x="54" y="438" width="1132" height="${defects.length ? 56 + Math.min(defects.length, 3) * 42 : 98}" rx="16" fill="#121b26" stroke="#294056"/>${defectLines}
 <text x="54" y="650" class="title">ROUND DIGEST</text>${rounds}

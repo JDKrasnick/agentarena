@@ -200,7 +200,7 @@ const SummaryContestantSchema = z
     provider: z.string().min(1),
     role: z.string().min(1),
     status: z.string().min(1),
-    health: z.number().int().min(0).max(100),
+    health: z.number().min(0).max(100).multipleOf(0.5),
     patchPath: z.string().min(1).optional(),
     patchSha256: Sha256Schema.optional(),
   })
@@ -236,6 +236,8 @@ export const RunSummaryV5Schema = z
     contestants: z.tuple([SummaryContestantSchema, SummaryContestantSchema]),
     outcome: JsonValueSchema.optional(),
     recommendation: JsonValueSchema.optional(),
+    coverageAssessment: JsonValueSchema.optional(),
+    coverageDecision: JsonValueSchema.optional(),
     warnings: z.array(z.string()),
     artifacts: z.record(z.string(), z.string()),
     appliedEnvelopes: z.array(AppliedEnvelopeSchema),

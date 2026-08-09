@@ -111,6 +111,25 @@ export interface AnonymizedAttackInput {
 export interface AttackVerifier {
   readonly id: AgentId;
   assess(input: AnonymizedAttackInput): Promise<AttackVerdict>;
+  /** Optional semantic fallback used only after the approved mechanical path fails. */
+  adjudicate?(input: JudgeAdjudicationInput): Promise<JudgeAttackVerdict>;
+}
+
+export interface JudgeAdjudicationInput extends Omit<
+  AnonymizedAttackInput,
+  "authorPassed" | "targetFailed"
+> {
+  mechanicalFailureReason: string;
+}
+
+export interface JudgeAttackVerdict {
+  decision: "confirmed" | "supported_untestable" | "rejected" | "unable";
+  relevant: boolean;
+  expectedBehaviorClearlySupported: boolean;
+  evidencePointsToDefect: boolean;
+  rootDefectId?: string;
+  severity?: Severity;
+  rationale: string;
 }
 
 export interface HarnessOverlayProposal {

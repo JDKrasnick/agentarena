@@ -77,6 +77,12 @@ export function reportCheckStatus(check?: CheckResult): ReportCheckStatus {
 }
 
 export function reportOutcome(state: RunState): ReportOutcome {
+  if (
+    state.coverageDecision?.decision === "inconclusive" ||
+    (state.coverageAssessment?.confidence === "provisional" &&
+      state.coverageDecision?.decision !== "accept-reduced")
+  )
+    return { kind: "incomplete" };
   if (!state.ranking) return { kind: "incomplete" };
   if (state.ranking.draw) return { kind: "draw" };
   return state.ranking.winner

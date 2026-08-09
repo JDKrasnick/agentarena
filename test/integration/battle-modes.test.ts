@@ -177,7 +177,8 @@ describe("PR battle modes", () => {
     );
     expect(challengerPrompt).not.toContain('replaceAll(" ", "-")');
     expect(outcome.state.contestants.a?.checks[0]?.id).toBe("initial-required");
-    expect(outcome.state.reviewPrompt?.choices).toHaveLength(2);
+    expect(outcome.state.coverageAssessment?.confidence).toBe("provisional");
+    expect(outcome.state.reviewPrompt).toBeUndefined();
     expect(await readFile(outcome.state.artifacts.battle!, "utf8")).toContain(
       "| bot_author | pull_request.author | codex-bot |",
     );
@@ -196,6 +197,7 @@ describe("PR battle modes", () => {
       rm(store.resolve("checkpoints"), { recursive: true, force: true }),
       rm(store.resolve("feedback"), { recursive: true, force: true }),
       rm(store.resolve("quality"), { recursive: true, force: true }),
+      rm(store.resolve("coverage"), { recursive: true, force: true }),
       rm(store.resolve("finalization.json"), { force: true }),
       rm(store.resolve("review-prompt.json"), { force: true }),
     ]);
