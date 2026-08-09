@@ -318,41 +318,35 @@ afterEach(async () => {
 });
 
 describe("escaped-descendant timeout reproduction", () => {
-  test.fails(
-    "runProcess satisfies the bounded cleanup contract (#40)",
-    async () => {
-      const result = await reproduce("process");
-      console.info(
-        "#40 runProcess reproduction",
-        JSON.stringify(result, null, 2),
-      );
+  test("runProcess satisfies the bounded cleanup contract (#40)", async () => {
+    const result = await reproduce("process");
+    console.info(
+      "#40 runProcess reproduction",
+      JSON.stringify(result, null, 2),
+    );
 
-      expect(result.watchdogFired).toBe(false);
-      expect(result.runnerReturned).toBe(true);
-      expect(result.outcome?.elapsedMs).toBeLessThanOrEqual(
-        runnerTimeoutMs + cleanupGraceMs,
-      );
-      expect(result.ownedAliveAtDeadline).toEqual([]);
-    },
-  );
+    expect(result.watchdogFired).toBe(false);
+    expect(result.runnerReturned).toBe(true);
+    expect(result.outcome?.elapsedMs).toBeLessThanOrEqual(
+      runnerTimeoutMs + cleanupGraceMs,
+    );
+    expect(result.ownedAliveAtDeadline).toEqual([]);
+  });
 
-  test.fails(
-    "runShellCommand satisfies the bounded cleanup contract (#40)",
-    async () => {
-      const result = await reproduce("shell");
-      console.info(
-        "#40 runShellCommand reproduction",
-        JSON.stringify(result, null, 2),
-      );
+  test("runShellCommand satisfies the bounded cleanup contract (#40)", async () => {
+    const result = await reproduce("shell");
+    console.info(
+      "#40 runShellCommand reproduction",
+      JSON.stringify(result, null, 2),
+    );
 
-      expect(result.watchdogFired).toBe(false);
-      expect(result.runnerReturned).toBe(true);
-      expect(result.outcome?.elapsedMs).toBeLessThanOrEqual(
-        runnerTimeoutMs + cleanupGraceMs,
-      );
-      expect(result.ownedAliveAtDeadline).toEqual([]);
-    },
-  );
+    expect(result.watchdogFired).toBe(false);
+    expect(result.runnerReturned).toBe(true);
+    expect(result.outcome?.elapsedMs).toBeLessThanOrEqual(
+      runnerTimeoutMs + cleanupGraceMs,
+    );
+    expect(result.ownedAliveAtDeadline).toEqual([]);
+  });
 
   test("cleanup never signals an unrelated sentinel", async () => {
     const directory = await mkdtemp(
