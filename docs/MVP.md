@@ -841,6 +841,11 @@ Failures should be useful and recoverable:
 - A contestant that exceeds a declared implementation or repair budget in an
   otherwise healthy environment fails that stage; a process-launch, provider,
   authentication, or network failure is infrastructure and does not cost HP.
+- Provider and shell-validation deadlines return control within the configured
+  budget plus a 1.5-second cleanup grace. The harness closes its output pipes,
+  terminates only identity-verified run-owned descendants even after session or
+  process-group changes, reaps the direct child, and records signal escalation,
+  cleanup duration, survivors, and transport or MCP failures independently.
 - If both implementations still fail required validation after round 1's repair,
   there is no winner.
 - If an attack is invalid, flaky, blocked, or self-defeating, it misses, the

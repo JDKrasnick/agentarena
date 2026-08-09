@@ -107,6 +107,40 @@ export const CommandResultSchema = z.object({
   durationMs: z.number().int().nonnegative(),
   stdoutPath: z.string(),
   stderrPath: z.string(),
+  deadline: z
+    .object({
+      expiredAt: z.string().datetime(),
+      graceMs: z.number().int().nonnegative(),
+      cleanupDurationMs: z.number().int().nonnegative(),
+      signalEscalation: z.array(
+        z.object({
+          pid: z.number().int().positive(),
+          identity: z.string().min(1),
+          signal: z.enum(["SIGTERM", "SIGKILL"]),
+          outcome: z.enum([
+            "sent",
+            "already_exited",
+            "identity_changed",
+            "error",
+          ]),
+        }),
+      ),
+      remainingDescendants: z.array(
+        z.object({
+          pid: z.number().int().positive(),
+          identity: z.string().min(1),
+        }),
+      ),
+    })
+    .optional(),
+  transportFailures: z
+    .array(
+      z.object({
+        kind: z.enum(["mcp_auth", "reconnect", "transport"]),
+        detail: z.string().min(1),
+      }),
+    )
+    .optional(),
 });
 export type CommandResult = z.infer<typeof CommandResultSchema>;
 

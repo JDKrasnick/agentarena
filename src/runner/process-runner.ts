@@ -1,7 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { execa, execaCommand } from "execa";
 import type { CommandResult, FailureClass } from "../core/types.js";
+import {
+  ProcessTreeSupervisor,
+  type ProcessCleanupResult,
+} from "./process-supervisor.js";
 
 const INHERITED_ENV = [
   "PATH",
@@ -60,116 +65,242 @@ function classifySpawnError(error: unknown): FailureClass | undefined {
     : undefined;
 }
 
-export async function runProcess(
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.stack ?? error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Unknown process error";
+  }
+}
+
+function findTransportFailures(
+  output: string,
+): NonNullable<CommandResult["transportFailures"]> {
+  const failures: NonNullable<CommandResult["transportFailures"]> = [];
+  for (const line of output.split("\n")) {
+    const detail = line.trim();
+    if (!detail) continue;
+    const kind =
+      /mcp/i.test(detail) && /(oauth|refresh|expired|auth)/i.test(detail)
+        ? "mcp_auth"
+        : /reconnect(?:ing|ed)?/i.test(detail)
+          ? "reconnect"
+          : /(transport|connection)\s+(?:error|failed|closed|lost)/i.test(
+                detail,
+              )
+            ? "transport"
+            : undefined;
+    if (
+      kind &&
+      !failures.some(
+        (failure) => failure.kind === kind && failure.detail === detail,
+      )
+    ) {
+      failures.push({ kind, detail: redact(detail).slice(0, 512) });
+    }
+    if (failures.length === 20) break;
+  }
+  return failures;
+}
+
+interface SupervisedOptions {
+  executable: string;
+  args: string[];
+  shell: boolean;
+  input?: string;
+  cwd: string;
+  env: Record<string, string>;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}
+
+interface SupervisedResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  spawnError?: unknown;
+  deadline?: NonNullable<CommandResult["deadline"]>;
+}
+
+async function supervise(
+  options: SupervisedOptions,
+): Promise<SupervisedResult> {
+  const owner = randomUUID();
+  let subprocess;
+  try {
+    const executionOptions = {
+      cwd: options.cwd,
+      env: { ...options.env, AGENT_ARENA_PROCESS_OWNER: owner },
+      reject: false as const,
+      all: false as const,
+      ...(options.input === undefined ? {} : { input: options.input }),
+      ...(options.signal === undefined ? {} : { cancelSignal: options.signal }),
+    };
+    subprocess = options.shell
+      ? execaCommand(options.executable, {
+          ...executionOptions,
+          shell: true,
+        })
+      : execa(options.executable, options.args, executionOptions);
+  } catch (spawnError) {
+    return {
+      stdout: "",
+      stderr: "",
+      exitCode: null,
+      signal: null,
+      timedOut: false,
+      spawnError,
+    };
+  }
+
+  const supervisor =
+    subprocess.pid === undefined
+      ? undefined
+      : new ProcessTreeSupervisor(subprocess.pid, owner);
+  let cleanup: Promise<ProcessCleanupResult> | undefined;
+  let expiredAt: string | undefined;
+  const beginCleanup = (): void => {
+    if (cleanup !== undefined) return;
+    subprocess.stdin?.destroy();
+    subprocess.stdout?.destroy();
+    subprocess.stderr?.destroy();
+    cleanup = supervisor
+      ? supervisor.cleanup((signal) => {
+          try {
+            subprocess.kill(signal);
+          } catch {
+            // The direct child may already have exited; execa reaps it.
+          }
+        })
+      : Promise.resolve({
+          durationMs: 0,
+          graceMs: 0,
+          signalEscalation: [],
+          remainingDescendants: [],
+        });
+  };
+  const deadlineTimer = setTimeout(() => {
+    expiredAt = new Date().toISOString();
+    beginCleanup();
+  }, options.timeoutMs);
+  const abortListener = (): void => beginCleanup();
+  if (options.signal?.aborted) beginCleanup();
+  else options.signal?.addEventListener("abort", abortListener, { once: true });
+
+  try {
+    const result = await subprocess;
+    const cleanupResult = cleanup === undefined ? undefined : await cleanup;
+    return {
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode ?? null,
+      signal: result.signal ?? null,
+      timedOut: expiredAt !== undefined,
+      ...(expiredAt !== undefined && cleanupResult !== undefined
+        ? {
+            deadline: {
+              expiredAt,
+              graceMs: cleanupResult.graceMs,
+              cleanupDurationMs: cleanupResult.durationMs,
+              signalEscalation: cleanupResult.signalEscalation,
+              remainingDescendants: cleanupResult.remainingDescendants,
+            },
+          }
+        : {}),
+    };
+  } catch (spawnError) {
+    if (cleanup !== undefined) await cleanup;
+    return {
+      stdout: "",
+      stderr: "",
+      exitCode: null,
+      signal: null,
+      timedOut: expiredAt !== undefined,
+      spawnError,
+    };
+  } finally {
+    clearTimeout(deadlineTimer);
+    options.signal?.removeEventListener("abort", abortListener);
+  }
+}
+
+async function run(
   request: ProcessRequest,
+  executable: string,
+  args: string[],
+  shell: boolean,
+  command: string,
+  timeoutFailureClass?: FailureClass,
 ): Promise<CommandResult> {
   await mkdir(path.dirname(request.logPrefix), { recursive: true });
   const started = Date.now();
-  let stdout = "";
-  let stderr: string;
-  let exitCode: number | null = null;
-  let signal: string | null = null;
-  let timedOut = false;
-  let failureClass: FailureClass | undefined;
-
-  try {
-    const result = await execa(request.executable, request.args ?? [], {
-      cwd: request.cwd,
-      env: minimalEnvironment(request.env),
-      reject: false,
-      timeout: request.timeoutMs,
-      forceKillAfterDelay: 1_000,
-      all: false,
-      ...(request.input === undefined ? {} : { input: request.input }),
-      ...(request.signal === undefined ? {} : { cancelSignal: request.signal }),
-    });
-    stdout = result.stdout;
-    stderr = result.stderr;
-    exitCode = result.exitCode ?? null;
-    signal = result.signal ?? null;
-    timedOut = result.timedOut;
-    if (result.timedOut) failureClass = "agent_submission";
-  } catch (error) {
-    stderr =
-      error instanceof Error ? (error.stack ?? error.message) : String(error);
-    failureClass = classifySpawnError(error) ?? "arena_infrastructure";
+  const result = await supervise({
+    executable,
+    args,
+    shell,
+    cwd: request.cwd,
+    env: minimalEnvironment(request.env),
+    timeoutMs: request.timeoutMs,
+    ...(request.input === undefined ? {} : { input: request.input }),
+    ...(request.signal === undefined ? {} : { signal: request.signal }),
+  });
+  const failureClass = result.spawnError
+    ? (classifySpawnError(result.spawnError) ?? "arena_infrastructure")
+    : result.timedOut
+      ? timeoutFailureClass
+      : undefined;
+  if (result.spawnError) {
+    result.stderr = describeError(result.spawnError);
   }
-
   const stdoutPath = `${request.logPrefix}.stdout.log`;
   const stderrPath = `${request.logPrefix}.stderr.log`;
   await Promise.all([
-    writeFile(stdoutPath, redact(stdout), "utf8"),
-    writeFile(stderrPath, redact(stderr), "utf8"),
+    writeFile(stdoutPath, redact(result.stdout), "utf8"),
+    writeFile(stderrPath, redact(result.stderr), "utf8"),
   ]);
+  const transportFailures = findTransportFailures(
+    `${result.stdout}\n${result.stderr}`,
+  );
   const base = {
-    command:
-      request.displayCommand ??
-      [request.executable, ...(request.args ?? [])]
-        .map((part) => JSON.stringify(part))
-        .join(" "),
+    command,
     cwd: request.cwd,
-    exitCode,
-    signal,
-    timedOut,
+    exitCode: result.exitCode,
+    signal: result.signal,
+    timedOut: result.timedOut,
     attempts: request.attempts ?? 1,
     durationMs: Date.now() - started,
     stdoutPath,
     stderrPath,
+    ...(result.deadline ? { deadline: result.deadline } : {}),
+    ...(transportFailures.length > 0 ? { transportFailures } : {}),
   };
   return failureClass ? { ...base, failureClass } : base;
 }
 
-export async function runShellCommand(
+export function runProcess(request: ProcessRequest): Promise<CommandResult> {
+  return run(
+    request,
+    request.executable,
+    request.args ?? [],
+    false,
+    request.displayCommand ??
+      [request.executable, ...(request.args ?? [])]
+        .map((part) => JSON.stringify(part))
+        .join(" "),
+    "agent_submission",
+  );
+}
+
+export function runShellCommand(
   command: string,
   options: Omit<
     ProcessRequest,
     "executable" | "args" | "input" | "displayCommand"
   >,
 ): Promise<CommandResult> {
-  const started = Date.now();
-  await mkdir(path.dirname(options.logPrefix), { recursive: true });
-  let stdout = "";
-  let stderr: string;
-  let exitCode: number | null = null;
-  let signal: string | null = null;
-  let timedOut = false;
-  let failureClass: FailureClass | undefined;
-  try {
-    const result = await execaCommand(command, {
-      cwd: options.cwd,
-      env: minimalEnvironment(options.env),
-      reject: false,
-      timeout: options.timeoutMs,
-      forceKillAfterDelay: 1_000,
-      shell: true,
-      ...(options.signal === undefined ? {} : { cancelSignal: options.signal }),
-    });
-    stdout = result.stdout;
-    stderr = result.stderr;
-    exitCode = result.exitCode ?? null;
-    signal = result.signal ?? null;
-    timedOut = result.timedOut;
-  } catch (error) {
-    stderr =
-      error instanceof Error ? (error.stack ?? error.message) : String(error);
-    failureClass = classifySpawnError(error) ?? "arena_infrastructure";
-  }
-  const stdoutPath = `${options.logPrefix}.stdout.log`;
-  const stderrPath = `${options.logPrefix}.stderr.log`;
-  await Promise.all([
-    writeFile(stdoutPath, redact(stdout), "utf8"),
-    writeFile(stderrPath, redact(stderr), "utf8"),
-  ]);
-  const base = {
-    command,
-    cwd: options.cwd,
-    exitCode,
-    signal,
-    timedOut,
-    attempts: options.attempts ?? 1,
-    durationMs: Date.now() - started,
-    stdoutPath,
-    stderrPath,
-  };
-  return failureClass ? { ...base, failureClass } : base;
+  return run({ ...options, executable: command }, command, [], true, command);
 }

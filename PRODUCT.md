@@ -483,6 +483,14 @@ FINAL_VALIDATE
 
 Agents cannot skip required stages simply because they believe their work is complete.
 
+Every provider and validation command runs under the same hard deadline
+contract. The harness tracks run-owned descendants across process-group and
+session changes, stops reading inherited output pipes at expiry, terminates and
+reaps the owned tree within a documented cleanup grace period, and verifies
+process identity before every signal. Reports record deadline expiry, signal
+escalation, cleanup duration, any surviving descendants, and detected
+transport, reconnect, or MCP authentication failures separately.
+
 When an agent needs an unavailable capability, it submits a structured request:
 
 ```json
