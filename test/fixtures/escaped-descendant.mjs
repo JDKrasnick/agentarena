@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -51,6 +51,29 @@ function record(event, details = {}) {
   );
 }
 
+function hasStartedGrandchild() {
+  try {
+    return readFileSync(statePath, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .some((line) => {
+        const entry = JSON.parse(line);
+        return entry.role === "grandchild" && entry.event === "started";
+      });
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function waitForGrandchildStart() {
+  const deadline = performance.now() + 1_000;
+  while (performance.now() < deadline) {
+    if (hasStartedGrandchild()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 function resist(signal) {
   process.on(signal, () => record("signal-resisted", { signal }));
 }
@@ -88,8 +111,12 @@ if (role === "launcher" || role === "child") {
 
   // The reproduction launcher exits before the runner's first deadline scan.
   // Its still-running, token-marked descendants are then reparented and no
-  // longer carry the runner's internal ownership environment marker.
+  // longer carry the runner's internal ownership environment marker. Keep the
+  // launcher alive until the full topology exists, then leave an additional
+  // sampling window so the supervisor observes it before ancestry disappears.
   if (role === "launcher" && escapeMode === "orphan-before-deadline") {
+    await waitForGrandchildStart();
+    await new Promise((resolve) => setTimeout(resolve, 700));
     process.exit(0);
   }
 }

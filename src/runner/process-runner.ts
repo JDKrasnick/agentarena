@@ -175,6 +175,7 @@ async function supervise(
     subprocess.pid === undefined
       ? undefined
       : new ProcessTreeSupervisor(subprocess.pid, owner);
+  supervisor?.startTracking();
   let cleanup: Promise<ProcessCleanupResult> | undefined;
   let expiredAt: string | undefined;
   const beginCleanup = (): void => {
@@ -235,6 +236,7 @@ async function supervise(
   } finally {
     clearTimeout(deadlineTimer);
     options.signal?.removeEventListener("abort", abortListener);
+    supervisor?.stopTracking();
   }
 }
 

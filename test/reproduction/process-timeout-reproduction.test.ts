@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, test } from "vitest";
+import { PROCESS_CLEANUP_GRACE_MS } from "../../src/runner/process-supervisor.js";
 
 const execFileAsync = promisify(execFile);
 const fixturePath = fileURLToPath(
@@ -15,8 +16,9 @@ const fixturePath = fileURLToPath(
 const probePath = fileURLToPath(
   new URL("../fixtures/process-timeout-probe.ts", import.meta.url),
 );
-const runnerTimeoutMs = 500;
-const cleanupGraceMs = 2_000;
+const runnerTimeoutMs = 2_000;
+const cleanupGraceMs = PROCESS_CLEANUP_GRACE_MS;
+const schedulingToleranceMs = 500;
 const outerWatchdogMs = runnerTimeoutMs + cleanupGraceMs + 2_000;
 
 interface LifecycleRecord {
@@ -35,7 +37,15 @@ interface LifecycleRecord {
 
 interface ProbeOutcome {
   elapsedMs: number;
-  result: { timedOut: boolean; durationMs: number };
+  result: {
+    timedOut: boolean;
+    durationMs: number;
+    deadline?: {
+      graceMs: number;
+      cleanupComplete: boolean;
+      remainingDescendants: Array<{ pid: number; identity: string }>;
+    };
+  };
   logDirectory: string;
 }
 
@@ -318,37 +328,21 @@ afterEach(async () => {
 });
 
 describe("escaped-descendant timeout reproduction", () => {
-  test.fails(
-    "runProcess satisfies the bounded cleanup contract (#11)",
-    async () => {
-      const result = await reproduce("process");
-      console.info(
-        "#11 runProcess reproduction",
-        JSON.stringify(result, null, 2),
-      );
+  test.each(["process", "shell"] as const)(
+    "%s runner satisfies the bounded cleanup contract (#11)",
+    async (mode) => {
+      const result = await reproduce(mode);
+      console.info(`#11 ${mode} reproduction`, JSON.stringify(result, null, 2));
 
+      expectEscapedTopology(result.records);
       expect(result.watchdogFired).toBe(false);
       expect(result.runnerReturned).toBe(true);
+      expect(result.outcome?.result.timedOut).toBe(true);
+      expect(result.outcome?.result.deadline?.graceMs).toBe(cleanupGraceMs);
+      expect(result.outcome?.result.deadline?.cleanupComplete).toBe(true);
+      expect(result.outcome?.result.deadline?.remainingDescendants).toEqual([]);
       expect(result.outcome?.elapsedMs).toBeLessThanOrEqual(
-        runnerTimeoutMs + cleanupGraceMs,
-      );
-      expect(result.ownedAliveAtDeadline).toEqual([]);
-    },
-  );
-
-  test.fails(
-    "runShellCommand satisfies the bounded cleanup contract (#11)",
-    async () => {
-      const result = await reproduce("shell");
-      console.info(
-        "#11 runShellCommand reproduction",
-        JSON.stringify(result, null, 2),
-      );
-
-      expect(result.watchdogFired).toBe(false);
-      expect(result.runnerReturned).toBe(true);
-      expect(result.outcome?.elapsedMs).toBeLessThanOrEqual(
-        runnerTimeoutMs + cleanupGraceMs,
+        runnerTimeoutMs + cleanupGraceMs + schedulingToleranceMs,
       );
       expect(result.ownedAliveAtDeadline).toEqual([]);
     },
