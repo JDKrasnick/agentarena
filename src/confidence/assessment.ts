@@ -183,7 +183,7 @@ export function assessBattleCoverage(
       )
         reasonCodes.push(`attack_${attack.status}`);
       if (attack.evidenceProvenance === "judge_partial")
-        reasonCodes.push("judge_partial_half_damage");
+        reasonCodes.push("judge_partial_35_percent_damage");
     }
     if (!usableTerminal) reasonCodes.push("no_usable_terminal_result");
     if (retryCandidate?.status === "discarded")
@@ -295,7 +295,7 @@ export function assessBattleCoverage(
     const evidenceBasis: CoverageLaneAssessment["evidenceBasis"] = explicitEmpty
       ? "explicit_empty"
       : partial.length
-        ? "judge_partial"
+        ? "partial_judge"
         : usable.some((entry) => entry.evidenceProvenance === "judge_confirmed")
           ? "judge_confirmed"
           : usable.some((entry) => entry.status === "judge_rejected")

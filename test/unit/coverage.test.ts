@@ -268,7 +268,7 @@ describe("coverage assessment", () => {
     expect(assessment.counts).toMatchObject({ degraded: 1, unresolved: 0 });
     expect(assessment.reasonCodes).toEqual(
       expect.arrayContaining([
-        "judge_partial_half_damage",
+        "judge_partial_35_percent_damage",
         "submitted_path_lost",
         "required_capability_gap_accepted",
       ]),
@@ -405,8 +405,8 @@ describe("coverage assessment", () => {
   });
 });
 
-describe("judge adjudication and half-point scoring", () => {
-  it("applies and exactly heals supported-but-untestable half damage", () => {
+describe("judge adjudication and quarter-point scoring", () => {
+  it("applies and exactly heals supported-but-untestable 35% damage", () => {
     const attack = applyJudgeVerdict(baseAttack(), {
       decision: "supported_untestable",
       relevant: true,
@@ -418,7 +418,7 @@ describe("judge adjudication and half-point scoring", () => {
     });
     expect(attack).toMatchObject({
       status: "landed",
-      damage: 7.5,
+      damage: 5.25,
       evidenceProvenance: "judge_partial",
     });
     const resolved = resolveRound(
@@ -426,7 +426,7 @@ describe("judge adjudication and half-point scoring", () => {
       [attack],
       1,
     );
-    expect(resolved.contestants.b?.finalHealth).toBe(92.5);
+    expect(resolved.contestants.b?.finalHealth).toBe(94.75);
     expect(healDefect(resolved.contestants.b!, "root", 1).finalHealth).toBe(
       100,
     );
@@ -459,7 +459,7 @@ describe("judge adjudication and half-point scoring", () => {
     expect(result.contestants.b?.finalHealth).toBe(100);
   });
 
-  it("requires both guard conditions for half damage and preserves full judge damage", () => {
+  it("requires both guard conditions for partial damage and preserves full judge damage", () => {
     const guarded = applyJudgeVerdict(baseAttack(), {
       decision: "supported_untestable",
       relevant: true,
@@ -502,6 +502,7 @@ describe("judge adjudication and half-point scoring", () => {
       status: "duplicate",
       damageActive: false,
       rootDefectId: "known-root",
+      adjudication: { duplicateState: "corroborating", scoreEffect: "none" },
     });
   });
 });

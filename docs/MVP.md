@@ -23,10 +23,11 @@ Each failed stage or evidence path receives one targeted retry, shared with the
 existing correction, evidence-revision, and recovery mechanisms. Mechanical
 confirmation is preferred. When that path still cannot execute, the neutral
 judge may confirm normal damage, reject the claim with ordinary rank recoil,
-decline to adjudicate with no score change, or award exact half damage only
+decline to adjudicate with no score change, or award exact 35% damage only
 when the task clearly supports the expected behavior and available evidence
-points to the defect. Half damage is Critical 25, High 15, Medium 7.5, or Low
-2.5 HP; judge-adjudicated repairs heal the exact original amount.
+points to the defect. Partial-judge damage is Critical 17.5, High 10.5, Medium
+5.25, or Low 1.75 HP; health uses quarter-point precision and repairs heal the
+exact currently applied amount.
 
 Unresolved required coverage preserves the health-ledger leader as provisional
 but publishes no champion or recommended patch. `agent-arena
@@ -868,11 +869,19 @@ containing:
   base commit, topology, commands, budgets, permissions, and deterministic hash.
 - `permissions.json`: requested scopes, user decisions, leases, omitted checks,
   and redacted provisioning results.
-- `result.json`: compact schema-v5 status, stage, contestant health, outcome,
+- `result.json`: compact schema-v6 status, stage, contestant health, outcome,
   recommendation, warnings, artifact pointers, provenance, and ordered
   applied-envelope ledger. Detailed state is rebuilt from `baseline.json` and
   `rounds/<round>/envelope.json`; the immutable `finalization.json` projection
   supplies post-round validation and recommendation details.
+- `rounds/<round>/adjudications/`: complete local immutable semantic verdicts, frozen
+  severities, evidence provenance, retry diagnostics, canonical-defect history,
+  exact score effects, and upgrade links. Pre-change completed runs remain
+  reportable as read-only legacy artifacts with `legacy_unknown` provenance;
+  interrupted legacy runs require a restart.
+- `feedback/`: schema-v2 deterministic, digest-linked role-safe agent
+  projections targeting 8 KiB and capped at 24 KiB. Private transcripts,
+  verbose judge rationale, and opponent-only evidence are never projected.
 - `runtime-manifest.json`: repository, frozen-source, dependency, runtime,
   provider/model, command, capability, and service fingerprints for resume
   drift checks.

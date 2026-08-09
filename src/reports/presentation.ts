@@ -93,7 +93,7 @@ export function reportOutcome(state: RunState): ReportOutcome {
 export function reportDefects(state: RunState): ReportDefect[] {
   const grouped = new Map<string, Attack[]>();
   for (const attack of state.attacks) {
-    if (attack.status !== "landed") continue;
+    if (attack.status !== "landed" && attack.status !== "duplicate") continue;
     const id = attack.rootDefectId ?? attack.id;
     grouped.set(id, [...(grouped.get(id) ?? []), attack]);
   }
@@ -101,11 +101,20 @@ export function reportDefects(state: RunState): ReportDefect[] {
     const representative = attacks.at(-1) ?? attacks[0];
     if (!representative)
       throw new Error(`Missing representative for defect ${id}`);
+    const canonical = reportContestants(state)
+      .flatMap((contestant) => contestant.healthLedger.canonicalDefects ?? [])
+      .find((defect) => defect.rootDefectId === id);
     return {
       id,
       representative,
       attacks,
-      damage: Math.max(...attacks.map((attack) => attack.damage ?? 0)),
+      damage:
+        canonical?.currentDamage ??
+        Math.max(
+          ...attacks.map(
+            (attack) => attack.adjudication?.exactAmount ?? attack.damage ?? 0,
+          ),
+        ),
       active: reportContestants(state).some((contestant) =>
         contestant.healthLedger.activeDefects.some(
           (defect) => defect.rootDefectId === id,

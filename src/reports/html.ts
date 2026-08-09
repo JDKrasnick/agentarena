@@ -68,10 +68,13 @@ function attackAuthor(state: RunState, attack: Attack): string {
 }
 
 function attackEffect(attack: Attack): string {
+  const amount = attack.adjudication?.exactAmount ?? attack.damage ?? 0;
+  if (attack.adjudication?.scoreEffect === "damage_upgrade")
+    return `${String(amount)} HP upgrade delta`;
   if (attack.status === "landed")
     return attack.damageActive
-      ? `${String(attack.damage ?? 0)} HP remains active`
-      : `${String(attack.damage ?? 0)} HP repaired`;
+      ? `${String(amount)} HP remains active`
+      : `${String(amount)} HP repaired`;
   if (attack.recoil) return `${String(attack.recoil)} HP recoil`;
   return "No health change";
 }
@@ -81,7 +84,11 @@ function attackNarrative(attack: Attack): string {
     attack.outcomeReason ??
     attack.impact ??
     "No adjudication detail was recorded.";
-  return `${attack.evidenceProvenance ? `${attack.evidenceProvenance.replaceAll("_", " ")}: ` : ""}${narrative}`;
+  const basis =
+    attack.adjudication?.evidenceBasis ??
+    attack.evidenceProvenance ??
+    "legacy_unknown";
+  return `${basis.replaceAll("_", " ")}: ${narrative}`;
 }
 
 /** A deterministic, self-contained, clickable battle dossier for local review. */
@@ -268,7 +275,7 @@ export function renderBattleHtml(state: RunState): string {
     )
     .join("");
   const laneCoverage = state.coverageAssessment
-    ? `<section class="section"><h2>Required attack-lane coverage</h2><p class="note"><strong>${escapeHtml(state.coverageAssessment.confidence.replaceAll("_", " "))}</strong> · ${String(state.coverageAssessment.counts.completed)} completed · ${String(state.coverageAssessment.counts.degraded)} degraded · ${String(state.coverageAssessment.counts.unresolved)} unresolved / ${String(state.coverageAssessment.counts.required)} required. Evidence: ${String(state.coverageAssessment.evidenceCounts.mechanical)} mechanical, ${String(state.coverageAssessment.evidenceCounts.judgeConfirmed)} judge-confirmed, ${String(state.coverageAssessment.evidenceCounts.judgePartial)} half-damage judge. Reasons: ${escapeHtml(state.coverageAssessment.reasonCodes.join(", ") || "none")}.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Lane</th><th>State</th><th>Evidence basis</th><th>Reason codes</th></tr></thead><tbody>${state.coverageAssessment.requiredLanes.map((lane) => `<tr><td>${escapeHtml(lane.id)}</td><td>${chip(lane.finalState, lane.finalState === "completed" ? "pass" : lane.finalState === "degraded" ? "warn" : "fail")}</td><td>${escapeHtml(lane.evidenceBasis)}</td><td>${escapeHtml(lane.reasonCodes.join(", ") || "none")}</td></tr>`).join("")}</tbody></table></div><p class="note">Assessment digest: <code>${escapeHtml(state.coverageAssessment.assessmentDigest)}</code></p></section>`
+    ? `<section class="section"><h2>Required attack-lane coverage</h2><p class="note"><strong>${escapeHtml(state.coverageAssessment.confidence.replaceAll("_", " "))}</strong> · ${String(state.coverageAssessment.counts.completed)} completed · ${String(state.coverageAssessment.counts.degraded)} degraded · ${String(state.coverageAssessment.counts.unresolved)} unresolved / ${String(state.coverageAssessment.counts.required)} required. Evidence: ${String(state.coverageAssessment.evidenceCounts.mechanical)} mechanical, ${String(state.coverageAssessment.evidenceCounts.judgeConfirmed)} judge-confirmed, ${String(state.coverageAssessment.evidenceCounts.judgePartial)} 35% partial-judge. Reasons: ${escapeHtml(state.coverageAssessment.reasonCodes.join(", ") || "none")}.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Lane</th><th>State</th><th>Evidence basis</th><th>Reason codes</th></tr></thead><tbody>${state.coverageAssessment.requiredLanes.map((lane) => `<tr><td>${escapeHtml(lane.id)}</td><td>${chip(lane.finalState, lane.finalState === "completed" ? "pass" : lane.finalState === "degraded" ? "warn" : "fail")}</td><td>${escapeHtml(lane.evidenceBasis)}</td><td>${escapeHtml(lane.reasonCodes.join(", ") || "none")}</td></tr>`).join("")}</tbody></table></div><p class="note">Assessment digest: <code>${escapeHtml(state.coverageAssessment.assessmentDigest)}</code></p></section>`
     : `<section class="section"><h2>Required attack-lane coverage</h2><p class="note">Legacy / unknown. No confidence claim is inferred.</p></section>`;
 
   return `<!doctype html>
@@ -283,7 +290,7 @@ ${laneCoverage}
 <section class="section"><h2>Verified test coverage</h2><p class="note">These results apply to each named final patch in this run. “Not run” is intentionally not shown as a pass. Open stdout/stderr to inspect the harness evidence.</p><div class="table-wrap" tabindex="0"><table><caption>Recorded checks by contestant and exact command</caption><thead><tr><th>Check / command</th>${contestants.map((contestant) => `<th>${escapeHtml(contestantLabel(state.config.contestants, contestant.id))}</th>`).join("")}</tr></thead><tbody>${coverageRows}</tbody></table></div></section>
 <section class="section"><h2>What happened in each round</h2><div class="table-wrap" tabindex="0"><table><caption>Round outcomes and health after repair</caption><thead><tr><th>Investigation</th><th>Attack outcome</th><th>Health after repair</th><th>Artifacts</th></tr></thead><tbody>${roundRows}</tbody></table></div></section>
 <section class="section" aria-labelledby="phase-heading"><h2 id="phase-heading">Phase replay</h2>${phaseReplay}</section>
-<section class="section"><h2>Attack ledger — bugs found, misses, and repairs</h2><p class="note">Each row reports its recorded evidence basis; judge-partial rulings apply exact half damage. Zero landed attacks is not presented as proof of correctness.</p><div class="table-wrap" tabindex="0"><table><caption>All submitted contestant and house attacks</caption><thead><tr><th>Round</th><th>Author</th><th>Target</th><th>Result</th><th>What failed / why</th><th>Severity & score</th><th>Evidence</th></tr></thead><tbody>${attacks}</tbody></table></div></section>
+<section class="section"><h2>Attack ledger — bugs found, misses, and repairs</h2><p class="note">Each row reports its recorded evidence basis; partial-judge rulings apply exact 35% damage. Zero landed attacks is not presented as proof of correctness.</p><div class="table-wrap" tabindex="0"><table><caption>All submitted contestant and house attacks</caption><thead><tr><th>Round</th><th>Author</th><th>Target</th><th>Result</th><th>What failed / why</th><th>Severity & score</th><th>Evidence</th></tr></thead><tbody>${attacks}</tbody></table></div></section>
 <section class="section"><h2>Submission artifacts</h2><p class="note">Exact provider bytes are retained locally and linked, never embedded. Parsed artifacts contain accepted normalized values and redacted diagnostics.</p><ul>${submissionArtifacts || "<li>No permanent submission artifacts recorded (legacy run).</li>"}</ul></section>
 <section class="section handoff" id="handoff"><div><h3>Already done</h3><p>Required validation was run, ${String(defects.length)} distinct defect(s) were adjudicated, and final patches were frozen for review.</p></div><div><h3>What remains</h3><p>${unresolved.length ? `Review ${String(unresolved.length)} unresolved defect(s) before accepting a patch.` : "Choose and inspect the recommended patch; no unresolved proven defect remains."}</p><p>${link(state, "Open the review handoff", state.artifacts.battle)}</p></div></section>
 </main></body></html>`;

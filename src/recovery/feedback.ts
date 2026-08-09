@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   ContestantFeedbackSchema,
+  calculateContestantFeedbackDigest,
   canonicalJson,
   type ContestantFeedback,
 } from "../contracts/round.js";
@@ -15,11 +16,12 @@ import type { ArtifactStore } from "../artifacts/store.js";
 import { z } from "zod";
 
 export const FEEDBACK_INLINE_LIMIT_BYTES = 24 * 1024;
-export const FEEDBACK_RANKING_VERSION = "lane-feedback-rank@1";
+export const FEEDBACK_TARGET_BYTES = 8 * 1024;
+export const FEEDBACK_RANKING_VERSION = "lane-feedback-rank@2";
 
 const FeedbackManifestSchema = z
   .object({
-    version: z.literal(1),
+    version: z.union([z.literal(1), z.literal(2)]),
     runId: z.string().min(1),
     roundId: z.union([
       z.literal(1),
@@ -105,7 +107,7 @@ function roundOrder(round: RoundId): number {
 function compact(feedback: ContestantFeedback): ContestantFeedback {
   const bytes = (value: ContestantFeedback) =>
     Buffer.byteLength(JSON.stringify(value, null, 2), "utf8");
-  if (bytes(feedback) <= FEEDBACK_INLINE_LIMIT_BYTES) return feedback;
+  if (bytes(feedback) <= FEEDBACK_TARGET_BYTES) return feedback;
 
   // Old healed evidence and old misses are optional. Stable attack IDs break ties.
   const active = new Set(feedback.unresolvedDefectIds);
@@ -117,7 +119,7 @@ function compact(feedback: ContestantFeedback): ContestantFeedback {
     ownAttackOutcomes: own,
   };
   let verboseFieldsCondensed = false;
-  while (bytes(candidate) > FEEDBACK_INLINE_LIMIT_BYTES) {
+  while (bytes(candidate) > FEEDBACK_TARGET_BYTES) {
     const optionalOwn = candidate.ownAttackOutcomes.findLastIndex(
       (entry) => !entry.defectId,
     );
@@ -130,6 +132,19 @@ function compact(feedback: ContestantFeedback): ContestantFeedback {
     );
     if (optionalIncoming >= 0) {
       candidate.acceptedIncomingAttacks.splice(optionalIncoming, 1);
+      continue;
+    }
+    const retainedAttackIds = new Set([
+      ...candidate.acceptedIncomingAttacks.map((entry) => entry.attackId),
+      ...candidate.ownAttackOutcomes.map((entry) => entry.attackId),
+    ]);
+    const optionalPointer = candidate.evidencePointers.findLastIndex(
+      (entry) =>
+        entry.artifactId.startsWith("attack:") &&
+        !retainedAttackIds.has(entry.artifactId.slice("attack:".length)),
+    );
+    if (optionalPointer >= 0) {
+      candidate.evidencePointers.splice(optionalPointer, 1);
       continue;
     }
     if (!verboseFieldsCondensed) {
@@ -147,6 +162,7 @@ function compact(feedback: ContestantFeedback): ContestantFeedback {
       verboseFieldsCondensed = true;
       continue;
     }
+    if (bytes(candidate) <= FEEDBACK_INLINE_LIMIT_BYTES) break;
     throw new Error(
       "Mandatory contestant feedback exceeds the 24 KiB inline contract",
     );
@@ -226,14 +242,32 @@ export function projectContestantFeedback(options: {
             own: false,
           }) || left.id.localeCompare(right.id),
     )
-    .map((attack) => ({
-      attackId: attack.id,
-      defectId: attack.rootDefectId!,
-      severity: attack.severity!,
-      damage: attack.damage!,
-      claim: attack.claim,
-      visibleReproducers: visibleReproducers(attack),
-    }));
+    .map((attack) => {
+      const canonical = contestant.healthLedger.canonicalDefects?.find(
+        (defect) => defect.rootDefectId === attack.rootDefectId,
+      );
+      return {
+        attackId: attack.id,
+        defectId: attack.rootDefectId!,
+        severity: canonical?.baseSeverity ?? attack.severity!,
+        damage: canonical?.currentDamage ?? attack.damage!,
+        evidenceBasis:
+          canonical?.evidenceHistory.at(-1)?.basis ??
+          attack.adjudication?.evidenceBasis ??
+          (attack.evidenceProvenance === "judge_partial"
+            ? "partial_judge"
+            : attack.evidenceProvenance === "judge_confirmed"
+              ? "judge"
+              : (attack.evidenceProvenance ?? "legacy_unknown")),
+        multiplier:
+          canonical?.currentMultiplier ??
+          (attack.adjudication?.multiplier === 0.35
+            ? (0.35 as const)
+            : (1 as const)),
+        claim: attack.claim,
+        visibleReproducers: visibleReproducers(attack),
+      };
+    });
   const own = history
     .filter(
       (attack) =>
@@ -289,8 +323,8 @@ export function projectContestantFeedback(options: {
   const starting =
     contestant.rounds.find((entry) => entry.round === options.roundId)
       ?.startingHealth ?? contestant.finalHealth;
-  const feedback = ContestantFeedbackSchema.parse({
-    version: 1,
+  const feedbackDraft = {
+    version: 2,
     runId: options.state.runId,
     roundId: options.roundId,
     contestantId: options.contestantId,
@@ -322,8 +356,16 @@ export function projectContestantFeedback(options: {
         path: attack.patchPath,
       }))
       .sort((left, right) => left.artifactId.localeCompare(right.artifactId)),
+  } as const;
+  const feedback = ContestantFeedbackSchema.parse({
+    ...feedbackDraft,
+    projectionDigest: calculateContestantFeedbackDigest(feedbackDraft),
   });
-  return compact(feedback);
+  const compacted = compact(feedback);
+  return ContestantFeedbackSchema.parse({
+    ...compacted,
+    projectionDigest: calculateContestantFeedbackDigest(compacted),
+  });
 }
 
 export async function persistContestantFeedback(options: {
@@ -335,7 +377,7 @@ export async function persistContestantFeedback(options: {
   await options.store.writeImmutableJson(relative, feedback);
   const encoded = canonicalJson(feedback);
   const manifest = FeedbackManifestSchema.parse({
-    version: 1,
+    version: 2,
     runId: feedback.runId,
     roundId: feedback.roundId,
     contestantId: feedback.contestantId,

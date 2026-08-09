@@ -339,7 +339,7 @@ describe("durable round recovery", () => {
     const summary = JSON.parse(
       await readFile(store.resolve("result.json"), "utf8"),
     ) as { schemaVersion: number; appliedEnvelopes: unknown[] };
-    expect(summary.schemaVersion).toBe(5);
+    expect(summary.schemaVersion).toBe(6);
     expect(summary.appliedEnvelopes).toHaveLength(1);
     const rebuilt = await store.readState();
     expect(rebuilt.warnings).toEqual(["sealed warning"]);

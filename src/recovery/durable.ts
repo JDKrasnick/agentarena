@@ -14,6 +14,7 @@ import type { ArtifactStore } from "../artifacts/store.js";
 import { applyCompletedRound } from "../core/round-state-delta.js";
 import {
   RunStateV4Schema,
+  RunStateV5Schema,
   type CheckResult,
   type RunState,
 } from "../core/types.js";
@@ -22,13 +23,14 @@ import {
   FinalizationRecordSchema,
   RoundEnvelopeSchema,
   RunBaselineSchema,
-  RunSummaryV5Schema,
+  RunSummaryV6Schema,
+  type RunSummaryV5,
   type AppliedEnvelope,
   type CheckpointDescriptor,
   type FinalizationRecord,
   type RoundEnvelope,
   type RunBaseline,
-  type RunSummaryV5,
+  type RunSummaryV6,
 } from "./contracts.js";
 
 function hashWithout(value: object, field: string): string {
@@ -81,8 +83,8 @@ export async function writeBaseline(options: {
   repositoryIdentity: string;
   now?: Date;
 }): Promise<RunBaseline> {
-  if (options.state.schemaVersion !== 4)
-    throw new Error("Only v4 runtime state can seed a v5 durable baseline");
+  if (options.state.schemaVersion !== 5)
+    throw new Error("Only v5 runtime state can seed a v6 durable baseline");
   const draft = {
     version: 1 as const,
     runId: options.state.runId,
@@ -182,7 +184,7 @@ export async function sealRoundEnvelope(options: {
   if (sha256(deltaBytes) !== delta.sha256)
     throw new Error("Cannot seal a round with a corrupt state delta");
   const draft = {
-    version: 1 as const,
+    version: 2 as const,
     runId: options.result.runId,
     roundId: options.result.roundId,
     sealedAt: (options.now ?? new Date()).toISOString(),
@@ -346,7 +348,7 @@ export async function applyEnvelopeExactlyOnce(options: {
 
 export async function reconstructRunState(options: {
   store: ArtifactStore;
-  summary: RunSummaryV5;
+  summary: RunSummaryV5 | RunSummaryV6;
 }): Promise<RunState> {
   const baseline = await readBaseline(options.store);
   if (options.summary.baseline) {
@@ -358,7 +360,13 @@ export async function reconstructRunState(options: {
   }
   if (baseline.runId !== options.summary.runId)
     throw new Error("Baseline run identity mismatch");
-  const state = RunStateV4Schema.parse(structuredClone(baseline.state));
+  const baselineState = structuredClone(baseline.state) as {
+    schemaVersion?: unknown;
+  };
+  const state =
+    baselineState.schemaVersion === 4
+      ? RunStateV4Schema.parse(baselineState)
+      : RunStateV5Schema.parse(baselineState);
   let ledger: AppliedEnvelope[] = [];
   const envelopes = await readEnvelopeChain(options.store);
   for (const [index, expected] of options.summary.appliedEnvelopes.entries()) {
@@ -486,17 +494,19 @@ export async function reconstructRunState(options: {
     };
     relocate(state);
   }
-  return RunStateV4Schema.parse(state);
+  return state.schemaVersion === 4
+    ? RunStateV4Schema.parse(state)
+    : RunStateV5Schema.parse(state);
 }
 
 export async function buildRunSummary(options: {
   store: ArtifactStore;
   state: RunState;
   appliedEnvelopes: readonly AppliedEnvelope[];
-  provenance?: RunSummaryV5["provenance"];
-}): Promise<RunSummaryV5> {
-  if (options.state.schemaVersion !== 4)
-    throw new Error("Only new v4 runtime state may be written as schema v5");
+  provenance?: RunSummaryV6["provenance"];
+}): Promise<RunSummaryV6> {
+  if (options.state.schemaVersion !== 5)
+    throw new Error("Only new v5 runtime state may be written as schema v6");
   const baselinePath = options.store.resolve("baseline.json");
   let baseline: { path: string; sha256: string } | undefined;
   try {
@@ -538,8 +548,8 @@ export async function buildRunSummary(options: {
       };
     }),
   );
-  return RunSummaryV5Schema.parse({
-    schemaVersion: 5,
+  return RunSummaryV6Schema.parse({
+    schemaVersion: 6,
     runId: options.state.runId,
     harnessVersion: options.state.harnessVersion,
     status: options.state.status,

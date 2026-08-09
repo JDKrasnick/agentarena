@@ -76,7 +76,7 @@ export function renderConsoleSummary(
     ...(state.coverageAssessment
       ? [
           `Coverage: ${state.coverageAssessment.confidence.replaceAll("_", " ")} — ${String(state.coverageAssessment.counts.completed)} completed, ${String(state.coverageAssessment.counts.degraded)} degraded, ${String(state.coverageAssessment.counts.unresolved)} unresolved / ${String(state.coverageAssessment.counts.required)} required`,
-          `Evidence: ${String(state.coverageAssessment.evidenceCounts.mechanical)} mechanical, ${String(state.coverageAssessment.evidenceCounts.judgeConfirmed)} judge-confirmed, ${String(state.coverageAssessment.evidenceCounts.judgePartial)} half-damage judge`,
+          `Evidence: ${String(state.coverageAssessment.evidenceCounts.mechanical)} mechanical, ${String(state.coverageAssessment.evidenceCounts.judgeConfirmed)} judge-confirmed, ${String(state.coverageAssessment.evidenceCounts.judgePartial)} 35% partial-judge`,
           ...(state.coverageAssessment.reasonCodes.length
             ? [
                 `Coverage reasons: ${state.coverageAssessment.reasonCodes.join(", ")}`,

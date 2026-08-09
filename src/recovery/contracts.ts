@@ -37,7 +37,7 @@ export type AppliedEnvelope = z.infer<typeof AppliedEnvelopeSchema>;
 
 export const RoundEnvelopeSchema = z
   .object({
-    version: z.literal(1),
+    version: z.union([z.literal(1), z.literal(2)]),
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     sealedAt: IsoDateSchema,
@@ -200,7 +200,7 @@ const SummaryContestantSchema = z
     provider: z.string().min(1),
     role: z.string().min(1),
     status: z.string().min(1),
-    health: z.number().min(0).max(100).multipleOf(0.5),
+    health: z.number().min(0).max(100).multipleOf(0.25),
     patchPath: z.string().min(1).optional(),
     patchSha256: Sha256Schema.optional(),
   })
@@ -254,6 +254,20 @@ export const RunSummaryV5Schema = z
   .strict()
   .readonly();
 export type RunSummaryV5 = z.infer<typeof RunSummaryV5Schema>;
+
+/** Current durable summary. V5 remains readable without canonical rewriting. */
+export const RunSummaryV6Schema = RunSummaryV5Schema.unwrap()
+  .omit({
+    schemaVersion: true,
+  })
+  .extend({
+    schemaVersion: z.literal(6),
+  });
+export type RunSummaryV6 = z.infer<typeof RunSummaryV6Schema>;
+export const AnyRunSummarySchema = z.discriminatedUnion("schemaVersion", [
+  RunSummaryV5Schema,
+  RunSummaryV6Schema,
+]);
 
 export const CheckpointDescriptorSchema = z
   .object({

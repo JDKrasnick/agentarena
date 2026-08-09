@@ -1,9 +1,13 @@
 import type { JudgeAttackVerdict } from "../agents/adapter.js";
-import { DAMAGE_BY_SEVERITY } from "../core/scoring.js";
+import {
+  DAMAGE_BY_SEVERITY,
+  normalizeAttackAdjudication,
+  PARTIAL_DAMAGE_BY_SEVERITY,
+} from "../core/scoring.js";
 import type { Attack } from "../core/types.js";
 
 /** Apply the ordered neutral-judge fallback without inventing mechanical proof. */
-export function applyJudgeVerdict(
+function applyJudgeVerdictInternal(
   attack: Attack,
   verdict: JudgeAttackVerdict,
 ): Attack {
@@ -38,7 +42,7 @@ export function applyJudgeVerdict(
         ...attack,
         status: "judge_unable",
         outcomeReason:
-          "Half damage requires clear task support and evidence pointing to the defect",
+          "35% partial-judge damage requires clear task support and evidence pointing to the defect",
       };
     }
     return {
@@ -46,11 +50,11 @@ export function applyJudgeVerdict(
       status: "landed",
       rootDefectId: verdict.rootDefectId,
       severity: verdict.severity,
-      damage: (normalDamage / 2) as 25 | 15 | 7.5 | 2.5,
+      damage: PARTIAL_DAMAGE_BY_SEVERITY[verdict.severity],
       damageActive: true,
       evidenceProvenance: "judge_partial",
       severityRationale: verdict.rationale,
-      outcomeReason: `Judge-supported but mechanically untestable; exact half damage. ${verdict.rationale}`,
+      outcomeReason: `Judge-supported but mechanically untestable; exact 35% partial-judge damage. ${verdict.rationale}`,
     };
   }
   return {
@@ -66,6 +70,17 @@ export function applyJudgeVerdict(
   };
 }
 
+export function applyJudgeVerdict(
+  attack: Attack,
+  verdict: JudgeAttackVerdict,
+): Attack {
+  const adjudicated = applyJudgeVerdictInternal(attack, verdict);
+  return {
+    ...adjudicated,
+    adjudication: normalizeAttackAdjudication(adjudicated),
+  };
+}
+
 /** Apply the same canonical-defect suppression used by mechanical verdicts. */
 export function suppressKnownJudgeDefect(
   attack: Attack,
@@ -77,10 +92,15 @@ export function suppressKnownJudgeDefect(
     !knownRootDefects.has(attack.rootDefectId)
   )
     return attack;
-  return {
+  const duplicate: Attack = {
     ...attack,
     status: "duplicate",
     damageActive: false,
     outcomeReason: "Canonical root defect already scored",
+    adjudication: undefined,
+  };
+  return {
+    ...duplicate,
+    adjudication: normalizeAttackAdjudication(duplicate),
   };
 }

@@ -120,6 +120,15 @@ export interface JudgeAdjudicationInput extends Omit<
   "authorPassed" | "targetFailed"
 > {
   mechanicalFailureReason: string;
+  priorCanonicalDefects: ReadonlyArray<{
+    canonicalDefectId: string;
+    severity: Severity;
+    multiplier: 0.35 | 1;
+    effectiveDamage: number;
+    status: "active" | "healed";
+    evidenceBasis:
+      "mechanical" | "judge" | "partial_judge" | "none" | "legacy_unknown";
+  }>;
 }
 
 export interface JudgeAttackVerdict {

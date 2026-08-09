@@ -11,7 +11,7 @@ import {
 import { ArtifactStore } from "../../src/artifacts/store.js";
 import { applyAcceptedPatch } from "../../src/commands/apply.js";
 import { Arena } from "../../src/core/arena.js";
-import { FightConfigSchema, RunStateV4Schema } from "../../src/core/types.js";
+import { FightConfigSchema, RunStateV5Schema } from "../../src/core/types.js";
 import { readBaseline } from "../../src/recovery/durable.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
 import { freezePullRequest } from "../../src/task/pr-fixture.js";
@@ -189,7 +189,7 @@ describe("PR battle modes", () => {
       { durableV5: true },
     );
     const baseline = await readBaseline(store);
-    const baselineState = RunStateV4Schema.parse(
+    const baselineState = RunStateV5Schema.parse(
       structuredClone(baseline.state),
     );
     await Promise.all([
@@ -242,6 +242,23 @@ describe("PR battle modes", () => {
     );
     expect(attackerAttack?.targets).toEqual(["b"]);
     expect(attackerAttack?.status).toBe("landed");
+    expect(attackerAttack?.adjudication).toMatchObject({
+      verdict: "valid",
+      evidenceBasis: "mechanical",
+    });
+    const attackerAdjudication = JSON.parse(
+      await readFile(
+        path.join(
+          outcome.state.artifacts.runDirectory!,
+          "rounds",
+          String(attackerAttack!.round),
+          "adjudications",
+          `${attackerAttack!.id}.json`,
+        ),
+        "utf8",
+      ),
+    ) as { evidenceBasis: string };
+    expect(attackerAdjudication.evidenceBasis).toBe("mechanical");
     expect(outcome.state.contestants.b?.healthEvents).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: "heal" })]),
     );
