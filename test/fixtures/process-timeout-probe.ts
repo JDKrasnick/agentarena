@@ -33,13 +33,26 @@ const result =
   mode === "process"
     ? await runProcess({
         executable: process.execPath,
-        args: [fixturePath, "launcher", ownershipToken, statePath],
+        args: [
+          fixturePath,
+          "launcher",
+          ownershipToken,
+          statePath,
+          "orphan-before-deadline",
+        ],
         cwd: process.cwd(),
         timeoutMs,
         logPrefix,
       })
     : await runShellCommand(
-        [process.execPath, fixturePath, "launcher", ownershipToken, statePath]
+        [
+          process.execPath,
+          fixturePath,
+          "launcher",
+          ownershipToken,
+          statePath,
+          "orphan-before-deadline",
+        ]
           .map((part) => `'${part.replaceAll("'", `'\\''`)}'`)
           .join(" "),
         {

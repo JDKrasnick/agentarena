@@ -5,11 +5,12 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export const PROCESS_CLEANUP_GRACE_MS = 1_500;
-const PROCESS_SNAPSHOT_TTL_MS = 1_000;
+export const PROCESS_CLEANUP_GRACE_MS = 2_000;
+const PROCESS_SNAPSHOT_INTERVAL_MS = 100;
+const PROCESS_SNAPSHOT_TTL_MS = PROCESS_SNAPSHOT_INTERVAL_MS;
 const OWNER_ENV_NAME = "AGENT_ARENA_PROCESS_OWNER";
 const TERM_SIGNAL_GRACE_MS = 500;
-const FINAL_REAP_WAIT_MS = 100;
+const FINAL_REAP_WAIT_MS = 500;
 
 interface ProcessRecord {
   pid: number;
@@ -155,13 +156,62 @@ async function readProcessesBefore(
   }
 }
 
+type ProcessObserver = (processes: Map<number, ProcessRecord>) => void;
+
+const processObservers = new Set<ProcessObserver>();
+let processObserverLoop: Promise<void> | undefined;
+
+async function observeProcessTable(): Promise<void> {
+  while (processObservers.size > 0) {
+    try {
+      const processes = await readProcesses();
+      for (const observer of processObservers) observer(processes);
+    } catch {
+      // Deadline cleanup performs bounded fresh reads and records failures.
+    }
+    if (processObservers.size === 0) return;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, PROCESS_SNAPSHOT_INTERVAL_MS);
+      timer.unref();
+    });
+  }
+}
+
+function startProcessObserverLoop(): void {
+  if (processObserverLoop === undefined) {
+    processObserverLoop = observeProcessTable().finally(() => {
+      processObserverLoop = undefined;
+      if (processObservers.size > 0) startProcessObserverLoop();
+    });
+  }
+}
+
+function addProcessObserver(observer: ProcessObserver): () => void {
+  processObservers.add(observer);
+  startProcessObserverLoop();
+  return () => processObservers.delete(observer);
+}
+
 export class ProcessTreeSupervisor {
   private readonly owned = new Map<number, string>();
+  private stopObserving: (() => void) | undefined;
 
   constructor(
     private readonly rootPid: number,
     private readonly owner: string,
   ) {}
+
+  startTracking(): void {
+    if (this.stopObserving !== undefined) return;
+    this.stopObserving = addProcessObserver((processes) => {
+      this.remember(processes);
+    });
+  }
+
+  stopTracking(): void {
+    this.stopObserving?.();
+    this.stopObserving = undefined;
+  }
 
   private remember(processes: Map<number, ProcessRecord>): void {
     const ancestry = new Set(this.owned.keys());
@@ -249,6 +299,7 @@ export class ProcessTreeSupervisor {
       )
       .map(([pid, identity]) => ({ pid, identity }));
     const durationMs = Date.now() - started;
+    this.stopTracking();
     return {
       durationMs,
       graceMs: PROCESS_CLEANUP_GRACE_MS,
