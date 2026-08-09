@@ -65,3 +65,22 @@ export function applyJudgeVerdict(
     outcomeReason: `Judge-confirmed after mechanical failure; ${verdict.rationale}`,
   };
 }
+
+/** Apply the same canonical-defect suppression used by mechanical verdicts. */
+export function suppressKnownJudgeDefect(
+  attack: Attack,
+  knownRootDefects: ReadonlySet<string>,
+): Attack {
+  if (
+    attack.status !== "landed" ||
+    !attack.rootDefectId ||
+    !knownRootDefects.has(attack.rootDefectId)
+  )
+    return attack;
+  return {
+    ...attack,
+    status: "duplicate",
+    damageActive: false,
+    outcomeReason: "Canonical root defect already scored",
+  };
+}

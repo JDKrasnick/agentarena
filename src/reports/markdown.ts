@@ -301,7 +301,7 @@ export function renderBattleReport(state: RunState): string {
     "",
     state.ranking?.draw
       ? `Draw: ${state.ranking.reason}`
-      : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Winner"}: **${state.ranking?.winner ?? "none"}** — ${state.ranking?.reason ?? "run incomplete"}`,
+      : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Winner"}: **${state.coverageDecision?.decision === "inconclusive" ? (state.ranking?.order[0] ?? "none") : (state.ranking?.winner ?? "none")}** — ${state.ranking?.reason ?? "run incomplete"}`,
     state.coverageDecision?.decision === "inconclusive" ||
     (state.coverageAssessment?.confidence === "provisional" &&
       !state.coverageDecision)
@@ -357,7 +357,7 @@ export function renderBattleReport(state: RunState): string {
     "",
     "## Developer takeaway",
     "",
-    `- **Ledger result:** ${state.ranking?.draw ? "Draw" : `${contestantLabel(state.config.contestants, state.ranking?.winner ?? "a")} — ${state.ranking?.reason ?? "run incomplete"}`}.`,
+    `- **Ledger result:** ${state.ranking?.draw ? "Draw" : `${contestantLabel(state.config.contestants, state.coverageDecision?.decision === "inconclusive" ? (state.ranking?.order[0] ?? "a") : (state.ranking?.winner ?? "a"))} — ${state.ranking?.reason ?? "run incomplete"}`}.`,
     `- **Why:** ${contestants
       .map((contestant) => {
         const outcome = state.arenaOutcome?.contestants[contestant.id];

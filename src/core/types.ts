@@ -620,6 +620,7 @@ export const ContestantRoundResultSchema = z.object({
   postAttackHealth: HealthPointSchema,
   postAttackStatus: z.enum(["active", "downed"]),
   repair: AgentInvocationSchema.optional(),
+  repairAttempts: z.array(AgentInvocationSchema).min(1).max(2).optional(),
   endingHealth: HealthPointSchema,
   endingStatus: z.enum(["active", "eliminated"]),
 });

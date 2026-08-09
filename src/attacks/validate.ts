@@ -15,7 +15,8 @@ import type { RunSpec } from "../contracts/round.js";
 import { changedPathsFromPatch, isAllowedAttackPath } from "../repo/git.js";
 import type { WorktreeManager } from "../repo/git.js";
 import { runShellCommand } from "../runner/process-runner.js";
-import { applyJudgeVerdict } from "./adjudicate.js";
+import { applyJudgeVerdict, suppressKnownJudgeDefect } from "./adjudicate.js";
+import { assertTargetedRetryAllowed } from "../confidence/assessment.js";
 
 interface ValidateAttackOptions {
   attack: Attack;
@@ -122,25 +123,37 @@ async function judgeFallback(
 ): Promise<Attack> {
   if (!options.verifier.adjudicate)
     return withOutcome(attack, "judge_unable", reason);
-  try {
-    const verdict = await options.verifier.adjudicate({
-      attack: anonymizeAttackForVerifier(attack),
-      runSpec: options.runSpec,
-      mechanicalFailureReason: reason,
-      worktree,
-      promptPath: path.join(options.logRoot, "judge-fallback.prompt.md"),
-      transcriptPrefix: path.join(options.logRoot, "judge-fallback"),
-      timeoutMs: options.config.limits.verifierMs,
-      signal: options.signal,
-    });
-    return applyJudgeVerdict(attack, verdict);
-  } catch (error) {
-    return withOutcome(
-      attack,
-      "judge_unable",
-      `Judge fallback failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  let lastFailure = reason;
+  for (const attemptNumber of [1, 2] as const) {
+    try {
+      const verdict = await options.verifier.adjudicate({
+        attack: anonymizeAttackForVerifier(attack),
+        runSpec: options.runSpec,
+        mechanicalFailureReason: reason,
+        worktree,
+        promptPath: path.join(
+          options.logRoot,
+          `judge-fallback-attempt-${String(attemptNumber)}.prompt.md`,
+        ),
+        transcriptPrefix: path.join(
+          options.logRoot,
+          `judge-fallback-attempt-${String(attemptNumber)}`,
+        ),
+        timeoutMs: options.config.limits.verifierMs,
+        signal: options.signal,
+      });
+      const adjudicated = suppressKnownJudgeDefect(
+        applyJudgeVerdict(attack, verdict),
+        options.knownRootDefects,
+      );
+      if (adjudicated.status !== "judge_unable") return adjudicated;
+      lastFailure = adjudicated.outcomeReason ?? reason;
+    } catch (error) {
+      lastFailure = `Judge fallback failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (attemptNumber === 1) assertTargetedRetryAllowed(attemptNumber);
   }
+  return withOutcome(attack, "judge_unable", lastFailure);
 }
 
 export async function validateAttack(

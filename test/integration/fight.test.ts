@@ -458,6 +458,12 @@ describe("fake-adapter fight on a mocked real issue", () => {
         }),
       ]),
     );
+    expect(
+      outcome.state.attackInvocations.filter(
+        (entry) =>
+          entry.attacker === "b" && entry.target === "a" && entry.round === 2,
+      ),
+    ).toHaveLength(2);
     expect(outcome.state.reviewInvocations).toHaveLength(6);
     expect(outcome.state.reviewInvocations).toEqual(
       expect.arrayContaining([

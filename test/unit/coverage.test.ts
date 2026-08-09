@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { applyJudgeVerdict } from "../../src/attacks/adjudicate.js";
+import {
+  applyJudgeVerdict,
+  suppressKnownJudgeDefect,
+} from "../../src/attacks/adjudicate.js";
 import { ArtifactStore } from "../../src/artifacts/store.js";
 import { resolveCoverage } from "../../src/commands/resolve-coverage.js";
 import {
@@ -100,6 +103,26 @@ function contestant(id: "a" | "b"): ContestantResult {
     rounds: [],
     checks: [],
   };
+}
+
+function addRepairAttempts(
+  state: RunState,
+  target: "a" | "b",
+  round: 1 | 2 | 3,
+  statuses: AgentInvocation["status"][],
+): void {
+  const attempts = statuses.map(invocation);
+  state.contestants[target]!.rounds.push({
+    round,
+    startingHealth: 100,
+    submittedAttackIds: [],
+    postAttackHealth: 95,
+    postAttackStatus: "active",
+    repair: attempts.at(-1),
+    repairAttempts: attempts,
+    endingHealth: 100,
+    endingStatus: "active",
+  });
 }
 
 describe("coverage assessment", () => {
@@ -223,6 +246,7 @@ describe("coverage assessment", () => {
       damage: 2.5,
       evidenceProvenance: "judge_partial",
     });
+    addRepairAttempts(state, "b", 1, ["succeeded"]);
     const assessment = assessBattleCoverage(state, {
       defaultMode: "confirm",
       reducedValidationAccepted: true,
@@ -249,6 +273,87 @@ describe("coverage assessment", () => {
         "required_capability_gap_accepted",
       ]),
     );
+  });
+
+  it("requires usable repair evidence after landed damage", () => {
+    const missing = makeRunState();
+    addLaneRecords(missing);
+    missing.attackInvocations[0]!.parseOutcome = "valid";
+    missing.attackInvocations[0]!.attackCount = 1;
+    missing.attacks.push({
+      ...baseAttack(),
+      status: "landed",
+      rootDefectId: "repair-root",
+      severity: "low",
+      damage: 5,
+      damageActive: true,
+      evidenceProvenance: "mechanical",
+    });
+    const missingAssessment = assessBattleCoverage(missing);
+    expect(missingAssessment.confidence).toBe("provisional");
+    expect(missingAssessment.requiredLanes[0]?.finalState).toBe("unresolved");
+    expect(missingAssessment.requiredLanes[0]?.reasonCodes).toContain(
+      "repair_missing",
+    );
+
+    const retried = structuredClone(missing);
+    addRepairAttempts(retried, "b", 1, ["timed_out", "succeeded"]);
+    const retriedAssessment = assessBattleCoverage(retried);
+    expect(retriedAssessment.confidence).toBe("full_confidence");
+    expect(retriedAssessment.retryHistory).toContainEqual({
+      laneId: "round-1:a->b",
+      stage: "repair",
+      result: "succeeded",
+    });
+  });
+
+  it("does not reuse correction evidence across rounds", () => {
+    const state = makeRunState();
+    addLaneRecords(state);
+    const roundTwo = state.attackInvocations.find(
+      (entry) =>
+        entry.round === 2 && entry.attacker === "a" && entry.target === "b",
+    )!;
+    roundTwo.invocation = invocation("timed_out");
+    delete roundTwo.parseOutcome;
+    roundTwo.submissionStatus = "not_run";
+    state.attackInvocations.push({
+      round: 1,
+      attacker: "a",
+      target: "b",
+      invocation: invocation("succeeded"),
+      submissionStatus: "submitted",
+      attackCount: 1,
+      parseOutcome: "valid",
+      detail: "Correction-only reconciliation lane",
+    });
+    state.attacks.push({
+      ...baseAttack(),
+      id: "round-two-blocked",
+      round: 2,
+      status: "blocked",
+    });
+    const assessment = assessBattleCoverage(state);
+    const roundTwoLane = assessment.requiredLanes.find(
+      (lane) => lane.id === "round-2:a->b",
+    );
+    expect(roundTwoLane?.finalState).toBe("unresolved");
+    expect(roundTwoLane?.reasonCodes).toContain("focused_description_failed");
+  });
+
+  it("keeps evidence-count categories mutually exclusive", () => {
+    const state = makeRunState();
+    addLaneRecords(state);
+    state.attacks.push(
+      { ...baseAttack(), id: "blocked", status: "blocked" },
+      { ...baseAttack(), id: "rejected", status: "judge_rejected" },
+      { ...baseAttack(), id: "unable", status: "judge_unable" },
+    );
+    const assessment = assessBattleCoverage(state);
+    expect(assessment.evidenceCounts).toMatchObject({
+      mechanical: 1,
+      judgeRejected: 1,
+    });
   });
 
   it("binds an inconclusive decision to the assessment digest and keeps patch review blocked", async () => {
@@ -280,6 +385,11 @@ describe("coverage assessment", () => {
       assessmentDigest: state.coverageAssessment.assessmentDigest,
       decision: "inconclusive",
       now: new Date("2026-08-09T00:00:00.000Z"),
+    });
+    const resolvedState = await store.readState();
+    expect(resolvedState).toMatchObject({
+      status: "inconclusive",
+      ranking: { winner: null, draw: false },
     });
     expect(
       await resolveCoverage({
@@ -373,6 +483,25 @@ describe("judge adjudication and half-point scoring", () => {
       status: "landed",
       damage: 50,
       evidenceProvenance: "judge_confirmed",
+    });
+  });
+
+  it("suppresses duplicate root defects returned by judge fallback", () => {
+    const confirmed = applyJudgeVerdict(baseAttack(), {
+      decision: "confirmed",
+      relevant: true,
+      expectedBehaviorClearlySupported: true,
+      evidencePointsToDefect: true,
+      rootDefectId: "known-root",
+      severity: "critical",
+      rationale: "same canonical defect",
+    });
+    expect(
+      suppressKnownJudgeDefect(confirmed, new Set(["known-root"])),
+    ).toMatchObject({
+      status: "duplicate",
+      damageActive: false,
+      rootDefectId: "known-root",
     });
   });
 });

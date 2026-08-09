@@ -71,7 +71,7 @@ export function renderBattleVisual(state: RunState): string {
   const outcome = reportOutcome(state);
   const verdict =
     state.coverageDecision?.decision === "inconclusive"
-      ? `Inconclusive · ledger leader: ${state.ranking?.winner ?? "none"}`
+      ? `Inconclusive · ledger leader: ${state.ranking?.order[0] ?? "none"}`
       : state.coverageAssessment?.confidence === "provisional" &&
           !state.coverageDecision
         ? `Provisional leader: ${state.ranking?.winner ?? "none"}`

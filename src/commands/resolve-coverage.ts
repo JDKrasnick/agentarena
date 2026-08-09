@@ -48,6 +48,7 @@ export async function resolveCoverage(options: {
   );
   state.coverageDecision = decision;
   if (decision.decision === "accept-reduced") {
+    state.status = "complete";
     state.arenaOutcome = deriveArenaOutcome(state);
     state.patchRecommendation = selectRecommendedPatch({
       contestants: state.contestants,
@@ -58,6 +59,15 @@ export async function resolveCoverage(options: {
     });
     state.reviewPrompt = buildReviewPrompt(state);
   } else {
+    state.status = "inconclusive";
+    if (state.ranking) {
+      state.ranking = {
+        ...state.ranking,
+        winner: null,
+        draw: false,
+        reason: `Coverage was finalized as inconclusive; ledger order only. ${state.ranking.reason}`,
+      };
+    }
     if (state.arenaOutcome) delete state.arenaOutcome.championId;
     delete state.patchRecommendation;
     delete state.reviewPrompt;

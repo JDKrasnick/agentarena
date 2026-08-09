@@ -87,12 +87,6 @@ export function assessBattleCoverage(
         entry.detail !== "Correction-only reconciliation lane",
     );
     const focused = focusedRecords.slice(0, 2).at(-1);
-    const correction = state.attackInvocations.find(
-      (entry) =>
-        entry.attacker === attacker &&
-        entry.target === target &&
-        entry.detail === "Correction-only reconciliation lane",
-    );
     const attacks = state.attacks.filter(
       (entry) =>
         entry.round === round &&
@@ -140,18 +134,14 @@ export function assessBattleCoverage(
       focusedAttempts.push(
         attempt("failed", [], "focused_description_missing"),
       );
-    if ((retryCandidate || correction) && focusedAttempts.length < 2) {
+    if (retryCandidate && focusedAttempts.length < 2) {
       focusedAttempts.push(
         attempt(
-          correction?.parseOutcome === "valid" ||
-            retryCandidate?.status === "corrected"
-            ? "succeeded"
-            : "failed",
-          [
-            correction?.parsedArtifactPath,
-            retryCandidate?.correctionParsedArtifactPath,
-          ].filter((value): value is string => Boolean(value)),
-          retryCandidate?.discardReason,
+          retryCandidate.status === "corrected" ? "succeeded" : "failed",
+          [retryCandidate.correctionParsedArtifactPath].filter(
+            (value): value is string => Boolean(value),
+          ),
+          retryCandidate.discardReason,
           2,
         ),
       );
@@ -163,7 +153,8 @@ export function assessBattleCoverage(
       review.parseOutcome !== "invalid",
     );
     const focusedCompleted = focusedAttempts.at(-1)?.state !== "failed";
-    const laneResolved = reviewCompleted && focusedCompleted && usableTerminal;
+    const attackPathResolved =
+      reviewCompleted && focusedCompleted && usableTerminal;
     const reasonCodes: string[] = [];
     if (!review) reasonCodes.push("review_missing");
     else if (review.parseOutcome === "partial")
@@ -173,8 +164,10 @@ export function assessBattleCoverage(
       review.parseOutcome === "invalid"
     )
       reasonCodes.push("review_failed");
-    if (!explicitEmpty && !focused)
-      reasonCodes.push("focused_description_missing");
+    if (!focusedCompleted)
+      reasonCodes.push(
+        focused ? "focused_description_failed" : "focused_description_missing",
+      );
     if (!explicitEmpty && focused && focused.attackCount > attacks.length)
       reasonCodes.push("submitted_path_lost");
     for (const attack of attacks) {
@@ -204,6 +197,21 @@ export function assessBattleCoverage(
       ),
     );
     const hasLanded = usable.some((entry) => entry.status === "landed");
+    const targetRound = state.contestants[target]?.rounds.find(
+      (entry) => entry.round === round,
+    );
+    const repairRequired =
+      hasLanded && targetRound?.postAttackStatus !== "downed";
+    const repairAttempts =
+      targetRound?.repairAttempts ??
+      (targetRound?.repair ? [targetRound.repair] : []);
+    const repairCompleted =
+      !repairRequired || repairAttempts.at(-1)?.status === "succeeded";
+    if (repairRequired && !repairAttempts.length)
+      reasonCodes.push("repair_missing");
+    else if (repairRequired && !repairCompleted)
+      reasonCodes.push("repair_failed");
+    const laneResolved = attackPathResolved && repairCompleted;
     const stages = [
       stage(
         "review",
@@ -262,10 +270,20 @@ export function assessBattleCoverage(
         ),
       ]),
       stage("repair", [
-        attempt(
-          explicitEmpty || !hasLanded ? "not_applicable" : "succeeded",
-          [],
-        ),
+        ...(repairRequired
+          ? repairAttempts.length
+            ? repairAttempts.slice(0, 2).map((entry, index) =>
+                attempt(
+                  entry.status === "succeeded" ? "succeeded" : "failed",
+                  [entry.promptPath, entry.transcriptPath].filter(
+                    (value): value is string => Boolean(value),
+                  ),
+                  entry.status === "succeeded" ? undefined : "repair_failed",
+                  index === 0 ? 1 : 2,
+                ),
+              )
+            : [attempt("failed", [], "repair_missing")]
+          : [attempt("not_applicable")]),
       ]),
     ];
     const degraded =
@@ -320,7 +338,15 @@ export function assessBattleCoverage(
   const evidenceCounts = {
     mechanical: contestantAttacks.filter(
       (entry) =>
-        entry.status !== "submitted" &&
+        ![
+          "submitted",
+          "capability_denied",
+          "provisional_infrastructure",
+          "infrastructure_error",
+          "execution_inconclusive",
+          "judge_rejected",
+          "judge_unable",
+        ].includes(entry.status) &&
         (!entry.evidenceProvenance ||
           entry.evidenceProvenance === "mechanical"),
     ).length,

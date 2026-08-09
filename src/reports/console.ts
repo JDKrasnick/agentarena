@@ -55,7 +55,7 @@ export function renderConsoleSummary(
   );
   const champion = state.ranking?.draw
     ? `Draw: ${state.ranking.reason}`
-    : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Arena champion"}: ${state.ranking?.winner ? contestantLabel(state.config.contestants, state.ranking.winner) : "none"} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`;
+    : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Arena champion"}: ${state.coverageDecision?.decision === "inconclusive" && state.ranking?.order[0] ? contestantLabel(state.config.contestants, state.ranking.order[0]) : state.ranking?.winner ? contestantLabel(state.config.contestants, state.ranking.winner) : "none"} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`;
   const recommendation = state.patchRecommendation?.contestantId
     ? contestantLabel(
         state.config.contestants,
