@@ -120,6 +120,15 @@ export function reportRounds(state: RunState): ReportRound[] {
   ) {
     ids.push("recovery");
   }
+  if (
+    state.reconciliationQueue.length > 0 ||
+    state.attacks.some((attack) => attack.round === "reconciliation") ||
+    contestants.some((contestant) =>
+      contestant.rounds.some((round) => round.round === "reconciliation"),
+    )
+  ) {
+    ids.push("reconciliation");
+  }
   return ids.map((id) => ({
     id,
     attacks: state.attacks.filter((attack) => attack.round === id),
@@ -161,6 +170,26 @@ export function recordedArtifactPaths(state: RunState): Set<string> {
   for (const record of state.attackInvocations) {
     for (const artifact of invocationPaths(record.invocation))
       paths.add(artifact);
+    if (record.rawArtifactPath) paths.add(record.rawArtifactPath);
+    if (record.parsedArtifactPath) paths.add(record.parsedArtifactPath);
+  }
+  for (const record of state.reviewInvocations) {
+    for (const artifact of invocationPaths(record.invocation))
+      paths.add(artifact);
+    if (record.rawArtifactPath) paths.add(record.rawArtifactPath);
+    if (record.parsedArtifactPath) paths.add(record.parsedArtifactPath);
+  }
+  for (const candidate of state.reconciliationQueue) {
+    paths.add(candidate.rawArtifactPath);
+    paths.add(candidate.parsedArtifactPath);
+    if (candidate.correctionRawArtifactPath)
+      paths.add(candidate.correctionRawArtifactPath);
+    if (candidate.correctionParsedArtifactPath)
+      paths.add(candidate.correctionParsedArtifactPath);
+  }
+  for (const record of state.submissionArtifacts) {
+    paths.add(record.rawArtifactPath);
+    paths.add(record.parsedArtifactPath);
   }
   return paths;
 }

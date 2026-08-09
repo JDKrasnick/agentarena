@@ -19,7 +19,9 @@ export function selectMethods(
         ? "systematic_exploration"
         : round === 3
           ? "integration_resilience_security"
-          : "infrastructure_recovery";
+          : round === "reconciliation"
+            ? "reconciliation"
+            : "infrastructure_recovery";
   const methodPackIds = [`${profile}@1`];
   const probeCardIds = [`boundary-table@1`];
   if (round === 2) {

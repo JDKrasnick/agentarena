@@ -11,11 +11,7 @@ import type {
   IssueResolver,
   PullRequestResolver,
 } from "../index-internal.js";
-import {
-  readAttackSubmission,
-  readReviewSubmission,
-  removeSubmission,
-} from "../agents/adapter.js";
+import { removeSubmission } from "../agents/adapter.js";
 import {
   composeAttackReviewPrompt,
   composeNeutralCasePrompt,
@@ -26,10 +22,15 @@ import { ArtifactStore } from "../artifacts/store.js";
 import {
   materializeAttack,
   materializeHouseAttack,
-  validateAttackOrdering,
 } from "../attacks/submission.js";
 import { validateAttack, validateHouseAttack } from "../attacks/validate.js";
 import { validateSiblingCase } from "../attacks/case-bundle.js";
+import {
+  parseFaultIsolatedSubmission,
+  mergeCorrectionFields,
+  type ParsedSubmission,
+  type SubmissionKind,
+} from "../attacks/fault-isolated-submission.js";
 import { assertEvidenceIdentityPreserved } from "../attacks/evidence-revision.js";
 import { validateHarnessOverlay } from "../maintenance/overlays.js";
 import { selectMethods } from "../methods/catalog.js";
@@ -93,14 +94,17 @@ import {
   type Attack,
   type AttackReviewArtifact,
   type AttackSubmission,
+  type CaseSubmission,
   type CheckResult,
   type ContestantResult,
   type ContestantConfig,
   type ContestantId,
   type ContestantRoundResult,
   type FightConfig,
+  type HouseSubmission,
   type PermissionPolicy,
   type PullRequestFixture,
+  type ReconciliationCandidate,
   type RoundId,
   type RunState,
   type Stage,
@@ -199,8 +203,8 @@ interface ArenaContext {
 
 interface RecordedRoundInvocation {
   id: string;
-  kind: "case_generation" | "verification";
-  actor: "verifier";
+  kind: "case_generation" | "verification" | "house";
+  actor: "verifier" | "harness";
   status:
     "succeeded" | "failed" | "timed_out" | "cancelled" | "infrastructure_error";
   startedAt: string;
@@ -518,6 +522,8 @@ export class RoundEngine {
         attackInvocations: [],
         promptManifests: [],
         harnessOverlays: [],
+        reconciliationQueue: [],
+        submissionArtifacts: [],
         patchQualityFacts: {},
         ...(targetResolution.target
           ? { deliveryTarget: targetResolution.target }
@@ -623,6 +629,34 @@ export class RoundEngine {
         if (result.status !== "completed")
           return this.finishTerminalRound(context, result);
         await this.applyRoundTransaction(context, result);
+        priorReplayHash = result.replay.replayHash;
+      }
+
+      if (
+        context.state.reconciliationQueue.some(
+          (candidate) => candidate.status === "pending",
+        )
+      ) {
+        await this.transition(
+          context,
+          "reconciliation_round",
+          "reconciliation",
+        );
+        const beforeRound = structuredClone(context.state);
+        const snapshot = await this.createRoundSnapshot(
+          context,
+          "reconciliation",
+          priorReplayHash,
+        );
+        const transaction = await this.executeLiveRound(
+          context,
+          snapshot,
+          beforeRound,
+          {},
+        );
+        if (transaction.result.status !== "completed")
+          return this.finishTerminalRound(context, transaction.result);
+        await this.applyRoundTransaction(context, transaction.result);
       }
 
       await this.finalValidation(context);
@@ -878,7 +912,7 @@ export class RoundEngine {
       state = await store.readState();
     }
 
-    const nextRound = ([1, 2, 3, "recovery"] as const).find(
+    const nextRound = ([1, 2, 3, "recovery", "reconciliation"] as const).find(
       (roundId) =>
         !envelopes.some((envelope) => envelope.roundId === roundId) &&
         (roundId !== "recovery" ||
@@ -886,6 +920,10 @@ export class RoundEngine {
             getContestant(state, agent).replacementCredits.some(
               (credit) => credit.status === "available",
             ),
+          )) &&
+        (roundId !== "reconciliation" ||
+          state.reconciliationQueue.some(
+            (candidate) => candidate.status === "pending",
           )),
     );
     if (nextRound) {
@@ -1000,6 +1038,34 @@ export class RoundEngine {
         if (transaction.result.status !== "completed") {
           return this.finishTerminalRound(context, transaction.result);
         }
+        await this.applyRoundTransaction(context, transaction.result);
+        priorReplayHash = transaction.result.replay.replayHash;
+      }
+      if (
+        context.state.reconciliationQueue.some(
+          (candidate) => candidate.status === "pending",
+        ) &&
+        !envelopes.some((envelope) => envelope.roundId === "reconciliation")
+      ) {
+        await this.transition(
+          context,
+          "reconciliation_round",
+          "reconciliation",
+        );
+        const beforeRound = structuredClone(context.state);
+        const snapshot = await this.createRoundSnapshot(
+          context,
+          "reconciliation",
+          priorReplayHash,
+        );
+        const transaction = await this.executeLiveRound(
+          context,
+          snapshot,
+          beforeRound,
+          {},
+        );
+        if (transaction.result.status !== "completed")
+          return this.finishTerminalRound(context, transaction.result);
         await this.applyRoundTransaction(context, transaction.result);
       }
       if (!savedFinalization) {
@@ -1247,6 +1313,7 @@ export class RoundEngine {
       runSpec: context.runSpec,
       contestants: [contestants[0]!, contestants[1]!] as const,
       knownDefects,
+      reconciliationQueue: structuredClone(context.state.reconciliationQueue),
       priorReplayHash,
     };
     draft.snapshotHash = calculateSnapshotHash(draft);
@@ -1290,17 +1357,19 @@ export class RoundEngine {
         );
         const kind = relative.startsWith("prompts/")
           ? "prompt"
-          : key.toLowerCase().includes("transcript")
-            ? "transcript"
-            : relative.startsWith("patches/")
-              ? "patch"
-              : relative.startsWith("attacks/")
-                ? "attack"
-                : relative.startsWith("cases/")
-                  ? "case"
-                  : relative.startsWith("logs/")
-                    ? "check_log"
-                    : "diagnostic";
+          : relative.startsWith("submissions/")
+            ? "submission"
+            : key.toLowerCase().includes("transcript")
+              ? "transcript"
+              : relative.startsWith("patches/")
+                ? "patch"
+                : relative.startsWith("attacks/")
+                  ? "attack"
+                  : relative.startsWith("cases/")
+                    ? "case"
+                    : relative.startsWith("logs/")
+                      ? "check_log"
+                      : "diagnostic";
         artifacts.push({
           id: stableId("artifact", relative),
           kind,
@@ -1312,6 +1381,174 @@ export class RoundEngine {
       }
     }
     return artifacts;
+  }
+
+  private async persistProviderSubmission(
+    context: ArenaContext,
+    options: {
+      worktree: string;
+      sourceName: string;
+      round: RoundId;
+      phase: string;
+      actor: string;
+      kind: SubmissionKind;
+    },
+  ): Promise<{
+    parsed: ParsedSubmission<unknown>;
+    rawPath: string;
+    parsedPath: string;
+  }> {
+    const sourcePath = path.join(options.worktree, options.sourceName);
+    const raw = await readFile(sourcePath);
+    const prefix = `submissions/${String(options.round)}/${options.phase}/${options.actor}`;
+    const rawPath = await context.store.writeImmutableBytes(
+      `${prefix}/raw.txt`,
+      raw,
+    );
+    const parsed = parseFaultIsolatedSubmission(
+      options.kind as "review",
+      raw.toString("utf8"),
+    ) as ParsedSubmission<unknown>;
+    parsed.rawSha256 = sha256(raw);
+    const parsedPath = await context.store.writeImmutableJson(
+      `${prefix}/parsed.json`,
+      parsed,
+    );
+    context.state.submissionArtifacts.push({
+      round: options.round,
+      phase: options.phase,
+      actor: options.actor,
+      kind: options.kind,
+      outcome: parsed.outcome,
+      rawSha256: sha256(raw),
+      rawArtifactPath: rawPath,
+      parsedArtifactPath: parsedPath,
+    });
+    return { parsed, rawPath, parsedPath };
+  }
+
+  private submissionWarning(
+    label: string,
+    parsed: ParsedSubmission<unknown>,
+    rawPath: string,
+    parsedPath: string,
+  ): string {
+    const detail = parsed.rejections
+      .slice(0, 4)
+      .map(
+        (entry) =>
+          `${entry.path}: ${entry.code} (received ${entry.received}${entry.allowedValues ? `; allowed ${entry.allowedValues.join(", ")}` : ""})`,
+      )
+      .join("; ");
+    return `${label}: ${detail || parsed.outcome}. Raw: ${rawPath}. Parsed: ${parsedPath}`;
+  }
+
+  private async persistReturnedSubmission(
+    context: ArenaContext,
+    options: {
+      submission: object;
+      round: RoundId;
+      phase: string;
+      actor: string;
+      kind: "house" | "case";
+    },
+  ): Promise<{
+    parsed: ParsedSubmission<unknown>;
+    rawPath: string;
+    parsedPath: string;
+  }> {
+    const rawSource =
+      "rawSource" in options.submission &&
+      typeof options.submission.rawSource === "string"
+        ? options.submission.rawSource
+        : JSON.stringify(options.submission);
+    const raw = Buffer.from(rawSource, "utf8");
+    const prefix = `submissions/${String(options.round)}/${options.phase}/${options.actor}`;
+    const rawPath = await context.store.writeImmutableBytes(
+      `${prefix}/raw.txt`,
+      raw,
+    );
+    const parsed =
+      options.kind === "house"
+        ? parseFaultIsolatedSubmission("house", raw.toString("utf8"))
+        : parseFaultIsolatedSubmission("case", raw.toString("utf8"));
+    parsed.rawSha256 = sha256(raw);
+    const parsedPath = await context.store.writeImmutableJson(
+      `${prefix}/parsed.json`,
+      parsed,
+    );
+    context.state.submissionArtifacts.push({
+      round: options.round,
+      phase: options.phase,
+      actor: options.actor,
+      kind: options.kind,
+      outcome: parsed.outcome,
+      rawSha256: sha256(raw),
+      rawArtifactPath: rawPath,
+      parsedArtifactPath: parsedPath,
+    });
+    return { parsed, rawPath, parsedPath };
+  }
+
+  private enqueueRejectedAttacks(
+    context: ArenaContext,
+    options: {
+      parsed: ParsedSubmission<unknown>;
+      rawPath: string;
+      parsedPath: string;
+      round: RoundId;
+      lane: "contestant" | "house";
+      actor: ContestantId | "house";
+      target: ContestantId;
+    },
+  ): void {
+    const section = options.parsed.sections.attacks;
+    if (
+      !section ||
+      (options.parsed.outcome === "invalid" && !section.entries.length)
+    )
+      return;
+    for (const entry of section.entries) {
+      if (
+        entry.outcome !== "rejected" ||
+        entry.rejections.every(
+          (rejection) => rejection.code === "position_limit",
+        )
+      )
+        continue;
+      const id = stableId(
+        "reconciliation",
+        String(options.round),
+        options.lane,
+        options.actor,
+        options.target,
+        String(entry.index),
+        options.parsed.rawSha256 ?? "no-raw-hash",
+      );
+      if (
+        context.state.reconciliationQueue.some(
+          (candidate) => candidate.id === id,
+        )
+      )
+        continue;
+      const candidate: ReconciliationCandidate = {
+        version: 1,
+        id,
+        lane: options.lane,
+        sourceRound: options.round,
+        sourceEntryIndex: entry.index,
+        actor: options.actor,
+        target: options.target,
+        attemptCount: 1,
+        rawArtifactPath: options.rawPath,
+        parsedArtifactPath: options.parsedPath,
+        diagnostics: structuredClone(entry.rejections),
+        validatedFields: structuredClone(entry.validatedFields),
+        editablePaths: structuredClone(entry.editablePaths),
+        status: "pending",
+      };
+      context.state.reconciliationQueue.push(candidate);
+    }
   }
 
   private async persistRoundBoundary(
@@ -1520,6 +1757,7 @@ export class RoundEngine {
                   .map((artifact) => artifact.id),
               },
             ],
+      reconciliationQueue: structuredClone(context.state.reconciliationQueue),
       artifacts,
       stateDeltaArtifactId: deltaArtifact.id,
       replayHash: "0".repeat(64),
@@ -1576,6 +1814,7 @@ export class RoundEngine {
         resultingContestants[0]!,
         resultingContestants[1]!,
       ],
+      reconciliationQueue: structuredClone(context.state.reconciliationQueue),
       replay,
     } as const;
     const result = RoundResultSchema.parse(
@@ -1884,7 +2123,12 @@ export class RoundEngine {
     const active = context.config.agents.filter(
       (agent) => getContestant(context.state, agent).status !== "eliminated",
     );
-    return active.length <= 1;
+    return (
+      active.length <= 1 &&
+      !context.state.reconciliationQueue.some(
+        (candidate) => candidate.status === "pending",
+      )
+    );
   }
 
   private async collectAttackReviews(
@@ -1990,7 +2234,19 @@ export class RoundEngine {
           continue;
         }
         try {
-          const submission = await readReviewSubmission(worktree);
+          const captured = await this.persistProviderSubmission(context, {
+            worktree,
+            sourceName: ".agent-arena-submission.json",
+            round,
+            phase: "review",
+            actor: reviewer,
+            kind: "review",
+          });
+          invocation.submissionPath = captured.parsedPath;
+          const submission = captured.parsed.value as {
+            version: 1;
+            findings: AttackReviewArtifact["findings"];
+          };
           await removeSubmission(worktree);
           const changedPaths =
             await context.worktrees.changedPathsSinceSnapshot(
@@ -2023,10 +2279,34 @@ export class RoundEngine {
             reviewer,
             target,
             invocation,
-            submissionStatus: "submitted",
+            submissionStatus:
+              captured.parsed.outcome === "partial"
+                ? "partially_submitted"
+                : captured.parsed.outcome === "invalid"
+                  ? "invalid_submission"
+                  : "submitted",
             findingCount: artifact.findings.length,
             artifactPath,
+            parseOutcome: captured.parsed.outcome,
+            sectionOutcomes: Object.fromEntries(
+              Object.entries(captured.parsed.sections).map(([key, section]) => [
+                key,
+                section.outcome,
+              ]),
+            ),
+            rawArtifactPath: captured.rawPath,
+            parsedArtifactPath: captured.parsedPath,
           });
+          if (captured.parsed.rejections.length) {
+            const warning = this.submissionWarning(
+              `Review submission from ${reviewer} against ${target} was partially usable`,
+              captured.parsed,
+              captured.rawPath,
+              captured.parsedPath,
+            );
+            context.state.warnings.push(warning);
+            this.progress(warning);
+          }
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
           context.state.reviewInvocations.push({
@@ -2152,6 +2432,7 @@ export class RoundEngine {
     entry: AttackSubmission["attacks"][number],
     round: RoundId,
     attacker: ContestantId,
+    artifactKey?: string,
   ): Promise<
     | {
         focusedCommand: string;
@@ -2167,7 +2448,7 @@ export class RoundEngine {
       return undefined;
     }
     const worktree = await context.worktrees.create(
-      `case-judge-${String(round)}-${attacker}-${String(entry.rank)}`,
+      `case-judge-${String(round)}-${attacker}-${String(entry.rank)}${artifactKey ? `-${artifactKey}` : ""}`,
     );
     try {
       const snapshot = await context.worktrees.snapshot(worktree);
@@ -2178,12 +2459,13 @@ export class RoundEngine {
         outputPath: path.join(worktree, ".agent-arena-cases.json"),
       });
       const transcriptPrefix = context.store.resolve(
-        `logs/case-judge-${String(round)}-${attacker}-${String(entry.rank)}`,
+        `logs/case-judge-${String(round)}-${attacker}-${String(entry.rank)}${artifactKey ? `-${artifactKey}` : ""}`,
       );
+      const caseArtifactPaths = [transcriptPrefix];
       const submission = await this.recordCaseGeneration(
         context,
         round,
-        [transcriptPrefix],
+        caseArtifactPaths,
         () =>
           this.dependencies.caseBuilder!.build({
             worktree,
@@ -2191,10 +2473,28 @@ export class RoundEngine {
             timeoutMs: context.config.limits.attackMs,
             transcriptPrefix,
             signal: context.controller.signal,
-            round: round === "recovery" ? 3 : round,
+            round: typeof round === "number" ? round : 3,
           }),
       );
-      const proposal = submission.cases[0];
+      const captured = await this.persistReturnedSubmission(context, {
+        submission,
+        round,
+        phase: "case-generation",
+        actor: `${attacker}-rank-${String(entry.rank)}${artifactKey ? `-${artifactKey}` : ""}`,
+        kind: "case",
+      });
+      caseArtifactPaths.push(captured.rawPath, captured.parsedPath);
+      if (captured.parsed.rejections.length) {
+        const warning = this.submissionWarning(
+          `Neutral case output for ${attacker}'s rank ${String(entry.rank)} was partially usable`,
+          captured.parsed,
+          captured.rawPath,
+          captured.parsedPath,
+        );
+        context.state.warnings.push(warning);
+        this.progress(warning);
+      }
+      const proposal = (captured.parsed.value as CaseSubmission).cases[0];
       if (!proposal) return undefined;
       assertDirectCapabilitiesAllowed(
         context.permissions,
@@ -2202,7 +2502,7 @@ export class RoundEngine {
         proposal.requiredCapabilities,
       );
       const patchPath = context.store.resolve(
-        `cases/round-${String(round)}/${attacker}/${String(entry.rank)}.diff`,
+        `cases/round-${String(round)}/${attacker}/${String(entry.rank)}${artifactKey ? `-${artifactKey}` : ""}.diff`,
       );
       await context.worktrees.capturePatchAgainstSnapshot(
         worktree,
@@ -2228,6 +2528,373 @@ export class RoundEngine {
     } finally {
       await context.worktrees.remove(worktree);
     }
+  }
+
+  private async collectReconciledAttacks(
+    context: ArenaContext,
+    round: RoundId,
+  ): Promise<Attack[]> {
+    const pending = context.state.reconciliationQueue.filter(
+      (candidate) => candidate.status === "pending",
+    );
+    if (!pending.length) return [];
+    const collected: Attack[] = [];
+    const groups = new Map<string, ReconciliationCandidate[]>();
+    for (const candidate of pending) {
+      const key = candidate.lane === "house" ? "house" : candidate.actor;
+      groups.set(key, [...(groups.get(key) ?? []), candidate]);
+    }
+    for (const [actor, candidates] of groups) {
+      const worktree = await context.worktrees.create(
+        `round-${String(round)}-correction-${actor}`,
+      );
+      const contestantId =
+        actor === "house" ? undefined : (actor as ContestantId);
+      const target = candidates[0]!.target;
+      let invocation: AgentInvocation | undefined;
+      try {
+        if (contestantId) {
+          const targetPatch = getContestant(
+            context.state,
+            target,
+          ).currentPatchPath;
+          if (targetPatch)
+            await context.worktrees.applyPatch(worktree, targetPatch);
+        }
+        const outputName =
+          actor === "house"
+            ? ".agent-arena-house.json"
+            : ".agent-arena-submission.json";
+        const outputPath = path.join(worktree, outputName);
+        const prompt = [
+          "# Correction-only reconciliation",
+          "This is the second and final attempt for the listed malformed attack entries.",
+          "Return one object per candidate ID. Put only missing or previously rejected fields in fields. Previously valid fields are frozen; changing one discards the candidate.",
+          "Do not submit new attacks, reviews, or hypotheses.",
+          "",
+          JSON.stringify(
+            candidates.map((candidate) => ({
+              candidateId: candidate.id,
+              validatedFields: candidate.validatedFields,
+              editablePaths: candidate.editablePaths,
+              diagnostics: candidate.diagnostics,
+            })),
+            null,
+            2,
+          ),
+          "",
+          `Write {"version":1,"corrections":[{"candidateId":"...","fields":{}}]} to ${outputPath}.`,
+        ].join("\n");
+        const promptPath = await context.store.writeText(
+          `prompts/round-${String(round)}-correction-${actor}.md`,
+          prompt,
+        );
+        if (actor === "house") {
+          if (!this.dependencies.houseScout)
+            throw new Error("No neutral house lane is configured");
+          const startedAt = this.now().toISOString();
+          // The house scout's normal return schema is intentionally ignored:
+          // its exact correction bytes are parsed below.
+          await this.dependencies.houseScout
+            .scout({
+              worktree,
+              prompt,
+              timeoutMs: context.config.limits.attackMs,
+              transcriptPrefix: context.store.resolve(
+                `logs/round-${String(round)}-correction-house`,
+              ),
+              signal: context.controller.signal,
+              round: 3,
+            })
+            .catch((error) => {
+              throw error;
+            });
+          context.roundInvocations.push({
+            id: stableId("invocation", String(round), "correction", "house"),
+            kind: "case_generation",
+            actor: "verifier",
+            status: "succeeded",
+            startedAt,
+            finishedAt: this.now().toISOString(),
+            artifactPaths: [promptPath],
+          });
+        } else {
+          invocation = await this.adapterFor(context, contestantId!).attack({
+            worktree,
+            contestantId: contestantId!,
+            prompt,
+            promptPath,
+            transcriptPrefix: context.store.resolve(
+              `logs/round-${String(round)}-correction-${actor}`,
+            ),
+            timeoutMs: context.config.limits.attackMs,
+            signal: context.controller.signal,
+            round,
+            opponent: target,
+          });
+          if (invocation.status !== "succeeded")
+            throw new Error(`Correction invocation ${invocation.status}`);
+        }
+        const raw = await readFile(outputPath);
+        const prefix = `submissions/${String(round)}/correction/${actor}`;
+        const rawPath = await context.store.writeImmutableBytes(
+          `${prefix}/raw.txt`,
+          raw,
+        );
+        let decoded: unknown;
+        try {
+          decoded = JSON.parse(raw.toString("utf8"));
+        } catch {
+          decoded = undefined;
+        }
+        const corrections =
+          decoded &&
+          typeof decoded === "object" &&
+          !Array.isArray(decoded) &&
+          (decoded as Record<string, unknown>).version === 1 &&
+          Array.isArray((decoded as Record<string, unknown>).corrections)
+            ? ((decoded as Record<string, unknown>).corrections as unknown[])
+            : [];
+        const correctedRankCounts = new Map<number, number>();
+        for (const candidate of candidates.filter(
+          (entry) => entry.lane === "contestant",
+        )) {
+          const match = corrections.find(
+            (entry) =>
+              entry &&
+              typeof entry === "object" &&
+              !Array.isArray(entry) &&
+              (entry as Record<string, unknown>).candidateId === candidate.id,
+          );
+          const fields =
+            match && typeof match === "object" && !Array.isArray(match)
+              ? (match as Record<string, unknown>).fields
+              : undefined;
+          if (!fields || typeof fields !== "object" || Array.isArray(fields))
+            continue;
+          const rank =
+            (fields as Record<string, unknown>).rank ??
+            candidate.validatedFields.rank;
+          if (typeof rank === "number")
+            correctedRankCounts.set(
+              rank,
+              (correctedRankCounts.get(rank) ?? 0) + 1,
+            );
+        }
+        const outcomes: Array<Record<string, unknown>> = [];
+        for (const candidate of candidates) {
+          candidate.attemptCount = 2;
+          candidate.correctionRound = round;
+          const matches = corrections.filter(
+            (entry) =>
+              entry &&
+              typeof entry === "object" &&
+              !Array.isArray(entry) &&
+              (entry as Record<string, unknown>).candidateId === candidate.id,
+          );
+          if (matches.length !== 1) {
+            candidate.status = "discarded";
+            candidate.discardReason = matches.length
+              ? "duplicate_correction"
+              : "missing_correction";
+            outcomes.push({
+              candidateId: candidate.id,
+              outcome: "rejected",
+              reason: candidate.discardReason,
+            });
+            continue;
+          }
+          const fields = (matches[0] as Record<string, unknown>).fields;
+          const mergedCorrection = mergeCorrectionFields(
+            candidate.validatedFields,
+            fields,
+          );
+          if (!mergedCorrection.accepted) {
+            candidate.status = "discarded";
+            candidate.discardReason = mergedCorrection.code;
+            outcomes.push({
+              candidateId: candidate.id,
+              outcome: "rejected",
+              reason: candidate.discardReason,
+            });
+            continue;
+          }
+          const merged = mergedCorrection.value;
+          if (
+            candidate.lane === "contestant" &&
+            typeof merged.rank === "number" &&
+            (correctedRankCounts.get(merged.rank) ?? 0) > 1
+          ) {
+            candidate.status = "discarded";
+            candidate.discardReason = "duplicate_rank";
+            outcomes.push({
+              candidateId: candidate.id,
+              outcome: "rejected",
+              reason: candidate.discardReason,
+            });
+            continue;
+          }
+          const parsed =
+            candidate.lane === "house"
+              ? parseFaultIsolatedSubmission(
+                  "house",
+                  JSON.stringify({
+                    version: 1,
+                    hypotheses: [],
+                    attacks: [merged],
+                  }),
+                )
+              : parseFaultIsolatedSubmission(
+                  "attack",
+                  JSON.stringify({ version: 1, attacks: [merged] }),
+                );
+          const corrected = parsed.sections.attacks?.accepted[0];
+          if (!corrected) {
+            candidate.status = "discarded";
+            candidate.discardReason = "still_malformed";
+            outcomes.push({
+              candidateId: candidate.id,
+              outcome: "rejected",
+              reason: candidate.discardReason,
+              diagnostics: parsed.rejections,
+            });
+            continue;
+          }
+          const attackEntry =
+            candidate.lane === "house"
+              ? {
+                  ...(corrected as HouseSubmission["attacks"][number]),
+                  rank: 1 as const,
+                }
+              : (corrected as AttackSubmission["attacks"][number]);
+          const neutralCase = await this.buildNeutralCase(
+            context,
+            attackEntry,
+            round,
+            contestantId ?? "a",
+            candidate.id,
+          );
+          if (!neutralCase) {
+            candidate.status = "discarded";
+            candidate.discardReason = "case_generation_failed";
+            outcomes.push({
+              candidateId: candidate.id,
+              outcome: "rejected",
+              reason: candidate.discardReason,
+            });
+            continue;
+          }
+          const attack =
+            candidate.lane === "house"
+              ? await materializeHouseAttack(
+                  {
+                    ...(corrected as HouseSubmission["attacks"][number]),
+                    focusedCommand: neutralCase.focusedCommand,
+                    requiredCapabilities: neutralCase.requiredCapabilities,
+                  },
+                  {
+                    targets: [candidate.target],
+                    round,
+                    patchPath: neutralCase.patchPath,
+                    methodPackId: "reconciliation@1",
+                  },
+                )
+              : await materializeAttack(
+                  {
+                    ...(corrected as AttackSubmission["attacks"][number]),
+                    focusedCommand: neutralCase.focusedCommand,
+                    requiredCapabilities: neutralCase.requiredCapabilities,
+                  },
+                  {
+                    author: contestantId!,
+                    authorProvider: getContestant(context.state, contestantId!)
+                      .provider,
+                    target: candidate.target,
+                    round,
+                    patchPath: neutralCase.patchPath,
+                  },
+                );
+          candidate.status = "corrected";
+          candidate.resultingAttackId = attack.id;
+          collected.push(attack);
+          outcomes.push({
+            candidateId: candidate.id,
+            outcome: "accepted",
+            attackId: attack.id,
+          });
+        }
+        const parsedPath = await context.store.writeImmutableJson(
+          `${prefix}/parsed.json`,
+          { version: 1, rawSha256: sha256(raw), outcomes },
+        );
+        for (const candidate of candidates) {
+          candidate.correctionRawArtifactPath = rawPath;
+          candidate.correctionParsedArtifactPath = parsedPath;
+        }
+        const correctionOutcome = outcomes.some(
+          (outcome) => outcome.outcome === "accepted",
+        )
+          ? outcomes.some((outcome) => outcome.outcome === "rejected")
+            ? "partial"
+            : "valid"
+          : "invalid";
+        context.state.submissionArtifacts.push({
+          round,
+          phase: "correction",
+          actor,
+          kind: "correction",
+          outcome: correctionOutcome,
+          rawSha256: sha256(raw),
+          rawArtifactPath: rawPath,
+          parsedArtifactPath: parsedPath,
+        });
+        if (invocation) {
+          invocation.submissionPath = parsedPath;
+          context.state.attackInvocations.push({
+            round,
+            attacker: contestantId!,
+            target,
+            invocation,
+            submissionStatus: outcomes.some(
+              (outcome) => outcome.outcome === "accepted",
+            )
+              ? outcomes.some((outcome) => outcome.outcome === "rejected")
+                ? "partially_submitted"
+                : "submitted"
+              : "invalid_submission",
+            attackCount: outcomes.filter(
+              (outcome) => outcome.outcome === "accepted",
+            ).length,
+            parseOutcome: outcomes.some(
+              (outcome) => outcome.outcome === "accepted",
+            )
+              ? outcomes.some((outcome) => outcome.outcome === "rejected")
+                ? "partial"
+                : "valid"
+              : "invalid",
+            rawArtifactPath: rawPath,
+            parsedArtifactPath: parsedPath,
+            detail: "Correction-only reconciliation lane",
+          });
+        }
+      } catch (error) {
+        for (const candidate of candidates) {
+          candidate.attemptCount = 2;
+          candidate.correctionRound = round;
+          candidate.status = "discarded";
+          candidate.discardReason =
+            error instanceof Error && error.message.includes("timed_out")
+              ? "correction_timeout"
+              : "correction_failed";
+        }
+        context.state.warnings.push(
+          `Correction lane ${actor} failed; ${String(candidates.length)} candidate(s) were permanently discarded: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } finally {
+        await context.worktrees.remove(worktree);
+      }
+    }
+    return collected;
   }
 
   private async runRound(context: ArenaContext, round: RoundId): Promise<void> {
@@ -2308,7 +2975,10 @@ export class RoundEngine {
       ),
     );
 
-    const collected: Attack[] = [];
+    const collected: Attack[] = await this.collectReconciledAttacks(
+      context,
+      round,
+    );
     const siegeAttacker = context.config.contestants.find(
       (contestant) => contestant.role === "attacker",
     );
@@ -2316,16 +2986,21 @@ export class RoundEngine {
       (contestant) => contestant.role === "defender",
     );
     const collectingAgents =
-      context.config.mode === "siege" && siegeAttacker
-        ? [siegeAttacker.id]
-        : context.config.agents;
-    const reviewPackets = await this.collectAttackReviews(
-      context,
-      round,
-      selection,
-      collectingAgents,
-      siegeDefender?.id,
-    );
+      round === "reconciliation"
+        ? []
+        : context.config.mode === "siege" && siegeAttacker
+          ? [siegeAttacker.id]
+          : context.config.agents;
+    const reviewPackets =
+      round === "reconciliation"
+        ? new Map<ContestantId, AttackReviewArtifact>()
+        : await this.collectAttackReviews(
+            context,
+            round,
+            selection,
+            collectingAgents,
+            siegeDefender?.id,
+          );
     await this.transition(context, "collect_attacks", round);
     for (const agent of collectingAgents) {
       const contestant = getContestant(context.state, agent);
@@ -2420,8 +3095,25 @@ export class RoundEngine {
           continue;
         }
         try {
-          const submission = await readAttackSubmission(worktree);
-          validateAttackOrdering(submission);
+          const captured = await this.persistProviderSubmission(context, {
+            worktree,
+            sourceName: ".agent-arena-submission.json",
+            round,
+            phase: "attack",
+            actor: agent,
+            kind: "attack",
+          });
+          invocation.submissionPath = captured.parsedPath;
+          const submission = captured.parsed.value as AttackSubmission;
+          this.enqueueRejectedAttacks(context, {
+            parsed: captured.parsed,
+            rawPath: captured.rawPath,
+            parsedPath: captured.parsedPath,
+            round,
+            lane: "contestant",
+            actor: agent,
+            target,
+          });
           const availableCredits =
             round === "recovery"
               ? contestant.replacementCredits.filter(
@@ -2429,10 +3121,6 @@ export class RoundEngine {
                 ).length
               : 3;
           const accepted = submission.attacks.slice(0, availableCredits);
-          await context.store.writeJson(
-            `hypotheses/round-${String(round)}/${agent}.json`,
-            submission.hypotheses,
-          );
           await removeSubmission(worktree);
           for (const entry of accepted) {
             const neutralCase = await this.buildNeutralCase(
@@ -2469,12 +3157,36 @@ export class RoundEngine {
             attacker: agent,
             target,
             invocation,
-            submissionStatus: "submitted",
+            submissionStatus:
+              captured.parsed.outcome === "partial"
+                ? "partially_submitted"
+                : captured.parsed.outcome === "invalid"
+                  ? "invalid_submission"
+                  : "submitted",
             attackCount: accepted.length,
+            parseOutcome: captured.parsed.outcome,
+            sectionOutcomes: Object.fromEntries(
+              Object.entries(captured.parsed.sections).map(([key, section]) => [
+                key,
+                section.outcome,
+              ]),
+            ),
+            rawArtifactPath: captured.rawPath,
+            parsedArtifactPath: captured.parsedPath,
             ...(salvagingTimedOutSubmission
               ? { detail: "Valid submission salvaged after timeout" }
               : {}),
           });
+          if (captured.parsed.rejections.length) {
+            const warning = this.submissionWarning(
+              `Attack submission from ${agent} against ${target} was partially usable`,
+              captured.parsed,
+              captured.rawPath,
+              captured.parsedPath,
+            );
+            context.state.warnings.push(warning);
+            this.progress(warning);
+          }
           if (salvagingTimedOutSubmission) {
             context.state.warnings.push(
               `Attack submission from ${agent} against ${target} was salvaged after timeout; inspect the invocation duration before relying on the configured limit`,
@@ -2548,21 +3260,63 @@ export class RoundEngine {
             "",
             `Write {"version":1,"hypotheses":[],"attacks":[]} to ${path.join(worktree, ".agent-arena-house.json")}. Each attack uses the normal attack schema without rank.`,
           ].join("\n");
+          const houseStartedAt = this.now().toISOString();
+          const houseTranscript = context.store.resolve(
+            `logs/round-${String(round)}-attack-house-${target}`,
+          );
           const submission = await this.dependencies.houseScout.scout({
             worktree,
             prompt,
             timeoutMs: context.config.limits.attackMs,
-            transcriptPrefix: context.store.resolve(
-              `logs/round-${String(round)}-attack-house-${target}`,
-            ),
+            transcriptPrefix: houseTranscript,
             signal: context.controller.signal,
             round,
           });
+          const captured = await this.persistReturnedSubmission(context, {
+            submission,
+            round,
+            phase: "house",
+            actor: `house-${target}`,
+            kind: "house",
+          });
+          context.roundInvocations.push({
+            id: stableId("invocation", String(round), "house", target),
+            kind: "house",
+            actor: "harness",
+            status: "succeeded",
+            startedAt: houseStartedAt,
+            finishedAt: this.now().toISOString(),
+            artifactPaths: [
+              houseTranscript,
+              captured.rawPath,
+              captured.parsedPath,
+            ],
+          });
+          const parsedSubmission = captured.parsed.value as HouseSubmission;
+          this.enqueueRejectedAttacks(context, {
+            parsed: captured.parsed,
+            rawPath: captured.rawPath,
+            parsedPath: captured.parsedPath,
+            round,
+            lane: "house",
+            actor: "house",
+            target,
+          });
           await context.store.writeJson(
             `hypotheses/round-${String(round)}/house-${target}.json`,
-            submission.hypotheses,
+            parsedSubmission.hypotheses,
           );
-          const entry = submission.attacks[0];
+          if (captured.parsed.rejections.length) {
+            const warning = this.submissionWarning(
+              `House scout output for Candidate ${String(candidateIndex + 1)} was partially usable`,
+              captured.parsed,
+              captured.rawPath,
+              captured.parsedPath,
+            );
+            context.state.warnings.push(warning);
+            this.progress(warning);
+          }
+          const entry = parsedSubmission.attacks[0];
           if (entry) {
             await rm(path.join(worktree, ".agent-arena-house.json"), {
               force: true,
@@ -3313,10 +4067,11 @@ export class RoundEngine {
         const transcriptPrefix = context.store.resolve(
           `logs/case-builder-${attack.id}`,
         );
+        const siblingArtifactPaths = [transcriptPrefix];
         const submission = await this.recordCaseGeneration(
           context,
           round,
-          [transcriptPrefix],
+          siblingArtifactPaths,
           () =>
             this.dependencies.caseBuilder!.build({
               worktree,
@@ -3327,10 +4082,20 @@ export class RoundEngine {
               round,
             }),
         );
+        const captured = await this.persistReturnedSubmission(context, {
+          submission,
+          round,
+          phase: "held-out-case-generation",
+          actor: attack.id,
+          kind: "case",
+        });
+        siblingArtifactPaths.push(captured.rawPath, captured.parsedPath);
         await rm(path.join(worktree, ".agent-arena-cases.json"), {
           force: true,
         });
-        for (const [index, proposal] of submission.cases
+        for (const [index, proposal] of (
+          captured.parsed.value as CaseSubmission
+        ).cases
           .slice(0, context.config.maxHeldOutCasesPerDefect)
           .entries()) {
           const patchPath = context.store.resolve(

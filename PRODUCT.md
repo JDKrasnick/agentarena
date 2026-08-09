@@ -297,6 +297,31 @@ Purely rhetorical or stylistic criticism should not affect the result unless it 
 
 Both agents submit their ranked attack sets before any result is revealed. The harness resolves all target damage and attacker recoil simultaneously so process order cannot influence the fight.
 
+Structured provider output is fault-isolated. The harness preserves the exact
+submitted bytes before parsing or worktree cleanup, then validates review
+findings, contestant attacks, house hypotheses and attacks, and neutral cases
+independently. A malformed optional section or sibling cannot suppress valid
+scoring evidence. Contestant attack ranks are unique values from 1 through 3;
+they may be sparse, are never renumbered, and every entry sharing a duplicate
+rank is rejected. Explicit empty sections remain distinct from missing or lost
+coverage. Contestant scouting portfolios are legacy non-scoring input; only
+house-scout hypotheses remain in the current artifact contract.
+
+Each independently identifiable rejected contestant or house attack receives
+one correction opportunity at the start of the next attack-bearing round. The
+original malformed entry is attempt one. Correction uses a separate lane with
+one shared attack deadline per contestant and one for the house, does not
+consume new attack slots, freezes every field that already validated, and lets
+the provider supply only missing or rejected fields. A corrected attack is
+tested against that round's current frozen patches and receives ordinary
+damage/recoil semantics while retaining its original rank; corrected house
+attacks remain no-recoil. A missing, timed-out, tampered, or malformed second
+attempt is permanently discarded as lost coverage. Infrastructure recovery is
+the next correction opportunity when it runs. If candidates are first created
+in the final attack-bearing round, one correction-only reconciliation round
+runs neutral case construction, validation, simultaneous scoring, repair, and
+required validation; it is skipped when the queue is empty.
+
 Case-judge worktrees start from the frozen base implementation. The case judge
 receives an anonymized failure description and immutable RunSpec, snapshots
 that tree before generation, captures its test-only overlay, and replays it in

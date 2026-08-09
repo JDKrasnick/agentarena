@@ -105,6 +105,31 @@ export class ArtifactStore {
     }
   }
 
+  async writeImmutableBytes(
+    relativePath: string,
+    content: Uint8Array,
+  ): Promise<string> {
+    const target = this.resolve(relativePath);
+    await mkdir(path.dirname(target), { recursive: true });
+    const temporary = this.resolve(`.${randomUUID()}.tmp`);
+    await writeFile(temporary, content);
+    try {
+      await link(temporary, target);
+      return target;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = await readFile(target);
+      if (!existing.equals(Buffer.from(content))) {
+        throw new Error(`Immutable artifact already exists: ${relativePath}`, {
+          cause: error,
+        });
+      }
+      return target;
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
+
   async replaceDerivedJson(
     relativePath: string,
     value: unknown,

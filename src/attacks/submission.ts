@@ -11,10 +11,8 @@ import type {
 
 export function validateAttackOrdering(submission: AttackSubmission): void {
   const ranks = submission.attacks.map((attack) => attack.rank);
-  const expected = ranks.map((_, index) => index + 1);
-  if (ranks.some((rank, index) => rank !== expected[index])) {
-    throw new Error("Attack ranks must be unique and contiguous from rank 1");
-  }
+  if (new Set(ranks).size !== ranks.length)
+    throw new Error("Attack ranks must be unique values from 1 through 3");
 }
 
 export async function materializeAttack(
@@ -69,7 +67,7 @@ export async function materializeHouseAttack(
   submission: HouseSubmission["attacks"][number],
   options: {
     targets: ContestantId[];
-    round: 2 | 3;
+    round: RoundId;
     patchPath: string;
     methodPackId: string;
   },

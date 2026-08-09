@@ -26,6 +26,7 @@ const FeedbackManifestSchema = z
       z.literal(2),
       z.literal(3),
       z.literal("recovery"),
+      z.literal("reconciliation"),
     ]),
     contestantId: z.enum(["a", "b"]),
     phase: z.enum(["review", "attack", "repair", "recovery"]),
@@ -96,7 +97,7 @@ function visibleReproducers(attack: Attack) {
 }
 
 function roundOrder(round: RoundId): number {
-  return round === "recovery" ? 4 : round;
+  return round === "recovery" ? 4 : round === "reconciliation" ? 5 : round;
 }
 
 function compact(feedback: ContestantFeedback): ContestantFeedback {

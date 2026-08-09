@@ -88,7 +88,13 @@ function roundDigest(
         return `${contestantLabel(state.config.contestants, contestant.id)} ${result ? `${String(result.startingHealth)} → ${String(result.endingHealth)} HP` : "not run"}`;
       })
       .join("; ");
-    return `| ${round.id === "recovery" ? "Recovery" : `R${String(round.id)}`} | ${tableCell(summary)} | ${health} | ${artifactLink(state, "open round evidence", state.artifacts.battle)} |`;
+    const label =
+      round.id === "recovery"
+        ? "Recovery"
+        : round.id === "reconciliation"
+          ? "Reconciliation"
+          : `R${String(round.id)}`;
+    return `| ${label} | ${tableCell(summary)} | ${health} | ${artifactLink(state, "open round evidence", state.artifacts.battle)} |`;
   });
 }
 
@@ -151,7 +157,11 @@ function implementationReplay(
 function roundReplay(state: RunState): string[] {
   return reportRounds(state).flatMap((round) => {
     const title =
-      round.id === "recovery" ? "Recovery round" : `Round ${String(round.id)}`;
+      round.id === "recovery"
+        ? "Recovery round"
+        : round.id === "reconciliation"
+          ? "Reconciliation round"
+          : `Round ${String(round.id)}`;
     const goal =
       round.id === 1
         ? "Contract and local correctness"
@@ -159,7 +169,9 @@ function roundReplay(state: RunState): string[] {
           ? "Systematic exploration of state, boundaries, and concurrency"
           : round.id === 3
             ? "Integration, resilience, and security"
-            : "Replacement attacks for confirmed infrastructure losses";
+            : round.id === "reconciliation"
+              ? "Correction-only reconciliation"
+              : "Replacement attacks for confirmed infrastructure losses";
     const invocations = state.attackInvocations.filter(
       (record) => record.round === round.id,
     );
@@ -413,6 +425,20 @@ export function renderBattleReport(state: RunState): string {
           "| — | — | — | — | — | 0 | — | No contestant attack invocation recorded |",
         ]),
     "",
+    "### Permanent submission artifacts",
+    "",
+    "Raw provider contents are linked but never embedded. Parsed artifacts contain normalized accepted values and redacted diagnostics.",
+    "",
+    ...state.submissionArtifacts.map(
+      (record) =>
+        `- ${String(record.round)} ${record.phase} ${record.actor} (${record.outcome}, SHA-256 \`${record.rawSha256}\`): ${artifactLink(state, "raw", record.rawArtifactPath)} · ${artifactLink(state, "parsed", record.parsedArtifactPath)}`,
+    ),
+    ...(state.submissionArtifacts.length
+      ? []
+      : [
+          "- No permanent structured-submission artifacts recorded (legacy run).",
+        ]),
+    "",
     "| Round | Author | Rank | Claim | Outcome | Severity | Effect |",
     "| --- | --- | ---: | --- | --- | --- | --- |",
     ...state.attacks.map(
@@ -464,6 +490,15 @@ export function renderBattleReport(state: RunState): string {
             `- Overlay ${overlay.id}: ${overlay.status}; scopes ${overlay.scopes.join(", ") || "none"}; validation ${overlay.validationChecks.map((check) => `${check.id}:${check.status}`).join(", ") || "none"}`,
         )
       : ["- No harness overlays applied."]),
+    "",
+    "## Submission reconciliation",
+    "",
+    ...(state.reconciliationQueue.length
+      ? state.reconciliationQueue.map(
+          (candidate) =>
+            `- ${candidate.id}: ${candidate.lane} ${candidate.actor} → ${candidate.target}, source ${String(candidate.sourceRound)} position ${String(candidate.sourceEntryIndex)}, attempt ${String(candidate.attemptCount)}/2 — ${candidate.status}${candidate.resultingAttackId ? ` as ${candidate.resultingAttackId}` : ""}${candidate.discardReason ? ` (${candidate.discardReason})` : ""}; attempt 1 ${artifactLink(state, "raw", candidate.rawArtifactPath)} · ${artifactLink(state, "parsed", candidate.parsedArtifactPath)}${candidate.correctionRawArtifactPath || candidate.correctionParsedArtifactPath ? `; attempt 2 ${artifactLink(state, "raw", candidate.correctionRawArtifactPath)} · ${artifactLink(state, "parsed", candidate.correctionParsedArtifactPath)}` : ""}`,
+        )
+      : ["- No reconciliation candidates were created."]),
     "",
     ...contestants.flatMap(contestantSection),
     "## Permissions and limitations",

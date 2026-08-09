@@ -199,8 +199,16 @@ export function renderBattleHtml(state: RunState): string {
             ? "State, boundaries & systematic probes"
             : round.id === 3
               ? "Integration, resilience & security"
-              : "Infrastructure recovery";
-      return `<tr><th>${round.id === "recovery" ? "Recovery" : `Round ${String(round.id)}`}<span class="subtle">${focus}</span></th><td>${String(attacksForRound.length)} submitted · ${String(landedForRound.length)} proven · ${String(recoil)} HP recoil</td><td>${escapeHtml(health)} HP</td><td>${link(state, "Open report", state.artifacts.battle)}</td></tr>`;
+              : round.id === "reconciliation"
+                ? "Correction-only reconciliation"
+                : "Infrastructure recovery";
+      const label =
+        round.id === "recovery"
+          ? "Recovery"
+          : round.id === "reconciliation"
+            ? "Reconciliation"
+            : `Round ${String(round.id)}`;
+      return `<tr><th>${label}<span class="subtle">${focus}</span></th><td>${String(attacksForRound.length)} submitted · ${String(landedForRound.length)} proven · ${String(recoil)} HP recoil</td><td>${escapeHtml(health)} HP</td><td>${link(state, "Open report", state.artifacts.battle)}</td></tr>`;
     })
     .join("\n");
   const phaseReplay = rounds
@@ -208,7 +216,9 @@ export function renderBattleHtml(state: RunState): string {
       const title =
         round.id === "recovery"
           ? "Recovery round"
-          : `Round ${String(round.id)}`;
+          : round.id === "reconciliation"
+            ? "Reconciliation round"
+            : `Round ${String(round.id)}`;
       const submissions = state.attackInvocations.filter(
         (record) => record.round === round.id,
       );
@@ -241,6 +251,12 @@ export function renderBattleHtml(state: RunState): string {
         state.patchRecommendation.contestantId,
       )
     : "No patch recommendation";
+  const submissionArtifacts = state.submissionArtifacts
+    .map(
+      (record) =>
+        `<li><strong>${escapeHtml(`${String(record.round)} ${record.phase} ${record.actor}`)}</strong><span class="subtle">${escapeHtml(record.outcome)} · SHA-256 ${escapeHtml(record.rawSha256)} · ${link(state, "raw", record.rawArtifactPath)} · ${link(state, "parsed", record.parsedArtifactPath)}</span></li>`,
+    )
+    .join("");
 
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Agent Arena — Battle dossier</title>
@@ -254,6 +270,7 @@ export function renderBattleHtml(state: RunState): string {
 <section class="section"><h2>What happened in each round</h2><div class="table-wrap" tabindex="0"><table><caption>Round outcomes and health after repair</caption><thead><tr><th>Investigation</th><th>Attack outcome</th><th>Health after repair</th><th>Artifacts</th></tr></thead><tbody>${roundRows}</tbody></table></div></section>
 <section class="section" aria-labelledby="phase-heading"><h2 id="phase-heading">Phase replay</h2>${phaseReplay}</section>
 <section class="section"><h2>Attack ledger — bugs found, misses, and repairs</h2><p class="note">A landed attack is executable evidence: it passed on the attacker patch, failed on its target, and met the task oracle. Unsuccessful attacks may cost recoil; repaired defects no longer reduce final health.</p><div class="table-wrap" tabindex="0"><table><caption>All submitted contestant and house attacks</caption><thead><tr><th>Round</th><th>Author</th><th>Target</th><th>Result</th><th>What failed / why</th><th>Severity & score</th><th>Evidence</th></tr></thead><tbody>${attacks}</tbody></table></div></section>
+<section class="section"><h2>Submission artifacts</h2><p class="note">Exact provider bytes are retained locally and linked, never embedded. Parsed artifacts contain accepted normalized values and redacted diagnostics.</p><ul>${submissionArtifacts || "<li>No permanent submission artifacts recorded (legacy run).</li>"}</ul></section>
 <section class="section handoff" id="handoff"><div><h3>Already done</h3><p>Required validation was run, ${String(defects.length)} distinct defect(s) were adjudicated, and final patches were frozen for review.</p></div><div><h3>What remains</h3><p>${unresolved.length ? `Review ${String(unresolved.length)} unresolved defect(s) before accepting a patch.` : "Choose and inspect the recommended patch; no unresolved proven defect remains."}</p><p>${link(state, "Open the review handoff", state.artifacts.battle)}</p></div></section>
 </main></body></html>`;
 }

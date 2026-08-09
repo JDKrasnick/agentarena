@@ -24,7 +24,7 @@ function entry(rank: 1 | 2 | 3) {
 }
 
 describe("ordered attack sets", () => {
-  it("accepts zero to three contiguous failure descriptions", () => {
+  it("accepts zero to three unique failure descriptions", () => {
     const submission = AttackSubmissionSchema.parse({
       version: 1,
       hypotheses: [],
@@ -43,13 +43,14 @@ describe("ordered attack sets", () => {
     ).toEqual({ expectedBehavior: "expected", rationale: "stated" });
   });
 
-  it("rejects gaps", () => {
+  it("accepts sparse ranks without renumbering", () => {
     const gap = AttackSubmissionSchema.parse({
       version: 1,
       hypotheses: [],
       attacks: [entry(2)],
     });
-    expect(() => validateAttackOrdering(gap)).toThrow(/contiguous/);
+    expect(() => validateAttackOrdering(gap)).not.toThrow();
+    expect(gap.attacks[0]?.rank).toBe(2);
   });
 
   it("records capabilities selected by the neutral case judge", () => {
