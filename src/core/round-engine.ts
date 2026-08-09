@@ -108,6 +108,7 @@ import {
   calculateSnapshotHash,
   RoundReplaySchema,
   RoundResultSchema,
+  RoundStateDeltaSchema,
   validateRoundResult,
   validateRoundSnapshot,
   type ArtifactReference,
@@ -115,7 +116,10 @@ import {
   type RoundResult,
   type RoundSnapshot,
 } from "../contracts/round.js";
-import { projectRoundStateDelta } from "./round-state-delta.js";
+import {
+  applyCompletedRound,
+  projectRoundStateDelta,
+} from "./round-state-delta.js";
 
 export interface ArenaDependencies {
   adapters: Partial<Record<AgentId, AgentAdapter>>;
@@ -154,6 +158,28 @@ interface ArenaContext {
   permissions: PermissionPolicy;
   state: RunState;
   controller: AbortController;
+  roundInvocations: RecordedRoundInvocation[];
+}
+
+interface RecordedRoundInvocation {
+  id: string;
+  kind: "case_generation" | "verification";
+  actor: "verifier";
+  status:
+    "succeeded" | "failed" | "timed_out" | "cancelled" | "infrastructure_error";
+  startedAt: string;
+  finishedAt: string;
+  artifactPaths: string[];
+}
+
+interface RoundExecutionRuntime {
+  context: ArenaContext;
+  before: RunState;
+  options: {
+    initialize?: boolean;
+    pullRequestFixture?: PullRequestFixture;
+    recovery?: boolean;
+  };
 }
 
 function initialContestant(config: ContestantConfig): ContestantResult {
@@ -263,7 +289,10 @@ export class RoundEngine {
     Record<ContestantId, AgentAdapter>
   > = {};
 
-  constructor(private readonly dependencies: ArenaDependencies) {
+  constructor(
+    private readonly dependencies: ArenaDependencies,
+    private readonly runtime?: RoundExecutionRuntime,
+  ) {
     this.now = dependencies.now ?? (() => new Date());
     this.progress = dependencies.onProgress ?? (() => undefined);
   }
@@ -274,12 +303,13 @@ export class RoundEngine {
    */
   async run(snapshotValue: RoundSnapshot): Promise<RoundResult> {
     const snapshot = validateRoundSnapshot(snapshotValue);
-    if (!this.dependencies.executeRound)
+    const execute = this.runtime
+      ? (accepted: RoundSnapshot) =>
+          this.executeAcceptedRound(accepted, this.runtime!)
+      : this.dependencies.executeRound;
+    if (!execute)
       throw new Error("RoundEngine.run requires an injected round executor");
-    return validateRoundResult(
-      await this.dependencies.executeRound(snapshot),
-      snapshot,
-    );
+    return validateRoundResult(await execute(snapshot), snapshot);
   }
 
   async fight(
@@ -475,6 +505,7 @@ export class RoundEngine {
         permissions,
         state,
         controller,
+        roundInvocations: [],
       };
       await this.persist(context);
 
@@ -488,74 +519,21 @@ export class RoundEngine {
           round,
           priorReplayHash,
         );
-        try {
-          if (round === 1) {
-            if (pullRequestFixture) {
-              await this.initializePullRequestContestant(
-                context,
-                pullRequestFixture,
-              );
-              const protectedContestant = context.config.contestants.find(
-                (contestant) => contestant.startingPatch === "pull_request",
-              );
-              if (!protectedContestant)
-                throw new Error(
-                  "PR battle topology is missing its frozen-patch contestant",
-                );
-              await this.initialValidation(context, [protectedContestant.id]);
-              const protectedState = getContestant(
-                context.state,
-                protectedContestant.id,
-              );
-              if (!latestRequiredPass(protectedState)) {
-                const check = protectedState.checks.at(-1);
-                throw new Error(
-                  `Frozen PR patch failed required validation; preflight cannot award a free win${check?.reason ? `: ${check.reason}` : check?.command?.stderrPath ? ` (stderr: ${check.command.stderrPath})` : ""}`,
-                );
-              }
-            }
-            if (config.mode !== "siege") {
-              const readyContext = context;
-              await this.implement(readyContext);
-              await this.initialValidation(
-                readyContext,
-                readyContext.config.agents.filter(
-                  (agent) =>
-                    getContestant(readyContext.state, agent).role !==
-                    "incumbent",
-                ),
-              );
-            }
-          }
-          await this.runRound(context, round);
-        } catch (error) {
-          if (this.isRoundInvariantError(error)) throw error;
-          const terminalStatus = controller.signal.aborted
-            ? "cancelled"
-            : this.isInfrastructureError(error)
-              ? "inconclusive"
-              : "failed";
-          const result = await this.persistRoundBoundary(
-            context,
-            snapshot,
-            beforeRound,
-            terminalStatus,
-            error,
-          );
-          if (result.status === "completed")
-            throw new Error("Terminal round unexpectedly completed", {
-              cause: error,
-            });
-          return this.finishTerminalRound(context, result);
-        }
-        const result = await this.persistRoundBoundary(
+        const transaction = await this.executeLiveRound(
           context,
           snapshot,
           beforeRound,
+          {
+            initialize: round === 1,
+            ...(pullRequestFixture ? { pullRequestFixture } : {}),
+          },
         );
+        const { result } = transaction;
         if (result.status !== "completed") {
+          context.state = transaction.state;
           return this.finishTerminalRound(context, result);
         }
+        await this.applyRoundTransaction(context, result);
         priorReplayHash = result.replay.replayHash;
       }
 
@@ -579,39 +557,17 @@ export class RoundEngine {
           "recovery",
           priorReplayHash,
         );
-        try {
-          await this.runRound(context, "recovery");
-          for (const agent of config.agents) {
-            for (const credit of getContestant(context.state, agent)
-              .replacementCredits) {
-              if (credit.status === "available") credit.status = "spent";
-            }
-          }
-        } catch (error) {
-          if (this.isRoundInvariantError(error)) throw error;
-          const terminalStatus = controller.signal.aborted
-            ? "cancelled"
-            : "inconclusive";
-          const result = await this.persistRoundBoundary(
-            context,
-            snapshot,
-            beforeRound,
-            terminalStatus,
-            error,
-          );
-          if (result.status === "completed")
-            throw new Error("Terminal recovery round unexpectedly completed", {
-              cause: error,
-            });
-          return this.finishTerminalRound(context, result);
-        }
-        const result = await this.persistRoundBoundary(
+        const transaction = await this.executeLiveRound(
           context,
           snapshot,
           beforeRound,
+          { recovery: true },
         );
+        const { result } = transaction;
+        if (result.status !== "completed") context.state = transaction.state;
         if (result.status !== "completed")
           return this.finishTerminalRound(context, result);
+        await this.applyRoundTransaction(context, result);
       }
 
       await this.finalValidation(context);
@@ -657,6 +613,120 @@ export class RoundEngine {
       if (!config.keepWorktrees)
         await worktrees.cleanup().catch(() => undefined);
     }
+  }
+
+  private async executeLiveRound(
+    coordinator: ArenaContext,
+    snapshot: RoundSnapshot,
+    before: RunState,
+    options: {
+      initialize?: boolean;
+      pullRequestFixture?: PullRequestFixture;
+      recovery?: boolean;
+    },
+  ): Promise<{ result: RoundResult; state: RunState }> {
+    const transactionContext: ArenaContext = {
+      ...coordinator,
+      state: structuredClone(coordinator.state),
+      roundInvocations: [],
+    };
+    const executor = new RoundEngine(this.dependencies, {
+      context: transactionContext,
+      before,
+      options,
+    });
+    return {
+      result: await executor.run(snapshot),
+      state: transactionContext.state,
+    };
+  }
+
+  private async executeAcceptedRound(
+    snapshot: RoundSnapshot,
+    runtime: RoundExecutionRuntime,
+  ): Promise<RoundResult> {
+    const { context, before, options } = runtime;
+    try {
+      if (options.initialize) {
+        if (options.pullRequestFixture) {
+          await this.initializePullRequestContestant(
+            context,
+            options.pullRequestFixture,
+          );
+          const protectedContestant = context.config.contestants.find(
+            (contestant) => contestant.startingPatch === "pull_request",
+          );
+          if (!protectedContestant)
+            throw new Error(
+              "PR battle topology is missing its frozen-patch contestant",
+            );
+          await this.initialValidation(context, [protectedContestant.id]);
+          const protectedState = getContestant(
+            context.state,
+            protectedContestant.id,
+          );
+          if (!latestRequiredPass(protectedState)) {
+            const check = protectedState.checks.at(-1);
+            throw new Error(
+              `Frozen PR patch failed required validation; preflight cannot award a free win${check?.reason ? `: ${check.reason}` : check?.command?.stderrPath ? ` (stderr: ${check.command.stderrPath})` : ""}`,
+            );
+          }
+        }
+        if (context.config.mode !== "siege") {
+          await this.implement(context);
+          await this.initialValidation(
+            context,
+            context.config.agents.filter(
+              (agent) =>
+                getContestant(context.state, agent).role !== "incumbent",
+            ),
+          );
+        }
+      }
+      await this.runRound(context, snapshot.roundId);
+      if (options.recovery) {
+        for (const agent of context.config.agents) {
+          for (const credit of getContestant(context.state, agent)
+            .replacementCredits) {
+            if (credit.status === "available") credit.status = "spent";
+          }
+        }
+      }
+      return this.persistRoundBoundary(context, snapshot, before);
+    } catch (error) {
+      if (this.isRoundInvariantError(error)) throw error;
+      const status = context.controller.signal.aborted
+        ? "cancelled"
+        : options.recovery || this.isInfrastructureError(error)
+          ? "inconclusive"
+          : "failed";
+      return this.persistRoundBoundary(
+        context,
+        snapshot,
+        before,
+        status,
+        error,
+      );
+    }
+  }
+
+  private async applyRoundTransaction(
+    context: ArenaContext,
+    result: Extract<RoundResult, { status: "completed" }>,
+  ): Promise<void> {
+    const deltaArtifact = result.replay.artifacts.find(
+      (artifact) => artifact.id === result.replay.stateDeltaArtifactId,
+    );
+    if (!deltaArtifact)
+      throw new Error("Completed replay is missing its state delta artifact");
+    const bytes = await readFile(deltaArtifact.path);
+    if (sha256(bytes) !== deltaArtifact.sha256)
+      throw new Error("Round-state delta artifact hash does not match replay");
+    const delta = RoundStateDeltaSchema.parse(
+      JSON.parse(bytes.toString("utf8")) as unknown,
+    );
+    applyCompletedRound(context.state, result, delta);
+    await this.persist(context);
   }
 
   private async createRoundSnapshot(
@@ -714,7 +784,12 @@ export class RoundEngine {
             target,
             severity: attack.severity!,
             damage: attack.damage!,
-            status: attack.damageActive
+            status: getContestant(
+              context.state,
+              target,
+            ).healthLedger.activeDefects.some(
+              (defect) => defect.rootDefectId === attack.rootDefectId,
+            )
               ? ("active" as const)
               : ("healed" as const),
             visibleReproducerArtifactIds: [
@@ -820,6 +895,7 @@ export class RoundEngine {
     };
     const artifacts = [
       ...(await this.collectRoundArtifacts(context, delta)),
+      ...(await this.collectRoundArtifacts(context, context.roundInvocations)),
       deltaArtifact,
     ];
     const artifactIdFor = (artifactPath: string): string[] =>
@@ -831,37 +907,48 @@ export class RoundEngine {
       kind: "implementation" | "review" | "attack" | "repair";
       value: AgentInvocation | { invocation?: AgentInvocation };
     }>;
-    const invocations = invocationEntries.flatMap((entry, index) => {
-      const invocation =
-        "invocation" in entry.value && entry.value.invocation
-          ? entry.value.invocation
-          : (entry.value as AgentInvocation);
-      if (!invocation?.startedAt || !invocation.finishedAt) return [];
-      return [
-        {
-          id: stableId(
-            "invocation",
-            String(roundId),
-            entry.kind,
-            entry.contestantId ?? String(index),
-          ),
-          kind: entry.kind,
-          actor:
-            entry.contestantId === "a"
-              ? ("contestant_a" as const)
-              : entry.contestantId === "b"
-                ? ("contestant_b" as const)
-                : ("harness" as const),
-          status: invocation.status,
-          startedAt: invocation.startedAt,
-          finishedAt: invocation.finishedAt,
-          artifactIds: [
-            ...artifactIdFor(invocation.promptPath),
-            ...artifactIdFor(invocation.transcriptPath),
-          ],
-        },
-      ];
-    });
+    const invocations: RoundReplay["invocations"] = [
+      ...invocationEntries.flatMap((entry, index) => {
+        const invocation =
+          "invocation" in entry.value && entry.value.invocation
+            ? entry.value.invocation
+            : (entry.value as AgentInvocation);
+        if (!invocation?.startedAt || !invocation.finishedAt) return [];
+        return [
+          {
+            id: stableId(
+              "invocation",
+              String(roundId),
+              entry.kind,
+              entry.contestantId ?? String(index),
+            ),
+            kind: entry.kind,
+            actor:
+              entry.contestantId === "a"
+                ? ("contestant_a" as const)
+                : entry.contestantId === "b"
+                  ? ("contestant_b" as const)
+                  : ("harness" as const),
+            status: invocation.status,
+            startedAt: invocation.startedAt,
+            finishedAt: invocation.finishedAt,
+            artifactIds: [
+              ...artifactIdFor(invocation.promptPath),
+              ...artifactIdFor(invocation.transcriptPath),
+            ],
+          },
+        ];
+      }),
+      ...context.roundInvocations.map((invocation) => ({
+        id: invocation.id,
+        kind: invocation.kind,
+        actor: invocation.actor,
+        status: invocation.status,
+        startedAt: invocation.startedAt,
+        finishedAt: invocation.finishedAt,
+        artifactIds: invocation.artifactPaths.flatMap(artifactIdFor),
+      })),
+    ];
     const attacks = (delta.attacks as Attack[]).flatMap((attack) =>
       attack.targets.map((target) => ({
         attackId: attack.id,
@@ -947,26 +1034,38 @@ export class RoundEngine {
       attacks,
       checks,
       repairs,
-      scoreEvents: (["a", "b"] as const).flatMap((contestantId) =>
-        getContestant(context.state, contestantId)
+      scoreEvents: (["a", "b"] as const).flatMap((contestantId) => {
+        let healthAfter =
+          snapshot.contestants.find(
+            (contestant) => contestant.contestantId === contestantId,
+          )?.health ?? 100;
+        return getContestant(context.state, contestantId)
           .healthEvents.slice(
             before.contestants[contestantId]?.healthEvents.length ?? 0,
           )
-          .map((event) => ({
-            contestantId,
-            type:
-              event.type === "target_damage" ? ("damage" as const) : event.type,
-            amount: event.amount,
-            healthAfter: getContestant(context.state, contestantId).finalHealth,
-            ...(event.attackId
-              ? {
-                  defectId: context.state.attacks.find(
-                    (attack) => attack.id === event.attackId,
-                  )?.rootDefectId,
-                }
-              : {}),
-          })),
-      ),
+          .map((event) => {
+            healthAfter = Math.max(
+              0,
+              Math.min(100, healthAfter + event.amount),
+            );
+            return {
+              contestantId,
+              type:
+                event.type === "target_damage"
+                  ? ("damage" as const)
+                  : event.type,
+              amount: event.amount,
+              healthAfter,
+              ...(event.attackId
+                ? {
+                    defectId: context.state.attacks.find(
+                      (attack) => attack.id === event.attackId,
+                    )?.rootDefectId,
+                  }
+                : {}),
+            };
+          });
+      }),
       diagnostics:
         status === "completed"
           ? []
@@ -1205,6 +1304,24 @@ export class RoundEngine {
             timeoutMs: context.config.limits.implementationMs,
             signal: context.controller.signal,
           });
+          const contestant = getContestant(context.state, agent);
+          invocation.contestantId = agent;
+          invocation.role = contestant.role;
+          contestant.implementation = invocation;
+          if (invocation.status !== "succeeded") {
+            if (invocation.status === "cancelled") {
+              context.controller.abort(
+                new Error(`Implementation cancelled for ${agent}`),
+              );
+              throw new Error(`Implementation cancelled for ${agent}`);
+            }
+            if (invocation.status === "infrastructure_error")
+              throw new Error(
+                `Implementation infrastructure failed for ${agent}`,
+              );
+            contestant.status = "failed";
+            return;
+          }
           await removeSubmission(worktree);
           const patchPath = context.store.resolve(
             `patches/${agent}-initial.diff`,
@@ -1213,10 +1330,6 @@ export class RoundEngine {
             worktree,
             patchPath,
           );
-          const contestant = getContestant(context.state, agent);
-          invocation.contestantId = agent;
-          invocation.role = contestant.role;
-          contestant.implementation = invocation;
           contestant.initialPatchPath = patchPath;
           contestant.currentPatchPath = patchPath;
           contestant.patchSize = patchSize;
@@ -1476,6 +1589,96 @@ export class RoundEngine {
     return packets;
   }
 
+  private recordingVerifier(
+    context: ArenaContext,
+    round: RoundId,
+  ): AttackVerifier {
+    const verifier = this.dependencies.verifier;
+    return {
+      id: verifier.id,
+      assess: async (input) => {
+        const startedAt = this.now().toISOString();
+        const id = stableId(
+          "invocation",
+          String(round),
+          "verification",
+          String(context.roundInvocations.length),
+        );
+        try {
+          const verdict = await verifier.assess(input);
+          context.roundInvocations.push({
+            id,
+            kind: "verification",
+            actor: "verifier",
+            status: "succeeded",
+            startedAt,
+            finishedAt: this.now().toISOString(),
+            artifactPaths: [input.promptPath, input.transcriptPrefix],
+          });
+          return verdict;
+        } catch (error) {
+          context.roundInvocations.push({
+            id,
+            kind: "verification",
+            actor: "verifier",
+            status: context.controller.signal.aborted
+              ? "cancelled"
+              : this.isInfrastructureError(error)
+                ? "infrastructure_error"
+                : "failed",
+            startedAt,
+            finishedAt: this.now().toISOString(),
+            artifactPaths: [input.promptPath, input.transcriptPrefix],
+          });
+          throw error;
+        }
+      },
+    };
+  }
+
+  private async recordCaseGeneration<T>(
+    context: ArenaContext,
+    round: RoundId,
+    artifactPaths: string[],
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const startedAt = this.now().toISOString();
+    const id = stableId(
+      "invocation",
+      String(round),
+      "case-generation",
+      String(context.roundInvocations.length),
+    );
+    try {
+      const value = await operation();
+      context.roundInvocations.push({
+        id,
+        kind: "case_generation",
+        actor: "verifier",
+        status: "succeeded",
+        startedAt,
+        finishedAt: this.now().toISOString(),
+        artifactPaths,
+      });
+      return value;
+    } catch (error) {
+      context.roundInvocations.push({
+        id,
+        kind: "case_generation",
+        actor: "verifier",
+        status: context.controller.signal.aborted
+          ? "cancelled"
+          : this.isInfrastructureError(error)
+            ? "infrastructure_error"
+            : "failed",
+        startedAt,
+        finishedAt: this.now().toISOString(),
+        artifactPaths,
+      });
+      throw error;
+    }
+  }
+
   private async buildNeutralCase(
     context: ArenaContext,
     entry: AttackSubmission["attacks"][number],
@@ -1506,16 +1709,23 @@ export class RoundEngine {
         failure: entry,
         outputPath: path.join(worktree, ".agent-arena-cases.json"),
       });
-      const submission = await this.dependencies.caseBuilder.build({
-        worktree,
-        prompt,
-        timeoutMs: context.config.limits.attackMs,
-        transcriptPrefix: context.store.resolve(
-          `logs/case-judge-${String(round)}-${attacker}-${String(entry.rank)}`,
-        ),
-        signal: context.controller.signal,
-        round: round === "recovery" ? 3 : round,
-      });
+      const transcriptPrefix = context.store.resolve(
+        `logs/case-judge-${String(round)}-${attacker}-${String(entry.rank)}`,
+      );
+      const submission = await this.recordCaseGeneration(
+        context,
+        round,
+        [transcriptPrefix],
+        () =>
+          this.dependencies.caseBuilder!.build({
+            worktree,
+            prompt,
+            timeoutMs: context.config.limits.attackMs,
+            transcriptPrefix,
+            signal: context.controller.signal,
+            round: round === "recovery" ? 3 : round,
+          }),
+      );
       const proposal = submission.cases[0];
       if (!proposal) return undefined;
       assertDirectCapabilitiesAllowed(
@@ -1961,7 +2171,7 @@ export class RoundEngine {
           permissionPolicy: context.permissions,
           config: context.config,
           worktrees: context.worktrees,
-          verifier: this.dependencies.verifier,
+          verifier: this.recordingVerifier(context, round),
           logRoot: context.store.resolve(
             `logs/round-${String(round)}/attack-${attack.id}`,
           ),
@@ -1991,7 +2201,7 @@ export class RoundEngine {
               permissionPolicy: context.permissions,
               config: context.config,
               worktrees: context.worktrees,
-              verifier: this.dependencies.verifier,
+              verifier: this.recordingVerifier(context, round),
               logRoot: context.store.resolve(
                 `logs/round-${String(round)}/attack-${attack.id}`,
               ),
@@ -2007,7 +2217,7 @@ export class RoundEngine {
                 permissionPolicy: context.permissions,
                 config: context.config,
                 worktrees: context.worktrees,
-                verifier: this.dependencies.verifier,
+                verifier: this.recordingVerifier(context, round),
                 logRoot: context.store.resolve(
                   `logs/round-${String(round)}/attack-${attack.id}`,
                 ),
@@ -2313,6 +2523,15 @@ export class RoundEngine {
       if (contestant.finalHealth === 0) contestant.status = "eliminated";
     }
 
+    for (const attack of context.state.attacks) {
+      if (!attack.rootDefectId || attack.status !== "landed") continue;
+      attack.damageActive = attack.targets.some((target) =>
+        getContestant(context.state, target).healthLedger.activeDefects.some(
+          (defect) => defect.rootDefectId === attack.rootDefectId,
+        ),
+      );
+    }
+
     for (const agent of context.config.agents) {
       const contestant = getContestant(context.state, agent);
       const roundResult: ContestantRoundResult = {
@@ -2464,7 +2683,7 @@ export class RoundEngine {
         permissionPolicy: context.permissions,
         config: context.config,
         worktrees: context.worktrees,
-        verifier: this.dependencies.verifier,
+        verifier: this.recordingVerifier(context, round),
         logRoot: context.store.resolve(
           `logs/infrastructure-revision-${provisional.id}`,
         ),
@@ -2645,16 +2864,23 @@ export class RoundEngine {
           "",
           `Write {"version":1,"cases":[{"category":"boundary","focusedCommand":"...","paths":["test/..."]}]} to ${path.join(worktree, ".agent-arena-cases.json")}.`,
         ].join("\n");
-        const submission = await this.dependencies.caseBuilder.build({
-          worktree,
-          prompt,
-          timeoutMs: context.config.limits.attackMs,
-          transcriptPrefix: context.store.resolve(
-            `logs/case-builder-${attack.id}`,
-          ),
-          signal: context.controller.signal,
+        const transcriptPrefix = context.store.resolve(
+          `logs/case-builder-${attack.id}`,
+        );
+        const submission = await this.recordCaseGeneration(
+          context,
           round,
-        });
+          [transcriptPrefix],
+          () =>
+            this.dependencies.caseBuilder!.build({
+              worktree,
+              prompt,
+              timeoutMs: context.config.limits.attackMs,
+              transcriptPrefix,
+              signal: context.controller.signal,
+              round,
+            }),
+        );
         await rm(path.join(worktree, ".agent-arena-cases.json"), {
           force: true,
         });
@@ -2689,7 +2915,7 @@ export class RoundEngine {
             config: context.config,
             runSpec: context.runSpec,
             worktrees: context.worktrees,
-            verifier: this.dependencies.verifier,
+            verifier: this.recordingVerifier(context, round),
             logRoot: context.store.resolve(
               `logs/case-${attack.id}-${String(index + 1)}`,
             ),

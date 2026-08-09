@@ -7,6 +7,7 @@ import type {
   Attack,
   AttackInvocationRecord,
   ContestantId,
+  ContestantResult,
   ContestantRoundResult,
   HarnessOverlay,
   ReviewInvocationRecord,
@@ -45,6 +46,8 @@ export function projectRoundStateDelta(
   ];
   const checks: TaggedValue[] = [];
   const roundSummaries: TaggedValue[] = [];
+  const healthEvents: TaggedValue[] = [];
+  const patchMetadata: TaggedValue[] = [];
   for (const contestantId of ["a", "b"] as const) {
     const previous = before.contestants[contestantId];
     const current = after.contestants[contestantId];
@@ -59,6 +62,26 @@ export function projectRoundStateDelta(
         .slice(previous?.rounds.length ?? 0)
         .map((value) => ({ contestantId, value })),
     );
+    healthEvents.push(
+      ...current.healthEvents
+        .slice(previous?.healthEvents.length ?? 0)
+        .map((value) => ({ contestantId, value })),
+    );
+    patchMetadata.push({
+      contestantId,
+      value: {
+        ...(current.initialPatchPath
+          ? { initialPatchPath: current.initialPatchPath }
+          : {}),
+        ...(current.currentPatchPath
+          ? { currentPatchPath: current.currentPatchPath }
+          : {}),
+        patchSize: current.patchSize,
+        eliminatedByRequiredCheck:
+          current.healthLedger.eliminatedByRequiredCheck,
+        legacyStatus: current.status,
+      },
+    });
     if (!previous?.implementation && current.implementation)
       invocations.push({
         contestantId,
@@ -78,7 +101,9 @@ export function projectRoundStateDelta(
       })),
     );
   }
-  const attacks = after.attacks.slice(before.attacks.length);
+  // Existing attacks can change when held-out cases are revealed or defects
+  // heal, so the projection carries the authoritative collection.
+  const attacks = after.attacks;
   return RoundStateDeltaSchema.parse({
     version: 1,
     runId: after.runId,
@@ -94,6 +119,16 @@ export function projectRoundStateDelta(
     harnessOverlays: after.harnessOverlays.slice(before.harnessOverlays.length),
     checks,
     roundSummaries,
+    healthEvents,
+    patchMetadata,
+    coordinator: {
+      stage: after.stage,
+      ...(after.currentRound !== undefined
+        ? { currentRound: after.currentRound }
+        : {}),
+      warnings: after.warnings.slice(before.warnings.length),
+      updatedAt: after.updatedAt,
+    },
   });
 }
 
@@ -137,7 +172,7 @@ export function applyCompletedRound(
     if (resulting.patch) contestant.currentPatchPath = resulting.patch.path;
   }
 
-  state.attacks.push(...(delta.attacks as Attack[]));
+  state.attacks = structuredClone(delta.attacks as Attack[]);
   for (const entry of delta.invocations as TaggedValue[]) {
     if (entry.kind === "review")
       state.reviewInvocations.push(entry.value as ReviewInvocationRecord);
@@ -162,4 +197,36 @@ export function applyCompletedRound(
         entry.value as ContestantRoundResult,
       );
   }
+  for (const entry of delta.healthEvents as TaggedValue[]) {
+    if (entry.contestantId)
+      state.contestants[entry.contestantId]?.healthEvents.push(
+        entry.value as never,
+      );
+  }
+  for (const entry of delta.patchMetadata as TaggedValue[]) {
+    if (!entry.contestantId || !entry.value || typeof entry.value !== "object")
+      continue;
+    const contestant = state.contestants[entry.contestantId];
+    if (!contestant) continue;
+    const metadata = entry.value as {
+      initialPatchPath?: string;
+      currentPatchPath?: string;
+      patchSize: number;
+      eliminatedByRequiredCheck: boolean;
+      legacyStatus: ContestantResult["status"];
+    };
+    if (metadata.initialPatchPath)
+      contestant.initialPatchPath = metadata.initialPatchPath;
+    if (metadata.currentPatchPath)
+      contestant.currentPatchPath = metadata.currentPatchPath;
+    contestant.patchSize = metadata.patchSize;
+    contestant.healthLedger.eliminatedByRequiredCheck =
+      metadata.eliminatedByRequiredCheck;
+    contestant.status = metadata.legacyStatus;
+  }
+  state.stage = delta.coordinator.stage as RunState["stage"];
+  if (delta.coordinator.currentRound !== undefined)
+    state.currentRound = delta.coordinator.currentRound;
+  state.warnings.push(...delta.coordinator.warnings);
+  state.updatedAt = delta.coordinator.updatedAt;
 }

@@ -608,6 +608,16 @@ export const RoundStateDeltaSchema = z
     harnessOverlays: z.array(JsonValueSchema),
     checks: z.array(JsonValueSchema),
     roundSummaries: z.array(JsonValueSchema),
+    healthEvents: z.array(JsonValueSchema),
+    patchMetadata: z.array(JsonValueSchema),
+    coordinator: z
+      .object({
+        stage: IdentifierSchema,
+        currentRound: RoundIdSchema.optional(),
+        warnings: z.array(z.string()),
+        updatedAt: IsoDateSchema,
+      })
+      .strict(),
   })
   .strict()
   .readonly();
