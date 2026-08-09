@@ -20,6 +20,7 @@ import {
   RoundStateDeltaSchema,
 } from "../../src/contracts/round.js";
 import { applyAcceptedPatch } from "../../src/commands/apply.js";
+import { resolveCoverage } from "../../src/commands/resolve-coverage.js";
 import { FightConfigSchema } from "../../src/core/types.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
 import type { IssueResolver } from "../../src/task/task-contract.js";
@@ -633,7 +634,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
       path.join(outcome.state.artifacts.runDirectory!, "BATTLE.md"),
       "utf8",
     );
-    expect(report).toContain("Winner: **a**");
+    expect(report).toContain("Provisional leader: **a**");
     expect(report).toContain("### Generation activity");
     expect(report).toContain("not_submitted");
     expect(report).toContain("Repeated whitespace is not collapsed");
@@ -656,6 +657,13 @@ describe("fake-adapter fight on a mocked real issue", () => {
       "service-maintainer",
     );
 
+    await resolveCoverage({
+      runId: outcome.state.runId,
+      repositoryRoot,
+      assessmentDigest:
+        outcome.state.coverageAssessment?.assessmentDigest ?? "",
+      decision: "accept-reduced",
+    });
     const prompt = await reviewRun({
       runId: outcome.state.runId,
       repositoryRoot,
@@ -762,26 +770,17 @@ describe("fake-adapter fight on a mocked real issue", () => {
       }),
     }).fight(config);
     const credit = outcome.state.contestants.a?.replacementCredits[0];
-    expect(credit).toMatchObject({
-      reason: "accepted_infrastructure",
-      status: "spent",
+    expect(credit).toBeUndefined();
+    expect(outcome.state.coverageAssessment).toMatchObject({
+      confidence: "provisional",
     });
-    expect(outcome.state.contestants.a?.rounds.at(-1)?.round).toBe("recovery");
+    expect(outcome.state.coverageAssessment?.reasonCodes).toContain(
+      "attack_judge_unable",
+    );
+    expect(outcome.state.contestants.a?.rounds.at(-1)?.round).toBe(3);
     expect(
-      outcome.state.attacks.find(
-        (attack) => attack.id === credit?.sourceAttackId,
-      )?.status,
-    ).toBe("infrastructure_error");
-    expect(
-      outcome.state.attacks.find(
-        (attack) => attack.id === credit?.sourceAttackId,
-      )?.infrastructureReview,
-    ).toBe("accept");
-    expect(outcome.state.harnessOverlays).toEqual([
-      expect.objectContaining({
-        scopes: ["diagnostic"],
-        status: "approved",
-      }),
-    ]);
+      outcome.state.attacks.some((attack) => attack.status === "judge_unable"),
+    ).toBe(true);
+    expect(outcome.state.harnessOverlays).toEqual([]);
   });
 });

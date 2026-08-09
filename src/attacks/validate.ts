@@ -15,6 +15,7 @@ import type { RunSpec } from "../contracts/round.js";
 import { changedPathsFromPatch, isAllowedAttackPath } from "../repo/git.js";
 import type { WorktreeManager } from "../repo/git.js";
 import { runShellCommand } from "../runner/process-runner.js";
+import { applyJudgeVerdict } from "./adjudicate.js";
 
 interface ValidateAttackOptions {
   attack: Attack;
@@ -113,6 +114,35 @@ function withOutcome(
   return { ...attack, status, outcomeReason: reason };
 }
 
+async function judgeFallback(
+  options: ValidateAttackOptions,
+  attack: Attack,
+  reason: string,
+  worktree = options.config.repositoryRoot,
+): Promise<Attack> {
+  if (!options.verifier.adjudicate)
+    return withOutcome(attack, "judge_unable", reason);
+  try {
+    const verdict = await options.verifier.adjudicate({
+      attack: anonymizeAttackForVerifier(attack),
+      runSpec: options.runSpec,
+      mechanicalFailureReason: reason,
+      worktree,
+      promptPath: path.join(options.logRoot, "judge-fallback.prompt.md"),
+      transcriptPrefix: path.join(options.logRoot, "judge-fallback"),
+      timeoutMs: options.config.limits.verifierMs,
+      signal: options.signal,
+    });
+    return applyJudgeVerdict(attack, verdict);
+  } catch (error) {
+    return withOutcome(
+      attack,
+      "judge_unable",
+      `Judge fallback failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 export async function validateAttack(
   options: ValidateAttackOptions,
 ): Promise<Attack> {
@@ -185,10 +215,11 @@ export async function validateAttack(
       );
       attack.checks.push(...baselineResult.checks);
       if (baselineResult.infrastructure) {
-        return withOutcome(
+        return judgeFallback(
+          options,
           attack,
-          "provisional_infrastructure",
-          "Baseline execution infrastructure failed",
+          "Baseline execution infrastructure failed after the targeted retry",
+          baseline,
         );
       }
       if (!baselineResult.stable) {
@@ -281,10 +312,11 @@ export async function validateAttack(
       targetFocused.infrastructure ||
       targetFull.infrastructure
     ) {
-      return withOutcome(
+      return judgeFallback(
+        options,
         attack,
-        "provisional_infrastructure",
-        "A comparative execution had an infrastructure failure",
+        "Comparative execution had an infrastructure failure after the targeted retry",
+        target,
       );
     }
     if (
@@ -347,14 +379,15 @@ export async function validateAttack(
       severity: verdict.severity,
       damage: DAMAGE_BY_SEVERITY[verdict.severity],
       damageActive: true,
+      evidenceProvenance: "mechanical",
       severityRationale: verdict.rationale,
       outcomeReason: `Stable author pass and target failure; ${verdict.rationale}`,
     };
   } catch (error) {
-    return withOutcome(
+    return judgeFallback(
+      options,
       attack,
-      "provisional_infrastructure",
-      `Harness exception during attack validation: ${error instanceof Error ? error.message : String(error)}`,
+      `Harness exception during attack validation after the targeted retry: ${error instanceof Error ? error.message : String(error)}`,
     );
   } finally {
     for (const worktree of created) await options.worktrees.remove(worktree);

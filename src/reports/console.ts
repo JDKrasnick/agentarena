@@ -55,7 +55,7 @@ export function renderConsoleSummary(
   );
   const champion = state.ranking?.draw
     ? `Draw: ${state.ranking.reason}`
-    : `Arena champion: ${state.ranking?.winner ? contestantLabel(state.config.contestants, state.ranking.winner) : "none"} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`;
+    : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Arena champion"}: ${state.ranking?.winner ? contestantLabel(state.config.contestants, state.ranking.winner) : "none"} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`;
   const recommendation = state.patchRecommendation?.contestantId
     ? contestantLabel(
         state.config.contestants,
@@ -73,6 +73,17 @@ export function renderConsoleSummary(
         ]
       : []),
     `Rounds completed: ${String(completedRounds)}/3`,
+    ...(state.coverageAssessment
+      ? [
+          `Coverage: ${state.coverageAssessment.confidence.replaceAll("_", " ")} — ${String(state.coverageAssessment.counts.completed)} completed, ${String(state.coverageAssessment.counts.degraded)} degraded, ${String(state.coverageAssessment.counts.unresolved)} unresolved / ${String(state.coverageAssessment.counts.required)} required`,
+          `Evidence: ${String(state.coverageAssessment.evidenceCounts.mechanical)} mechanical, ${String(state.coverageAssessment.evidenceCounts.judgeConfirmed)} judge-confirmed, ${String(state.coverageAssessment.evidenceCounts.judgePartial)} half-damage judge`,
+          ...(state.coverageAssessment.reasonCodes.length
+            ? [
+                `Coverage reasons: ${state.coverageAssessment.reasonCodes.join(", ")}`,
+              ]
+            : []),
+        ]
+      : ["Coverage: legacy/unknown"]),
     "",
     "Contestant   Required suite  Final HP  Unresolved  Recoil",
     ...contestants.map((contestant) => {
@@ -101,7 +112,7 @@ export function renderConsoleSummary(
       : `Recommendation reason: ${state.patchRecommendation?.rationale.join(" ") ?? "run incomplete"}`,
     defects.length
       ? `Decisive defects: ${defects.map((defect) => `${defect.representative.severity ?? "unrated"} ${truncateReportText(defect.representative.claim, 80)} (${defect.active ? "UNRESOLVED" : "REPAIRED"})`).join("; ")}`
-      : "Decisive defects: no proven defects beyond declared validation",
+      : "Recorded attacks: no landed defects; this does not establish correctness",
     unresolved.length
       ? style(
           `Still needed: review ${String(unresolved.length)} unresolved defect(s) before applying a patch`,
@@ -112,6 +123,9 @@ export function renderConsoleSummary(
     "Human review: pending",
     terminalLink("Open HTML dossier", state.artifacts.battleHtml, hyperlinks),
     terminalLink("Open Markdown report", state.artifacts.battle, hyperlinks),
-    `Next: agent-arena review ${state.runId}`,
+    state.coverageAssessment?.confidence === "provisional" &&
+    !state.coverageDecision
+      ? `Next: agent-arena resolve-coverage ${state.runId} --assessment-digest ${state.coverageAssessment.assessmentDigest} --decision <accept-reduced|inconclusive>`
+      : `Next: agent-arena review ${state.runId}`,
   ].join("\n");
 }

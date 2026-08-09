@@ -63,8 +63,10 @@ function publicReason(
     case "infrastructure_error":
     case "execution_inconclusive":
     case "provisional_infrastructure":
+    case "judge_unable":
       return "infrastructure_inconclusive";
     case "blocked":
+    case "judge_rejected":
       return "target_did_not_fail";
     case "submitted":
     case "invalid":

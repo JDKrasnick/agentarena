@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
+const PointValueSchema = z.number().min(0).max(100).multipleOf(0.5);
+const DamageValueSchema = z.number().positive().max(50).multipleOf(0.5);
+
 function canonicalize(value: unknown): unknown {
   if (value === null || typeof value === "string" || typeof value === "boolean")
     return value;
@@ -240,7 +243,7 @@ const ActiveDefectSchema = z
     defectId: IdentifierSchema,
     attackId: IdentifierSchema,
     severity: SeveritySchema,
-    damage: z.number().int().positive(),
+    damage: DamageValueSchema,
   })
   .strict();
 
@@ -263,8 +266,8 @@ export const RoundContestantStateSchema = z
   .object({
     contestantId: ContestantIdSchema,
     patch: PatchStateSchema.nullable(),
-    health: z.number().int().min(0).max(100),
-    permanentRecoil: z.number().int().nonnegative(),
+    health: PointValueSchema,
+    permanentRecoil: PointValueSchema,
     activeDefects: z.array(ActiveDefectSchema),
     replacementCredits: z.array(ReplacementCreditStateSchema),
     status: z.enum(["pending", "active", "downed", "eliminated"]),
@@ -278,7 +281,7 @@ const KnownDefectSchema = z
     attackId: IdentifierSchema,
     target: ContestantIdSchema,
     severity: SeveritySchema,
-    damage: z.number().int().positive(),
+    damage: DamageValueSchema,
     status: z.enum(["active", "healed"]),
     visibleReproducerArtifactIds: z.array(IdentifierSchema),
   })
@@ -512,8 +515,8 @@ const ReplayScoreEventSchema = z
   .object({
     contestantId: ContestantIdSchema,
     type: z.enum(["damage", "recoil", "heal", "elimination"]),
-    amount: z.number().int(),
-    healthAfter: z.number().int().min(0).max(100),
+    amount: z.number().multipleOf(0.5),
+    healthAfter: PointValueSchema,
     defectId: IdentifierSchema.optional(),
   })
   .strict();
@@ -695,7 +698,7 @@ const IncomingAttackFeedbackSchema = z
     attackId: IdentifierSchema,
     defectId: IdentifierSchema,
     severity: SeveritySchema,
-    damage: z.number().int().positive(),
+    damage: DamageValueSchema,
     claim: z.string().min(1),
     visibleReproducers: z.array(VisibleReproducerSchema).min(1),
   })
@@ -759,9 +762,9 @@ export const ContestantFeedbackSchema = z
     phase: z.enum(["review", "attack", "repair", "recovery"]),
     health: z
       .object({
-        starting: z.number().int().min(0).max(100),
-        afterAttacks: z.number().int().min(0).max(100),
-        ending: z.number().int().min(0).max(100),
+        starting: PointValueSchema,
+        afterAttacks: PointValueSchema,
+        ending: PointValueSchema,
       })
       .strict(),
     acceptedIncomingAttacks: z.array(IncomingAttackFeedbackSchema),

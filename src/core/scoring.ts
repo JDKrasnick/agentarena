@@ -96,6 +96,7 @@ export function resolveRound(
         "self_defeating",
         "unproven",
         "blocked",
+        "judge_rejected",
       ].includes(attack.status) &&
       attack.rank !== undefined
     ) {

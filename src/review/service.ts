@@ -12,6 +12,7 @@ import {
   type ApprovalVerifier,
 } from "./approval.js";
 import { buildReviewPrompt } from "./prompt.js";
+import { coverageAllowsPatchReview } from "../confidence/assessment.js";
 import {
   hashValue,
   readCurrentReview,
@@ -79,6 +80,10 @@ export async function reviewRun(options: RunLocation): Promise<ReviewPrompt> {
   const { store, state } = await openRun(options);
   if (state.status !== "complete")
     throw new Error("Only a completed run can be reviewed");
+  if (!coverageAllowsPatchReview(state))
+    throw new Error(
+      "Patch review is blocked until provisional coverage is resolved with accept-reduced",
+    );
   await ensureReviewFacts(store, state);
   return state.reviewPrompt ?? buildReviewPrompt(state);
 }
@@ -127,6 +132,10 @@ export async function recordReviewDecision(
   const { store, state } = await openRun(options);
   if (state.status !== "complete")
     throw new Error("Review decisions require a completed, trusted run");
+  if (!coverageAllowsPatchReview(state))
+    throw new Error(
+      "Patch acceptance is blocked until provisional coverage is resolved with accept-reduced",
+    );
   await ensureReviewFacts(store, state);
   const prompt = state.reviewPrompt ?? buildReviewPrompt(state);
   if (

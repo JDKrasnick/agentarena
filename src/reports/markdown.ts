@@ -18,7 +18,8 @@ function attackOwner(attack: Attack): string {
 }
 
 function attackEffect(attack: Attack): string {
-  if (attack.status === "landed") return `${String(attack.damage ?? 0)} damage`;
+  if (attack.status === "landed")
+    return `${String(attack.damage ?? 0)} damage${attack.evidenceProvenance ? ` (${attack.evidenceProvenance.replaceAll("_", " ")})` : ""}`;
   if (attack.recoil !== undefined) return `${String(attack.recoil)} recoil`;
   return "no health effect";
 }
@@ -117,7 +118,7 @@ function decisiveDefects(state: RunState): string[] {
         ].join(" ");
         return `| ${tableCell(attack.claim)} | ${tableCell(attack.oracle.expectedBehavior)} | ${tableCell(observed)} | ${tableCell(attack.impact)} | ${attack.severity ?? "unrated"} — ${String(defect.damage)} HP | ${defect.active ? "UNRESOLVED" : "REPAIRED"} | ${evidence} |`;
       })
-    : ["| No proven defects | — | — | — | — | — | — |"];
+    : ["| No landed defect records | — | — | — | — | — | — |"];
 }
 
 function invocationEvidence(
@@ -300,10 +301,14 @@ export function renderBattleReport(state: RunState): string {
     "",
     state.ranking?.draw
       ? `Draw: ${state.ranking.reason}`
-      : `Winner: **${state.ranking?.winner ?? "none"}** — ${state.ranking?.reason ?? "run incomplete"}`,
-    state.arenaOutcome
-      ? `Arena champion: **${state.arenaOutcome.championId ?? "draw"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
-      : "Arena champion: unavailable",
+      : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Winner"}: **${state.ranking?.winner ?? "none"}** — ${state.ranking?.reason ?? "run incomplete"}`,
+    state.coverageDecision?.decision === "inconclusive" ||
+    (state.coverageAssessment?.confidence === "provisional" &&
+      !state.coverageDecision)
+      ? "Arena champion: **not published** (coverage unresolved or finalized inconclusive)"
+      : state.arenaOutcome
+        ? `Arena champion: **${state.arenaOutcome.championId ?? "draw"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
+        : "Arena champion: unavailable",
     state.config.mode === "siege"
       ? "Production artifact: **defender final patch only** (patch comparison disabled)"
       : `Recommended patch: **${state.patchRecommendation?.contestantId ?? "draw"}** (${state.patchRecommendation?.reason ?? "pending"})`,
@@ -327,9 +332,32 @@ export function renderBattleReport(state: RunState): string {
     "",
     `Deciding factors: ${state.arenaOutcome?.decidingFactors.join(", ") || "none"}`,
     "",
+    "## Attack-lane coverage",
+    "",
+    ...(state.coverageAssessment
+      ? [
+          `Confidence: **${state.coverageAssessment.confidence.replaceAll("_", " ")}**`,
+          "",
+          `Required ${String(state.coverageAssessment.counts.required)} · completed ${String(state.coverageAssessment.counts.completed)} · degraded ${String(state.coverageAssessment.counts.degraded)} · unresolved ${String(state.coverageAssessment.counts.unresolved)}`,
+          "",
+          `Evidence: mechanical ${String(state.coverageAssessment.evidenceCounts.mechanical)} · judge-confirmed ${String(state.coverageAssessment.evidenceCounts.judgeConfirmed)} · judge-partial ${String(state.coverageAssessment.evidenceCounts.judgePartial)} · judge-rejected ${String(state.coverageAssessment.evidenceCounts.judgeRejected)} · explicit empty ${String(state.coverageAssessment.evidenceCounts.explicitEmpty)}`,
+          "",
+          `Reason codes: ${state.coverageAssessment.reasonCodes.join(", ") || "none"}`,
+          "",
+          "| Required lane | State | Evidence | Reason codes |",
+          "| --- | --- | --- | --- |",
+          ...state.coverageAssessment.requiredLanes.map(
+            (lane) =>
+              `| ${lane.id} | ${lane.finalState} | ${lane.evidenceBasis} | ${lane.reasonCodes.join(", ") || "none"} |`,
+          ),
+          "",
+          `Assessment digest: \`${state.coverageAssessment.assessmentDigest}\``,
+        ]
+      : ["Confidence: **legacy / unknown** (no coverage claim is inferred)."]),
+    "",
     "## Developer takeaway",
     "",
-    `- **Who won:** ${state.ranking?.draw ? "Draw" : `${contestantLabel(state.config.contestants, state.ranking?.winner ?? "a")} — ${state.ranking?.reason ?? "run incomplete"}`}.`,
+    `- **Ledger result:** ${state.ranking?.draw ? "Draw" : `${contestantLabel(state.config.contestants, state.ranking?.winner ?? "a")} — ${state.ranking?.reason ?? "run incomplete"}`}.`,
     `- **Why:** ${contestants
       .map((contestant) => {
         const outcome = state.arenaOutcome?.contestants[contestant.id];
@@ -337,7 +365,7 @@ export function renderBattleReport(state: RunState): string {
       })
       .join("; ")}.`,
     `- **Bugs found:** ${String(defects.length)} proven; ${String(defects.filter((defect) => !defect.active).length)} repaired; ${String(defects.filter((defect) => defect.active).length)} unresolved.`,
-    `- **Battle value:** ${defects.length ? "Executable adversarial evidence was captured and every landed defect received a repair opportunity." : "No additional defect beyond declared validation was proven."}`,
+    `- **Battle evidence:** ${defects.length ? "Recorded landed attacks and their repair outcomes are listed below." : "No attacks landed in the recorded evidence; no correctness inference is made from that count."}`,
     "",
     "## Verified test coverage — final patches",
     "",
@@ -376,7 +404,13 @@ export function renderBattleReport(state: RunState): string {
             (defect) =>
               `- Review unresolved ${defect.representative.severity ?? "unrated"} defect: ${defect.representative.claim}.`,
           )
-      : ["- Nothing required before review."]),
+      : ["- Inspect the recorded coverage and attack ledger before review."]),
+    ...(state.coverageAssessment?.confidence === "provisional" &&
+    !state.coverageDecision
+      ? [
+          `- Resolve provisional coverage before patch review: \`agent-arena resolve-coverage ${state.runId} --assessment-digest ${state.coverageAssessment.assessmentDigest} --decision <accept-reduced|inconclusive>\`.`,
+        ]
+      : []),
     state.config.mode === "siege"
       ? "- Review the defender patch before delivery."
       : `- Review and choose a patch: \`agent-arena review ${state.runId}\`.`,

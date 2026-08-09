@@ -1,0 +1,414 @@
+import { calculateCanonicalHash } from "../contracts/round.js";
+import {
+  CoverageAssessmentSchema,
+  CoverageDecisionSchema,
+  type CoverageAssessment,
+  type CoverageAttempt,
+  type CoverageDecision,
+  type CoverageLaneAssessment,
+  type CoverageStageName,
+  type ContestantId,
+  type PermissionPolicy,
+  type RunState,
+} from "../core/types.js";
+
+export function requiredCoverageLanes(
+  mode: RunState["config"]["mode"],
+): Array<{ round: 1 | 2 | 3; attacker: ContestantId; target: ContestantId }> {
+  return ([1, 2, 3] as const).flatMap((round) =>
+    mode === "siege"
+      ? [{ round, attacker: "a" as const, target: "b" as const }]
+      : [
+          { round, attacker: "a" as const, target: "b" as const },
+          { round, attacker: "b" as const, target: "a" as const },
+        ],
+  );
+}
+
+function attempt(
+  state: CoverageAttempt["state"],
+  evidencePaths: string[] = [],
+  reasonCode?: string,
+  attemptNumber: 1 | 2 = 1,
+): CoverageAttempt {
+  return {
+    attempt: attemptNumber,
+    state,
+    ...(reasonCode ? { reasonCode } : {}),
+    evidencePaths,
+  };
+}
+
+function stage(
+  name: CoverageStageName,
+  attempts: CoverageAttempt[],
+): CoverageLaneAssessment["stages"][number] {
+  const last = attempts.at(-1)!;
+  return {
+    stage: name,
+    finalState:
+      last.state === "failed"
+        ? "failed"
+        : last.state === "not_applicable"
+          ? "not_applicable"
+          : "completed",
+    attempts,
+  };
+}
+
+function unique(values: readonly string[]): string[] {
+  return [...new Set(values)].sort();
+}
+
+/**
+ * Derive the auditable assessment from persisted lane records. House activity
+ * is deliberately ignored: it is useful evidence, but never a required lane.
+ */
+export function assessBattleCoverage(
+  state: RunState,
+  permissionPolicy?: PermissionPolicy,
+): CoverageAssessment {
+  const lanes: CoverageLaneAssessment[] = requiredCoverageLanes(
+    state.config.mode,
+  ).map(({ round, attacker, target }) => {
+    const id = `round-${String(round)}:${attacker}->${target}`;
+    const reviews = state.reviewInvocations.filter(
+      (entry) =>
+        entry.round === round &&
+        entry.reviewer === attacker &&
+        entry.target === target,
+    );
+    const review = reviews.slice(0, 2).at(-1);
+    const focusedRecords = state.attackInvocations.filter(
+      (entry) =>
+        entry.round === round &&
+        entry.attacker === attacker &&
+        entry.target === target &&
+        entry.detail !== "Correction-only reconciliation lane",
+    );
+    const focused = focusedRecords.slice(0, 2).at(-1);
+    const correction = state.attackInvocations.find(
+      (entry) =>
+        entry.attacker === attacker &&
+        entry.target === target &&
+        entry.detail === "Correction-only reconciliation lane",
+    );
+    const attacks = state.attacks.filter(
+      (entry) =>
+        entry.round === round &&
+        entry.origin.kind === "contestant" &&
+        entry.origin.contestant === attacker &&
+        entry.targets.includes(target),
+    );
+    const explicitEmpty = focused?.parseOutcome === "valid_empty";
+    const usable = attacks.filter(
+      (entry) =>
+        ![
+          "submitted",
+          "provisional_infrastructure",
+          "infrastructure_error",
+          "execution_inconclusive",
+          "capability_denied",
+          "judge_unable",
+        ].includes(entry.status),
+    );
+    const partial = attacks.filter(
+      (entry) => entry.evidenceProvenance === "judge_partial",
+    );
+    const retryCandidate = state.reconciliationQueue.find(
+      (entry) =>
+        entry.actor === attacker &&
+        entry.target === target &&
+        entry.sourceRound === round &&
+        entry.attemptCount === 2,
+    );
+    const focusedAttempts = focusedRecords.slice(0, 2).map((record, index) =>
+      attempt(
+        record.parseOutcome === "valid_empty"
+          ? "valid_empty"
+          : record.parseOutcome === "valid" || record.parseOutcome === "partial"
+            ? "succeeded"
+            : "failed",
+        [record.parsedArtifactPath, record.rawArtifactPath].filter(
+          (value): value is string => Boolean(value),
+        ),
+        record.parseOutcome ? undefined : "focused_description_failed",
+        index === 0 ? 1 : 2,
+      ),
+    );
+    if (!focusedAttempts.length)
+      focusedAttempts.push(
+        attempt("failed", [], "focused_description_missing"),
+      );
+    if ((retryCandidate || correction) && focusedAttempts.length < 2) {
+      focusedAttempts.push(
+        attempt(
+          correction?.parseOutcome === "valid" ||
+            retryCandidate?.status === "corrected"
+            ? "succeeded"
+            : "failed",
+          [
+            correction?.parsedArtifactPath,
+            retryCandidate?.correctionParsedArtifactPath,
+          ].filter((value): value is string => Boolean(value)),
+          retryCandidate?.discardReason,
+          2,
+        ),
+      );
+    }
+
+    const usableTerminal = explicitEmpty || usable.length > 0;
+    const reviewCompleted = Boolean(
+      review?.invocation.status === "succeeded" &&
+      review.parseOutcome !== "invalid",
+    );
+    const focusedCompleted = focusedAttempts.at(-1)?.state !== "failed";
+    const laneResolved = reviewCompleted && focusedCompleted && usableTerminal;
+    const reasonCodes: string[] = [];
+    if (!review) reasonCodes.push("review_missing");
+    else if (review.parseOutcome === "partial")
+      reasonCodes.push("review_partial");
+    else if (
+      review.invocation.status !== "succeeded" ||
+      review.parseOutcome === "invalid"
+    )
+      reasonCodes.push("review_failed");
+    if (!explicitEmpty && !focused)
+      reasonCodes.push("focused_description_missing");
+    if (!explicitEmpty && focused && focused.attackCount > attacks.length)
+      reasonCodes.push("submitted_path_lost");
+    for (const attack of attacks) {
+      if (attack.status === "capability_denied")
+        reasonCodes.push("required_capability_unavailable");
+      if (
+        [
+          "provisional_infrastructure",
+          "infrastructure_error",
+          "execution_inconclusive",
+          "judge_unable",
+        ].includes(attack.status)
+      )
+        reasonCodes.push(`attack_${attack.status}`);
+      if (attack.evidenceProvenance === "judge_partial")
+        reasonCodes.push("judge_partial_half_damage");
+    }
+    if (!usableTerminal) reasonCodes.push("no_usable_terminal_result");
+    if (retryCandidate?.status === "discarded")
+      reasonCodes.push("targeted_retry_exhausted");
+
+    const executionPaths = attacks.flatMap((entry) =>
+      entry.checks.flatMap((check) =>
+        check.command
+          ? [check.command.stdoutPath, check.command.stderrPath]
+          : [],
+      ),
+    );
+    const hasLanded = usable.some((entry) => entry.status === "landed");
+    const stages = [
+      stage(
+        "review",
+        reviews.length
+          ? reviews.slice(0, 2).map((record, index) =>
+              attempt(
+                record.invocation.status === "succeeded" &&
+                  record.parseOutcome !== "invalid"
+                  ? record.parseOutcome === "valid_empty"
+                    ? "valid_empty"
+                    : "succeeded"
+                  : "failed",
+                [record.artifactPath, record.parsedArtifactPath].filter(
+                  (value): value is string => Boolean(value),
+                ),
+                record.invocation.status === "succeeded"
+                  ? undefined
+                  : "review_failed",
+                index === 0 ? 1 : 2,
+              ),
+            )
+          : [attempt("failed", [], "review_missing")],
+      ),
+      stage("focused_description", focusedAttempts),
+      stage("case_construction", [
+        attempt(
+          explicitEmpty
+            ? "not_applicable"
+            : attacks.length
+              ? "succeeded"
+              : "failed",
+          attacks.map((entry) => entry.patchPath),
+          attacks.length ? undefined : "case_construction_failed",
+        ),
+      ]),
+      stage("execution", [
+        attempt(
+          explicitEmpty
+            ? "not_applicable"
+            : usableTerminal
+              ? "succeeded"
+              : "failed",
+          executionPaths,
+          usableTerminal ? undefined : "execution_no_terminal_result",
+        ),
+      ]),
+      stage("semantic_adjudication", [
+        attempt(
+          explicitEmpty
+            ? "not_applicable"
+            : usableTerminal
+              ? "succeeded"
+              : "failed",
+          [],
+          usableTerminal ? undefined : "judge_unable_to_adjudicate",
+        ),
+      ]),
+      stage("repair", [
+        attempt(
+          explicitEmpty || !hasLanded ? "not_applicable" : "succeeded",
+          [],
+        ),
+      ]),
+    ];
+    const degraded =
+      laneResolved &&
+      (partial.length > 0 ||
+        focused?.parseOutcome === "partial" ||
+        review?.parseOutcome === "partial" ||
+        reasonCodes.includes("submitted_path_lost"));
+    const evidenceBasis: CoverageLaneAssessment["evidenceBasis"] = explicitEmpty
+      ? "explicit_empty"
+      : partial.length
+        ? "judge_partial"
+        : usable.some((entry) => entry.evidenceProvenance === "judge_confirmed")
+          ? "judge_confirmed"
+          : usable.some((entry) => entry.status === "judge_rejected")
+            ? "judge_rejected"
+            : usable.length
+              ? "mechanical"
+              : "none";
+    return {
+      id,
+      round,
+      attacker,
+      target,
+      required: true,
+      finalState: laneResolved
+        ? degraded
+          ? "degraded"
+          : "completed"
+        : "unresolved",
+      evidenceBasis,
+      reasonCodes: unique(reasonCodes),
+      stages,
+    };
+  });
+
+  const requiredCapabilityGap =
+    permissionPolicy?.capabilities.some(
+      (entry) =>
+        entry.requirement === "required" && entry.status !== "approved",
+    ) ?? false;
+  const counts = {
+    required: lanes.length,
+    completed: lanes.filter((lane) => lane.finalState === "completed").length,
+    degraded: lanes.filter((lane) => lane.finalState === "degraded").length,
+    unresolved: lanes.filter((lane) => lane.finalState === "unresolved").length,
+  };
+  const contestantAttacks = state.attacks.filter(
+    (entry) =>
+      entry.origin.kind === "contestant" && typeof entry.round === "number",
+  );
+  const evidenceCounts = {
+    mechanical: contestantAttacks.filter(
+      (entry) =>
+        entry.status !== "submitted" &&
+        (!entry.evidenceProvenance ||
+          entry.evidenceProvenance === "mechanical"),
+    ).length,
+    judgeConfirmed: contestantAttacks.filter(
+      (entry) => entry.evidenceProvenance === "judge_confirmed",
+    ).length,
+    judgePartial: contestantAttacks.filter(
+      (entry) => entry.evidenceProvenance === "judge_partial",
+    ).length,
+    judgeRejected: contestantAttacks.filter(
+      (entry) => entry.status === "judge_rejected",
+    ).length,
+    explicitEmpty: lanes.filter(
+      (lane) => lane.evidenceBasis === "explicit_empty",
+    ).length,
+  };
+  const reasonCodes = unique([
+    ...lanes.flatMap((lane) => lane.reasonCodes),
+    ...(requiredCapabilityGap ? ["required_capability_gap_accepted"] : []),
+  ]);
+  const retryHistory = lanes.flatMap((lane) =>
+    lane.stages.flatMap((entry) =>
+      entry.attempts.length === 2
+        ? [
+            {
+              laneId: lane.id,
+              stage: entry.stage,
+              result:
+                entry.finalState === "completed"
+                  ? ("succeeded" as const)
+                  : ("failed" as const),
+              ...(entry.attempts[1]?.reasonCode
+                ? { reasonCode: entry.attempts[1].reasonCode }
+                : {}),
+            },
+          ]
+        : [],
+    ),
+  );
+  const draft = {
+    version: 1 as const,
+    runId: state.runId,
+    mode: state.config.mode,
+    confidence:
+      counts.unresolved > 0
+        ? ("provisional" as const)
+        : counts.degraded > 0 ||
+            evidenceCounts.judgePartial > 0 ||
+            requiredCapabilityGap
+          ? ("reduced_confidence" as const)
+          : ("full_confidence" as const),
+    requiredLanes: lanes,
+    counts,
+    evidenceCounts,
+    reasonCodes,
+    retryHistory,
+  };
+  return CoverageAssessmentSchema.parse({
+    ...draft,
+    assessmentDigest: calculateCanonicalHash(draft),
+  });
+}
+
+export function createCoverageDecision(input: {
+  runId: string;
+  assessmentDigest: string;
+  decision: CoverageDecision["decision"];
+  decidedAt: string;
+}): CoverageDecision {
+  const draft = { version: 1 as const, ...input };
+  return CoverageDecisionSchema.parse({
+    ...draft,
+    decisionDigest: calculateCanonicalHash(draft),
+  });
+}
+
+export function assertTargetedRetryAllowed(attemptsAlreadyMade: number): void {
+  if (attemptsAlreadyMade >= 2)
+    throw new Error("Targeted retry allowance is exhausted for this failure");
+}
+
+export function coverageAllowsPatchReview(
+  state: Pick<RunState, "coverageAssessment" | "coverageDecision">,
+): boolean {
+  if (!state.coverageAssessment) return true; // Legacy/unknown compatibility.
+  if (state.coverageDecision?.decision === "inconclusive") return false;
+  return (
+    state.coverageAssessment.confidence !== "provisional" ||
+    state.coverageDecision?.decision === "accept-reduced"
+  );
+}

@@ -57,6 +57,7 @@ export class ArtifactStore {
         "harness-overlays",
         "sources",
         "quality",
+        "coverage",
         "reviews",
         "delivery/events",
         "operations",

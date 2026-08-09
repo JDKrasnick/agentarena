@@ -150,6 +150,7 @@ import {
 } from "../recovery/manifest.js";
 import { appendRecoveryEvent } from "../recovery/events.js";
 import { readEnvelopeChain } from "../recovery/durable.js";
+import { assessBattleCoverage } from "../confidence/assessment.js";
 
 export interface ArenaDependencies {
   adapters: Partial<Record<AgentId, AgentAdapter>>;
@@ -1635,11 +1636,13 @@ export class RoundEngine {
         status:
           attack.status === "landed"
             ? ("landed" as const)
-            : attack.status === "capability_denied" ||
-                attack.status === "infrastructure_error" ||
-                attack.status === "execution_inconclusive"
-              ? attack.status
-              : ("missed" as const),
+            : attack.status === "judge_unable"
+              ? ("execution_inconclusive" as const)
+              : attack.status === "capability_denied" ||
+                  attack.status === "infrastructure_error" ||
+                  attack.status === "execution_inconclusive"
+                ? attack.status
+                : ("missed" as const),
         ...(attack.rootDefectId ? { defectId: attack.rootDefectId } : {}),
         artifactIds: artifactIdFor(attack.patchPath),
       })),
@@ -2376,6 +2379,47 @@ export class RoundEngine {
           throw error;
         }
       },
+      ...(verifier.adjudicate
+        ? {
+            adjudicate: async (input) => {
+              const startedAt = this.now().toISOString();
+              const id = stableId(
+                "invocation",
+                String(round),
+                "judge-fallback",
+                String(context.roundInvocations.length),
+              );
+              try {
+                const verdict = await verifier.adjudicate!(input);
+                context.roundInvocations.push({
+                  id,
+                  kind: "verification",
+                  actor: "verifier",
+                  status: "succeeded",
+                  startedAt,
+                  finishedAt: this.now().toISOString(),
+                  artifactPaths: [input.promptPath, input.transcriptPrefix],
+                });
+                return verdict;
+              } catch (error) {
+                context.roundInvocations.push({
+                  id,
+                  kind: "verification",
+                  actor: "verifier",
+                  status: context.controller.signal.aborted
+                    ? "cancelled"
+                    : this.isInfrastructureError(error)
+                      ? "infrastructure_error"
+                      : "failed",
+                  startedAt,
+                  finishedAt: this.now().toISOString(),
+                  artifactPaths: [input.promptPath, input.transcriptPrefix],
+                });
+                throw error;
+              }
+            },
+          }
+        : {}),
     };
   }
 
@@ -4379,6 +4423,7 @@ export class RoundEngine {
         "review-prompt.json",
         context.state.reviewPrompt,
       );
+      await this.finalizeCoverage(context);
       await this.persist(context);
       return;
     }
@@ -4534,6 +4579,22 @@ export class RoundEngine {
       "review-prompt.json",
       context.state.reviewPrompt,
     );
+    await this.finalizeCoverage(context);
     await this.persist(context);
+  }
+
+  private async finalizeCoverage(context: ArenaContext): Promise<void> {
+    const assessment = assessBattleCoverage(context.state, context.permissions);
+    context.state.coverageAssessment = assessment;
+    context.state.artifacts.coverageAssessment =
+      await context.store.writeImmutableJson(
+        "coverage/assessment.json",
+        assessment,
+      );
+    if (assessment.confidence !== "provisional") return;
+    if (context.state.arenaOutcome)
+      delete context.state.arenaOutcome.championId;
+    delete context.state.patchRecommendation;
+    delete context.state.reviewPrompt;
   }
 }

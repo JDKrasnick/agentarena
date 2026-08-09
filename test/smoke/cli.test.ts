@@ -64,6 +64,10 @@ describe("built CLI smoke flow", () => {
       schemaVersion: number;
       contestants: Array<{ id: string }>;
       appliedEnvelopes: Array<{ roundId: number | "recovery" }>;
+      coverageAssessment?: {
+        confidence: string;
+        assessmentDigest: string;
+      };
     };
     expect(result.schemaVersion).toBe(5);
     expect(result.contestants.map((contestant) => contestant.id)).toEqual([
@@ -91,6 +95,21 @@ describe("built CLI smoke flow", () => {
     expect(
       await readFile(path.join(runsRoot, runId!, "BATTLE.md"), "utf8"),
     ).toContain("Recommended patch");
+    if (result.coverageAssessment?.confidence === "provisional") {
+      await execa(
+        process.execPath,
+        [
+          cli,
+          "resolve-coverage",
+          runId!,
+          "--assessment-digest",
+          result.coverageAssessment.assessmentDigest,
+          "--decision",
+          "accept-reduced",
+        ],
+        { cwd: repositoryRoot, env },
+      );
+    }
     const review = await execa(
       process.execPath,
       [cli, "review", runId!, "--json"],

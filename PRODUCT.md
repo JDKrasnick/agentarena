@@ -8,6 +8,16 @@ The central idea is:
 
 > Make coding agents fight for the merge.
 
+Champion and patch-recommendation language is conditional on coverage. Duel
+and catch-up require both attack directions in each of the three rounds; siege
+requires the attacker-to-defender lane in each round. Optional neutral-house
+scouting is outside this calculation. A valid explicit empty attack submission
+completes a lane, while a lane with no usable terminal result leaves only a
+provisional health-ledger leader. The user must bind an `accept-reduced` or
+`inconclusive` decision to the exact coverage-assessment digest before an
+unresolved run can become final. Ordinary patch review and apply remain blocked
+while coverage is provisional.
+
 A developer supplies a task:
 
 ```bash
