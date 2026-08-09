@@ -9,6 +9,7 @@ import type {
   ContestantId,
   ContestantResult,
   ContestantRoundResult,
+  Damage,
   HarnessOverlay,
   ReviewInvocationRecord,
   RoundId,
@@ -105,7 +106,7 @@ export function projectRoundStateDelta(
   // heal, so the projection carries the authoritative collection.
   const attacks = after.attacks;
   return RoundStateDeltaSchema.parse({
-    version: 1,
+    version: 2,
     runId: after.runId,
     roundId,
     attacks,
@@ -161,7 +162,23 @@ export function applyCompletedRound(
       (defect) => ({
         rootDefectId: defect.defectId,
         attackId: defect.attackId,
-        damage: defect.damage as 5 | 15 | 30 | 50,
+        damage: defect.damage as Damage,
+        ...(defect.severity ? { severity: defect.severity } : {}),
+        ...(defect.multiplier ? { multiplier: defect.multiplier } : {}),
+      }),
+    );
+    contestant.healthLedger.canonicalDefects = resulting.canonicalDefects?.map(
+      (defect) => ({
+        rootDefectId: defect.defectId,
+        firstAttackId: defect.firstAttackId,
+        ...(defect.firstAdjudicationId
+          ? { firstAdjudicationId: defect.firstAdjudicationId }
+          : {}),
+        baseSeverity: defect.baseSeverity,
+        currentMultiplier: defect.currentMultiplier,
+        currentDamage: defect.currentDamage as Damage,
+        evidenceHistory: structuredClone(defect.evidenceHistory),
+        status: defect.status,
       }),
     );
     contestant.replacementCredits = structuredClone(

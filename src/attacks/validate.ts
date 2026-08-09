@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   anonymizeAttackForVerifier,
   type AttackVerifier,
+  type JudgeAdjudicationInput,
 } from "../agents/adapter.js";
 import { DAMAGE_BY_SEVERITY } from "../core/scoring.js";
 import type {
@@ -30,6 +31,7 @@ interface ValidateAttackOptions {
   logRoot: string;
   signal: AbortSignal;
   knownRootDefects: ReadonlySet<string>;
+  priorCanonicalDefects?: JudgeAdjudicationInput["priorCanonicalDefects"];
 }
 
 interface RepeatedCheck {
@@ -130,6 +132,7 @@ async function judgeFallback(
         attack: anonymizeAttackForVerifier(attack),
         runSpec: options.runSpec,
         mechanicalFailureReason: reason,
+        priorCanonicalDefects: options.priorCanonicalDefects ?? [],
         worktree,
         promptPath: path.join(
           options.logRoot,
@@ -383,6 +386,9 @@ export async function validateAttack(
           "Canonical root defect already scored",
         ),
         rootDefectId: verdict.rootDefectId,
+        severity: verdict.severity,
+        evidenceProvenance: "mechanical",
+        severityRationale: verdict.rationale,
       };
     }
     return {

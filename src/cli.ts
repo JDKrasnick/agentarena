@@ -56,7 +56,7 @@ program
 program
   .command("resume")
   .description(
-    "Validate and continue a schema v5 run from its latest sealed boundary",
+    "Validate and continue a durable schema v6 run from its latest sealed boundary",
   )
   .argument("<run-id>", "Run ID under .agent-arena/runs")
   .addOption(

@@ -19,7 +19,7 @@ function attackOwner(attack: Attack): string {
 
 function attackEffect(attack: Attack): string {
   if (attack.status === "landed")
-    return `${String(attack.damage ?? 0)} damage${attack.evidenceProvenance ? ` (${attack.evidenceProvenance.replaceAll("_", " ")})` : ""}`;
+    return `${String(attack.adjudication?.exactAmount ?? attack.damage ?? 0)} damage (${(attack.adjudication?.evidenceBasis ?? attack.evidenceProvenance ?? "legacy_unknown").replaceAll("_", " ")})`;
   if (attack.recoil !== undefined) return `${String(attack.recoil)} recoil`;
   return "no health effect";
 }
@@ -290,7 +290,7 @@ export function renderBattleReport(state: RunState): string {
     "",
     `Mode: **${state.config.mode}**`,
     "",
-    state.schemaVersion === 4
+    state.schemaVersion === 4 || state.schemaVersion === 5
       ? `Run specification: \`${state.runSpecHash}\``
       : `Legacy task contract: \`${state.taskContractHash}\``,
     "",

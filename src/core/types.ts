@@ -35,17 +35,22 @@ export type ContestantConfig = z.infer<typeof ContestantConfigSchema>;
 export const SeveritySchema = z.enum(["critical", "high", "medium", "low"]);
 export type Severity = z.infer<typeof SeveritySchema>;
 
-/** Health and score values are persisted in exact half-point increments. */
-export const HealthPointSchema = z.number().min(0).max(100).multipleOf(0.5);
+/** Health and score values are persisted in exact quarter-point increments. */
+export const HealthPointSchema = z.number().min(0).max(100).multipleOf(0.25);
 export const DamageSchema = z.union([
   z.literal(50),
   z.literal(30),
   z.literal(25),
+  z.literal(17.5),
   z.literal(15),
+  z.literal(10.5),
   z.literal(7.5),
   z.literal(5),
+  z.literal(5.25),
   z.literal(2.5),
+  z.literal(1.75),
 ]);
+export type Damage = z.infer<typeof DamageSchema>;
 
 export const BugCategorySchema = z.enum([
   "contract_logic",
@@ -544,6 +549,44 @@ export const AttackStatusSchema = z.enum([
 ]);
 export type AttackStatus = z.infer<typeof AttackStatusSchema>;
 
+export const EvidenceBasisSchema = z.enum([
+  "mechanical",
+  "judge",
+  "partial_judge",
+  "none",
+  "legacy_unknown",
+]);
+export type EvidenceBasis = z.infer<typeof EvidenceBasisSchema>;
+
+export const AdjudicationRecordSchema = z
+  .object({
+    version: z.literal(1),
+    id: z.string().min(1),
+    verdict: z.enum(["valid", "rejected", "unable"]),
+    rejectionBasis: z
+      .enum(["semantic", "mechanical", "malformed_submission"])
+      .optional(),
+    canonicalDefectId: z.string().min(1).optional(),
+    severity: SeveritySchema.optional(),
+    rationale: z.string(),
+    evidenceBasis: EvidenceBasisSchema,
+    duplicateState: z.enum([
+      "unique",
+      "duplicate",
+      "corroborating",
+      "regression",
+    ]),
+    retryArtifactRefs: z.array(z.string()),
+    diagnosticArtifactRefs: z.array(z.string()),
+    multiplier: z.union([z.literal(0), z.literal(0.35), z.literal(1)]),
+    scoreEffect: z.enum(["damage", "damage_upgrade", "recoil", "none"]),
+    exactAmount: z.number().nonnegative().multipleOf(0.25),
+    upgradesAdjudicationId: z.string().min(1).optional(),
+  })
+  .strict()
+  .readonly();
+export type AdjudicationRecord = z.infer<typeof AdjudicationRecordSchema>;
+
 export const AttackSchema = z.object({
   id: z.string(),
   round: RoundIdSchema,
@@ -574,14 +617,23 @@ export const AttackSchema = z.object({
   evidenceRevision: EvidenceRevisionSchema.optional(),
   checks: z.array(CheckResultSchema),
   caseBundle: AttackCaseBundleSchema.optional(),
+  adjudication: AdjudicationRecordSchema.optional(),
 });
 export type Attack = z.infer<typeof AttackSchema>;
 
 export const HealthEventSchema = z.object({
   attackId: z.string().optional(),
+  adjudicationId: z.string().optional(),
+  upgradesAdjudicationId: z.string().optional(),
   round: RoundIdSchema,
-  type: z.enum(["target_damage", "recoil", "heal", "elimination"]),
-  amount: z.number().multipleOf(0.5),
+  type: z.enum([
+    "target_damage",
+    "damage_upgrade",
+    "recoil",
+    "heal",
+    "elimination",
+  ]),
+  amount: z.number().multipleOf(0.25),
   reason: z.string(),
 });
 export type HealthEvent = z.infer<typeof HealthEventSchema>;
@@ -593,8 +645,31 @@ export const HealthLedgerSchema = z.object({
       rootDefectId: z.string(),
       attackId: z.string(),
       damage: DamageSchema,
+      severity: SeveritySchema.optional(),
+      multiplier: z.union([z.literal(0.35), z.literal(1)]).optional(),
     }),
   ),
+  canonicalDefects: z
+    .array(
+      z.object({
+        rootDefectId: z.string(),
+        firstAttackId: z.string(),
+        firstAdjudicationId: z.string().optional(),
+        baseSeverity: SeveritySchema,
+        currentMultiplier: z.union([z.literal(0.35), z.literal(1)]),
+        currentDamage: DamageSchema,
+        evidenceHistory: z.array(
+          z.object({
+            attackId: z.string(),
+            basis: EvidenceBasisSchema,
+            multiplier: z.union([z.literal(0.35), z.literal(1)]),
+            rationale: z.string(),
+          }),
+        ),
+        status: z.enum(["active", "healed"]),
+      }),
+    )
+    .optional(),
   eliminatedByRequiredCheck: z.boolean(),
 });
 export type HealthLedger = z.infer<typeof HealthLedgerSchema>;
@@ -1040,6 +1115,8 @@ export const CoverageLaneAssessmentSchema = z.object({
     "mechanical",
     "judge_confirmed",
     "judge_partial",
+    "partial_judge",
+    "legacy_unknown",
     "judge_rejected",
     "explicit_empty",
     "none",
@@ -1174,10 +1251,29 @@ export const RunStateV4Schema = RunStateCoreSchema.extend({
   deliveryTarget: DeliveryTargetSchema.optional(),
   pullRequestFixture: PullRequestFixtureSchema.optional(),
 });
-export const RunStateSchema = RunStateV4Schema;
+export const RunStateV5Schema = RunStateCoreSchema.extend({
+  schemaVersion: z.literal(5),
+  runSpecHash: z.string().length(64),
+  contestants: z.partialRecord(ContestantIdSchema, ContestantResultSchema),
+  attacks: z.array(AttackSchema),
+  reviewInvocations: z.array(ReviewInvocationRecordSchema).default([]),
+  attackInvocations: z.array(AttackInvocationRecordSchema).default([]),
+  ranking: RankingSchema.optional(),
+  arenaOutcome: ArenaOutcomeSchema.optional(),
+  patchQualityFacts: z
+    .partialRecord(ContestantIdSchema, PatchQualityFactsSchema)
+    .default({}),
+  patchQualityVerdict: PatchQualityVerdictSchema.optional(),
+  patchRecommendation: PatchRecommendationSchema.optional(),
+  reviewPrompt: ReviewPromptSchema.optional(),
+  deliveryTarget: DeliveryTargetSchema.optional(),
+  pullRequestFixture: PullRequestFixtureSchema.optional(),
+});
+export const RunStateSchema = RunStateV5Schema;
 export type RunStateV3 = z.infer<typeof RunStateV3Schema>;
 export type RunStateV4 = z.infer<typeof RunStateV4Schema>;
-export type RunState = RunStateV3 | RunStateV4;
+export type RunStateV5 = z.infer<typeof RunStateV5Schema>;
+export type RunState = RunStateV3 | RunStateV4 | RunStateV5;
 
 // --- Legacy readers: in schema versions 1 and 2 the provider was the
 // contestant identity. They are migrated to contestant slots at load time. ---
@@ -1287,6 +1383,7 @@ export const AnyRunStateSchema = z.discriminatedUnion("schemaVersion", [
   RunStateV2Schema,
   RunStateV3Schema,
   RunStateV4Schema,
+  RunStateV5Schema,
 ]);
 export type AnyRunState = z.infer<typeof AnyRunStateSchema>;
 

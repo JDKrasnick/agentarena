@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { Attack, RunState } from "../../src/core/types.js";
 import {
   FEEDBACK_INLINE_LIMIT_BYTES,
+  FEEDBACK_TARGET_BYTES,
   projectContestantFeedback,
 } from "../../src/recovery/feedback.js";
-import { canonicalJson } from "../../src/contracts/round.js";
+import {
+  canonicalJson,
+  validateContestantFeedback,
+} from "../../src/contracts/round.js";
 import { makeRunState } from "../helpers/run-state.js";
 
 function attack(
@@ -131,6 +135,14 @@ describe("lane-safe contestant feedback", () => {
     expect(encoded).not.toContain("PRIVATE SEVERITY RATIONALE");
     expect(encoded).not.toContain("SECRET-INPUT");
     expect(encoded).not.toContain("opponent-own");
+    expect(projected.version).toBe(2);
+    expect(() => validateContestantFeedback(projected)).not.toThrow();
+    expect(() =>
+      validateContestantFeedback({
+        ...projected,
+        health: { ...projected.health, ending: 1 },
+      }),
+    ).toThrow(/digest mismatch/);
   });
 
   it("uses hard public reason codes and keeps canonical landed identities", () => {
@@ -161,7 +173,7 @@ describe("lane-safe contestant feedback", () => {
     );
   });
 
-  it("compacts deterministically below 24 KiB without evicting active evidence", () => {
+  it("targets 8 KiB, caps at 24 KiB, and never evicts active evidence", () => {
     const state = makeRunState();
     state.attacks = Array.from({ length: 180 }, (_, index) =>
       attack(`history-${String(index).padStart(3, "0")}`, "b", "a", {
@@ -182,7 +194,7 @@ describe("lane-safe contestant feedback", () => {
     );
     expect(
       Buffer.byteLength(JSON.stringify(first, null, 2), "utf8"),
-    ).toBeLessThanOrEqual(FEEDBACK_INLINE_LIMIT_BYTES);
+    ).toBeLessThanOrEqual(FEEDBACK_TARGET_BYTES);
     expect(first).toEqual(second);
     expect(
       first.acceptedIncomingAttacks.some(

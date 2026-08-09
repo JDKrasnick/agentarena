@@ -1,8 +1,16 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-const PointValueSchema = z.number().min(0).max(100).multipleOf(0.5);
-const DamageValueSchema = z.number().positive().max(50).multipleOf(0.5);
+const PointValueSchema = z.number().min(0).max(100).multipleOf(0.25);
+const DamageValueSchema = z.number().positive().max(50).multipleOf(0.25);
+const ContractVersionSchema = z.union([z.literal(1), z.literal(2)]);
+const EvidenceBasisSchema = z.enum([
+  "mechanical",
+  "judge",
+  "partial_judge",
+  "none",
+  "legacy_unknown",
+]);
 
 function canonicalize(value: unknown): unknown {
   if (value === null || typeof value === "string" || typeof value === "boolean")
@@ -244,6 +252,29 @@ const ActiveDefectSchema = z
     attackId: IdentifierSchema,
     severity: SeveritySchema,
     damage: DamageValueSchema,
+    multiplier: z.union([z.literal(0.35), z.literal(1)]).optional(),
+  })
+  .strict();
+
+const CanonicalDefectSchema = z
+  .object({
+    defectId: IdentifierSchema,
+    firstAttackId: IdentifierSchema,
+    firstAdjudicationId: IdentifierSchema.optional(),
+    baseSeverity: SeveritySchema,
+    currentMultiplier: z.union([z.literal(0.35), z.literal(1)]),
+    currentDamage: DamageValueSchema,
+    evidenceHistory: z.array(
+      z
+        .object({
+          attackId: IdentifierSchema,
+          basis: EvidenceBasisSchema,
+          multiplier: z.union([z.literal(0.35), z.literal(1)]),
+          rationale: z.string(),
+        })
+        .strict(),
+    ),
+    status: z.enum(["active", "healed"]),
   })
   .strict();
 
@@ -269,6 +300,7 @@ export const RoundContestantStateSchema = z
     health: PointValueSchema,
     permanentRecoil: PointValueSchema,
     activeDefects: z.array(ActiveDefectSchema),
+    canonicalDefects: z.array(CanonicalDefectSchema).optional(),
     replacementCredits: z.array(ReplacementCreditStateSchema),
     status: z.enum(["pending", "active", "downed", "eliminated"]),
   })
@@ -282,6 +314,8 @@ const KnownDefectSchema = z
     target: ContestantIdSchema,
     severity: SeveritySchema,
     damage: DamageValueSchema,
+    multiplier: z.union([z.literal(0.35), z.literal(1)]).optional(),
+    evidenceBasis: EvidenceBasisSchema.optional(),
     status: z.enum(["active", "healed"]),
     visibleReproducerArtifactIds: z.array(IdentifierSchema),
   })
@@ -324,7 +358,7 @@ const ReconciliationCandidateSchema = z
 /** A complete, serializable input for exactly one transactional round. */
 export const RoundSnapshotSchema = z
   .object({
-    version: z.literal(1),
+    version: ContractVersionSchema,
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     snapshotHash: Sha256Schema,
@@ -482,6 +516,7 @@ const ReplayAttackSchema = z
       "execution_inconclusive",
     ]),
     defectId: IdentifierSchema.optional(),
+    adjudication: JsonValueSchema.optional(),
     artifactIds: z.array(IdentifierSchema),
   })
   .strict();
@@ -514,17 +549,19 @@ const ReplayRepairSchema = z
 const ReplayScoreEventSchema = z
   .object({
     contestantId: ContestantIdSchema,
-    type: z.enum(["damage", "recoil", "heal", "elimination"]),
-    amount: z.number().multipleOf(0.5),
+    type: z.enum(["damage", "damage_upgrade", "recoil", "heal", "elimination"]),
+    amount: z.number().multipleOf(0.25),
     healthAfter: PointValueSchema,
     defectId: IdentifierSchema.optional(),
+    adjudicationId: IdentifierSchema.optional(),
+    upgradesAdjudicationId: IdentifierSchema.optional(),
   })
   .strict();
 
 /** Immutable audit envelope from which a round can be inspected and replayed. */
 export const RoundReplaySchema = z
   .object({
-    version: z.literal(1),
+    version: ContractVersionSchema,
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     snapshotHash: Sha256Schema,
@@ -558,7 +595,7 @@ export type RoundReplay = z.infer<typeof RoundReplaySchema>;
 
 const RoundResultBaseSchema = z
   .object({
-    version: z.literal(1),
+    version: ContractVersionSchema,
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     resultingContestants: z.tuple([
@@ -658,7 +695,7 @@ export function validateRoundResult(
  */
 export const RoundStateDeltaSchema = z
   .object({
-    version: z.literal(1),
+    version: ContractVersionSchema,
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     attacks: z.array(JsonValueSchema),
@@ -699,6 +736,9 @@ const IncomingAttackFeedbackSchema = z
     defectId: IdentifierSchema,
     severity: SeveritySchema,
     damage: DamageValueSchema,
+    evidenceBasis: EvidenceBasisSchema.optional(),
+    multiplier: z.union([z.literal(0.35), z.literal(1)]).optional(),
+    rationale: z.string().min(1).optional(),
     claim: z.string().min(1),
     visibleReproducers: z.array(VisibleReproducerSchema).min(1),
   })
@@ -755,7 +795,7 @@ const OwnAttackOutcomeSchema = z
 /** Deliberately narrow, contestant-visible projection of round evidence. */
 export const ContestantFeedbackSchema = z
   .object({
-    version: z.literal(1),
+    version: ContractVersionSchema,
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     contestantId: ContestantIdSchema,
@@ -788,9 +828,17 @@ export const ContestantFeedbackSchema = z
         })
         .strict(),
     ),
+    projectionDigest: Sha256Schema.optional(),
   })
   .strict()
   .superRefine((feedback, context) => {
+    if (feedback.version === 2 && !feedback.projectionDigest) {
+      context.addIssue({
+        code: "custom",
+        path: ["projectionDigest"],
+        message: "Contestant feedback v2 requires a projection digest",
+      });
+    }
     feedback.ownAttackOutcomes.forEach((attack, index) => {
       if (attack.target === feedback.contestantId) {
         context.addIssue({
@@ -803,3 +851,21 @@ export const ContestantFeedbackSchema = z
   })
   .readonly();
 export type ContestantFeedback = z.infer<typeof ContestantFeedbackSchema>;
+
+export function calculateContestantFeedbackDigest(feedback: object): string {
+  const payload = Object.fromEntries(
+    Object.entries(feedback).filter(([key]) => key !== "projectionDigest"),
+  );
+  return calculateCanonicalHash(payload);
+}
+
+export function validateContestantFeedback(value: unknown): ContestantFeedback {
+  const feedback = ContestantFeedbackSchema.parse(value);
+  if (
+    feedback.version === 2 &&
+    feedback.projectionDigest !== calculateContestantFeedbackDigest(feedback)
+  ) {
+    throw new Error("Contestant feedback projection digest mismatch");
+  }
+  return feedback;
+}

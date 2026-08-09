@@ -69,7 +69,7 @@ describe("built CLI smoke flow", () => {
         assessmentDigest: string;
       };
     };
-    expect(result.schemaVersion).toBe(5);
+    expect(result.schemaVersion).toBe(6);
     expect(result.contestants.map((contestant) => contestant.id)).toEqual([
       "a",
       "b",
@@ -89,7 +89,7 @@ describe("built CLI smoke flow", () => {
       { cwd: repositoryRoot, env },
     );
     expect(JSON.parse(resumed.stdout)).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: 6,
       status: "complete",
     });
     expect(

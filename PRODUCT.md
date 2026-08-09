@@ -82,10 +82,29 @@ configuration, invalid schemas, and programming invariants.
 
 `Arena` has no direct mechanism imports. Durable recovery treats the immutable
 preflight baseline and sealed per-round envelopes as authority. `result.json`
-is a compact schema-v5 summary with an ordered applied-envelope ledger. Resume
+is a compact schema-v6 summary with an ordered applied-envelope ledger. Runtime
+state is V5 and round snapshots, results, replays, envelopes, and state deltas
+are V2. Resume
 validates the digest chain and runtime drift, applies a sealed boundary exactly
 once, and never reruns an interrupted unsealed round under the original run ID.
 Production prompts consume only persisted lane-safe `ContestantFeedback`.
+
+Every attack outcome is normalized into an immutable, versioned adjudication
+record before scoring. Semantic verdict, rejection basis, canonical defect,
+frozen severity, evidence basis, duplicate state, diagnostics, multiplier, and
+exact score effect are separate fields; scoring never trusts free-form attack
+status or caller-supplied damage. Definitive mechanical or judge evidence deals
+full severity damage, while a supported partial-judge ruling deals exactly 35%
+(17.5/10.5/5.25/1.75 HP). A later definitive corroboration applies only the
+delta to full damage, preserves the original severity, and does not re-damage a
+healed defect unless the current patch genuinely regresses.
+
+Complete adjudications and rationale remain local. Agent packets are
+deterministic, digest-linked role-safe projections targeting 8 KiB with a 24
+KiB ceiling; they retain current and unresolved defects, concise verdict,
+severity, basis, multiplier, effective damage, expected behavior, visible
+reproducers, and artifact pointers while excluding private transcripts,
+opponent-only evidence, and verbose judge rationale.
 
 ### Battle modes
 

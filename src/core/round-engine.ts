@@ -82,12 +82,15 @@ import { deriveDeliveryTarget } from "../delivery/target.js";
 import { createRunId, sha256, stableId } from "./ids.js";
 import {
   calculateHealth,
+  DAMAGE_BY_SEVERITY,
   healDefect,
+  normalizeAttackAdjudication,
   rankContestants,
   resolveRound,
 } from "./scoring.js";
 import { assertTransition } from "./state-machine.js";
 import {
+  AdjudicationRecordSchema,
   FightConfigSchema,
   PermissionPolicySchema,
   type AgentId,
@@ -240,6 +243,7 @@ function initialContestant(config: ContestantConfig): ContestantResult {
     healthLedger: {
       permanentRecoil: 0,
       activeDefects: [],
+      canonicalDefects: [],
       eliminatedByRequiredCheck: false,
     },
     healthEvents: [],
@@ -257,6 +261,25 @@ function getContestant(
   if (!contestant)
     throw new Error(`Missing contestant state for ${contestantId}`);
   return contestant;
+}
+
+function priorCanonicalDefects(
+  state: RunState,
+  targets: readonly ContestantId[],
+) {
+  return targets.flatMap((target) =>
+    (getContestant(state, target).healthLedger.canonicalDefects ?? []).map(
+      (defect) => ({
+        canonicalDefectId: defect.rootDefectId,
+        severity: defect.baseSeverity,
+        multiplier: defect.currentMultiplier,
+        effectiveDamage: defect.currentDamage,
+        status: defect.status,
+        evidenceBasis:
+          defect.evidenceHistory.at(-1)?.basis ?? ("legacy_unknown" as const),
+      }),
+    ),
+  );
 }
 
 function getAdapter(
@@ -507,7 +530,7 @@ export class RoundEngine {
       await store.writeJson("permissions.json", permissions);
       const startedAt = this.now().toISOString();
       const state: RunState = {
-        schemaVersion: 4,
+        schemaVersion: 5,
         runId,
         harnessVersion: "0.1.0",
         status: "running",
@@ -737,15 +760,18 @@ export class RoundEngine {
     });
     await store.initialize();
     const summary = await store.readSummary();
-    if (!summary) throw new Error("Only schema v5 runs support durable resume");
+    if (!summary)
+      throw new Error("Only durable schema v5/v6 runs support resume");
     await appendRecoveryEvent({
       store,
       type: "resume_started",
       now: this.now(),
     });
     let state = await store.readState();
-    if (state.schemaVersion !== 4)
-      throw new Error("Durable resume requires a v5 run with a v4 baseline");
+    if (state.schemaVersion !== 5)
+      throw new Error(
+        "Interrupted pre-#31 runs are read-only legacy artifacts and cannot continue; restart the fight to create a v5 run",
+      );
     const config = FightConfigSchema.parse({
       ...state.config,
       repositoryRoot,
@@ -1272,10 +1298,25 @@ export class RoundEngine {
             return {
               defectId: defect.rootDefectId,
               attackId: defect.attackId,
-              severity: attack?.severity ?? ("low" as const),
+              severity: defect.severity ?? attack?.severity ?? ("low" as const),
               damage: defect.damage,
+              ...(defect.multiplier ? { multiplier: defect.multiplier } : {}),
             };
           }),
+          canonicalDefects: (
+            contestant.healthLedger.canonicalDefects ?? []
+          ).map((defect) => ({
+            defectId: defect.rootDefectId,
+            firstAttackId: defect.firstAttackId,
+            ...(defect.firstAdjudicationId
+              ? { firstAdjudicationId: defect.firstAdjudicationId }
+              : {}),
+            baseSeverity: defect.baseSeverity,
+            currentMultiplier: defect.currentMultiplier,
+            currentDamage: defect.currentDamage,
+            evidenceHistory: structuredClone(defect.evidenceHistory),
+            status: defect.status,
+          })),
           replacementCredits: structuredClone(contestant.replacementCredits),
           status:
             contestant.status === "eliminated" || contestant.status === "failed"
@@ -1288,30 +1329,30 @@ export class RoundEngine {
         };
       }),
     );
-    const knownDefects = context.state.attacks.flatMap((attack) =>
-      attack.rootDefectId && attack.severity && attack.damage
-        ? attack.targets.map((target) => ({
-            defectId: attack.rootDefectId!,
-            attackId: attack.id,
-            target,
-            severity: attack.severity!,
-            damage: attack.damage!,
-            status: getContestant(
-              context.state,
-              target,
-            ).healthLedger.activeDefects.some(
-              (defect) => defect.rootDefectId === attack.rootDefectId,
-            )
-              ? ("active" as const)
-              : ("healed" as const),
-            visibleReproducerArtifactIds: [
-              stableId("artifact", attack.patchPath),
-            ],
-          }))
-        : [],
-    );
+    const knownDefects = (["a", "b"] as const).flatMap((target) => {
+      const contestant = getContestant(context.state, target);
+      return (contestant.healthLedger.canonicalDefects ?? []).map((defect) => {
+        const evidence = defect.evidenceHistory.at(-1);
+        const firstAttack = context.state.attacks.find(
+          (attack) => attack.id === defect.firstAttackId,
+        );
+        return {
+          defectId: defect.rootDefectId,
+          attackId: defect.firstAttackId,
+          target,
+          severity: defect.baseSeverity,
+          damage: defect.currentDamage,
+          multiplier: defect.currentMultiplier,
+          evidenceBasis: evidence?.basis ?? ("legacy_unknown" as const),
+          status: defect.status,
+          visibleReproducerArtifactIds: firstAttack
+            ? [stableId("artifact", firstAttack.patchPath)]
+            : [],
+        };
+      });
+    });
     const draft = {
-      version: 1 as const,
+      version: 2 as const,
       runId: context.state.runId,
       roundId,
       snapshotHash: "0".repeat(64),
@@ -1647,6 +1688,7 @@ export class RoundEngine {
                 ? attack.status
                 : ("missed" as const),
         ...(attack.rootDefectId ? { defectId: attack.rootDefectId } : {}),
+        ...(attack.adjudication ? { adjudication: attack.adjudication } : {}),
         artifactIds: artifactIdFor(attack.patchPath),
       })),
     );
@@ -1704,7 +1746,7 @@ export class RoundEngine {
       };
     });
     const replayDraft = {
-      version: 1 as const,
+      version: 2 as const,
       runId: snapshot.runId,
       roundId,
       snapshotHash: snapshot.snapshotHash,
@@ -1735,6 +1777,12 @@ export class RoundEngine {
                   : event.type,
               amount: event.amount,
               healthAfter,
+              ...(event.adjudicationId
+                ? { adjudicationId: event.adjudicationId }
+                : {}),
+              ...(event.upgradesAdjudicationId
+                ? { upgradesAdjudicationId: event.upgradesAdjudicationId }
+                : {}),
               ...(event.attackId
                 ? {
                     defectId: context.state.attacks.find(
@@ -1793,10 +1841,25 @@ export class RoundEngine {
             return {
               defectId: defect.rootDefectId,
               attackId: defect.attackId,
-              severity: attack?.severity ?? ("low" as const),
+              severity: defect.severity ?? attack?.severity ?? ("low" as const),
               damage: defect.damage,
+              ...(defect.multiplier ? { multiplier: defect.multiplier } : {}),
             };
           }),
+          canonicalDefects: (
+            contestant.healthLedger.canonicalDefects ?? []
+          ).map((defect) => ({
+            defectId: defect.rootDefectId,
+            firstAttackId: defect.firstAttackId,
+            ...(defect.firstAdjudicationId
+              ? { firstAdjudicationId: defect.firstAdjudicationId }
+              : {}),
+            baseSeverity: defect.baseSeverity,
+            currentMultiplier: defect.currentMultiplier,
+            currentDamage: defect.currentDamage,
+            evidenceHistory: structuredClone(defect.evidenceHistory),
+            status: defect.status,
+          })),
           replacementCredits: structuredClone(contestant.replacementCredits),
           status:
             contestant.status === "eliminated" || contestant.status === "failed"
@@ -1808,7 +1871,7 @@ export class RoundEngine {
       }),
     );
     const baseResult = {
-      version: 1,
+      version: 2,
       runId: snapshot.runId,
       roundId,
       resultingContestants: [
@@ -3574,6 +3637,10 @@ export class RoundEngine {
           ),
           signal: context.controller.signal,
           knownRootDefects: knownRoots,
+          priorCanonicalDefects: priorCanonicalDefects(
+            context.state,
+            attack.targets,
+          ),
         });
         if (result.status === "landed" && result.rootDefectId)
           knownRoots.add(result.rootDefectId);
@@ -3604,6 +3671,10 @@ export class RoundEngine {
               ),
               signal: context.controller.signal,
               knownRootDefects: knownRoots,
+              priorCanonicalDefects: priorCanonicalDefects(
+                context.state,
+                attack.targets,
+              ),
             })
           : authorPatch
             ? await validateAttack({
@@ -3620,6 +3691,10 @@ export class RoundEngine {
                 ),
                 signal: context.controller.signal,
                 knownRootDefects: knownRoots,
+                priorCanonicalDefects: priorCanonicalDefects(
+                  context.state,
+                  attack.targets,
+                ),
               })
             : undefined;
       if (!result) continue;
@@ -3644,6 +3719,71 @@ export class RoundEngine {
       if (result.status === "landed" && typeof round === "number") {
         await this.buildCaseBundle(context, result, round);
       }
+      result.adjudication = normalizeAttackAdjudication(result);
+      const priorCanonical = result.targets
+        .map((target) =>
+          getContestant(
+            context.state,
+            target,
+          ).healthLedger.canonicalDefects?.find(
+            (defect) =>
+              defect.rootDefectId === result.adjudication?.canonicalDefectId,
+          ),
+        )
+        .find(Boolean);
+      if (priorCanonical && result.adjudication.verdict === "valid") {
+        result.adjudication = AdjudicationRecordSchema.parse({
+          ...result.adjudication,
+          severity: priorCanonical.baseSeverity,
+        });
+      }
+      if (
+        priorCanonical?.status === "healed" &&
+        result.status === "duplicate" &&
+        result.adjudication.verdict === "valid" &&
+        result.adjudication.multiplier === 1
+      ) {
+        result.adjudication = AdjudicationRecordSchema.parse({
+          ...result.adjudication,
+          severity: priorCanonical.baseSeverity,
+          duplicateState: "regression",
+          scoreEffect: "damage",
+          exactAmount: DAMAGE_BY_SEVERITY[priorCanonical.baseSeverity],
+        });
+      }
+      if (
+        priorCanonical &&
+        result.adjudication.verdict === "valid" &&
+        result.adjudication.multiplier > priorCanonical.currentMultiplier
+      ) {
+        const delta =
+          DAMAGE_BY_SEVERITY[priorCanonical.baseSeverity] -
+          priorCanonical.currentDamage;
+        const regression = result.adjudication.duplicateState === "regression";
+        result.adjudication = AdjudicationRecordSchema.parse({
+          ...result.adjudication,
+          severity: priorCanonical.baseSeverity,
+          scoreEffect: regression
+            ? "damage"
+            : priorCanonical.status === "active" && delta > 0
+              ? "damage_upgrade"
+              : "none",
+          exactAmount: regression
+            ? DAMAGE_BY_SEVERITY[priorCanonical.baseSeverity]
+            : priorCanonical.status === "active"
+              ? Math.max(0, delta)
+              : 0,
+          ...(priorCanonical.firstAdjudicationId
+            ? {
+                upgradesAdjudicationId: priorCanonical.firstAdjudicationId,
+              }
+            : {}),
+        });
+      }
+      await context.store.writeImmutableJson(
+        `rounds/${String(round)}/adjudications/${result.id}.json`,
+        result.adjudication,
+      );
       if (
         result.status === "infrastructure_error" ||
         result.status === "execution_inconclusive"
@@ -4082,6 +4222,10 @@ export class RoundEngine {
         ),
         signal: context.controller.signal,
         knownRootDefects: knownRoots,
+        priorCanonicalDefects: priorCanonicalDefects(
+          context.state,
+          provisional.targets,
+        ),
       });
       if (replay.status === "provisional_infrastructure") {
         replay.status = "execution_inconclusive";
@@ -4468,21 +4612,34 @@ export class RoundEngine {
             if (
               !defectPasses &&
               attack.rootDefectId &&
-              attack.damage &&
               !contestant.healthLedger.activeDefects.some(
                 (defect) => defect.rootDefectId === attack.rootDefectId,
               )
             ) {
+              const canonical = contestant.healthLedger.canonicalDefects?.find(
+                (defect) => defect.rootDefectId === attack.rootDefectId,
+              );
+              const reactivatedDamage =
+                canonical?.currentDamage ??
+                normalizeAttackAdjudication(attack).exactAmount;
+              if (reactivatedDamage <= 0) continue;
+              if (canonical) canonical.status = "active";
               contestant.healthLedger.activeDefects.push({
                 rootDefectId: attack.rootDefectId,
                 attackId: attack.id,
-                damage: attack.damage,
+                damage: reactivatedDamage as never,
+                ...(canonical
+                  ? {
+                      severity: canonical.baseSeverity,
+                      multiplier: canonical.currentMultiplier,
+                    }
+                  : {}),
               });
               contestant.healthEvents.push({
                 attackId: attack.id,
                 round: context.state.currentRound ?? 3,
                 type: "target_damage",
-                amount: -attack.damage,
+                amount: -reactivatedDamage,
                 reason:
                   "Previously landed defect regressed during final validation",
               });
