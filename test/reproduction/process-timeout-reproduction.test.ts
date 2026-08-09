@@ -29,6 +29,8 @@ interface LifecycleRecord {
   sessionId: number | null;
   wallTimeMs: number;
   monotonicMs: number;
+  descendantPid?: number;
+  descendantRole?: string;
 }
 
 interface ProbeOutcome {
@@ -83,8 +85,10 @@ async function isOwnedProcess(pid: number, token: string): Promise<boolean> {
 
 async function readRecords(statePath: string): Promise<LifecycleRecord[]> {
   try {
-    return (await readFile(statePath, "utf8"))
-      .split("\n")
+    const contents = await readFile(statePath, "utf8");
+    const lines = contents.split("\n");
+    if (!contents.endsWith("\n")) lines.pop();
+    return lines
       .filter(Boolean)
       .map((line) => JSON.parse(line) as LifecycleRecord);
   } catch (error) {
@@ -109,6 +113,28 @@ async function aliveOwnedRecords(
   return ownership.filter(({ owned }) => owned).map(({ record }) => record);
 }
 
+function recordedProcessIds(records: LifecycleRecord[]): number[] {
+  return [
+    ...new Set(
+      records.flatMap((record) =>
+        record.descendantPid === undefined
+          ? [record.pid]
+          : [record.pid, record.descendantPid],
+      ),
+    ),
+  ].sort((left, right) => right - left);
+}
+
+async function aliveOwnedProcessIds(
+  pids: number[],
+  token: string,
+): Promise<number[]> {
+  const ownership = await Promise.all(
+    pids.map(async (pid) => ({ pid, owned: await isOwnedProcess(pid, token) })),
+  );
+  return ownership.filter(({ owned }) => owned).map(({ pid }) => pid);
+}
+
 async function signalIfOwned(
   pid: number,
   token: string,
@@ -126,9 +152,7 @@ async function cleanupOwnedProcesses(
   records: LifecycleRecord[],
   token: string,
 ): Promise<void> {
-  const pids = [...new Set(records.map((record) => record.pid))].sort(
-    (left, right) => right - left,
-  );
+  const pids = recordedProcessIds(records);
   emergencyCleanups.set(token, new Set(pids));
 
   await Promise.all(pids.map((pid) => signalIfOwned(pid, token, "SIGTERM")));
@@ -136,13 +160,73 @@ async function cleanupOwnedProcesses(
   await Promise.all(pids.map((pid) => signalIfOwned(pid, token, "SIGKILL")));
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    if ((await aliveOwnedRecords(records, token)).length === 0) {
+    if ((await aliveOwnedProcessIds(pids, token)).length === 0) {
       emergencyCleanups.delete(token);
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  expect(await aliveOwnedRecords(records, token)).toEqual([]);
+  expect(await aliveOwnedProcessIds(pids, token)).toEqual([]);
+}
+
+async function waitForCompleteTopology(
+  statePath: string,
+): Promise<LifecycleRecord[]> {
+  return waitForRecords(statePath, (records) => {
+    const startedRoles = new Set(
+      records
+        .filter((record) => record.event === "started")
+        .map((record) => record.role),
+    );
+    return ["launcher", "child", "grandchild"].every((role) =>
+      startedRoles.has(role),
+    );
+  });
+}
+
+async function waitForRecords(
+  statePath: string,
+  ready: (records: LifecycleRecord[]) => boolean,
+): Promise<LifecycleRecord[]> {
+  const deadline = performance.now() + cleanupGraceMs;
+  let records: LifecycleRecord[] = [];
+  while (performance.now() < deadline) {
+    records = await readRecords(statePath);
+    if (ready(records)) return records;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return records;
+}
+
+function expectEscapedTopology(records: LifecycleRecord[]): void {
+  const started = records.filter((record) => record.event === "started");
+  const launcher = started.find((record) => record.role === "launcher");
+  const child = started.find((record) => record.role === "child");
+  const grandchild = started.find((record) => record.role === "grandchild");
+
+  expect(launcher, "launcher did not record startup").toBeDefined();
+  expect(child, "child did not record startup").toBeDefined();
+  expect(grandchild, "grandchild did not record startup").toBeDefined();
+  if (
+    launcher === undefined ||
+    child === undefined ||
+    grandchild === undefined
+  ) {
+    return;
+  }
+
+  expect(child.parentPid).toBe(launcher.pid);
+  expect(grandchild.parentPid).toBe(child.pid);
+  if (process.platform !== "win32") {
+    expect(child.processGroupId).toBe(child.pid);
+    expect(grandchild.processGroupId).toBe(grandchild.pid);
+    expect(child.processGroupId).not.toBe(launcher.processGroupId);
+    expect(grandchild.processGroupId).not.toBe(child.processGroupId);
+  }
+  if (process.platform === "linux") {
+    expect(child.sessionId).toBe(child.pid);
+    expect(grandchild.sessionId).toBe(grandchild.pid);
+  }
 }
 
 function waitForExit(
@@ -293,12 +377,12 @@ describe("escaped-descendant timeout reproduction", () => {
     let fixtureRecords: LifecycleRecord[] = [];
 
     try {
-      await new Promise((resolve) => setTimeout(resolve, 350));
-      fixtureRecords = await readRecords(fixtureState);
-      const sentinelRecords = await readRecords(sentinelState);
-      expect(
-        fixtureRecords.some((record) => record.role === "grandchild"),
-      ).toBe(true);
+      fixtureRecords = await waitForCompleteTopology(fixtureState);
+      const sentinelRecords = await waitForRecords(
+        sentinelState,
+        (records) => records.length > 0,
+      );
+      expectEscapedTopology(fixtureRecords);
       expect(sentinelRecords).toHaveLength(1);
 
       // Include the sentinel as a candidate to prove token revalidation, rather
@@ -320,6 +404,41 @@ describe("escaped-descendant timeout reproduction", () => {
       await cleanupOwnedProcesses(
         await readRecords(sentinelState),
         sentinelToken,
+      );
+    }
+  });
+
+  test("cleanup includes descendants with partial startup records", async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "arena-timeout-partial-startup-"),
+    );
+    const token = `agent-arena-partial-${randomUUID()}`;
+    const statePath = path.join(directory, "lifecycle.jsonl");
+    const fixture = spawn(
+      process.execPath,
+      [fixturePath, "launcher", token, statePath],
+      { detached: true, stdio: "ignore" },
+    );
+    fixture.unref();
+    let completeRecords: LifecycleRecord[] = [];
+
+    try {
+      completeRecords = await waitForCompleteTopology(statePath);
+      expectEscapedTopology(completeRecords);
+      const partialRecords = completeRecords.filter(
+        (record) =>
+          record.role === "launcher" || record.event === "spawned-descendant",
+      );
+
+      await cleanupOwnedProcesses(partialRecords, token);
+
+      expect(await aliveOwnedRecords(completeRecords, token)).toEqual([]);
+    } finally {
+      await cleanupOwnedProcesses(
+        completeRecords.length > 0
+          ? completeRecords
+          : await readRecords(statePath),
+        token,
       );
     }
   });
