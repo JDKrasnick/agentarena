@@ -59,7 +59,13 @@ export function renderBattleVisual(state: RunState): string {
       const count = round.attacks.filter(
         (attack) => attack.status === "landed",
       ).length;
-      return `<rect x="${54 + index * 380}" y="690" width="340" height="112" rx="12" fill="#121b26" stroke="#294056"/><text x="${78 + index * 380}" y="730" class="label">${round.id === "recovery" ? "RECOVERY" : `ROUND ${String(round.id)}`}</text><text x="${78 + index * 380}" y="766" class="body">${count ? `${String(count)} proven attack(s)` : "No proven attacks"}</text>`;
+      const label =
+        round.id === "recovery"
+          ? "RECOVERY"
+          : round.id === "reconciliation"
+            ? "RECONCILIATION"
+            : `ROUND ${String(round.id)}`;
+      return `<rect x="${54 + index * 380}" y="690" width="340" height="112" rx="12" fill="#121b26" stroke="#294056"/><text x="${78 + index * 380}" y="730" class="label">${label}</text><text x="${78 + index * 380}" y="766" class="body">${count ? `${String(count)} proven attack(s)` : "No proven attacks"}</text>`;
     })
     .join("\n");
   const outcome = reportOutcome(state);

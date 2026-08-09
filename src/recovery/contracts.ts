@@ -12,6 +12,7 @@ const RoundIdSchema = z.union([
   z.literal(2),
   z.literal(3),
   z.literal("recovery"),
+  z.literal("reconciliation"),
 ]);
 const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([

@@ -18,6 +18,7 @@ const OVERLAY_VERSION: Record<RoundId, string> = {
   2: "round-2-systematic@1",
   3: "round-3-integration@1",
   recovery: "recovery@1",
+  reconciliation: "reconciliation@1",
 };
 
 const OVERLAYS: Record<RoundId, string> = {
@@ -26,6 +27,8 @@ const OVERLAYS: Record<RoundId, string> = {
   3: "Exercise approved component boundaries, configuration, trust boundaries, dependency faults, retry/idempotency, recovery, and bounded resources. Degrade to local resilience probes when integration is unavailable.",
   recovery:
     "Use replacement credits only for new attacks against the post-round-3 patches. Another infrastructure failure makes the run inconclusive.",
+  reconciliation:
+    "Correction-only round. Do not submit new reviews, scouting, or attacks; process only durable reconciliation candidates.",
 };
 
 function executionArchitecture(

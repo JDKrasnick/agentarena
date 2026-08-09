@@ -227,7 +227,51 @@ if (stage === "implement") {
     JSON.stringify({ version: 1, findings: repeatedWhitespaceFinding }),
   );
 } else if (stage === "collect_attacks") {
-  if (round === "2" && agent === "claude") {
+  if (prompt.includes("# Correction-only reconciliation")) {
+    const candidateIds = [...prompt.matchAll(/"candidateId":\s*"([^"]+)"/g)]
+      .map((match) => match[1])
+      .filter((candidateId) => candidateId !== "...");
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 1,
+        corrections: candidateIds.map((candidateId) => ({
+          candidateId,
+          fields: { proposedSeverity: "medium" },
+        })),
+      }),
+    );
+  } else if (
+    process.env.AGENT_ARENA_FAKE_RECONCILIATION === "1" &&
+    round === "3" &&
+    agent === "codex"
+  ) {
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 1,
+        attacks: [
+          {},
+          {
+            rank: 1,
+            claim: "Uppercase input is not normalized",
+            impact: "Public slugs are inconsistent",
+            oracle: {
+              expectedBehavior: "Return a lowercase slug",
+              sourceId: "task-user",
+              sourceLocation: "command-line task",
+              rationale: "The task requires lowercase slugs",
+            },
+            proposedSeverity: "catastrophic",
+            confidence: 70,
+            reproduction:
+              "Call slug with Alpha Beta; expect a lowercase alpha-beta slug.",
+            requiredCapabilities: [],
+          },
+        ],
+      }),
+    );
+  } else if (round === "2" && agent === "claude") {
     process.exit(0);
   } else if (round !== "1") {
     await writeFile(

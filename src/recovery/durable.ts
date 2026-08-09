@@ -204,7 +204,7 @@ export async function sealRoundEnvelope(options: {
 
 async function readEnvelopeAt(
   store: ArtifactStore,
-  roundId: 1 | 2 | 3 | "recovery",
+  roundId: 1 | 2 | 3 | "recovery" | "reconciliation",
 ): Promise<RoundEnvelope | undefined> {
   try {
     const envelope = RoundEnvelopeSchema.parse(
@@ -256,10 +256,12 @@ export async function readEnvelopeChain(
 ): Promise<RoundEnvelope[]> {
   const envelopes: RoundEnvelope[] = [];
   let missingEarlier = false;
-  for (const roundId of [1, 2, 3, "recovery"] as const) {
+  for (const roundId of [1, 2, 3, "recovery", "reconciliation"] as const) {
     const envelope = await readEnvelopeAt(store, roundId);
     if (!envelope) {
-      missingEarlier = true;
+      // Normal rounds are contiguous authority. Recovery is optional, so a
+      // reconciliation envelope may legitimately follow round 3 directly.
+      if (typeof roundId === "number") missingEarlier = true;
       continue;
     }
     if (missingEarlier)

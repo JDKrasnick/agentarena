@@ -23,7 +23,7 @@ function hashWithout(value: object, field: string): string {
 export async function createForkContract(options: {
   parentStore: ArtifactStore;
   parentState: RunState;
-  checkpointRound: 1 | 2 | 3 | "recovery";
+  checkpointRound: 1 | 2 | 3 | "recovery" | "reconciliation";
   newRunId: string;
   artifactRoot?: string;
   steering?: { a?: string[]; b?: string[] };

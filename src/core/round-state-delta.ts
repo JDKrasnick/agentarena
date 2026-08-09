@@ -121,6 +121,10 @@ export function projectRoundStateDelta(
     roundSummaries,
     healthEvents,
     patchMetadata,
+    reconciliationQueue: structuredClone(after.reconciliationQueue),
+    submissionArtifacts: structuredClone(
+      after.submissionArtifacts.slice(before.submissionArtifacts.length),
+    ),
     coordinator: {
       stage: after.stage,
       ...(after.currentRound !== undefined
@@ -173,6 +177,12 @@ export function applyCompletedRound(
   }
 
   state.attacks = structuredClone(delta.attacks as Attack[]);
+  state.reconciliationQueue = structuredClone(delta.reconciliationQueue ?? []);
+  state.submissionArtifacts.push(
+    ...structuredClone(
+      (delta.submissionArtifacts ?? []) as RunState["submissionArtifacts"],
+    ),
+  );
   for (const entry of delta.invocations as TaggedValue[]) {
     if (entry.kind === "review")
       state.reviewInvocations.push(entry.value as ReviewInvocationRecord);

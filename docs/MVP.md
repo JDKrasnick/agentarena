@@ -459,6 +459,46 @@ Recoil cannot be healed. This makes a short list of strong attacks safer than
 submitting three guesses, and makes the declared order reflect both expected
 impact and confidence.
 
+### Fault-isolated submissions and one correction
+
+Every structured provider submission is copied byte-for-byte to a permanent
+`submissions/<round>/<phase>/<actor>/raw.txt` artifact before parsing or
+worktree removal. A neighboring `parsed.json` records its SHA-256, overall and
+section outcomes (`valid`, `valid_empty`, `partial`, or `invalid`), every
+accepted or rejected entry, all versioned normalizations, redacted/truncated
+received values, exact JSON paths, validation codes, and allowed enum values.
+Reports link both artifacts but never embed raw provider contents.
+
+Review considers the first twelve positions, contestant attacks accept sparse
+unique ranks 1 through 3 without renumbering, house considers one submitted
+attack position, and case generation considers the first two positions.
+Duplicate-rank contestant entries are all rejected while unrelated ranks
+survive. House hypotheses are validated independently from house attacks.
+Contestant hypotheses are accepted only for legacy-read compatibility and
+cannot affect scoring or attack validity. Unsupported versions, non-object
+envelopes, and unparseable JSON remain wholly invalid.
+
+An independently identifiable rejected contestant or house attack enters a
+versioned durable reconciliation queue. The original submission is attempt one;
+at the start of the next attack-bearing round each contestant receives one
+shared `attack_minutes` deadline for all its pending corrections and the neutral
+house receives one shared deadline. Correction is keyed by candidate ID,
+freezes every field that already validated, and permits only missing or rejected
+fields to change. Corrected evidence is evaluated against the current frozen
+patches in a separate carry-over lane, outside the three new contestant slots,
+with ordinary damage/recoil and the original rank; house evidence remains
+no-recoil. A missing, timed-out, tampered, or still-malformed second attempt is
+discarded permanently and recorded as lost coverage.
+
+Infrastructure recovery, when present, is the next correction opportunity. If
+the last attack-bearing round creates candidates, one optional `reconciliation`
+round runs correction, neutral case construction, attack validation,
+simultaneous scoring, repair, and required validation without new review,
+scouting, or attacks. It is skipped when no candidate is pending. Queue state is
+part of snapshots, results, replays, deltas, sealed recovery, and resume; legacy
+runs default to an empty queue. These outcomes preserve coverage telemetry for
+later confidence policy without changing winner or confidence policy here.
+
 ### Conservative attack acceptance
 
 An attack lands only when:
@@ -815,7 +855,9 @@ containing:
   fork UI. Invoking agents from history creates a fork with a new run ID.
 - `prompts/`: rendered common, implementation, attack-round, repair, recovery,
   verifier, and infrastructure-review prompts with versions and hashes.
-- `hypotheses/round-<n>/<agent>.json`: concise scouting portfolios.
+- `submissions/<round>/<phase>/<actor>/raw.txt`: immutable exact provider bytes.
+- `submissions/<round>/<phase>/<actor>/parsed.json`: fault-isolated parse and coverage telemetry.
+- `hypotheses/round-<n>/house-<target>.json`: neutral house-scout portfolios. Legacy contestant portfolio artifacts remain readable but are no longer written.
 - `methods.json`: selected method packs, probe cards, tool versions, and seeds.
 - `patches/<agent>.diff`: each final implementation.
 - `attacks/round-<n>/<agent>/<rank>.diff`: every ordered attack patch.

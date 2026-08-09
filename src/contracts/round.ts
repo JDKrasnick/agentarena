@@ -49,6 +49,16 @@ const IdentifierSchema = z.string().trim().min(1);
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const GitCommitSchema = z.string().regex(/^[a-f0-9]{40,64}$/);
 const IsoDateSchema = z.string().datetime({ offset: true });
+const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.string(),
+    z.number().finite(),
+    z.boolean(),
+    z.array(JsonValueSchema),
+    z.record(z.string(), JsonValueSchema),
+  ]),
+);
 
 const ContestantIdSchema = z.enum(["a", "b"]);
 const RoundIdSchema = z.union([
@@ -56,6 +66,7 @@ const RoundIdSchema = z.union([
   z.literal(2),
   z.literal(3),
   z.literal("recovery"),
+  z.literal("reconciliation"),
 ]);
 const SeveritySchema = z.enum(["critical", "high", "medium", "low"]);
 
@@ -273,6 +284,40 @@ const KnownDefectSchema = z
   })
   .strict();
 
+const ReconciliationCandidateSchema = z
+  .object({
+    version: z.literal(1),
+    id: IdentifierSchema,
+    lane: z.enum(["contestant", "house"]),
+    sourceRound: RoundIdSchema,
+    sourceEntryIndex: z.number().int().nonnegative(),
+    actor: z.union([ContestantIdSchema, z.literal("house")]),
+    target: ContestantIdSchema,
+    attemptCount: z.union([z.literal(1), z.literal(2)]),
+    rawArtifactPath: z.string().min(1),
+    parsedArtifactPath: z.string().min(1),
+    correctionRawArtifactPath: z.string().optional(),
+    correctionParsedArtifactPath: z.string().optional(),
+    diagnostics: z.array(
+      z
+        .object({
+          path: z.string().min(1),
+          received: z.string(),
+          code: z.string().min(1),
+          message: z.string().min(1),
+          allowedValues: z.array(z.string()).optional(),
+        })
+        .strict(),
+    ),
+    validatedFields: z.record(z.string(), JsonValueSchema),
+    editablePaths: z.array(z.string()),
+    status: z.enum(["pending", "corrected", "discarded"]),
+    correctionRound: RoundIdSchema.optional(),
+    resultingAttackId: IdentifierSchema.optional(),
+    discardReason: z.string().optional(),
+  })
+  .strict();
+
 /** A complete, serializable input for exactly one transactional round. */
 export const RoundSnapshotSchema = z
   .object({
@@ -286,6 +331,7 @@ export const RoundSnapshotSchema = z
       RoundContestantStateSchema,
     ]),
     knownDefects: z.array(KnownDefectSchema),
+    reconciliationQueue: z.array(ReconciliationCandidateSchema).optional(),
     priorReplayHash: Sha256Schema.nullable(),
   })
   .strict()
@@ -345,6 +391,19 @@ export const RoundSnapshotSchema = z
         message: "A recovery round requires at least one available credit",
       });
     }
+    if (
+      snapshot.roundId === "reconciliation" &&
+      !(snapshot.reconciliationQueue ?? []).some(
+        (candidate) => candidate.status === "pending",
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["reconciliationQueue"],
+        message:
+          "A reconciliation round requires at least one pending candidate",
+      });
+    }
   })
   .readonly();
 export type RoundSnapshot = z.infer<typeof RoundSnapshotSchema>;
@@ -360,6 +419,7 @@ export const ArtifactReferenceSchema = z
       "check_log",
       "case",
       "diagnostic",
+      "submission",
       "round_state_delta",
     ]),
     path: z.string().min(1),
@@ -387,6 +447,7 @@ const ReplayInvocationSchema = z
       "review",
       "attack",
       "case_generation",
+      "house",
       "verification",
       "repair",
       "validation",
@@ -471,6 +532,7 @@ export const RoundReplaySchema = z
     repairs: z.array(ReplayRepairSchema),
     scoreEvents: z.array(ReplayScoreEventSchema),
     diagnostics: z.array(RoundDiagnosticSchema),
+    reconciliationQueue: z.array(ReconciliationCandidateSchema).optional(),
     artifacts: z.array(ArtifactReferenceSchema),
     stateDeltaArtifactId: IdentifierSchema,
     replayHash: Sha256Schema,
@@ -500,6 +562,7 @@ const RoundResultBaseSchema = z
       RoundContestantStateSchema,
       RoundContestantStateSchema,
     ]),
+    reconciliationQueue: z.array(ReconciliationCandidateSchema).optional(),
     replay: RoundReplaySchema,
   })
   .strict();
@@ -586,17 +649,6 @@ export function validateRoundResult(
   return result;
 }
 
-const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
-  z.union([
-    z.null(),
-    z.string(),
-    z.number().finite(),
-    z.boolean(),
-    z.array(JsonValueSchema),
-    z.record(z.string(), JsonValueSchema),
-  ]),
-);
-
 /**
  * Immutable projection used to apply a completed transactional round to the
  * legacy RunState report without sharing that mutable object with the engine.
@@ -615,6 +667,8 @@ export const RoundStateDeltaSchema = z
     roundSummaries: z.array(JsonValueSchema),
     healthEvents: z.array(JsonValueSchema),
     patchMetadata: z.array(JsonValueSchema),
+    reconciliationQueue: z.array(ReconciliationCandidateSchema).optional(),
+    submissionArtifacts: z.array(JsonValueSchema).optional(),
     coordinator: z
       .object({
         stage: IdentifierSchema,

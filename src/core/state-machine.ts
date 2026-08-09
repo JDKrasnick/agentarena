@@ -35,6 +35,7 @@ const TRANSITIONS: Readonly<Record<Stage, readonly Stage[]>> = {
     "review_attacks",
     "collect_attacks",
     "recovery_round",
+    "reconciliation_round",
     "final_validate",
     "inconclusive",
     "cancelled",
@@ -42,7 +43,14 @@ const TRANSITIONS: Readonly<Record<Stage, readonly Stage[]>> = {
   recovery_round: [
     "review_attacks",
     "collect_attacks",
+    "reconciliation_round",
     "final_validate",
+    "inconclusive",
+    "cancelled",
+  ],
+  reconciliation_round: [
+    "review_attacks",
+    "collect_attacks",
     "inconclusive",
     "cancelled",
   ],

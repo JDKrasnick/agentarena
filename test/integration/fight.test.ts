@@ -172,6 +172,105 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(outcome.state.attacks).toEqual([]);
   });
 
+  it("reconciles only identifiable malformed attacks in a complete fight", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      task: "Normalize slug whitespace and lowercase input.",
+      acceptanceCriteria: ["Collapse whitespace.", "Return lowercase slugs."],
+      specPaths: [],
+      issueReferences: [],
+      agents: ["codex", "claude"],
+      attackVerifier: "codex",
+      harnessMaintainer: "codex",
+      rounds: 3,
+      maxAttacksPerRound: 3,
+      infrastructureRecoveryRound: true,
+      maxHeldOutCasesPerDefect: 0,
+      testCommand: "node --test",
+      repositoryRoot,
+      artifactRoot: path.join(repositoryRoot, ".agent-arena", "runs"),
+      permissionMode: "confirm",
+      permissionAllow: {},
+      permissionDeny: [],
+      reducedValidationAccepted: false,
+      nonInteractiveApproval: true,
+      keepWorktrees: false,
+      limits: {
+        implementationMs: 10_000,
+        attackMs: 10_000,
+        verifierMs: 10_000,
+        repairMs: 10_000,
+      },
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_RECONCILIATION: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+      caseBuilder: new CommandCaseBuilder("codex", {
+        executable: process.execPath,
+        args: [fixtureAgent],
+      }),
+    }).fight(config);
+
+    expect(outcome.state.status).toBe("complete");
+    expect(outcome.state.reconciliationQueue).toEqual([
+      expect.objectContaining({
+        sourceRound: 3,
+        sourceEntryIndex: 1,
+        actor: "a",
+        status: "corrected",
+        attemptCount: 2,
+        correctionRound: "reconciliation",
+      }),
+    ]);
+    expect(outcome.state.reconciliationQueue[0]?.resultingAttackId).toBeTypeOf(
+      "string",
+    );
+    expect(
+      outcome.state.attacks.find((attack) => attack.round === "reconciliation"),
+    ).toMatchObject({
+      origin: { kind: "contestant", contestant: "a" },
+      rank: 1,
+    });
+    expect(outcome.state.submissionArtifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          round: "reconciliation",
+          phase: "correction",
+          actor: "a",
+          kind: "correction",
+          outcome: "valid",
+        }),
+      ]),
+    );
+    expect(
+      RoundReplaySchema.parse(
+        JSON.parse(
+          await readFile(
+            path.join(
+              outcome.state.artifacts.runDirectory!,
+              "rounds",
+              "reconciliation",
+              "replay.json",
+            ),
+            "utf8",
+          ),
+        ),
+      ).roundId,
+    ).toBe("reconciliation");
+  });
+
   it("returns an inconclusive round when implementation infrastructure fails", async () => {
     const run = vi.spyOn(RoundEngine.prototype, "run");
     const repositoryRoot = await createSlugRepository();

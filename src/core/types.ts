@@ -54,6 +54,7 @@ export const RoundIdSchema = z.union([
   z.literal(2),
   z.literal(3),
   z.literal("recovery"),
+  z.literal("reconciliation"),
 ]);
 export type RoundId = z.infer<typeof RoundIdSchema>;
 
@@ -62,6 +63,7 @@ export const RoundProfileSchema = z.enum([
   "systematic_exploration",
   "integration_resilience_security",
   "infrastructure_recovery",
+  "reconciliation",
 ]);
 export type RoundProfile = z.infer<typeof RoundProfileSchema>;
 
@@ -87,6 +89,7 @@ export const StageSchema = z.enum([
   "repair",
   "validate_repairs",
   "recovery_round",
+  "reconciliation_round",
   "final_validate",
   "report",
   "complete",
@@ -338,11 +341,20 @@ export const AttackInvocationRecordSchema = z.object({
   invocation: AgentInvocationSchema,
   submissionStatus: z.enum([
     "submitted",
+    "partially_submitted",
     "invalid_submission",
     "not_submitted",
     "not_run",
   ]),
   attackCount: z.number().int().nonnegative(),
+  parseOutcome: z
+    .enum(["valid", "valid_empty", "partial", "invalid"])
+    .optional(),
+  sectionOutcomes: z
+    .record(z.string(), z.enum(["valid", "valid_empty", "partial", "invalid"]))
+    .optional(),
+  rawArtifactPath: z.string().optional(),
+  parsedArtifactPath: z.string().optional(),
   detail: z.string().optional(),
 });
 export type AttackInvocationRecord = z.infer<
@@ -358,6 +370,53 @@ export const ReviewFindingSchema = z.object({
   suggestedMinimalRegressionTest: z.string().min(1),
 });
 export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
+
+export const ReconciliationDiagnosticSchema = z.object({
+  path: z.string().min(1),
+  received: z.string(),
+  code: z.string().min(1),
+  message: z.string().min(1),
+  allowedValues: z.array(z.string()).optional(),
+});
+
+export const ReconciliationCandidateSchema = z.object({
+  version: z.literal(1),
+  id: z.string().min(1),
+  lane: z.enum(["contestant", "house"]),
+  sourceRound: RoundIdSchema,
+  sourceEntryIndex: z.number().int().nonnegative(),
+  actor: z.union([ContestantIdSchema, z.literal("house")]),
+  target: ContestantIdSchema,
+  attemptCount: z.union([z.literal(1), z.literal(2)]),
+  rawArtifactPath: z.string().min(1),
+  parsedArtifactPath: z.string().min(1),
+  correctionRawArtifactPath: z.string().optional(),
+  correctionParsedArtifactPath: z.string().optional(),
+  diagnostics: z.array(ReconciliationDiagnosticSchema).min(1),
+  validatedFields: z.record(z.string(), z.unknown()),
+  editablePaths: z.array(z.string()),
+  status: z.enum(["pending", "corrected", "discarded"]),
+  correctionRound: RoundIdSchema.optional(),
+  resultingAttackId: z.string().optional(),
+  discardReason: z.string().optional(),
+});
+export type ReconciliationCandidate = z.infer<
+  typeof ReconciliationCandidateSchema
+>;
+
+export const SubmissionArtifactRecordSchema = z.object({
+  round: RoundIdSchema,
+  phase: z.string().min(1),
+  actor: z.string().min(1),
+  kind: z.enum(["review", "attack", "house", "case", "correction"]),
+  outcome: z.enum(["valid", "valid_empty", "partial", "invalid"]),
+  rawSha256: z.string().length(64),
+  rawArtifactPath: z.string().min(1),
+  parsedArtifactPath: z.string().min(1),
+});
+export type SubmissionArtifactRecord = z.infer<
+  typeof SubmissionArtifactRecordSchema
+>;
 
 export const ReviewSubmissionSchema = z.object({
   version: z.literal(1),
@@ -382,11 +441,20 @@ export const ReviewInvocationRecordSchema = z.object({
   invocation: AgentInvocationSchema,
   submissionStatus: z.enum([
     "submitted",
+    "partially_submitted",
     "invalid_submission",
     "not_submitted",
     "not_run",
   ]),
   findingCount: z.number().int().nonnegative(),
+  parseOutcome: z
+    .enum(["valid", "valid_empty", "partial", "invalid"])
+    .optional(),
+  sectionOutcomes: z
+    .record(z.string(), z.enum(["valid", "valid_empty", "partial", "invalid"]))
+    .optional(),
+  rawArtifactPath: z.string().optional(),
+  parsedArtifactPath: z.string().optional(),
   artifactPath: z.string().optional(),
   detail: z.string().optional(),
 });
@@ -964,6 +1032,8 @@ const RunStateCoreSchema = z.object({
   harnessOverlays: z.array(HarnessOverlaySchema),
   artifacts: z.record(z.string(), z.string()),
   warnings: z.array(z.string()),
+  reconciliationQueue: z.array(ReconciliationCandidateSchema).default([]),
+  submissionArtifacts: z.array(SubmissionArtifactRecordSchema).default([]),
 });
 
 export const RunStateV3Schema = RunStateCoreSchema.extend({
@@ -1132,17 +1202,6 @@ export const AttackSubmissionEntrySchema = z.object({
 
 export const AttackSubmissionSchema = z.object({
   version: z.literal(1),
-  hypotheses: z
-    .array(
-      z.object({
-        category: BugCategorySchema,
-        invariant: z.string(),
-        probe: z.string(),
-        requiredCapabilities: z.array(z.string()).default([]),
-        confidence: z.number().int().min(0).max(100),
-      }),
-    )
-    .default([]),
   attacks: z.array(AttackSubmissionEntrySchema).max(3),
 });
 export type AttackSubmission = z.infer<typeof AttackSubmissionSchema>;

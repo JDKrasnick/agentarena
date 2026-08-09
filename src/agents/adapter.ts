@@ -4,8 +4,6 @@ import { constants } from "node:fs";
 import {
   AgentInvocationSchema,
   AttackSubmissionSchema,
-  CaseSubmissionSchema,
-  HouseSubmissionSchema,
   InfrastructureReviewSubmissionSchema,
   ReviewSubmissionSchema,
   SeveritySchema,
@@ -40,7 +38,7 @@ interface InvocationInput {
   transcriptPrefix: string;
   timeoutMs: number;
   signal: AbortSignal;
-  round?: 1 | 2 | 3 | "recovery";
+  round?: 1 | 2 | 3 | "recovery" | "reconciliation";
 }
 
 export type ImplementInput = InvocationInput;
@@ -149,14 +147,22 @@ export interface StructuredGeneratorInput {
   round: 1 | 2 | 3;
 }
 
+export interface RawStructuredSubmission {
+  rawSource: string;
+}
+
 export interface HouseScout {
   readonly id: AgentId;
-  scout(input: StructuredGeneratorInput): Promise<HouseSubmission>;
+  scout(
+    input: StructuredGeneratorInput,
+  ): Promise<HouseSubmission | RawStructuredSubmission>;
 }
 
 export interface CaseBuilder {
   readonly id: AgentId;
-  build(input: StructuredGeneratorInput): Promise<CaseSubmission>;
+  build(
+    input: StructuredGeneratorInput,
+  ): Promise<CaseSubmission | RawStructuredSubmission>;
 }
 
 export interface InfrastructureReviewInput extends StructuredGeneratorInput {
@@ -531,7 +537,7 @@ async function invokeStructuredGenerator(
   input: StructuredGeneratorInput,
   outputName: string,
   commandOverride?: Omit<CommandAdapterOptions, "id">,
-): Promise<unknown> {
+): Promise<string> {
   const command = commandOverride ?? providerCommand(id);
   const outputPath = path.join(input.worktree, outputName);
   await rm(outputPath, { force: true });
@@ -553,7 +559,7 @@ async function invokeStructuredGenerator(
   if (result.exitCode !== 0 || result.failureClass) {
     throw new Error(`${stage} invocation failed`);
   }
-  return extractJson(await readFile(outputPath, "utf8"));
+  return readFile(outputPath, "utf8");
 }
 
 export class CommandHouseScout implements HouseScout {
@@ -562,18 +568,17 @@ export class CommandHouseScout implements HouseScout {
     private readonly commandOverride?: Omit<CommandAdapterOptions, "id">,
   ) {}
 
-  async scout(input: StructuredGeneratorInput): Promise<HouseSubmission> {
-    return HouseSubmissionSchema.parse(
-      normalizeModelJson(
-        await invokeStructuredGenerator(
-          this.id,
-          "house",
-          input,
-          ".agent-arena-house.json",
-          this.commandOverride,
-        ),
-      ),
+  async scout(
+    input: StructuredGeneratorInput,
+  ): Promise<RawStructuredSubmission> {
+    const raw = await invokeStructuredGenerator(
+      this.id,
+      "house",
+      input,
+      ".agent-arena-house.json",
+      this.commandOverride,
     );
+    return { rawSource: raw };
   }
 }
 
@@ -583,18 +588,17 @@ export class CommandCaseBuilder implements CaseBuilder {
     private readonly commandOverride?: Omit<CommandAdapterOptions, "id">,
   ) {}
 
-  async build(input: StructuredGeneratorInput): Promise<CaseSubmission> {
-    return CaseSubmissionSchema.parse(
-      normalizeModelJson(
-        await invokeStructuredGenerator(
-          this.id,
-          "case_builder",
-          input,
-          ".agent-arena-cases.json",
-          this.commandOverride,
-        ),
-      ),
+  async build(
+    input: StructuredGeneratorInput,
+  ): Promise<RawStructuredSubmission> {
+    const raw = await invokeStructuredGenerator(
+      this.id,
+      "case_builder",
+      input,
+      ".agent-arena-cases.json",
+      this.commandOverride,
     );
+    return { rawSource: raw };
   }
 }
 
@@ -610,12 +614,14 @@ export class CommandInfrastructureReviewer implements InfrastructureReviewer {
   ): Promise<InfrastructureReviewSubmission> {
     return InfrastructureReviewSubmissionSchema.parse(
       normalizeModelJson(
-        await invokeStructuredGenerator(
-          input.agent,
-          "infrastructure_review",
-          input,
-          ".agent-arena-infrastructure-review.json",
-          this.commandOverrides[input.agent],
+        extractJson(
+          await invokeStructuredGenerator(
+            input.agent,
+            "infrastructure_review",
+            input,
+            ".agent-arena-infrastructure-review.json",
+            this.commandOverrides[input.agent],
+          ),
         ),
       ),
     );
@@ -648,19 +654,21 @@ export class CommandHarnessMaintainer implements HarnessMaintainer {
   ): Promise<HarnessOverlayProposal> {
     const value = HarnessOverlayProposalSchema.parse(
       normalizeModelJson(
-        await invokeStructuredGenerator(
-          this.id,
-          "harness_maintainer",
-          {
-            worktree: packet.worktree,
-            prompt: packet.prompt,
-            timeoutMs: packet.timeoutMs,
-            transcriptPrefix: packet.transcriptPrefix,
-            signal,
-            round: packet.round,
-          },
-          ".agent-arena-overlay.json",
-          this.commandOverride,
+        extractJson(
+          await invokeStructuredGenerator(
+            this.id,
+            "harness_maintainer",
+            {
+              worktree: packet.worktree,
+              prompt: packet.prompt,
+              timeoutMs: packet.timeoutMs,
+              transcriptPrefix: packet.transcriptPrefix,
+              signal,
+              round: packet.round,
+            },
+            ".agent-arena-overlay.json",
+            this.commandOverride,
+          ),
         ),
       ),
     );
