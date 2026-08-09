@@ -958,7 +958,12 @@ export class RoundEngine {
           context,
           snapshot,
           beforeRound,
-          { initialize: round === 1 },
+          {
+            initialize: round === 1,
+            ...(round === 1 && context.state.pullRequestFixture
+              ? { pullRequestFixture: context.state.pullRequestFixture }
+              : {}),
+          },
         );
         if (transaction.result.status !== "completed") {
           return this.finishTerminalRound(context, transaction.result);

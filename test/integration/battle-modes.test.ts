@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import {
@@ -8,9 +8,11 @@ import {
   CommandCaseBuilder,
   RuleBasedVerifier,
 } from "../../src/agents/adapter.js";
+import { ArtifactStore } from "../../src/artifacts/store.js";
 import { applyAcceptedPatch } from "../../src/commands/apply.js";
 import { Arena } from "../../src/core/arena.js";
-import { FightConfigSchema } from "../../src/core/types.js";
+import { FightConfigSchema, RunStateV4Schema } from "../../src/core/types.js";
+import { readBaseline } from "../../src/recovery/durable.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
 import { freezePullRequest } from "../../src/task/pr-fixture.js";
 import type { PullRequestResolver } from "../../src/task/task-contract.js";
@@ -147,7 +149,7 @@ describe("PR battle modes", () => {
   it("keeps the frozen incumbent patch out of the challenger implementation phase", async () => {
     const repositoryRoot = await createSlugRepository();
     const pullRequestResolver = await fixturePullRequest(repositoryRoot);
-    const outcome = await new Arena({
+    const arena = new Arena({
       adapters: adapters(),
       verifier: new RuleBasedVerifier("codex"),
       caseBuilder: new CommandCaseBuilder("codex", {
@@ -160,7 +162,8 @@ describe("PR battle modes", () => {
           ...options,
           fetchCommit: (_root, _repository, commit) => Promise.resolve(commit),
         }),
-    }).fight(config(repositoryRoot, "catch_up"));
+    });
+    const outcome = await arena.fight(config(repositoryRoot, "catch_up"));
 
     expect(outcome.state.status).toBe("complete");
     expect(outcome.state.pullRequestFixture?.head.commit).toBeTruthy();
@@ -178,6 +181,36 @@ describe("PR battle modes", () => {
     expect(await readFile(outcome.state.artifacts.battle!, "utf8")).toContain(
       "| bot_author | pull_request.author | codex-bot |",
     );
+
+    const store = new ArtifactStore(
+      path.join(repositoryRoot, ".agent-arena", "runs"),
+      outcome.state.runId,
+      { durableV5: true },
+    );
+    const baseline = await readBaseline(store);
+    const baselineState = RunStateV4Schema.parse(
+      structuredClone(baseline.state),
+    );
+    await Promise.all([
+      rm(store.resolve("rounds"), { recursive: true, force: true }),
+      rm(store.resolve("checkpoints"), { recursive: true, force: true }),
+      rm(store.resolve("feedback"), { recursive: true, force: true }),
+      rm(store.resolve("quality"), { recursive: true, force: true }),
+      rm(store.resolve("finalization.json"), { force: true }),
+      rm(store.resolve("review-prompt.json"), { force: true }),
+    ]);
+    await store.initialize();
+    await store.writeState(baselineState, []);
+
+    const resumed = await arena.resume({
+      runId: outcome.state.runId,
+      repositoryRoot,
+    });
+    expect(resumed.state.status).toBe("complete");
+    expect(resumed.state.contestants.a?.currentPatchPath).toBe(
+      resumed.state.pullRequestFixture?.patchPath,
+    );
+    expect(resumed.state.contestants.a?.checks[0]?.id).toBe("initial-required");
   });
 
   it("runs a siege with test-only attacker evidence and makes only the defender reviewable", async () => {
