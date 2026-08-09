@@ -32,6 +32,7 @@
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration",
+    "test:process-timeout-repro": "vitest run test/reproduction/process-timeout-reproduction.test.ts --reporter=verbose",
     "test:smoke": "vitest run test/smoke",
     "test:coverage": "vitest run test/unit test/integration --coverage.enabled --coverage.reporter=text --coverage.reporter=json-summary",
     "test:live": "tsx test/live/run.ts",
