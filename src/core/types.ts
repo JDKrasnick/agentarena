@@ -112,6 +112,7 @@ export const CommandResultSchema = z.object({
       expiredAt: z.string().datetime(),
       graceMs: z.number().int().nonnegative(),
       cleanupDurationMs: z.number().int().nonnegative(),
+      cleanupComplete: z.boolean(),
       signalEscalation: z.array(
         z.object({
           pid: z.number().int().positive(),

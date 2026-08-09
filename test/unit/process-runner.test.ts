@@ -48,7 +48,7 @@ describe("process runner supervision", () => {
         `writeFileSync(${JSON.stringify(launcherPidPath)}, String(process.pid))`,
         `const child = spawn(process.execPath, ["-e", ${JSON.stringify(childProgram)}], { detached: true, stdio: ["ignore", "inherit", "inherit"] })`,
         `writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid))`,
-        "setInterval(() => undefined, 1000)",
+        "setTimeout(() => process.exit(0), 25)",
       ].join(";");
       const timeoutMs = 300;
       const started = Date.now();
@@ -64,6 +64,7 @@ describe("process runner supervision", () => {
       expect(result.timedOut).toBe(true);
       expect(result.failureClass).toBe("agent_submission");
       expect(result.deadline?.graceMs).toBe(PROCESS_CLEANUP_GRACE_MS);
+      expect(result.deadline?.cleanupComplete).toBe(true);
       expect(result.deadline?.remainingDescendants).toEqual([]);
       expect(result.deadline?.cleanupDurationMs).toBeLessThanOrEqual(
         PROCESS_CLEANUP_GRACE_MS,
@@ -74,7 +75,7 @@ describe("process runner supervision", () => {
         ),
       ).toBe(true);
       expect(Date.now() - started).toBeLessThan(
-        timeoutMs + PROCESS_CLEANUP_GRACE_MS + 500,
+        timeoutMs + PROCESS_CLEANUP_GRACE_MS,
       );
 
       const launcherPid = Number(await readFile(launcherPidPath, "utf8"));

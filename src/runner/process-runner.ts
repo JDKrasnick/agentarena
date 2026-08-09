@@ -126,6 +126,20 @@ interface SupervisedResult {
   deadline?: NonNullable<CommandResult["deadline"]>;
 }
 
+function deadlineResult(
+  expiredAt: string,
+  cleanup: ProcessCleanupResult,
+): NonNullable<CommandResult["deadline"]> {
+  return {
+    expiredAt,
+    graceMs: cleanup.graceMs,
+    cleanupDurationMs: cleanup.durationMs,
+    cleanupComplete: cleanup.cleanupComplete,
+    signalEscalation: cleanup.signalEscalation,
+    remainingDescendants: cleanup.remainingDescendants,
+  };
+}
+
 async function supervise(
   options: SupervisedOptions,
 ): Promise<SupervisedResult> {
@@ -179,6 +193,7 @@ async function supervise(
       : Promise.resolve({
           durationMs: 0,
           graceMs: 0,
+          cleanupComplete: false,
           signalEscalation: [],
           remainingDescendants: [],
         });
@@ -201,19 +216,11 @@ async function supervise(
       signal: result.signal ?? null,
       timedOut: expiredAt !== undefined,
       ...(expiredAt !== undefined && cleanupResult !== undefined
-        ? {
-            deadline: {
-              expiredAt,
-              graceMs: cleanupResult.graceMs,
-              cleanupDurationMs: cleanupResult.durationMs,
-              signalEscalation: cleanupResult.signalEscalation,
-              remainingDescendants: cleanupResult.remainingDescendants,
-            },
-          }
+        ? { deadline: deadlineResult(expiredAt, cleanupResult) }
         : {}),
     };
   } catch (spawnError) {
-    if (cleanup !== undefined) await cleanup;
+    const cleanupResult = cleanup === undefined ? undefined : await cleanup;
     return {
       stdout: "",
       stderr: "",
@@ -221,6 +228,9 @@ async function supervise(
       signal: null,
       timedOut: expiredAt !== undefined,
       spawnError,
+      ...(expiredAt !== undefined && cleanupResult !== undefined
+        ? { deadline: deadlineResult(expiredAt, cleanupResult) }
+        : {}),
     };
   } finally {
     clearTimeout(deadlineTimer);
@@ -250,9 +260,11 @@ async function run(
   });
   const failureClass = result.spawnError
     ? (classifySpawnError(result.spawnError) ?? "arena_infrastructure")
-    : result.timedOut
-      ? timeoutFailureClass
-      : undefined;
+    : result.deadline?.cleanupComplete === false
+      ? "arena_infrastructure"
+      : result.timedOut
+        ? timeoutFailureClass
+        : undefined;
   if (result.spawnError) {
     result.stderr = describeError(result.spawnError);
   }

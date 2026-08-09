@@ -31,6 +31,7 @@ export interface ProcessSignalEvent extends OwnedProcessIdentity {
 export interface ProcessCleanupResult {
   durationMs: number;
   graceMs: number;
+  cleanupComplete: boolean;
   signalEscalation: ProcessSignalEvent[];
   remainingDescendants: OwnedProcessIdentity[];
 }
@@ -79,8 +80,8 @@ async function readPsProcesses(): Promise<Map<number, ProcessRecord>> {
   const records = new Map<number, ProcessRecord>();
   const { stdout } = await execFileAsync(
     "ps",
-    ["-axo", "pid=,ppid=,lstart=,command="],
-    { timeout: 250 },
+    ["eww", "-axo", "pid=,ppid=,lstart=,command="],
+    { timeout: 250, maxBuffer: 16 * 1024 * 1024 },
   );
   for (const line of stdout.split("\n")) {
     const match = line.match(
@@ -89,12 +90,17 @@ async function readPsProcesses(): Promise<Map<number, ProcessRecord>> {
     if (!match) continue;
     const pid = Number(match[1]);
     const ppid = Number(match[2]);
+    const commandAndEnvironment = match[4] ?? "";
+    const owner = commandAndEnvironment.match(
+      new RegExp(`(?:^|\\s)${OWNER_ENV_NAME}=([^\\s]+)`),
+    )?.[1];
     records.set(pid, {
       pid,
       ppid,
       identity: `ps:${createHash("sha256")
-        .update(`${match[3]}:${match[4]}`)
+        .update(`${match[3]}:${owner ?? commandAndEnvironment}`)
         .digest("hex")}`,
+      ...(owner ? { owner } : {}),
     });
   }
   return records;
@@ -114,19 +120,39 @@ async function readProcesses(
   ) {
     return cachedProcesses;
   }
-  if (processRead !== undefined) return processRead;
-  processRead = (
+  if (!fresh && processRead !== undefined) return processRead;
+  const nextRead = (
     process.platform === "linux" ? readLinuxProcesses() : readPsProcesses()
-  )
-    .then((processes) => {
-      cachedProcesses = processes;
-      cachedAt = Date.now();
-      return processes;
-    })
-    .finally(() => {
-      processRead = undefined;
-    });
+  ).then((processes) => {
+    cachedProcesses = processes;
+    cachedAt = Date.now();
+    return processes;
+  });
+  if (fresh) return nextRead;
+  processRead = nextRead.finally(() => {
+    processRead = undefined;
+  });
   return processRead;
+}
+
+async function readProcessesBefore(
+  deadlineAt: number,
+): Promise<Map<number, ProcessRecord> | undefined> {
+  const timeoutMs = deadlineAt - Date.now();
+  if (timeoutMs <= 0) return undefined;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      readProcesses(true),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), timeoutMs);
+      }),
+    ]);
+  } catch {
+    return undefined;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 export class ProcessTreeSupervisor {
@@ -137,19 +163,8 @@ export class ProcessTreeSupervisor {
     private readonly owner: string,
   ) {}
 
-  private async refresh(fresh = false): Promise<void> {
-    let processes: Map<number, ProcessRecord>;
-    try {
-      processes = await readProcesses(fresh);
-    } catch {
-      return;
-    }
-
-    const root = processes.get(this.rootPid);
-    if (root && !this.owned.has(this.rootPid)) {
-      this.owned.set(this.rootPid, root.identity);
-    }
-    const ancestry = new Set([this.rootPid, ...this.owned.keys()]);
+  private remember(processes: Map<number, ProcessRecord>): void {
+    const ancestry = new Set(this.owned.keys());
     for (const record of processes.values()) {
       if (record.owner === this.owner) {
         ancestry.add(record.pid);
@@ -160,7 +175,7 @@ export class ProcessTreeSupervisor {
     while (found) {
       found = false;
       for (const record of processes.values()) {
-        if (record.pid === this.rootPid || ancestry.has(record.pid)) continue;
+        if (ancestry.has(record.pid)) continue;
         if (ancestry.has(record.ppid)) {
           ancestry.add(record.pid);
           this.owned.set(record.pid, record.identity);
@@ -172,19 +187,17 @@ export class ProcessTreeSupervisor {
 
   private async signalOwned(
     signal: "SIGTERM" | "SIGKILL",
+    deadlineAt: number,
   ): Promise<ProcessSignalEvent[]> {
-    await this.refresh(true);
-    let processes: Map<number, ProcessRecord>;
-    try {
-      processes = await readProcesses(true);
-    } catch {
-      processes = new Map();
-    }
+    const processes = await readProcessesBefore(deadlineAt);
+    if (processes !== undefined) this.remember(processes);
     const events: ProcessSignalEvent[] = [];
     for (const [pid, identity] of [...this.owned.entries()].reverse()) {
-      const current = processes.get(pid);
+      const current = processes?.get(pid);
       let outcome: ProcessSignalEvent["outcome"];
-      if (!current) {
+      if (processes === undefined) {
+        outcome = "error";
+      } else if (!current) {
         outcome = "already_exited";
       } else if (current.identity !== identity) {
         outcome = "identity_changed";
@@ -208,28 +221,41 @@ export class ProcessTreeSupervisor {
     killRoot: (signal: NodeJS.Signals) => void,
   ): Promise<ProcessCleanupResult> {
     const started = Date.now();
-    const signalEscalation = await this.signalOwned("SIGTERM");
+    const deadlineAt = started + PROCESS_CLEANUP_GRACE_MS;
     killRoot("SIGTERM");
-    await new Promise((resolve) => setTimeout(resolve, TERM_SIGNAL_GRACE_MS));
-    signalEscalation.push(...(await this.signalOwned("SIGKILL")));
+    const signalEscalation = await this.signalOwned("SIGTERM", deadlineAt);
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.max(0, Math.min(TERM_SIGNAL_GRACE_MS, deadlineAt - Date.now())),
+      ),
+    );
     killRoot("SIGKILL");
-    await new Promise((resolve) => setTimeout(resolve, FINAL_REAP_WAIT_MS));
+    signalEscalation.push(...(await this.signalOwned("SIGKILL", deadlineAt)));
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.max(0, Math.min(FINAL_REAP_WAIT_MS, deadlineAt - Date.now())),
+      ),
+    );
 
-    let processes: Map<number, ProcessRecord>;
-    try {
-      processes = await readProcesses(true);
-    } catch {
-      processes = new Map();
-    }
+    const processes = await readProcessesBefore(deadlineAt);
     const remainingDescendants = [...this.owned.entries()]
       .filter(
         ([pid, identity]) =>
-          pid !== this.rootPid && processes.get(pid)?.identity === identity,
+          pid !== this.rootPid &&
+          (processes === undefined ||
+            processes.get(pid)?.identity === identity),
       )
       .map(([pid, identity]) => ({ pid, identity }));
+    const durationMs = Date.now() - started;
     return {
-      durationMs: Date.now() - started,
+      durationMs,
       graceMs: PROCESS_CLEANUP_GRACE_MS,
+      cleanupComplete:
+        processes !== undefined &&
+        remainingDescendants.length === 0 &&
+        durationMs <= PROCESS_CLEANUP_GRACE_MS,
       signalEscalation,
       remainingDescendants,
     };
