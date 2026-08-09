@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseFaultIsolatedSubmission,
+  isCorrectionEligible,
   mergeCorrectionFields,
   safelyRenderReceived,
 } from "../../src/attacks/fault-isolated-submission.js";
@@ -145,6 +146,100 @@ describe("fault-isolated provider submissions", () => {
     expect(
       mergeCorrectionFields({ rank: 2, claim: "frozen" }, { rank: 1 }),
     ).toEqual({ accepted: false, code: "frozen_field_tampering" });
+  });
+
+  it("freezes valid nested oracle fields while correcting a rejected sibling", () => {
+    const parsed = parseFaultIsolatedSubmission(
+      "attack",
+      JSON.stringify({
+        version: 1,
+        attacks: [
+          attack(1, {
+            oracle: { expectedBehavior: "original behavior", rationale: "" },
+          }),
+        ],
+      }),
+    );
+    const entry = parsed.sections.attacks?.entries[0];
+    expect(entry?.validatedFields).toMatchObject({
+      oracle: { expectedBehavior: "original behavior" },
+    });
+    expect(
+      mergeCorrectionFields(entry?.validatedFields ?? {}, {
+        oracle: { rationale: "task requires it" },
+      }),
+    ).toMatchObject({
+      accepted: true,
+      value: {
+        oracle: {
+          expectedBehavior: "original behavior",
+          rationale: "task requires it",
+        },
+      },
+    });
+    expect(
+      mergeCorrectionFields(entry?.validatedFields ?? {}, {
+        oracle: {
+          expectedBehavior: "changed behavior",
+          rationale: "task requires it",
+        },
+      }),
+    ).toEqual({ accepted: false, code: "frozen_field_tampering" });
+  });
+
+  it("does not offer correction when required scoring fields were absent", () => {
+    const missingAll = parseFaultIsolatedSubmission(
+      "attack",
+      JSON.stringify({ version: 1, attacks: [{}] }),
+    ).sections.attacks?.entries[0];
+    const primitive = parseFaultIsolatedSubmission(
+      "attack",
+      JSON.stringify({ version: 1, attacks: ["not an attack"] }),
+    ).sections.attacks?.entries[0];
+    const missingOracle = parseFaultIsolatedSubmission(
+      "attack",
+      JSON.stringify({
+        version: 1,
+        attacks: [attack(1, { oracle: undefined })],
+      }),
+    ).sections.attacks?.entries[0];
+    const invalidSeverity = parseFaultIsolatedSubmission(
+      "attack",
+      JSON.stringify({
+        version: 1,
+        attacks: [attack(1, { proposedSeverity: "catastrophic" })],
+      }),
+    ).sections.attacks?.entries[0];
+
+    expect(isCorrectionEligible(missingAll!)).toBe(false);
+    expect(isCorrectionEligible(primitive!)).toBe(false);
+    expect(isCorrectionEligible(missingOracle!)).toBe(false);
+    expect(isCorrectionEligible(invalidSeverity!)).toBe(true);
+  });
+
+  it("does not hide missing required fields behind a duplicate-rank error", () => {
+    const parsed = parseFaultIsolatedSubmission(
+      "attack",
+      JSON.stringify({
+        version: 1,
+        attacks: [attack(1), attack(1, { oracle: undefined })],
+      }),
+    );
+
+    expect(parsed.sections.attacks?.entries[0]?.rejections).toEqual([
+      expect.objectContaining({ code: "duplicate_rank" }),
+    ]);
+    expect(
+      parsed.sections.attacks?.entries[1]?.rejections.map(
+        (rejection) => rejection.code,
+      ),
+    ).toEqual(expect.arrayContaining(["duplicate_rank", "invalid_type"]));
+    expect(isCorrectionEligible(parsed.sections.attacks!.entries[0]!)).toBe(
+      true,
+    );
+    expect(isCorrectionEligible(parsed.sections.attacks!.entries[1]!)).toBe(
+      false,
+    );
   });
 
   it("limits review and case positions without suppressing valid siblings", () => {

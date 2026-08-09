@@ -27,6 +27,7 @@ import { validateAttack, validateHouseAttack } from "../attacks/validate.js";
 import { validateSiblingCase } from "../attacks/case-bundle.js";
 import {
   parseFaultIsolatedSubmission,
+  isCorrectionEligible,
   mergeCorrectionFields,
   type ParsedSubmission,
   type SubmissionKind,
@@ -1509,13 +1510,7 @@ export class RoundEngine {
     )
       return;
     for (const entry of section.entries) {
-      if (
-        entry.outcome !== "rejected" ||
-        entry.rejections.every(
-          (rejection) => rejection.code === "position_limit",
-        )
-      )
-        continue;
+      if (!isCorrectionEligible(entry)) continue;
       const id = stableId(
         "reconciliation",
         String(options.round),

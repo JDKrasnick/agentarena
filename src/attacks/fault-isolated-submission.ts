@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import { z } from "zod";
 import {
   AttackSubmissionEntrySchema,
   BugCategorySchema,
@@ -89,13 +89,55 @@ export function mergeCorrectionFields(
   if (!fields || typeof fields !== "object" || Array.isArray(fields))
     return { accepted: false, code: "malformed_correction" };
   const correction = fields as Record<string, unknown>;
-  const tampered = Object.entries(validatedFields).some(
-    ([key, frozen]) =>
+  const merged = mergeFrozenFields(validatedFields, correction);
+  if (!merged.accepted)
+    return { accepted: false, code: "frozen_field_tampering" };
+  return { accepted: true, value: merged.value };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeFrozenFields(
+  validatedFields: Readonly<Record<string, unknown>>,
+  correction: Readonly<Record<string, unknown>>,
+): { accepted: true; value: Record<string, unknown> } | { accepted: false } {
+  const value: Record<string, unknown> = { ...correction };
+  for (const [key, frozen] of Object.entries(validatedFields)) {
+    if (isRecord(frozen)) {
+      const supplied = correction[key];
+      if (key in correction && !isRecord(supplied)) return { accepted: false };
+      const nested = mergeFrozenFields(
+        frozen,
+        isRecord(supplied) ? supplied : {},
+      );
+      if (!nested.accepted) return nested;
+      value[key] = nested.value;
+      continue;
+    }
+    if (
       key in correction &&
-      JSON.stringify(correction[key]) !== JSON.stringify(frozen),
+      JSON.stringify(correction[key]) !== JSON.stringify(frozen)
+    )
+      return { accepted: false };
+    value[key] = frozen;
+  }
+  return { accepted: true, value };
+}
+
+/** Missing required scoring fields cannot be invented during correction. */
+export function isCorrectionEligible(entry: ParsedEntry): boolean {
+  return (
+    entry.outcome === "rejected" &&
+    entry.rejections.length > 0 &&
+    Object.keys(entry.validatedFields).length > 0 &&
+    entry.rejections.every(
+      (rejection) =>
+        rejection.code !== "position_limit" &&
+        rejection.received !== "undefined",
+    )
   );
-  if (tampered) return { accepted: false, code: "frozen_field_tampering" };
-  return { accepted: true, value: { ...correction, ...validatedFields } };
 }
 
 function jsonPath(parts: PropertyKey[]): string {
@@ -227,7 +269,7 @@ function normalizeEntry(
   return { value: visit(value, prefix), normalizations };
 }
 
-function validatedTopLevelFields(
+function collectValidatedFields(
   schema: z.ZodObject<Record<string, z.ZodType>>,
   value: unknown,
 ): Record<string, unknown> {
@@ -236,8 +278,14 @@ function validatedTopLevelFields(
   return Object.fromEntries(
     Object.entries(value).flatMap(([key, fieldValue]) => {
       const fieldSchema = shape[key];
-      if (!fieldSchema || !fieldSchema.safeParse(fieldValue).success) return [];
-      return [[key, fieldValue]];
+      if (!fieldSchema) return [];
+      const parsed = fieldSchema.safeParse(fieldValue);
+      if (parsed.success) return [[key, parsed.data]];
+      if (fieldSchema instanceof z.ZodObject) {
+        const nested = collectValidatedFields(fieldSchema, fieldValue);
+        if (Object.keys(nested).length) return [[key, nested]];
+      }
+      return [];
     }),
   );
 }
@@ -303,15 +351,21 @@ function parseEntries<T>(options: {
       normalized.value && typeof normalized.value === "object"
         ? (normalized.value as Record<string, unknown>).rank
         : undefined;
+    const parsed = options.schema.safeParse(normalized.value);
     if (typeof rank === "number" && duplicateRanks.has(rank)) {
-      const rejection = reject(
-        `${jsonPath(prefix)}.rank`,
-        rank,
-        "duplicate_rank",
-        `Rank ${String(rank)} is duplicated; every entry with that rank is rejected`,
-      );
+      const rejections = [
+        reject(
+          `${jsonPath(prefix)}.rank`,
+          rank,
+          "duplicate_rank",
+          `Rank ${String(rank)} is duplicated; every entry with that rank is rejected`,
+        ),
+        ...(parsed.success
+          ? []
+          : zodRejections(parsed.error, normalized.value, prefix)),
+      ];
       const validatedFields = options.fieldSchema
-        ? validatedTopLevelFields(options.fieldSchema, normalized.value)
+        ? collectValidatedFields(options.fieldSchema, normalized.value)
         : {};
       delete validatedFields.rank;
       return {
@@ -319,12 +373,16 @@ function parseEntries<T>(options: {
         path: jsonPath(prefix),
         outcome: "rejected",
         validatedFields,
-        editablePaths: [`${jsonPath(prefix)}.rank`],
-        rejections: [rejection],
+        editablePaths: [
+          ...new Set([
+            `${jsonPath(prefix)}.rank`,
+            ...rejections.map((entry) => entry.path),
+          ]),
+        ],
+        rejections,
         normalizations: normalized.normalizations,
       };
     }
-    const parsed = options.schema.safeParse(normalized.value);
     if (!parsed.success) {
       const rejections = zodRejections(parsed.error, normalized.value, prefix);
       return {
@@ -332,7 +390,7 @@ function parseEntries<T>(options: {
         path: jsonPath(prefix),
         outcome: "rejected",
         validatedFields: options.fieldSchema
-          ? validatedTopLevelFields(options.fieldSchema, normalized.value)
+          ? collectValidatedFields(options.fieldSchema, normalized.value)
           : {},
         editablePaths: [...new Set(rejections.map((entry) => entry.path))],
         rejections,
