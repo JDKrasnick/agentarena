@@ -173,7 +173,9 @@ Round 3 executes an approved integration profile symmetrically against both froz
 Each run is persisted atomically under `.agent-arena/runs/<run-id>/`:
 
 - `BATTLE.md`, the clickable `BATTLE.html` dossier, deterministic `BATTLE.svg`,
-  and versioned `result.json`
+  and compact schema-v5 `result.json`
+- immutable `baseline.json`, sealed round envelopes, runtime drift manifest,
+  envelope-head-bound finalization, and checkpoint descriptors
 - immutable `run-spec.json` and source snapshots
 - redacted `permissions.json`
 - implementation, attack, revision, held-out case, and final patches
@@ -192,6 +194,14 @@ Review, explicitly accept, and apply a final patch without committing it:
 agent-arena review <run-id>
 agent-arena inspect <run-id> --agent codex --view diff
 agent-arena accept <run-id> --selection recommended --apply
+```
+
+Resume only from a sealed boundary. Material runtime drift requires approval
+bound to the displayed report hash:
+
+```bash
+agent-arena resume <run-id> --display console
+agent-arena resume <run-id> --approve-drift <report-sha256>
 ```
 
 Non-interactive clients must provide the full displayed digest with

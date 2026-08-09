@@ -4,6 +4,7 @@ import {
   type FightOutcome,
 } from "./round-engine.js";
 import type { FightConfig } from "./types.js";
+import type { ResumeOptions } from "./round-engine.js";
 
 export type { ArenaDependencies, FightOutcome } from "./round-engine.js";
 
@@ -20,5 +21,12 @@ export class Arena {
     externalSignal?: AbortSignal,
   ): Promise<FightOutcome> {
     return this.roundEngine.fight(config, externalSignal);
+  }
+
+  resume(
+    options: ResumeOptions,
+    externalSignal?: AbortSignal,
+  ): Promise<FightOutcome> {
+    return this.roundEngine.resume(options, externalSignal);
   }
 }

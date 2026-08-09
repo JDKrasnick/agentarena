@@ -9,7 +9,7 @@ import type {
   RoundId,
   RoundPromptManifest,
 } from "../core/types.js";
-import type { RunSpec } from "../contracts/round.js";
+import type { ContestantFeedback, RunSpec } from "../contracts/round.js";
 import type { MethodSelection } from "../methods/catalog.js";
 
 const COMMON_VERSION = "common@1";
@@ -101,6 +101,7 @@ export interface PromptContext {
   evidence?: string;
   currentHealth?: number;
   priorOutcomes?: string;
+  contestantFeedback?: ContestantFeedback;
 }
 
 export function composePrompt(context: PromptContext): string {
@@ -178,6 +179,12 @@ export function composePrompt(context: PromptContext): string {
   }
   if (context.priorOutcomes)
     common.push("", "# Prior outcomes", context.priorOutcomes);
+  if (context.contestantFeedback)
+    common.push(
+      "",
+      "# Lane-safe committed feedback",
+      JSON.stringify(context.contestantFeedback, null, 2),
+    );
   return `${common.join("\n")}\n`;
 }
 
@@ -228,8 +235,12 @@ export function composeAttackReviewPrompt(
     "",
     "# Deterministic method pack",
     JSON.stringify(context.methodSelection ?? {}, null, 2),
-    ...(context.priorOutcomes
-      ? ["", "# Previously adjudicated defects", context.priorOutcomes]
+    ...(context.contestantFeedback
+      ? [
+          "",
+          "# Lane-safe committed feedback",
+          JSON.stringify(context.contestantFeedback, null, 2),
+        ]
       : []),
     "",
     "# Frozen target patch",

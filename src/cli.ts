@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { applyAcceptedPatch } from "./commands/apply.js";
 import { runAcceptCommand } from "./commands/accept.js";
 import { runDeliverCommand } from "./commands/deliver.js";
-import { runFight } from "./commands/fight.js";
+import { runFight, runResume } from "./commands/fight.js";
 import { runInspectCommand, runReviewCommand } from "./commands/review.js";
 import { ContestantIdSchema } from "./core/types.js";
 import { DeliveryActionSchema } from "./delivery/types.js";
@@ -13,6 +13,41 @@ const program = new Command()
   .name("agent-arena")
   .description("Make your coding agents fight for the merge.")
   .version("0.1.0");
+
+program
+  .command("resume")
+  .description(
+    "Validate and continue a schema v5 run from its latest sealed boundary",
+  )
+  .argument("<run-id>", "Run ID under .agent-arena/runs")
+  .addOption(
+    new Option("--display <format>", "Resume output format")
+      .choices(["console", "json"])
+      .default("console"),
+  )
+  .option(
+    "--approve-drift <report-hash>",
+    "Approve the exact current approval-required drift report",
+  )
+  .action(
+    async (
+      runId: string,
+      options: {
+        display: "console" | "json";
+        approveDrift?: string;
+      },
+    ) => {
+      process.stdout.write(
+        `${await runResume({
+          runId,
+          display: options.display,
+          ...(options.approveDrift
+            ? { approveDriftHash: options.approveDrift }
+            : {}),
+        })}\n`,
+      );
+    },
+  );
 
 program
   .command("fight")

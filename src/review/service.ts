@@ -72,7 +72,7 @@ async function ensureReviewFacts(
     state.reviewPrompt = buildReviewPrompt(state);
     changed = true;
   }
-  if (changed) await store.writeState(state);
+  if (changed && (await store.readSummary())) await store.writeState(state);
 }
 
 export async function reviewRun(options: RunLocation): Promise<ReviewPrompt> {

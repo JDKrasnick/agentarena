@@ -225,8 +225,8 @@ describe("runtime guards and deterministic prompts", () => {
     expect(prompt).toContain('"id": "production_credentials"');
     expect(prompt).toContain('"status": "denied"');
     expect(prompt).toContain("Do not probe around the decision");
-    expect(prompt).toContain("# Previously adjudicated defects");
-    expect(prompt).toContain('"rootDefectId":"atomicity"');
+    expect(prompt).not.toContain("# Previously adjudicated defects");
+    expect(prompt).not.toContain('"rootDefectId":"atomicity"');
   });
 
   it("binds neutral case generation to declared direct capabilities", () => {
