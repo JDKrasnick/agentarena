@@ -117,3 +117,34 @@ jobs:
 
       - name: Check fake GitHub delivery
         run: npm run test:integration -- test/integration/github-delivery.test.ts test/integration/merge-monitor.test.ts
+
+  process-timeout-reproduction:
+    name: Process timeout reproduction (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Pin npm
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Reproduce escaped-descendant timeout leakage
+        run: npm run test:process-timeout-repro
