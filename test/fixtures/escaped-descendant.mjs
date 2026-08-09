@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
-const [role, ownershipToken, statePath] = process.argv.slice(2);
+const [role, ownershipToken, statePath, escapeMode] = process.argv.slice(2);
 
 if (!role || !ownershipToken || !statePath) {
   throw new Error("usage: escaped-descendant.mjs <role> <token> <state-path>");
@@ -61,11 +61,22 @@ record("started");
 
 if (role === "launcher" || role === "child") {
   const nextRole = role === "launcher" ? "child" : "grandchild";
+  const descendantEnvironment = { ...process.env };
+  if (escapeMode === "orphan-before-deadline") {
+    delete descendantEnvironment.AGENT_ARENA_PROCESS_OWNER;
+  }
   const descendant = spawn(
     process.execPath,
-    [fileURLToPath(import.meta.url), nextRole, ownershipToken, statePath],
+    [
+      fileURLToPath(import.meta.url),
+      nextRole,
+      ownershipToken,
+      statePath,
+      ...(escapeMode ? [escapeMode] : []),
+    ],
     {
       detached: true,
+      env: descendantEnvironment,
       stdio: ["ignore", "inherit", "inherit"],
     },
   );
@@ -74,6 +85,13 @@ if (role === "launcher" || role === "child") {
     descendantPid: descendant.pid,
     descendantRole: nextRole,
   });
+
+  // The reproduction launcher exits before the runner's first deadline scan.
+  // Its still-running, token-marked descendants are then reparented and no
+  // longer carry the runner's internal ownership environment marker.
+  if (role === "launcher" && escapeMode === "orphan-before-deadline") {
+    process.exit(0);
+  }
 }
 
 // Keeping an inherited output stream open is the part of the fixture that can
