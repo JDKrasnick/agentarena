@@ -535,9 +535,27 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(house).toMatchObject({
       status: "landed",
       severity: "medium",
+      evidenceProvenance: "mechanical",
+      adjudication: {
+        verdict: "valid",
+        evidenceBasis: "mechanical",
+      },
       targets: ["b"],
     });
     expect(house?.rank).toBeUndefined();
+    const houseAdjudication = JSON.parse(
+      await readFile(
+        path.join(
+          outcome.state.artifacts.runDirectory!,
+          "rounds",
+          String(house!.round),
+          "adjudications",
+          `${house!.id}.json`,
+        ),
+        "utf8",
+      ),
+    ) as { evidenceBasis: string };
+    expect(houseAdjudication.evidenceBasis).toBe("mechanical");
     expect(
       outcome.state.contestants.b?.healthEvents.map((event) => event.type),
     ).toEqual(expect.arrayContaining(["target_damage", "recoil", "heal"]));

@@ -548,7 +548,11 @@ export async function validateHouseAttack(
           "duplicate",
           "House evidence corroborates an existing root defect",
         ),
+        targets: affected,
         rootDefectId: verdict.rootDefectId,
+        severity: verdict.severity,
+        evidenceProvenance: "mechanical",
+        severityRationale: verdict.rationale,
       };
     }
     return {
@@ -559,6 +563,7 @@ export async function validateHouseAttack(
       severity: verdict.severity,
       damage: DAMAGE_BY_SEVERITY[verdict.severity],
       damageActive: true,
+      evidenceProvenance: "mechanical",
       severityRationale: verdict.rationale,
       outcomeReason: `Neutral house evidence failed on ${affected.join(", ")}`,
     };

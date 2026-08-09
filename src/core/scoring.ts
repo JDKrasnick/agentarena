@@ -27,6 +27,35 @@ export const PARTIAL_DAMAGE_BY_SEVERITY = {
 
 export const RECOIL_BY_RANK = { 1: 5, 2: 10, 3: 15 } as const;
 
+function expectedRecoil(attack: Attack): 0 | 5 | 10 | 15 {
+  return attack.origin.kind === "contestant" && attack.rank
+    ? RECOIL_BY_RANK[attack.rank]
+    : 0;
+}
+
+function adjudicationRecoil(
+  attack: Attack,
+  adjudication: AdjudicationRecord,
+): 0 | 5 | 10 | 15 {
+  const shouldRecoil =
+    adjudication.verdict === "rejected" ||
+    adjudication.duplicateState !== "unique";
+  if (!shouldRecoil || attack.origin.kind !== "contestant") return 0;
+  const expected = expectedRecoil(attack);
+  if (expected === 0)
+    throw new Error("A contestant miss adjudication requires an attack rank");
+  const recorded =
+    adjudication.recoilAmount ??
+    (adjudication.scoreEffect === "recoil"
+      ? adjudication.exactAmount
+      : expected);
+  if (recorded !== expected)
+    throw new Error(
+      `Adjudication recoil amount ${String(recorded)} does not match rank-${String(attack.rank)} recoil ${String(expected)}`,
+    );
+  return expected;
+}
+
 function evidenceBasis(attack: Attack): EvidenceBasis {
   if (attack.evidenceProvenance === "mechanical") return "mechanical";
   if (attack.evidenceProvenance === "judge_confirmed") return "judge";
@@ -85,6 +114,7 @@ export function normalizeAttackAdjudication(
   }
   if (attack.status === "duplicate" && attack.rootDefectId && attack.severity) {
     const multiplier = basis === "partial_judge" ? 0.35 : 1;
+    const recoil = expectedRecoil(attack);
     return AdjudicationRecordSchema.parse({
       version: 1,
       id,
@@ -100,6 +130,7 @@ export function normalizeAttackAdjudication(
       multiplier,
       scoreEffect: "none",
       exactAmount: 0,
+      ...(recoil ? { recoilAmount: recoil } : {}),
     });
   }
   if (
@@ -126,10 +157,7 @@ export function normalizeAttackAdjudication(
       exactAmount: 0,
     });
   }
-  const recoil =
-    attack.origin.kind === "contestant" && attack.rank
-      ? RECOIL_BY_RANK[attack.rank]
-      : 0;
+  const recoil = expectedRecoil(attack);
   return AdjudicationRecordSchema.parse({
     version: 1,
     id,
@@ -206,6 +234,7 @@ export function resolveRound(
           (defect) => defect.rootDefectId === adjudication.canonicalDefectId,
         );
         if (!canonical) {
+          if (adjudication.scoreEffect !== "damage") continue;
           const newCanonical = {
             rootDefectId: adjudication.canonicalDefectId,
             firstAttackId: attack.id,
@@ -322,23 +351,20 @@ export function resolveRound(
       }
     }
 
-    if (
-      adjudication.verdict === "rejected" &&
-      attack.origin.kind === "contestant" &&
-      adjudication.scoreEffect === "recoil" &&
-      adjudication.exactAmount > 0
-    ) {
+    const recoil = adjudicationRecoil(attack, adjudication);
+    if (recoil > 0 && attack.origin.kind === "contestant") {
       const author = next[attack.origin.contestant];
       if (!author)
         throw new Error(
           `Missing author contestant ${attack.origin.contestant}`,
         );
-      author.healthLedger.permanentRecoil += adjudication.exactAmount;
+      author.healthLedger.permanentRecoil += recoil;
       author.healthEvents.push({
         attackId: attack.id,
+        adjudicationId: adjudication.id,
         round,
         type: "recoil",
-        amount: -adjudication.exactAmount,
+        amount: -recoil,
         reason: adjudication.rationale,
       });
       eventsApplied += 1;

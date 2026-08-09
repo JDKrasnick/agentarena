@@ -580,7 +580,10 @@ export const AdjudicationRecordSchema = z
     diagnosticArtifactRefs: z.array(z.string()),
     multiplier: z.union([z.literal(0), z.literal(0.35), z.literal(1)]),
     scoreEffect: z.enum(["damage", "damage_upgrade", "recoil", "none"]),
-    exactAmount: z.number().nonnegative().multipleOf(0.25),
+    exactAmount: z.number().nonnegative().max(50).multipleOf(0.25),
+    recoilAmount: z
+      .union([z.literal(5), z.literal(10), z.literal(15)])
+      .optional(),
     upgradesAdjudicationId: z.string().min(1).optional(),
   })
   .strict()

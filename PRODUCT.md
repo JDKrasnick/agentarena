@@ -91,9 +91,10 @@ Production prompts consume only persisted lane-safe `ContestantFeedback`.
 
 Every attack outcome is normalized into an immutable, versioned adjudication
 record before scoring. Semantic verdict, rejection basis, canonical defect,
-frozen severity, evidence basis, duplicate state, diagnostics, multiplier, and
-exact score effect are separate fields; scoring never trusts free-form attack
-status or caller-supplied damage. Definitive mechanical or judge evidence deals
+frozen severity, evidence basis, duplicate state, diagnostics, multiplier,
+exact target score effect, and rank-derived recoil are separate fields; scoring
+never trusts free-form attack status, caller-supplied damage, or a supplied
+recoil amount. Definitive mechanical or judge evidence deals
 full severity damage, while a supported partial-judge ruling deals exactly 35%
 (17.5/10.5/5.25/1.75 HP). A later definitive corroboration applies only the
 delta to full damage, preserves the original severity, and does not re-damage a

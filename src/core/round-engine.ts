@@ -85,6 +85,7 @@ import {
   DAMAGE_BY_SEVERITY,
   healDefect,
   normalizeAttackAdjudication,
+  PARTIAL_DAMAGE_BY_SEVERITY,
   rankContestants,
   resolveRound,
 } from "./scoring.js";
@@ -3647,6 +3648,7 @@ export class RoundEngine {
         if (result.status === "landed" && typeof round === "number") {
           await this.buildCaseBundle(context, result, round);
         }
+        await this.finalizeAttackAdjudication(context, result, round);
         validated.push(result);
         continue;
       }
@@ -3719,71 +3721,7 @@ export class RoundEngine {
       if (result.status === "landed" && typeof round === "number") {
         await this.buildCaseBundle(context, result, round);
       }
-      result.adjudication = normalizeAttackAdjudication(result);
-      const priorCanonical = result.targets
-        .map((target) =>
-          getContestant(
-            context.state,
-            target,
-          ).healthLedger.canonicalDefects?.find(
-            (defect) =>
-              defect.rootDefectId === result.adjudication?.canonicalDefectId,
-          ),
-        )
-        .find(Boolean);
-      if (priorCanonical && result.adjudication.verdict === "valid") {
-        result.adjudication = AdjudicationRecordSchema.parse({
-          ...result.adjudication,
-          severity: priorCanonical.baseSeverity,
-        });
-      }
-      if (
-        priorCanonical?.status === "healed" &&
-        result.status === "duplicate" &&
-        result.adjudication.verdict === "valid" &&
-        result.adjudication.multiplier === 1
-      ) {
-        result.adjudication = AdjudicationRecordSchema.parse({
-          ...result.adjudication,
-          severity: priorCanonical.baseSeverity,
-          duplicateState: "regression",
-          scoreEffect: "damage",
-          exactAmount: DAMAGE_BY_SEVERITY[priorCanonical.baseSeverity],
-        });
-      }
-      if (
-        priorCanonical &&
-        result.adjudication.verdict === "valid" &&
-        result.adjudication.multiplier > priorCanonical.currentMultiplier
-      ) {
-        const delta =
-          DAMAGE_BY_SEVERITY[priorCanonical.baseSeverity] -
-          priorCanonical.currentDamage;
-        const regression = result.adjudication.duplicateState === "regression";
-        result.adjudication = AdjudicationRecordSchema.parse({
-          ...result.adjudication,
-          severity: priorCanonical.baseSeverity,
-          scoreEffect: regression
-            ? "damage"
-            : priorCanonical.status === "active" && delta > 0
-              ? "damage_upgrade"
-              : "none",
-          exactAmount: regression
-            ? DAMAGE_BY_SEVERITY[priorCanonical.baseSeverity]
-            : priorCanonical.status === "active"
-              ? Math.max(0, delta)
-              : 0,
-          ...(priorCanonical.firstAdjudicationId
-            ? {
-                upgradesAdjudicationId: priorCanonical.firstAdjudicationId,
-              }
-            : {}),
-        });
-      }
-      await context.store.writeImmutableJson(
-        `rounds/${String(round)}/adjudications/${result.id}.json`,
-        result.adjudication,
-      );
+      await this.finalizeAttackAdjudication(context, result, round);
       if (
         result.status === "infrastructure_error" ||
         result.status === "execution_inconclusive"
@@ -4345,6 +4283,94 @@ export class RoundEngine {
     } finally {
       await context.worktrees.remove(worktree);
     }
+  }
+
+  private async finalizeAttackAdjudication(
+    context: ArenaContext,
+    result: Attack,
+    round: RoundId,
+  ): Promise<void> {
+    result.adjudication = normalizeAttackAdjudication(result);
+    const priorCanonicals = result.targets.map((target) =>
+      getContestant(context.state, target).healthLedger.canonicalDefects?.find(
+        (defect) =>
+          defect.rootDefectId === result.adjudication?.canonicalDefectId,
+      ),
+    );
+    const priorCanonical = priorCanonicals.find(Boolean);
+    const hasUnscoredTarget = priorCanonicals.some((canonical) => !canonical);
+    if (priorCanonical && result.adjudication.verdict === "valid") {
+      result.adjudication = AdjudicationRecordSchema.parse({
+        ...result.adjudication,
+        severity: priorCanonical.baseSeverity,
+      });
+    }
+    if (
+      result.adjudication.verdict === "valid" &&
+      result.adjudication.duplicateState !== "unique" &&
+      result.adjudication.severity &&
+      hasUnscoredTarget
+    ) {
+      result.adjudication = AdjudicationRecordSchema.parse({
+        ...result.adjudication,
+        scoreEffect: "damage",
+        exactAmount:
+          result.adjudication.multiplier === 0.35
+            ? PARTIAL_DAMAGE_BY_SEVERITY[result.adjudication.severity]
+            : DAMAGE_BY_SEVERITY[result.adjudication.severity],
+      });
+    }
+    if (
+      priorCanonical?.status === "healed" &&
+      result.status === "duplicate" &&
+      result.adjudication.verdict === "valid" &&
+      result.adjudication.multiplier === 1
+    ) {
+      result.adjudication = AdjudicationRecordSchema.parse({
+        ...result.adjudication,
+        severity: priorCanonical.baseSeverity,
+        duplicateState: "regression",
+        scoreEffect: "damage",
+        exactAmount: DAMAGE_BY_SEVERITY[priorCanonical.baseSeverity],
+      });
+    }
+    if (
+      priorCanonical &&
+      result.adjudication.verdict === "valid" &&
+      result.adjudication.multiplier > priorCanonical.currentMultiplier
+    ) {
+      const delta =
+        DAMAGE_BY_SEVERITY[priorCanonical.baseSeverity] -
+        priorCanonical.currentDamage;
+      const regression = result.adjudication.duplicateState === "regression";
+      result.adjudication = AdjudicationRecordSchema.parse({
+        ...result.adjudication,
+        severity: priorCanonical.baseSeverity,
+        scoreEffect: regression
+          ? "damage"
+          : hasUnscoredTarget
+            ? "damage"
+            : priorCanonical.status === "active" && delta > 0
+              ? "damage_upgrade"
+              : "none",
+        exactAmount: regression
+          ? DAMAGE_BY_SEVERITY[priorCanonical.baseSeverity]
+          : hasUnscoredTarget
+            ? DAMAGE_BY_SEVERITY[priorCanonical.baseSeverity]
+            : priorCanonical.status === "active"
+              ? Math.max(0, delta)
+              : 0,
+        ...(priorCanonical.firstAdjudicationId
+          ? {
+              upgradesAdjudicationId: priorCanonical.firstAdjudicationId,
+            }
+          : {}),
+      });
+    }
+    await context.store.writeImmutableJson(
+      `rounds/${String(round)}/adjudications/${result.id}.json`,
+      result.adjudication,
+    );
   }
 
   private async buildCaseBundle(

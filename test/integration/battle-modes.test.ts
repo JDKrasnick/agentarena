@@ -242,6 +242,23 @@ describe("PR battle modes", () => {
     );
     expect(attackerAttack?.targets).toEqual(["b"]);
     expect(attackerAttack?.status).toBe("landed");
+    expect(attackerAttack?.adjudication).toMatchObject({
+      verdict: "valid",
+      evidenceBasis: "mechanical",
+    });
+    const attackerAdjudication = JSON.parse(
+      await readFile(
+        path.join(
+          outcome.state.artifacts.runDirectory!,
+          "rounds",
+          String(attackerAttack!.round),
+          "adjudications",
+          `${attackerAttack!.id}.json`,
+        ),
+        "utf8",
+      ),
+    ) as { evidenceBasis: string };
+    expect(attackerAdjudication.evidenceBasis).toBe("mechanical");
     expect(outcome.state.contestants.b?.healthEvents).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: "heal" })]),
     );

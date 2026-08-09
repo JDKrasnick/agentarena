@@ -145,7 +145,8 @@ describe("ledger scoring", () => {
       severity: "critical" as const,
       evidenceProvenance: "mechanical" as const,
     };
-    const upgraded = resolveRound(first, [corroboration], 2).contestants.b!;
+    const upgradedRound = resolveRound(first, [corroboration], 2).contestants;
+    const upgraded = upgradedRound.b!;
     expect(upgraded.finalHealth).toBe(85);
     expect(upgraded.healthEvents.at(-1)).toMatchObject({
       type: "damage_upgrade",
@@ -155,6 +156,15 @@ describe("ledger scoring", () => {
       baseSeverity: "medium",
       currentMultiplier: 1,
       currentDamage: 15,
+    });
+    expect(upgradedRound.a).toMatchObject({
+      finalHealth: 95,
+      healthLedger: { permanentRecoil: 5 },
+    });
+    expect(upgradedRound.a?.healthEvents.at(-1)).toMatchObject({
+      type: "recoil",
+      amount: -5,
+      adjudicationId: "adjudication:definitive",
     });
     expect(healDefect(upgraded, "root", 2).finalHealth).toBe(100);
   });
@@ -171,6 +181,46 @@ describe("ledger scoring", () => {
       resolveRound({ a: contestant("a"), b: contestant("b") }, [attack], 1)
         .contestants.b?.finalHealth,
     ).toBe(70);
+  });
+
+  it("rejects an embedded recoil amount that does not match attack rank", () => {
+    const attack = attacks()[1]!;
+    expect(() =>
+      resolveRound(
+        { a: contestant("a"), b: contestant("b") },
+        [
+          {
+            ...attack,
+            adjudication: {
+              ...normalizeAttackAdjudication(attack),
+              exactAmount: 50,
+            },
+          },
+        ],
+        1,
+      ),
+    ).toThrow(/does not match rank-2 recoil 10/);
+  });
+
+  it("does not create target damage for a duplicate with no target score effect", () => {
+    const duplicate = {
+      ...attacks()[0]!,
+      status: "duplicate" as const,
+      evidenceProvenance: "mechanical" as const,
+    };
+    const resolved = resolveRound(
+      { a: contestant("a"), b: contestant("b") },
+      [duplicate],
+      1,
+    ).contestants;
+    expect(resolved.a).toMatchObject({
+      finalHealth: 95,
+      healthLedger: { permanentRecoil: 5 },
+    });
+    expect(resolved.b).toMatchObject({
+      finalHealth: 100,
+      healthLedger: { activeDefects: [], canonicalDefects: [] },
+    });
   });
 
   it("upgrades healed provenance without damage and reactivates only a genuine regression", () => {
@@ -193,7 +243,12 @@ describe("ledger scoring", () => {
       status: "duplicate" as const,
       evidenceProvenance: "mechanical" as const,
     };
-    const corroborated = resolveRound({ b: healed }, [proof], 2).contestants.b!;
+    const corroboratedRound = resolveRound(
+      { a: contestant("a"), b: healed },
+      [proof],
+      2,
+    ).contestants;
+    const corroborated = corroboratedRound.b!;
     expect(corroborated.finalHealth).toBe(100);
     expect(corroborated.healthLedger.canonicalDefects?.[0]).toMatchObject({
       currentMultiplier: 1,
@@ -213,8 +268,11 @@ describe("ledger scoring", () => {
         exactAmount: 5,
       },
     };
-    const regressed = resolveRound({ b: corroborated }, [regression], 3)
-      .contestants.b!;
+    const regressed = resolveRound(
+      { a: corroboratedRound.a!, b: corroborated },
+      [regression],
+      3,
+    ).contestants.b!;
     expect(regressed.finalHealth).toBe(95);
     expect(regressed.healthLedger.canonicalDefects?.[0]?.status).toBe("active");
   });
