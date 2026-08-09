@@ -32,6 +32,11 @@ function hashWithout(value: object, field: string): string {
   return createHash("sha256").update(canonicalJson(copy)).digest("hex");
 }
 
+/** SHA-256 of any strict JSON-safe value using the arena canonical encoding. */
+export function calculateCanonicalHash(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
 export function calculateSnapshotHash(snapshot: object): string {
   return hashWithout(snapshot, "snapshotHash");
 }
@@ -654,7 +659,17 @@ const OwnAttackOutcomeSchema = z
       "infrastructure_error",
       "execution_inconclusive",
     ]),
-    reason: z.string().min(1),
+    reason: z.enum([
+      "landed",
+      "oracle_not_supported",
+      "duplicate_root_defect",
+      "target_did_not_fail",
+      "author_patch_failed",
+      "capability_denied",
+      "infrastructure_inconclusive",
+      "invalid_evidence",
+      "blocked",
+    ]),
     recoil: z.number().int().nonnegative(),
     defectId: IdentifierSchema.optional(),
   })
@@ -687,6 +702,7 @@ export const ContestantFeedbackSchema = z
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     contestantId: ContestantIdSchema,
+    phase: z.enum(["review", "attack", "repair", "recovery"]),
     health: z
       .object({
         starting: z.number().int().min(0).max(100),
@@ -698,6 +714,23 @@ export const ContestantFeedbackSchema = z
     ownAttackOutcomes: z.array(OwnAttackOutcomeSchema),
     healedDefectIds: z.array(IdentifierSchema),
     unresolvedDefectIds: z.array(IdentifierSchema),
+    capabilityRestrictions: z.array(
+      z
+        .object({
+          capabilityId: IdentifierSchema,
+          status: z.enum(["denied", "unavailable", "provisioning_failed"]),
+        })
+        .strict(),
+    ),
+    evidencePointers: z.array(
+      z
+        .object({
+          artifactId: IdentifierSchema,
+          path: z.string().min(1),
+          sha256: Sha256Schema.optional(),
+        })
+        .strict(),
+    ),
   })
   .strict()
   .superRefine((feedback, context) => {

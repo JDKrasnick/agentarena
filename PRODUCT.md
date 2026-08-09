@@ -70,10 +70,12 @@ details. Expected execution failures are returned as `inconclusive`,
 `cancelled`, or `failed` results; exceptions are reserved for invalid
 configuration, invalid schemas, and programming invariants.
 
-`Arena` has no direct mechanism imports. Durable replay envelopes, restart
-recovery, exactly-once replay persistence, digest chaining across recovered
-processes, and the production filtered `ContestantFeedback` projection remain
-assigned to issue #32.
+`Arena` has no direct mechanism imports. Durable recovery treats the immutable
+preflight baseline and sealed per-round envelopes as authority. `result.json`
+is a compact schema-v5 summary with an ordered applied-envelope ledger. Resume
+validates the digest chain and runtime drift, applies a sealed boundary exactly
+once, and never reruns an interrupted unsealed round under the original run ID.
+Production prompts consume only persisted lane-safe `ContestantFeedback`.
 
 ### Battle modes
 

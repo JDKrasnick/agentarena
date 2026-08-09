@@ -148,6 +148,7 @@ function feedback() {
     runId: "run-1",
     roundId: 1 as const,
     contestantId: "a" as const,
+    phase: "attack" as const,
     health: { starting: 100, afterAttacks: 85, ending: 100 },
     acceptedIncomingAttacks: [
       {
@@ -170,12 +171,14 @@ function feedback() {
         attackId: "attack-2",
         target: "b" as const,
         status: "missed" as const,
-        reason: "the target passed",
+        reason: "target_did_not_fail" as const,
         recoil: 5,
       },
     ],
     healedDefectIds: ["defect-1"],
     unresolvedDefectIds: [],
+    capabilityRestrictions: [],
+    evidencePointers: [],
   };
 }
 

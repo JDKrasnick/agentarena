@@ -38,6 +38,7 @@ describe("built CLI smoke flow", () => {
     });
     expect(help.stdout).toContain("review");
     expect(help.stdout).toContain("defend");
+    expect(help.stdout).toContain("resume");
     await execa(
       process.execPath,
       [
@@ -61,26 +62,32 @@ describe("built CLI smoke flow", () => {
       await readFile(path.join(runsRoot, runId!, "result.json"), "utf8"),
     ) as {
       schemaVersion: number;
-      config: {
-        contestants: Array<{ model?: string }>;
-      };
-      contestants: Record<
-        string,
-        { model?: string; implementation?: { model?: string } }
-      >;
-      reviewPrompt: { choices: unknown[] };
+      contestants: Array<{ id: string }>;
+      appliedEnvelopes: Array<{ roundId: number | "recovery" }>;
     };
-    expect(result.schemaVersion).toBe(4);
+    expect(result.schemaVersion).toBe(5);
+    expect(result.contestants.map((contestant) => contestant.id)).toEqual([
+      "a",
+      "b",
+    ]);
+    expect(result.appliedEnvelopes.map((entry) => entry.roundId)).toEqual(
+      expect.arrayContaining([1, 2, 3]),
+    );
+    const runSpec = JSON.parse(
+      await readFile(path.join(runsRoot, runId!, "run-spec.json"), "utf8"),
+    ) as { topology: { contestants: Array<{ model?: string }> } };
     expect(
-      result.config.contestants.map((contestant) => contestant.model),
+      runSpec.topology.contestants.map((contestant) => contestant.model),
     ).toEqual(["codex-test-model", "claude-test-model"]);
-    expect(result.contestants.a?.implementation?.model).toBe(
-      "codex-test-model",
+    const resumed = await execa(
+      process.execPath,
+      [cli, "resume", runId!, "--display", "json"],
+      { cwd: repositoryRoot, env },
     );
-    expect(result.contestants.b?.implementation?.model).toBe(
-      "claude-test-model",
-    );
-    expect(result.reviewPrompt.choices).toHaveLength(2);
+    expect(JSON.parse(resumed.stdout)).toMatchObject({
+      schemaVersion: 5,
+      status: "complete",
+    });
     expect(
       await readFile(path.join(runsRoot, runId!, "BATTLE.md"), "utf8"),
     ).toContain("Recommended patch");
@@ -96,6 +103,7 @@ describe("built CLI smoke flow", () => {
         patchSha256: string;
       }>;
     };
+    expect(prompt.choices).toHaveLength(2);
     const selected =
       prompt.choices.find((choice) => choice.badges.includes("recommended")) ??
       prompt.choices[0]!;

@@ -51,12 +51,12 @@ Runtime services, callbacks, worktree objects, abort controllers, and mutable
 are terminal result values; throws indicate invalid configuration, schema
 violations, or programming invariants.
 
-`Arena`'s direct mechanism import allowlist is empty. Each completed result is
-applied before the next immutable snapshot is created; any inconclusive,
-cancelled, or failed round is terminal and retains its evidence. Issue #32 adds
-durable replay-envelope persistence, crash recovery, exactly-once restart
-semantics, digest chaining across recovery, and the production filtered
-contestant-feedback projection.
+`Arena`'s direct mechanism import allowlist is empty. Each terminal result is
+sealed in a digest-chained immutable envelope. Completed envelopes apply through
+an ordered exactly-once ledger; inconclusive, cancelled, and failed envelopes
+preserve evidence without advancing state. Schema-v5 summaries rebuild detailed
+state from the immutable preflight baseline and applied envelopes, while v1–v4
+runs retain their legacy authority model.
 
 ## Who it is for
 
@@ -803,8 +803,16 @@ containing:
   base commit, topology, commands, budgets, permissions, and deterministic hash.
 - `permissions.json`: requested scopes, user decisions, leases, omitted checks,
   and redacted provisioning results.
-- `result.json`: machine-readable rounds, health ledger, attacks, checks, cost,
-  and timing data.
+- `result.json`: compact schema-v5 status, stage, contestant health, outcome,
+  recommendation, warnings, artifact pointers, provenance, and ordered
+  applied-envelope ledger. Detailed state is rebuilt from `baseline.json` and
+  `rounds/<round>/envelope.json`; the immutable `finalization.json` projection
+  supplies post-round validation and recommendation details.
+- `runtime-manifest.json`: repository, frozen-source, dependency, runtime,
+  provider/model, command, capability, and service fingerprints for resume
+  drift checks.
+- `checkpoints/`: sealed-boundary descriptors for read-only replay and future
+  fork UI. Invoking agents from history creates a fork with a new run ID.
 - `prompts/`: rendered common, implementation, attack-round, repair, recovery,
   verifier, and infrastructure-review prompts with versions and hashes.
 - `hypotheses/round-<n>/<agent>.json`: concise scouting portfolios.

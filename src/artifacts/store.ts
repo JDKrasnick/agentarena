@@ -11,7 +11,17 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ZodType } from "zod";
 import { parseRunState } from "../core/run-state.js";
-import { RunStateSchema, type RunState } from "../core/types.js";
+import {
+  RunStateV3Schema,
+  RunStateV4Schema,
+  type RunState,
+} from "../core/types.js";
+import {
+  RunSummaryV5Schema,
+  type AppliedEnvelope,
+  type RunSummaryV5,
+} from "../recovery/contracts.js";
+import { buildRunSummary, reconstructRunState } from "../recovery/durable.js";
 
 export class ArtifactStore {
   readonly runDirectory: string;
@@ -19,6 +29,7 @@ export class ArtifactStore {
   constructor(
     artifactRoot: string,
     readonly runId: string,
+    private readonly options: { durableV5?: boolean } = {},
   ) {
     this.runDirectory = path.join(artifactRoot, runId);
   }
@@ -49,6 +60,11 @@ export class ArtifactStore {
         "reviews",
         "delivery/events",
         "operations",
+        "rounds",
+        "checkpoints",
+        "feedback",
+        "events",
+        "forks",
       ].map((directory) => mkdir(this.resolve(directory), { recursive: true })),
     );
   }
@@ -140,22 +156,72 @@ export class ArtifactStore {
     );
   }
 
-  async writeState(state: RunState): Promise<string> {
-    const validated = RunStateSchema.parse(state);
+  async writeState(
+    state: RunState,
+    appliedEnvelopes?: readonly AppliedEnvelope[],
+  ): Promise<string> {
+    let existingVersion: unknown;
+    try {
+      existingVersion = (
+        JSON.parse(await readFile(this.resolve("result.json"), "utf8")) as {
+          schemaVersion?: unknown;
+        }
+      ).schemaVersion;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (state.schemaVersion === 3 || existingVersion === 3) {
+      const validated = RunStateV3Schema.parse(state);
+      return this.replaceDerivedJson("result.json", validated);
+    }
+    if (existingVersion === 4) {
+      const validated = RunStateV4Schema.parse(state);
+      return this.replaceDerivedJson("result.json", validated);
+    }
+    if (existingVersion === undefined && !this.options.durableV5) {
+      const validated = RunStateV4Schema.parse(state);
+      return this.replaceDerivedJson("result.json", validated);
+    }
+    if (existingVersion !== undefined && existingVersion !== 5)
+      throw new Error("Cannot replace an unsupported result schema");
+    const validated = RunStateV4Schema.parse(state);
+    const current = await this.readSummary();
+    const summary = await buildRunSummary({
+      store: this,
+      state: validated,
+      appliedEnvelopes: appliedEnvelopes ?? current?.appliedEnvelopes ?? [],
+      ...(current ? { provenance: current.provenance } : {}),
+    });
     const target = this.resolve("result.json");
     const temporary = this.resolve(`.result-${randomUUID()}.tmp`);
-    await writeFile(
-      temporary,
-      `${JSON.stringify(validated, null, 2)}\n`,
-      "utf8",
-    );
+    await writeFile(temporary, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
     await rename(temporary, target);
     return target;
   }
 
   async readState(): Promise<RunState> {
-    return parseRunState(
-      JSON.parse(await readFile(this.resolve("result.json"), "utf8")),
-    );
+    const value = JSON.parse(
+      await readFile(this.resolve("result.json"), "utf8"),
+    ) as unknown;
+    const version = (value as { schemaVersion?: unknown }).schemaVersion;
+    if (version !== 5) return parseRunState(value);
+    return reconstructRunState({
+      store: this,
+      summary: RunSummaryV5Schema.parse(value),
+    });
+  }
+
+  async readSummary(): Promise<RunSummaryV5 | undefined> {
+    try {
+      const value = JSON.parse(
+        await readFile(this.resolve("result.json"), "utf8"),
+      ) as unknown;
+      if ((value as { schemaVersion?: unknown }).schemaVersion !== 5)
+        return undefined;
+      return RunSummaryV5Schema.parse(value);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
   }
 }

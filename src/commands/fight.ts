@@ -44,15 +44,16 @@ async function approvePermissionPlan(
   }
 }
 
-export async function runFight(overrides: CliConfigOverrides): Promise<string> {
-  const config = await approvePermissionPlan(await loadFightConfig(overrides));
+function createArena(
+  config: Awaited<ReturnType<typeof loadFightConfig>>,
+): Arena {
   const adapters = Object.fromEntries(
     config.contestants.map((contestant) => [
       contestant.provider,
       createProviderAdapter(contestant.provider, contestant.model),
     ]),
   );
-  const arena = new Arena({
+  return new Arena({
     adapters,
     adapterFactory: (contestant) =>
       createProviderAdapter(contestant.provider, contestant.model),
@@ -66,12 +67,58 @@ export async function runFight(overrides: CliConfigOverrides): Promise<string> {
     harnessMaintainer: new CommandHarnessMaintainer(config.harnessMaintainer),
     onProgress: (message) => stdout.write(`${message}\n`),
   });
+}
+
+export async function runFight(overrides: CliConfigOverrides): Promise<string> {
+  const config = await approvePermissionPlan(await loadFightConfig(overrides));
+  const arena = createArena(config);
   const controller = new AbortController();
   const cancel = (): void => controller.abort(new Error("Interrupted"));
   process.once("SIGINT", cancel);
   process.once("SIGTERM", cancel);
   try {
     return (await arena.fight(config, controller.signal)).summary;
+  } finally {
+    process.removeListener("SIGINT", cancel);
+    process.removeListener("SIGTERM", cancel);
+  }
+}
+
+export async function runResume(options: {
+  runId: string;
+  approveDriftHash?: string;
+  display?: "console" | "json";
+}): Promise<string> {
+  const repositoryRoot = process.cwd();
+  const store = new (await import("../artifacts/store.js")).ArtifactStore(
+    `${repositoryRoot}/.agent-arena/runs`,
+    options.runId,
+  );
+  const state = await store.readState();
+  const config = FightConfigSchema.parse({
+    ...state.config,
+    repositoryRoot,
+    artifactRoot: `${repositoryRoot}/.agent-arena/runs`,
+  });
+  const arena = createArena(config);
+  const controller = new AbortController();
+  const cancel = (): void => controller.abort(new Error("Interrupted"));
+  process.once("SIGINT", cancel);
+  process.once("SIGTERM", cancel);
+  try {
+    return (
+      await arena.resume(
+        {
+          runId: options.runId,
+          repositoryRoot,
+          ...(options.approveDriftHash
+            ? { approveDriftHash: options.approveDriftHash }
+            : {}),
+          ...(options.display ? { display: options.display } : {}),
+        },
+        controller.signal,
+      )
+    ).summary;
   } finally {
     process.removeListener("SIGINT", cancel);
     process.removeListener("SIGTERM", cancel);

@@ -4,13 +4,27 @@ Completed runs live under `.agent-arena/runs/<run-id>/`.
 
 ## Immutable battle evidence
 
-- `result.json` uses schema version 4 and records the immutable RunSpec hash.
-  `RunStateV1Schema`, `RunStateV2Schema`, `RunStateV3Schema`,
-  `RunStateV4Schema`, `AnyRunStateSchema`, and `parseRunState` keep version 1–3
-  runs readable. Version 1 and 2 states migrate provider-keyed contestants into
-  stable `a` and `b` slots; version 3 states retain their task-contract hash
-  without manufacturing RunSpec provenance. Migrated runs receive an explicit
-  arena-fallback recommendation and must be reviewed again before application.
+- New `result.json` files use compact schema version 5. The immutable
+  `baseline.json` and digest-chained `rounds/<round>/envelope.json` files are the
+  authoritative history; the summary records the ordered snapshot, replay, and
+  envelope hashes already applied. Versions 1–4 remain readable without being
+  converted to the new authority model. Version 1 and 2 states still migrate
+  provider-keyed contestants into stable `a` and `b` slots in memory.
+- `finalization.json` is an immutable, envelope-head-bound projection of final
+  validation checks, ranking, quality facts, recommendation, and review data.
+  This keeps post-round report, review, delivery, and inspection reconstruction
+  equivalent without putting full round history back into `result.json`.
+- `runtime-manifest.json` freezes repository identity, base commit, sources,
+  dependency files, runtimes, provider CLIs/models, commands, capabilities, and
+  service fingerprints. Approval-required resume drift is bound to a saved
+  report hash; repository/source/history corruption is a hard stop.
+- `checkpoints/<round>.json` describes each sealed boundary. Fork contracts bind
+  a new run to its parent checkpoint and intervention. Symmetric steering is the
+  default; asymmetric steering is assisted and not competitively comparable.
+- `feedback/round-*/` contains immutable lane-specific structured views and
+  reader manifests. Inline feedback is capped at 24 KiB and excludes opponent
+  transcripts, verifier prose, unrevealed held-out cases, and private repair
+  strategy.
 - `run-spec.json`, source snapshots, final patches, prompts,
   `attack-reviews/round-*/`, attack cases, logs, `quality/*`,
   `review-prompt.json`, `BATTLE.md`, `BATTLE.html`, and `BATTLE.svg` are frozen
@@ -42,6 +56,9 @@ Completed runs live under `.agent-arena/runs/<run-id>/`.
   evidence.
 - `operations/<idempotency-key-hash>.json` maps one key and payload hash to its
   immutable result. Reusing a key with another payload is an error.
+- `events/lifecycle.ndjson` records typed resume, drift, approval, and recovery
+  events with continuing sequence numbers. One torn trailing record is safely
+  discarded on recovery.
 
 `delivery/plan.json` and `delivery/status.json` are atomically replaced derived
 caches; they are never the audit source of truth. All artifact paths pass

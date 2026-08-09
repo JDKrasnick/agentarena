@@ -67,6 +67,7 @@ import { runShellCommand } from "../runner/process-runner.js";
 import { provisionIntegrationProfile } from "../runner/integration.js";
 import {
   buildRunSpec,
+  calculateRunSpecHash,
   GitHubPullRequestResolver,
   type ResolvedPullRequest,
 } from "../task/task-contract.js";
@@ -86,6 +87,7 @@ import {
 import { assertTransition } from "./state-machine.js";
 import {
   FightConfigSchema,
+  PermissionPolicySchema,
   type AgentId,
   type AgentInvocation,
   type Attack,
@@ -108,18 +110,41 @@ import {
   calculateSnapshotHash,
   RoundReplaySchema,
   RoundResultSchema,
-  RoundStateDeltaSchema,
   validateRoundResult,
   validateRoundSnapshot,
   type ArtifactReference,
   type RoundReplay,
   type RoundResult,
   type RoundSnapshot,
+  RunSpecSchema,
 } from "../contracts/round.js";
+import { projectRoundStateDelta } from "./round-state-delta.js";
 import {
-  applyCompletedRound,
-  projectRoundStateDelta,
-} from "./round-state-delta.js";
+  DriftReportSchema,
+  FinalizationRecordSchema,
+  RoundEnvelopeSchema,
+  type AppliedEnvelope,
+} from "../recovery/contracts.js";
+import {
+  applyEnvelopeExactlyOnce,
+  sealRoundEnvelope,
+  writeBaseline,
+  writeCheckpoint,
+  writeFinalizationRecord,
+} from "../recovery/durable.js";
+import {
+  persistContestantFeedback,
+  projectContestantFeedback,
+} from "../recovery/feedback.js";
+import { writeDependencyManifest } from "../recovery/manifest.js";
+import {
+  approveDrift,
+  captureDependencyManifest,
+  createDriftReport,
+  readDependencyManifest,
+} from "../recovery/manifest.js";
+import { appendRecoveryEvent } from "../recovery/events.js";
+import { readEnvelopeChain } from "../recovery/durable.js";
 
 export interface ArenaDependencies {
   adapters: Partial<Record<AgentId, AgentAdapter>>;
@@ -150,6 +175,15 @@ export interface FightOutcome {
   summary: string;
 }
 
+export interface ResumeOptions {
+  runId: string;
+  repositoryRoot?: string;
+  artifactRoot?: string;
+  approveDriftHash?: string;
+  approvedBy?: string;
+  display?: "console" | "json";
+}
+
 interface ArenaContext {
   config: FightConfig;
   store: ArtifactStore;
@@ -159,6 +193,8 @@ interface ArenaContext {
   state: RunState;
   controller: AbortController;
   roundInvocations: RecordedRoundInvocation[];
+  priorEnvelopeHash: string | null;
+  appliedEnvelopes: AppliedEnvelope[];
 }
 
 interface RecordedRoundInvocation {
@@ -326,7 +362,9 @@ export class RoundEngine {
     await assertCleanRepository(repositoryRoot);
     let config = FightConfigSchema.parse({ ...rawConfig, repositoryRoot });
     const runId = createRunId(this.now());
-    const store = new ArtifactStore(config.artifactRoot, runId);
+    const store = new ArtifactStore(config.artifactRoot, runId, {
+      durableV5: true,
+    });
     await store.initialize();
     let pullRequestFixture: PullRequestFixture | undefined;
     let frozenBasePullRequest: ResolvedPullRequest | undefined;
@@ -449,9 +487,11 @@ export class RoundEngine {
         warnings: contractWarnings,
       });
       await store.writeImmutableJson("run-spec.json", runSpec);
+      const repositoryIdentity =
+        await resolveGitHubRepositoryIdentity(repositoryRoot);
       const targetResolution = deriveDeliveryTarget(
         runSpec,
-        await resolveGitHubRepositoryIdentity(repositoryRoot),
+        repositoryIdentity,
       );
       if (targetResolution.ambiguous && targetResolution.reason)
         contractWarnings.push(targetResolution.reason);
@@ -506,10 +546,27 @@ export class RoundEngine {
         state,
         controller,
         roundInvocations: [],
+        priorEnvelopeHash: null,
+        appliedEnvelopes: [],
       };
       await this.persist(context);
 
       await this.preflight(context);
+      await writeDependencyManifest({
+        store,
+        runSpec,
+        config,
+        permissions,
+        now: this.now(),
+      });
+      await writeBaseline({
+        store,
+        state: context.state,
+        repositoryIdentity:
+          repositoryIdentity?.repository ?? `local:${runSpec.baseCommit}`,
+        now: this.now(),
+      });
+      await this.persist(context);
       let priorReplayHash: string | null = null;
       for (const round of [1, 2, 3] as const) {
         if (this.shouldStop(context)) break;
@@ -530,7 +587,6 @@ export class RoundEngine {
         );
         const { result } = transaction;
         if (result.status !== "completed") {
-          context.state = transaction.state;
           return this.finishTerminalRound(context, result);
         }
         await this.applyRoundTransaction(context, result);
@@ -564,7 +620,6 @@ export class RoundEngine {
           { recovery: true },
         );
         const { result } = transaction;
-        if (result.status !== "completed") context.state = transaction.state;
         if (result.status !== "completed")
           return this.finishTerminalRound(context, result);
         await this.applyRoundTransaction(context, result);
@@ -572,6 +627,18 @@ export class RoundEngine {
 
       await this.finalValidation(context);
       await this.finalizeRecommendation(context);
+      await writeFinalizationRecord({
+        store,
+        state: context.state,
+        appliedEnvelopeHash:
+          context.appliedEnvelopes.at(-1)?.envelopeHash ??
+          (() => {
+            throw new Error(
+              "Cannot finalize without an applied round envelope",
+            );
+          })(),
+        now: this.now(),
+      });
       await this.transition(context, "report");
       const report = renderBattleReport(context.state);
       await store.writeText("BATTLE.md", report);
@@ -608,6 +675,373 @@ export class RoundEngine {
           .catch(() => undefined);
       }
       throw error;
+    } finally {
+      externalSignal?.removeEventListener("abort", abort);
+      if (!config.keepWorktrees)
+        await worktrees.cleanup().catch(() => undefined);
+    }
+  }
+
+  async resume(
+    options: ResumeOptions,
+    externalSignal?: AbortSignal,
+  ): Promise<FightOutcome> {
+    const repositoryRoot = await resolveRepositoryRoot(
+      options.repositoryRoot ?? process.cwd(),
+    );
+    await assertCleanRepository(repositoryRoot);
+    const artifactRoot = path.resolve(
+      options.artifactRoot ?? path.join(repositoryRoot, ".agent-arena", "runs"),
+    );
+    const store = new ArtifactStore(artifactRoot, options.runId, {
+      durableV5: true,
+    });
+    await store.initialize();
+    const summary = await store.readSummary();
+    if (!summary) throw new Error("Only schema v5 runs support durable resume");
+    await appendRecoveryEvent({
+      store,
+      type: "resume_started",
+      now: this.now(),
+    });
+    let state = await store.readState();
+    if (state.schemaVersion !== 4)
+      throw new Error("Durable resume requires a v5 run with a v4 baseline");
+    const config = FightConfigSchema.parse({
+      ...state.config,
+      repositoryRoot,
+      artifactRoot,
+    });
+    const runSpec = RunSpecSchema.parse(
+      JSON.parse(await readFile(store.resolve("run-spec.json"), "utf8")),
+    );
+    const { contentHash: persistedRunSpecHash, ...runSpecBody } = runSpec;
+    if (
+      persistedRunSpecHash !== calculateRunSpecHash(runSpecBody) ||
+      persistedRunSpecHash !== summary.runSpecHash
+    )
+      throw new Error("RunSpec hash mismatch");
+    const permissions = PermissionPolicySchema.parse(
+      JSON.parse(await readFile(store.resolve("permissions.json"), "utf8")),
+    );
+    const originalManifest = await readDependencyManifest(store);
+    const currentManifest = await captureDependencyManifest({
+      store,
+      runSpec,
+      config,
+      permissions,
+      ...(options.display ? { display: options.display } : {}),
+      now: this.now(),
+    });
+    let drift = await createDriftReport({
+      original: originalManifest,
+      current: currentManifest,
+      repositoryRoot,
+      now: this.now(),
+    });
+    const driftPath = `drift/reports/${drift.reportHash}.json`;
+    const existingDrift = await store.readOptionalJson(
+      driftPath,
+      DriftReportSchema,
+    );
+    if (existingDrift) drift = existingDrift;
+    else await store.writeImmutableJson(driftPath, drift);
+    if (drift.entries.length)
+      await appendRecoveryEvent({
+        store,
+        type: "drift_detected",
+        detail: { reportHash: drift.reportHash, entries: drift.entries },
+        now: this.now(),
+      });
+    const hardStops = drift.entries.filter(
+      (entry) => entry.severity === "hard_stop",
+    );
+    if (hardStops.length)
+      throw new Error(
+        `Resume stopped by hard drift: ${hardStops.map((entry) => entry.code).join(", ")}`,
+      );
+    const approvalRequired = drift.entries.filter(
+      (entry) => entry.severity === "approval_required",
+    );
+    if (approvalRequired.length) {
+      if (options.approveDriftHash !== drift.reportHash)
+        throw new Error(
+          `Resume requires manual drift approval bound to report ${drift.reportHash}`,
+        );
+      const approval = await approveDrift({
+        store,
+        report: drift,
+        reportHash: options.approveDriftHash,
+        approvedBy: options.approvedBy ?? "cli-user",
+        now: this.now(),
+      });
+      const meaningful = approvalRequired.some((entry) =>
+        ["provider_changed", "toolchain_changed"].includes(entry.code),
+      );
+      await store.replaceDerivedJson("result.json", {
+        ...summary,
+        provenance: {
+          ...summary.provenance,
+          assisted: summary.provenance.assisted || meaningful,
+          driftApprovalHashes: [
+            ...summary.provenance.driftApprovalHashes,
+            approval.approvalHash,
+          ],
+        },
+      });
+      await appendRecoveryEvent({
+        store,
+        type: "drift_approved",
+        detail: {
+          reportHash: drift.reportHash,
+          approvalHash: approval.approvalHash,
+        },
+        now: this.now(),
+      });
+    }
+
+    const envelopes = await readEnvelopeChain(store);
+    let ledger = [...summary.appliedEnvelopes];
+    for (const envelope of envelopes.slice(ledger.length)) {
+      if (envelope.result.status !== "completed") {
+        const completedAt = this.now().toISOString();
+        state.status = envelope.result.status;
+        state.stage = envelope.result.status;
+        state.completedAt = completedAt;
+        state.updatedAt = completedAt;
+        state.warnings.push(
+          ...("diagnostics" in envelope.result
+            ? envelope.result.diagnostics.map((entry) => entry.message)
+            : []),
+        );
+        await store.writeState(state, ledger);
+        return {
+          state,
+          summary: renderConsoleSummary(
+            state,
+            this.dependencies.consoleOptions,
+          ),
+        };
+      }
+      const application = await applyEnvelopeExactlyOnce({
+        store,
+        state,
+        envelope,
+        ledger,
+      });
+      ledger = application.ledger;
+      await writeCheckpoint({ store, state, envelope, now: this.now() });
+      await store.writeState(state, ledger);
+      await appendRecoveryEvent({
+        store,
+        type: "sealed_envelope_applied",
+        detail: {
+          roundId: envelope.roundId,
+          envelopeHash: envelope.envelopeHash,
+        },
+        now: this.now(),
+      });
+    }
+
+    if (
+      state.status === "complete" &&
+      ledger.length ===
+        envelopes.filter((envelope) => envelope.result.status === "completed")
+          .length
+    ) {
+      await appendRecoveryEvent({
+        store,
+        type: "resume_stopped",
+        detail: { reason: "already_complete" },
+        now: this.now(),
+      });
+      return {
+        state,
+        summary:
+          options.display === "json"
+            ? JSON.stringify(await store.readSummary(), null, 2)
+            : renderConsoleSummary(state, this.dependencies.consoleOptions),
+      };
+    }
+
+    const savedFinalization = await store.readOptionalJson(
+      "finalization.json",
+      FinalizationRecordSchema,
+    );
+    if (
+      savedFinalization &&
+      savedFinalization.appliedEnvelopeHash !== ledger.at(-1)?.envelopeHash
+    )
+      throw new Error("Saved finalization does not match envelope history");
+    if (savedFinalization && !summary.finalization) {
+      await store.writeState(state, ledger);
+      state = await store.readState();
+    }
+
+    const nextRound = ([1, 2, 3, "recovery"] as const).find(
+      (roundId) =>
+        !envelopes.some((envelope) => envelope.roundId === roundId) &&
+        (roundId !== "recovery" ||
+          config.agents.some((agent) =>
+            getContestant(state, agent).replacementCredits.some(
+              (credit) => credit.status === "available",
+            ),
+          )),
+    );
+    if (nextRound) {
+      try {
+        await access(
+          store.resolve(`rounds/${String(nextRound)}/snapshot.json`),
+        );
+        state.status = "inconclusive";
+        state.stage = "inconclusive";
+        state.completedAt = this.now().toISOString();
+        state.updatedAt = state.completedAt;
+        state.warnings.push(
+          `Round ${String(nextRound)} was interrupted before sealing; fork from the latest checkpoint to run it again`,
+        );
+        await store.writeState(state, ledger);
+        await appendRecoveryEvent({
+          store,
+          type: "unsealed_round_expired",
+          detail: { roundId: nextRound },
+          now: this.now(),
+        });
+        return {
+          state,
+          summary: renderConsoleSummary(
+            state,
+            this.dependencies.consoleOptions,
+          ),
+        };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+
+    const temporaryRoot = await mkdtemp(
+      path.join(os.tmpdir(), `agent-arena-resume-${options.runId}-`),
+    );
+    const worktrees = new WorktreeManager(
+      repositoryRoot,
+      temporaryRoot,
+      runSpec.baseCommit,
+    );
+    await worktrees.initialize();
+    const controller = new AbortController();
+    const abort = (): void => controller.abort(externalSignal?.reason);
+    externalSignal?.addEventListener("abort", abort, { once: true });
+    const context: ArenaContext = {
+      config,
+      store,
+      worktrees,
+      runSpec,
+      permissions,
+      state,
+      controller,
+      roundInvocations: [],
+      priorEnvelopeHash: envelopes.at(-1)?.envelopeHash ?? null,
+      appliedEnvelopes: ledger,
+    };
+    try {
+      let priorReplayHash = envelopes.at(-1)?.replayHash ?? null;
+      for (const round of [1, 2, 3] as const) {
+        if (envelopes.some((envelope) => envelope.roundId === round)) continue;
+        if (this.shouldStop(context)) break;
+        const beforeRound = structuredClone(context.state);
+        const snapshot = await this.createRoundSnapshot(
+          context,
+          round,
+          priorReplayHash,
+        );
+        const transaction = await this.executeLiveRound(
+          context,
+          snapshot,
+          beforeRound,
+          {
+            initialize: round === 1,
+            ...(round === 1 && context.state.pullRequestFixture
+              ? { pullRequestFixture: context.state.pullRequestFixture }
+              : {}),
+          },
+        );
+        if (transaction.result.status !== "completed") {
+          return this.finishTerminalRound(context, transaction.result);
+        }
+        await this.applyRoundTransaction(context, transaction.result);
+        priorReplayHash = transaction.result.replay.replayHash;
+      }
+      const credits = config.agents.reduce(
+        (sum, agent) =>
+          sum +
+          getContestant(state, agent).replacementCredits.filter(
+            (credit) => credit.status === "available",
+          ).length,
+        0,
+      );
+      if (
+        credits > 0 &&
+        config.infrastructureRecoveryRound &&
+        !envelopes.some((envelope) => envelope.roundId === "recovery")
+      ) {
+        await this.transition(context, "recovery_round", "recovery");
+        const beforeRound = structuredClone(context.state);
+        const snapshot = await this.createRoundSnapshot(
+          context,
+          "recovery",
+          priorReplayHash,
+        );
+        const transaction = await this.executeLiveRound(
+          context,
+          snapshot,
+          beforeRound,
+          { recovery: true },
+        );
+        if (transaction.result.status !== "completed") {
+          return this.finishTerminalRound(context, transaction.result);
+        }
+        await this.applyRoundTransaction(context, transaction.result);
+      }
+      if (!savedFinalization) {
+        await this.finalValidation(context);
+        await this.finalizeRecommendation(context);
+        await writeFinalizationRecord({
+          store,
+          state: context.state,
+          appliedEnvelopeHash:
+            context.appliedEnvelopes.at(-1)?.envelopeHash ??
+            (() => {
+              throw new Error(
+                "Cannot finalize without an applied round envelope",
+              );
+            })(),
+          now: this.now(),
+        });
+      }
+      if (context.state.stage !== "report")
+        await this.transition(context, "report");
+      await store.writeText("BATTLE.md", renderBattleReport(context.state));
+      await store.writeText("BATTLE.html", renderBattleHtml(context.state));
+      await store.writeText("BATTLE.svg", renderBattleVisual(context.state));
+      context.state.status = "complete";
+      context.state.completedAt = this.now().toISOString();
+      await this.transition(context, "complete");
+      await appendRecoveryEvent({
+        store,
+        type: "resume_continued",
+        detail: { completed: true },
+        now: this.now(),
+      });
+      return {
+        state: context.state,
+        summary:
+          options.display === "json"
+            ? JSON.stringify(await store.readSummary(), null, 2)
+            : renderConsoleSummary(
+                context.state,
+                this.dependencies.consoleOptions,
+              ),
+      };
     } finally {
       externalSignal?.removeEventListener("abort", abort);
       if (!config.keepWorktrees)
@@ -714,18 +1148,25 @@ export class RoundEngine {
     context: ArenaContext,
     result: Extract<RoundResult, { status: "completed" }>,
   ): Promise<void> {
-    const deltaArtifact = result.replay.artifacts.find(
-      (artifact) => artifact.id === result.replay.stateDeltaArtifactId,
+    const envelope = await context.store.readOptionalJson(
+      `rounds/${String(result.roundId)}/envelope.json`,
+      RoundEnvelopeSchema,
     );
-    if (!deltaArtifact)
-      throw new Error("Completed replay is missing its state delta artifact");
-    const bytes = await readFile(deltaArtifact.path);
-    if (sha256(bytes) !== deltaArtifact.sha256)
-      throw new Error("Round-state delta artifact hash does not match replay");
-    const delta = RoundStateDeltaSchema.parse(
-      JSON.parse(bytes.toString("utf8")) as unknown,
-    );
-    applyCompletedRound(context.state, result, delta);
+    if (!envelope) throw new Error("Completed round envelope is missing");
+    const application = await applyEnvelopeExactlyOnce({
+      store: context.store,
+      state: context.state,
+      envelope,
+      ledger: context.appliedEnvelopes,
+    });
+    context.appliedEnvelopes = application.ledger;
+    context.priorEnvelopeHash = envelope.envelopeHash;
+    await writeCheckpoint({
+      store: context.store,
+      state: context.state,
+      envelope,
+      now: this.now(),
+    });
     await this.persist(context);
   }
 
@@ -1137,7 +1578,7 @@ export class RoundEngine {
       ],
       replay,
     } as const;
-    return RoundResultSchema.parse(
+    const result = RoundResultSchema.parse(
       status === "completed"
         ? { ...baseResult, status }
         : {
@@ -1146,6 +1587,14 @@ export class RoundEngine {
             diagnostics: replay.diagnostics,
           },
     );
+    const envelope = await sealRoundEnvelope({
+      store: context.store,
+      result,
+      priorEnvelopeHash: context.priorEnvelopeHash,
+      now: this.now(),
+    });
+    context.priorEnvelopeHash = envelope.envelopeHash;
+    return result;
   }
 
   private isInfrastructureError(error: unknown): boolean {
@@ -1164,13 +1613,15 @@ export class RoundEngine {
     context: ArenaContext,
     result: Exclude<RoundResult, { status: "completed" }>,
   ): Promise<FightOutcome> {
+    const completedAt = this.now().toISOString();
     context.state.status = result.status;
     context.state.stage = result.status;
-    context.state.completedAt = this.now().toISOString();
+    context.state.completedAt = completedAt;
+    context.state.updatedAt = completedAt;
     context.state.warnings.push(
       ...result.diagnostics.map((entry) => entry.message),
     );
-    await context.store.writeState(context.state);
+    await context.store.writeState(context.state, context.appliedEnvelopes);
     await context.store.writeText(
       "BATTLE.md",
       renderBattleReport(context.state),
@@ -1194,7 +1645,8 @@ export class RoundEngine {
 
   private async persist(context: ArenaContext): Promise<void> {
     context.state.updatedAt = this.now().toISOString();
-    await context.store.writeState(context.state);
+    if (this.runtime) return;
+    await context.store.writeState(context.state, context.appliedEnvelopes);
   }
 
   private adapterFor(
@@ -1213,6 +1665,23 @@ export class RoundEngine {
       return adapter;
     }
     return getAdapter(this.dependencies.adapters, contestant.provider);
+  }
+
+  private async laneFeedback(
+    context: ArenaContext,
+    contestantId: ContestantId,
+    roundId: RoundId,
+    phase: "review" | "attack" | "repair" | "recovery",
+  ) {
+    const feedback = projectContestantFeedback({
+      state: context.state,
+      contestantId,
+      roundId,
+      phase,
+      permissions: context.permissions,
+    });
+    await persistContestantFeedback({ store: context.store, feedback });
+    return feedback;
   }
 
   private async transition(
@@ -1469,6 +1938,12 @@ export class RoundEngine {
       try {
         await context.worktrees.applyPatch(worktree, targetPatchPath);
         const targetSnapshot = await context.worktrees.snapshot(worktree);
+        const contestantFeedback = await this.laneFeedback(
+          context,
+          reviewer,
+          round,
+          round === "recovery" ? "recovery" : "review",
+        );
         const prompt = composeAttackReviewPrompt({
           agent: reviewer,
           target,
@@ -1478,14 +1953,7 @@ export class RoundEngine {
           permissions: context.permissions,
           methodSelection: selection,
           opponentPatch: targetPatch.toString("utf8"),
-          priorOutcomes: JSON.stringify(
-            context.state.attacks.map((attack) => ({
-              id: attack.id,
-              claim: attack.claim,
-              status: attack.status,
-              rootDefectId: attack.rootDefectId,
-            })),
-          ),
+          contestantFeedback,
         });
         const promptPath = await context.store.writeText(
           `prompts/round-${String(round)}-review-${reviewer}.md`,
@@ -1893,6 +2361,12 @@ export class RoundEngine {
       try {
         await context.worktrees.applyPatch(worktree, targetPatchPath);
         const opponentPatch = await readFile(targetPatchPath, "utf8");
+        const contestantFeedback = await this.laneFeedback(
+          context,
+          agent,
+          round,
+          round === "recovery" ? "recovery" : "attack",
+        );
         const prompt = composePrompt({
           agent,
           target,
@@ -1907,13 +2381,7 @@ export class RoundEngine {
             ? { reviewPacket: reviewPackets.get(agent)! }
             : {}),
           currentHealth: contestant.finalHealth,
-          priorOutcomes: JSON.stringify(
-            context.state.attacks.map((attack) => ({
-              id: attack.id,
-              status: attack.status,
-              rootDefectId: attack.rootDefectId,
-            })),
-          ),
+          contestantFeedback,
         });
         const promptPath = await context.store.writeText(
           `prompts/round-${String(round)}-${agent}.md`,
@@ -2331,33 +2799,11 @@ export class RoundEngine {
       );
       try {
         await context.worktrees.applyPatch(worktree, currentPatch);
-        const evidence = JSON.stringify(
-          activeAttacks.map((attack) => ({
-            claim: attack.claim,
-            oracle: attack.oracle,
-            severity: attack.severity,
-            damage: attack.damage,
-            focusedCommand: attack.focusedCommand,
-            visiblePatch: attack.patchPath,
-            heldOutCaseCount:
-              attack.caseBundle?.cases.filter(
-                (caseEntry) => caseEntry.visibility === "held_out",
-              ).length ?? 0,
-            revealedCases:
-              attack.caseBundle?.cases
-                .filter(
-                  (caseEntry) =>
-                    caseEntry.visibility === "held_out" &&
-                    caseEntry.status === "revealed",
-                )
-                .map((caseEntry) => ({
-                  category: caseEntry.category,
-                  patchPath: caseEntry.patchPath,
-                  focusedCommand: caseEntry.focusedCommand,
-                })) ?? [],
-          })),
-          null,
-          2,
+        const contestantFeedback = await this.laneFeedback(
+          context,
+          agent,
+          round,
+          round === "recovery" ? "recovery" : "repair",
         );
         const prompt = composePrompt({
           agent,
@@ -2366,8 +2812,8 @@ export class RoundEngine {
           runSpec: context.runSpec,
           config: context.config,
           permissions: context.permissions,
-          evidence,
           currentHealth: contestant.finalHealth,
+          contestantFeedback,
         });
         const promptPath = await context.store.writeText(
           `prompts/round-${String(round)}-repair-${agent}.md`,
@@ -2954,7 +3400,16 @@ export class RoundEngine {
   }
 
   private async finalValidation(context: ArenaContext): Promise<void> {
-    await this.transition(context, "final_validate");
+    if (context.state.stage !== "final_validate")
+      await this.transition(context, "final_validate");
+    else {
+      for (const contestant of Object.values(context.state.contestants)) {
+        contestant.checks = contestant.checks.filter(
+          (check) =>
+            check.id !== "final-required" && !check.id.startsWith("final-"),
+        );
+      }
+    }
     for (const agent of context.config.agents) {
       const contestant = getContestant(context.state, agent);
       if (context.config.mode === "siege" && contestant.role === "attacker") {
