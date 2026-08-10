@@ -3,7 +3,11 @@ import { z } from "zod";
 
 const PointValueSchema = z.number().min(0).max(100).multipleOf(0.25);
 const DamageValueSchema = z.number().positive().max(50).multipleOf(0.25);
-const ContractVersionSchema = z.union([z.literal(1), z.literal(2)]);
+const ContractVersionSchema = z.union([
+  z.literal(1),
+  z.literal(2),
+  z.literal(3),
+]);
 const EvidenceBasisSchema = z.enum([
   "mechanical",
   "judge",
@@ -275,6 +279,10 @@ const CanonicalDefectSchema = z
         .strict(),
     ),
     status: z.enum(["active", "healed"]),
+    repairAllowance: z.number().int().positive().optional(),
+    repairAttemptsUsed: z.number().int().nonnegative().optional(),
+    repairAttemptIds: z.array(IdentifierSchema).optional(),
+    regressionResets: z.number().int().nonnegative().optional(),
   })
   .strict();
 
@@ -709,6 +717,7 @@ export const RoundStateDeltaSchema = z
     patchMetadata: z.array(JsonValueSchema),
     reconciliationQueue: z.array(ReconciliationCandidateSchema).optional(),
     submissionArtifacts: z.array(JsonValueSchema).optional(),
+    repairJudgments: z.array(JsonValueSchema).optional(),
     coordinator: z
       .object({
         stage: IdentifierSchema,
@@ -832,7 +841,7 @@ export const ContestantFeedbackSchema = z
   })
   .strict()
   .superRefine((feedback, context) => {
-    if (feedback.version === 2 && !feedback.projectionDigest) {
+    if (feedback.version >= 2 && !feedback.projectionDigest) {
       context.addIssue({
         code: "custom",
         path: ["projectionDigest"],
@@ -862,7 +871,7 @@ export function calculateContestantFeedbackDigest(feedback: object): string {
 export function validateContestantFeedback(value: unknown): ContestantFeedback {
   const feedback = ContestantFeedbackSchema.parse(value);
   if (
-    feedback.version === 2 &&
+    feedback.version >= 2 &&
     feedback.projectionDigest !== calculateContestantFeedbackDigest(feedback)
   ) {
     throw new Error("Contestant feedback projection digest mismatch");

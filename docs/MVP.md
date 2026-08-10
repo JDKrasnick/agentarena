@@ -12,12 +12,14 @@ The MVP exists to prove one idea:
 > Does an adversarial attack-and-repair round produce a better patch than simply
 > running multiple coding agents and choosing the first patch that passes?
 
-The result is confidence-qualified. Duel and catch-up require both directions
-in all three attack rounds; siege requires attacker-to-defender in all three.
-House scouting and house attacks remain optional and do not affect confidence.
-Every required lane records review, focused description, case construction,
-execution, semantic adjudication, and repair when applicable. A schema-valid
-`attacks: []` is completed coverage with downstream stages not applicable.
+The result is confidence-qualified. New runs use exactly two contestant adapters
+and one fresh, identity-blind judge adapter. Duel and catch-up require both
+directions in all three attack rounds; siege requires attacker-to-defender in
+all three. Every required coverage-v2 lane records `review`,
+`attack_submission`, `evidence_construction`, `execution`,
+`semantic_adjudication`, and `repair` when applicable. Direct overlay capture
+completes evidence construction without another model call; a schema-valid
+`attacks: []` completes the lane with downstream stages not applicable.
 
 Each failed stage or evidence path receives one targeted retry, shared with the
 existing correction, evidence-revision, and recovery mechanisms. Mechanical
@@ -128,22 +130,23 @@ Agent Arena then:
    - The harness freezes both current patches.
    - Both agents get an extended read-only review phase and produce structured
      target-specific findings.
-   - Each agent receives its compact review packet in a separate focused phase
-     and submits zero to three ranked failure descriptions with concrete public
-     reproduction steps and a rationale grounded in the frozen text. Source
-     location metadata is optional. A neutral case judge writes
-     and executes the regression test; `attacks: []` explicitly records that
-     no reviewed hypothesis is credible.
+   - Each agent receives its compact review packet and submits zero to three
+     sparse, uniquely ranked executable attacks. `AttackSubmissionV2` includes
+     oracle metadata, a focused command, required capabilities, disjoint
+     rank-specific paths, and optional shared support paths copied into every
+     independently replayable target-relative overlay. `attacks: []` explicitly
+     records that no reviewed hypothesis is credible.
    - The harness validates every attack and resolves damage or recoil
      simultaneously.
-   - Both agents receive the new evidence and one bounded opportunity to repair
-     their current implementation.
-   - The harness reruns all required and previously landed tests, applies heals,
-     and records end-of-round health.
+   - Both agents receive the new evidence and the remaining durable repair
+     allowance for each active defect: three attempts for Critical/High and two
+     for Medium/Low across the run.
+   - After every attempt, the harness reruns required checks, all active
+     reproducers, and healed regression checks; it stops early when all pass.
 8. Runs one recovery attack–repair round when infrastructure replacement credits
    exist.
-9. Runs every final patch against the original suite and every visible and
-   held-out case for all landed contestant and house defects.
+9. Runs every final patch against the original suite, all active reproducers,
+   and all healed-defect regression checks.
 10. Produces a recommendation, health timeline, test matrix, replayable run data,
    a clickable HTML dossier with linked evidence, and a patch the developer can
    inspect or apply.
@@ -264,14 +267,13 @@ authoritative oracle. House-generated probes must be surfaced during a normal
 round so the target receives a repair opportunity; a novel final-validation
 finding is reported but cannot change the winner.
 
-### Neutral house probes and shared defects
+### Deferred shared-defect extension
 
-Differential contestant attacks cannot expose a defect shared by both patches,
-because an ordinary attack must pass on its author's implementation. To cover
-this blind spot, Agent Arena may promote at most one neutral house attack in
-round 2 and at most one in round 3.
+Differential contestant attacks cannot expose a defect shared by both patches.
+Neutral house probes remain a readable legacy artifact and a possible future
+extension; new MVP runs do not invoke or score them.
 
-A house attack comes from the same versioned method packs and official task
+Historically, a house attack came from the same versioned method packs and official task
 contract, but has no contestant author. It must pass the ordinary determinism,
 relevance, oracle, root-defect, and severity checks. It is evaluated
 independently against both frozen patches and may land on either or both. Each
@@ -298,22 +300,19 @@ unscored report finding.
 - Optional provider-specific model selection for each contestant. Omission uses
   the provider CLI default; explicit selections are recorded in run artifacts.
 - A provider adapter boundary, even if only two adapters are release-ready.
-- One anonymized verifier invocation per mechanically landed candidate.
-- One isolated harness-maintainer role for validated run accommodations.
+- One identity-blind judge invocation for semantic adjudication when required.
 - A preflight permission plan with `auto`, `confirm`, and `deny` policies.
 - Harness-only, run-scoped access to approved test credentials and services.
 - Approved ephemeral local or test-service provisioning.
 - Deterministic method packs for property, fuzz, mutation, static,
   concurrency, security, and fault-injection probes when supported by the
   repository and permission plan.
-- At most one neutral house attack in round 2 and one in round 3.
-- One visible reproducer plus up to two held-out sibling cases for each landed
-  defect when the oracle supports safe generalization.
+- Independently replayable target-relative attack overlays.
 - One implementation round.
 - Three attack–repair rounds.
 - One optional post-round-3 infrastructure recovery attack–repair round.
 - Zero to three ordered attacks per agent in each round.
-- One repair opportunity per agent in each round.
+- Durable two- or three-attempt repair allowances per canonical defect.
 - Process timeout and an optional per-agent spend hint.
 - Captured stdout, stderr, exit codes, durations, prompts, and agent transcripts.
 - Markdown, JSON, and a deterministic SVG battle replay generated from the same run data.
@@ -495,9 +494,9 @@ accepted or rejected entry, all versioned normalizations, redacted/truncated
 received values, exact JSON paths, validation codes, and allowed enum values.
 Reports link both artifacts but never embed raw provider contents.
 
-Review considers the first twelve positions, contestant attacks accept sparse
-unique ranks 1 through 3 without renumbering, house considers one submitted
-attack position, and case generation considers the first two positions.
+Review considers the first twelve positions, and contestant attacks accept sparse
+unique ranks 1 through 3 without renumbering. Legacy house and case submissions
+remain readable but are not generated for new runs.
 Duplicate-rank contestant entries are all rejected while unrelated ranks
 survive. House hypotheses are validated independently from house attacks.
 Contestant hypotheses are accepted only for legacy-read compatibility and
@@ -547,33 +546,15 @@ damage is applied. Unsupported or genuinely ambiguous expected behavior is
 `unproven`, misses, and deals recoil. The report must label landed attacks as
 additional evidence, not ground truth.
 
-### Visible and held-out repair cases
+### Repair reproducers and regression checks
 
-Every landed defect has a visible reproducer. Before the target sees it, the
-harness may also derive up to two held-out sibling cases from the same cited
-invariant, similar to a programming challenge's public and hidden tests. Sibling
-cases protect against a repair that special-cases the disclosed input.
-
-Held-out cases are accepted only when they:
-
-- Were generated and frozen before the repair prompt.
-- Exercise the same oracle and canonical root defect as the visible case.
-- Pass on an ordinary attack's author patch and fail on its target patch; house
-  cases are instead evaluated independently against each contestant.
-- Are deterministic and pass the same mechanical and semantic review.
-- Do not increase severity or create additional damage entries.
-
-The repair prompt reveals the claim, oracle, impact, visible reproducer, and the
-number and categories of held-out cases, but not their exact inputs or
-assertions. A defect heals only when the repaired patch passes the visible case
-and every accepted held-out sibling. After repair validation, failed held-out
-cases become visible evidence for later repairs; all cases are revealed in the
-final report.
-
-Held-out files live outside contestant worktrees and are never included in agent
-prompts. In the local MVP this secrecy is brokered rather than a hostile-code
-sandbox guarantee, and the report must label it honestly. A future isolated
-runner can enforce stronger confidentiality without changing scoring.
+Every mechanically landed defect keeps its executable reproducer. After each
+repair attempt the harness runs the required check, every active reproducer,
+and every previously healed defect's regression check. A repair heals only the
+exact active damage whose evidence now passes. For judge-based defects whose
+mechanics remain unavailable, an immutable digest-bound repair judgment records
+`repaired`, `not_repaired`, or `unable`; `unable` leaves damage active and
+degrades coverage.
 
 ### Agent review and one evidence revision
 
@@ -645,11 +626,11 @@ More than three replacement credits for one agent indicates a systemic harness
 problem. The run becomes inconclusive instead of discarding credits or running
 an unbounded accommodation loop.
 
-### Harness maintenance and accommodations
+### Deterministic harness accommodations
 
-Contestants should not edit the referee. A separate harness-maintainer agent,
-outside the competition and scoring, owns proposed harness accommodations. It
-receives anonymized failure packets and may change only run infrastructure:
+Contestants do not edit the referee. New runs use only deterministic,
+harness-owned accommodations and do not invoke a harness-maintainer model.
+Legacy accommodations may cover only run infrastructure:
 
 - Service startup, readiness, reset, and teardown.
 - Worktree or environment preparation.
@@ -715,12 +696,11 @@ Its verdict and written rationale are saved in the report. It must choose the
 lowest severity fully supported by the evidence; disputed or ambiguous High and
 Critical ratings are capped at Medium for the MVP.
 
-Damage is shown when the attack first lands. At the repair phase of the same
-round, the contestant receives the visible evidence and held-out case categories
-and can respond. It heals exactly that amount only when the repair passes the
-visible reproducer and every accepted held-out sibling. Otherwise the damage
-remains, failed siblings are revealed for later repair, and fixing the defect in
-a later round can still restore that HP. Each defect can have only one active
+Damage is shown when the attack first lands. At repair, the contestant receives
+every active defect that still has allowance and focused diagnostics. It heals
+exactly the applied amount only when repair validation succeeds. Otherwise the
+damage remains, and fixing the defect in a later attempt can still restore that
+HP. Each defect can have only one active
 damage entry: a later regression can reactivate it, but can never stack another
 copy. Severity belongs to the proven defect and does not change based on which
 contestant it hits.
@@ -785,9 +765,7 @@ integration:
 agents:
   - codex
   - claude
-attack_verifier: codex
-quality_verifier: codex
-harness_maintainer: codex
+judge: codex
 permissions:
   default: confirm
   allow:
@@ -831,6 +809,13 @@ Pull-request sources are requirements-only by default. `--base-from-pr` or
 `base_from_pr` is the explicit choice that freezes and fetches the reviewed PR
 head as the identical contestant base; no reference diff is shared by default.
 
+`attack_verifier` and `--verifier` remain temporary aliases for `judge` and
+`--judge`; they emit deprecation warnings. Quality-verifier,
+harness-maintainer, house-scout, and held-out-case settings are accepted with a
+warning and ignored for new runs. Completed older runs remain readable with
+their original provenance, while an interrupted pre-change run must restart
+instead of resuming across contract versions.
+
 ### Round prompts
 
 Yes: every round has its own prompt. The harness composes it from:
@@ -869,7 +854,7 @@ containing:
   base commit, topology, commands, budgets, permissions, and deterministic hash.
 - `permissions.json`: requested scopes, user decisions, leases, omitted checks,
   and redacted provisioning results.
-- `result.json`: compact schema-v6 status, stage, contestant health, outcome,
+- `result.json`: compact schema-v7 status, stage, contestant health, outcome,
   recommendation, warnings, artifact pointers, provenance, and ordered
   applied-envelope ledger. Detailed state is rebuilt from `baseline.json` and
   `rounds/<round>/envelope.json`; the immutable `finalization.json` projection
@@ -879,7 +864,9 @@ containing:
   exact score effects, and upgrade links. Pre-change completed runs remain
   reportable as read-only legacy artifacts with `legacy_unknown` provenance;
   interrupted legacy runs require a restart.
-- `feedback/`: schema-v2 deterministic, digest-linked role-safe agent
+- `rounds/<round>/repair-judgments/`: immutable, digest-bound judge decisions
+  for defects whose repair cannot be confirmed mechanically.
+- `feedback/`: schema-v3 deterministic, digest-linked role-safe agent
   projections targeting 8 KiB and capped at 24 KiB. Private transcripts,
   verbose judge rationale, and opponent-only evidence are never projected.
 - `runtime-manifest.json`: repository, frozen-source, dependency, runtime,
@@ -891,15 +878,11 @@ containing:
   verifier, and infrastructure-review prompts with versions and hashes.
 - `submissions/<round>/<phase>/<actor>/raw.txt`: immutable exact provider bytes.
 - `submissions/<round>/<phase>/<actor>/parsed.json`: fault-isolated parse and coverage telemetry.
-- `hypotheses/round-<n>/house-<target>.json`: neutral house-scout portfolios. Legacy contestant portfolio artifacts remain readable but are no longer written.
+- Legacy house and case artifacts remain readable but are not written by new runs.
 - `methods.json`: selected method packs, probe cards, tool versions, and seeds.
 - `patches/<agent>.diff`: each final implementation.
 - `attacks/round-<n>/<agent>/<rank>.diff`: every ordered attack patch.
-- `attacks/round-<n>/house.diff`: the optional neutral house attack.
-- `cases/<attack-id>/manifest.json`: visible and held-out case hashes, oracle,
-  root defect, generation time, and reveal state.
-- `cases/<attack-id>/held-out/`: harness-only sibling cases, revealed in the
-  completed report bundle.
+- Each rank overlay includes its declared shared support and can replay independently.
 - `revisions/round-<n>/<agent>/<rank>.diff`: the single evidence revision for
   each provisionally infrastructural attack, when used.
 - `harness-overlays/`: symmetric run accommodations, validation logs, and
@@ -1008,14 +991,14 @@ The MVP is ready when a new user can:
    stated, reproducible reason.
 7. See severity damage, miss recoil, repairs, heals, and health after every
    round.
-8. Observe a neutral house attack detect a shared defect in a seeded fixture and
-   see a visible-only special-case repair rejected by held-out sibling cases.
+8. Observe independently replayable rank overlays include shared support while
+   malformed ranks remain isolated from valid siblings.
 9. See integration discovery select the simplest sufficient environment and
    record any escalation.
 10. Receive a deterministic final matrix, recommendation or draw, and complete
    Markdown, HTML, SVG, and JSON artifacts.
-11. See every harness accommodation applied symmetrically, validated, and
-   recorded without affecting health.
+11. See deterministic harness accommodations applied symmetrically, validated,
+   and recorded without affecting health.
 12. Apply the recommended patch with a command and independently rerun the
     tests.
 

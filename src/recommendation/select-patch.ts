@@ -69,45 +69,50 @@ export function selectRecommendedPatch(
       comparison,
     });
   }
-  const verdict = input.qualityVerdict?.verdict;
+  const legacyVerdict = input.qualityVerdict?.verdict;
   if (
-    (verdict === "patch_a" || verdict === "patch_b") &&
+    (legacyVerdict === "patch_a" || legacyVerdict === "patch_b") &&
     input.anonymizationMap
   ) {
-    const selected = input.anonymizationMap[verdict];
+    const selected = input.anonymizationMap[legacyVerdict];
     if (correct.some((candidate) => candidate.contestantId === selected)) {
       return PatchRecommendationSchema.parse({
         contestantId: selected,
         reason: "implementation_quality",
-        qualityVerdict: verdict,
+        qualityVerdict: legacyVerdict,
         rationale: input.qualityVerdict?.rationale.length
           ? input.qualityVerdict.rationale
-          : ["Neutral quality comparison preferred this patch."],
+          : ["Legacy quality comparison preferred this patch."],
         comparison,
       });
     }
   }
-  if (
-    input.championId &&
-    correct.some((candidate) => candidate.contestantId === input.championId)
-  ) {
+  const smallestPatchSize = Math.min(
+    ...correct.map(
+      (candidate) =>
+        contestants.find((entry) => entry.id === candidate.contestantId)!
+          .patchSize,
+    ),
+  );
+  const smallest = correct.filter(
+    (candidate) =>
+      contestants.find((entry) => entry.id === candidate.contestantId)!
+        .patchSize === smallestPatchSize,
+  );
+  if (smallest.length === 1) {
     return PatchRecommendationSchema.parse({
-      contestantId: input.championId,
-      reason: "arena_fallback",
-      ...(verdict ? { qualityVerdict: verdict } : {}),
+      contestantId: smallest[0]!.contestantId,
+      reason: "patch_size",
       rationale: [
-        verdict === "equivalent"
-          ? "Quality comparison found the patches equivalent; using the arena champion."
-          : "Quality comparison was unavailable or inconclusive; using the arena champion.",
+        `Equal-correctness patches were tied on active defect damage; selected the smaller ${String(smallestPatchSize)}-byte patch.`,
       ],
       comparison,
     });
   }
   return PatchRecommendationSchema.parse({
     reason: "draw",
-    ...(verdict ? { qualityVerdict: verdict } : {}),
     rationale: [
-      "No correctness or quality comparison produced a unique patch.",
+      "Required-check eligibility, active defect damage, and patch size are tied.",
     ],
     comparison,
   });

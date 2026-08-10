@@ -19,6 +19,7 @@ const DurationLimitsSchema = z
     rounds: z.literal(3).default(3),
     attacks_per_round: z.literal(3).default(3),
     infrastructure_recovery_round: z.literal(true).default(true),
+    /** @deprecated Ignored for new runs. */
     held_out_cases_per_defect: z.number().int().min(0).max(2).default(2),
   })
   .strict()
@@ -53,9 +54,15 @@ const FileConfigSchema = z
     challenger: AgentIdSchema.optional(),
     agents: z.array(AgentIdSchema).length(2).optional(),
     models: z.array(z.string().trim().min(1)).length(2).optional(),
+    judge: AgentIdSchema.optional(),
+    /** @deprecated Use `judge`. */
     attack_verifier: AgentIdSchema.optional(),
+    /** @deprecated Ignored for new runs. */
     quality_verifier: AgentIdSchema.optional(),
+    /** @deprecated Ignored for new runs. */
     harness_maintainer: AgentIdSchema.optional(),
+    /** @deprecated Ignored for new runs. */
+    house_scout: AgentIdSchema.optional(),
     acceptance_criteria: z.array(z.string()).default([]),
     specs: z.array(z.string()).default([]),
     sources: z
@@ -142,6 +149,8 @@ export interface CliConfigOverrides {
   testCommand?: string;
   agents?: string;
   models?: string;
+  judge?: string;
+  /** @deprecated Use `judge`. */
   verifier?: string;
   qualityVerifier?: string;
   maintainer?: string;
@@ -320,6 +329,31 @@ export async function loadFightConfig(
       },
     ]),
   );
+  const compatibilityWarnings = [
+    ...(overrides.verifier || file.attack_verifier
+      ? ["`attack_verifier`/`--verifier` is deprecated; use `judge`/`--judge`."]
+      : []),
+    ...(overrides.qualityVerifier || file.quality_verifier
+      ? ["`quality_verifier` is obsolete and ignored for new runs."]
+      : []),
+    ...(overrides.maintainer || file.harness_maintainer
+      ? ["`harness_maintainer` is obsolete and ignored for new runs."]
+      : []),
+    ...(file.house_scout
+      ? ["`house_scout` is obsolete and ignored for new runs."]
+      : []),
+    ...(fileValue &&
+    typeof fileValue === "object" &&
+    "limits" in fileValue &&
+    fileValue.limits &&
+    typeof fileValue.limits === "object" &&
+    Object.prototype.hasOwnProperty.call(
+      fileValue.limits,
+      "held_out_cases_per_defect",
+    )
+      ? ["`held_out_cases_per_defect` is obsolete and ignored for new runs."]
+      : []),
+  ];
 
   return FightConfigSchema.parse({
     task: overrides.task,
@@ -388,19 +422,17 @@ export async function loadFightConfig(
       })),
     ],
     agents,
-    attackVerifier: overrides.verifier ?? file.attack_verifier ?? agents[0],
-    qualityVerifier:
-      overrides.qualityVerifier ??
-      file.quality_verifier ??
+    judge:
+      overrides.judge ??
       overrides.verifier ??
+      file.judge ??
       file.attack_verifier ??
       agents[0],
-    harnessMaintainer:
-      overrides.maintainer ?? file.harness_maintainer ?? agents[0],
+    configWarnings: compatibilityWarnings,
+    maxHeldOutCasesPerDefect: 0,
     rounds: 3,
     maxAttacksPerRound: 3,
     infrastructureRecoveryRound: true,
-    maxHeldOutCasesPerDefect: file.limits.held_out_cases_per_defect,
     testCommand: overrides.testCommand ?? file.test,
     ...(file.integration
       ? {

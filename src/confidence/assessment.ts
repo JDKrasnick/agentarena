@@ -29,7 +29,7 @@ function attempt(
   state: CoverageAttempt["state"],
   evidencePaths: string[] = [],
   reasonCode?: string,
-  attemptNumber: 1 | 2 = 1,
+  attemptNumber: 1 | 2 | 3 = 1,
 ): CoverageAttempt {
   return {
     attempt: attemptNumber,
@@ -68,6 +68,7 @@ export function assessBattleCoverage(
   state: RunState,
   permissionPolicy?: PermissionPolicy,
 ): CoverageAssessment {
+  const coverageV2 = state.schemaVersion === 6;
   const lanes: CoverageLaneAssessment[] = requiredCoverageLanes(
     state.config.mode,
   ).map(({ round, attacker, target }) => {
@@ -205,12 +206,26 @@ export function assessBattleCoverage(
     const repairAttempts =
       targetRound?.repairAttempts ??
       (targetRound?.repair ? [targetRound.repair] : []);
+    const repairJudgments = state.repairJudgments.filter(
+      (entry) =>
+        entry.round === round &&
+        entry.contestantId === target &&
+        attacks.some(
+          (attack) => attack.rootDefectId === entry.canonicalDefectId,
+        ),
+    );
+    const repairJudgeUnable = repairJudgments.some(
+      (entry) => entry.decision === "unable",
+    );
     const repairCompleted =
-      !repairRequired || repairAttempts.at(-1)?.status === "succeeded";
+      !repairRequired ||
+      (!repairJudgeUnable && repairAttempts.at(-1)?.status === "succeeded");
     if (repairRequired && !repairAttempts.length)
       reasonCodes.push("repair_missing");
     else if (repairRequired && !repairCompleted)
-      reasonCodes.push("repair_failed");
+      reasonCodes.push(
+        repairJudgeUnable ? "repair_judge_unable" : "repair_failed",
+      );
     const laneResolved = attackPathResolved && repairCompleted;
     const stages = [
       stage(
@@ -235,8 +250,11 @@ export function assessBattleCoverage(
             )
           : [attempt("failed", [], "review_missing")],
       ),
-      stage("focused_description", focusedAttempts),
-      stage("case_construction", [
+      stage(
+        coverageV2 ? "attack_submission" : "focused_description",
+        focusedAttempts,
+      ),
+      stage(coverageV2 ? "evidence_construction" : "case_construction", [
         attempt(
           explicitEmpty
             ? "not_applicable"
@@ -272,14 +290,21 @@ export function assessBattleCoverage(
       stage("repair", [
         ...(repairRequired
           ? repairAttempts.length
-            ? repairAttempts.slice(0, 2).map((entry, index) =>
+            ? repairAttempts.slice(0, 3).map((entry, index) =>
                 attempt(
-                  entry.status === "succeeded" ? "succeeded" : "failed",
+                  entry.status === "succeeded" &&
+                    !(repairJudgeUnable && index === repairAttempts.length - 1)
+                    ? "succeeded"
+                    : "failed",
                   [entry.promptPath, entry.transcriptPath].filter(
                     (value): value is string => Boolean(value),
                   ),
-                  entry.status === "succeeded" ? undefined : "repair_failed",
-                  index === 0 ? 1 : 2,
+                  entry.status === "succeeded" && !repairJudgeUnable
+                    ? undefined
+                    : repairJudgeUnable && index === repairAttempts.length - 1
+                      ? "repair_judge_unable"
+                      : "repair_failed",
+                  (index + 1) as 1 | 2 | 3,
                 ),
               )
             : [attempt("failed", [], "repair_missing")]
@@ -369,7 +394,7 @@ export function assessBattleCoverage(
   ]);
   const retryHistory = lanes.flatMap((lane) =>
     lane.stages.flatMap((entry) =>
-      entry.attempts.length === 2
+      entry.attempts.length >= 2
         ? [
             {
               laneId: lane.id,
@@ -378,8 +403,8 @@ export function assessBattleCoverage(
                 entry.finalState === "completed"
                   ? ("succeeded" as const)
                   : ("failed" as const),
-              ...(entry.attempts[1]?.reasonCode
-                ? { reasonCode: entry.attempts[1].reasonCode }
+              ...(entry.attempts.at(-1)?.reasonCode
+                ? { reasonCode: entry.attempts.at(-1)!.reasonCode }
                 : {}),
             },
           ]
@@ -387,7 +412,7 @@ export function assessBattleCoverage(
     ),
   );
   const draft = {
-    version: 1 as const,
+    version: coverageV2 ? (2 as const) : (1 as const),
     runId: state.runId,
     mode: state.config.mode,
     confidence:

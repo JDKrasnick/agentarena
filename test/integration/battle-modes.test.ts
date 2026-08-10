@@ -11,7 +11,7 @@ import {
 import { ArtifactStore } from "../../src/artifacts/store.js";
 import { applyAcceptedPatch } from "../../src/commands/apply.js";
 import { Arena } from "../../src/core/arena.js";
-import { FightConfigSchema, RunStateV5Schema } from "../../src/core/types.js";
+import { FightConfigSchema, RunStateV6Schema } from "../../src/core/types.js";
 import { readBaseline } from "../../src/recovery/durable.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
 import { freezePullRequest } from "../../src/task/pr-fixture.js";
@@ -189,7 +189,7 @@ describe("PR battle modes", () => {
       { durableV5: true },
     );
     const baseline = await readBaseline(store);
-    const baselineState = RunStateV5Schema.parse(
+    const baselineState = RunStateV6Schema.parse(
       structuredClone(baseline.state),
     );
     await Promise.all([

@@ -21,7 +21,7 @@ export const FEEDBACK_RANKING_VERSION = "lane-feedback-rank@2";
 
 const FeedbackManifestSchema = z
   .object({
-    version: z.union([z.literal(1), z.literal(2)]),
+    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
     runId: z.string().min(1),
     roundId: z.union([
       z.literal(1),
@@ -324,7 +324,7 @@ export function projectContestantFeedback(options: {
     contestant.rounds.find((entry) => entry.round === options.roundId)
       ?.startingHealth ?? contestant.finalHealth;
   const feedbackDraft = {
-    version: 2,
+    version: options.state.schemaVersion === 6 ? 3 : 2,
     runId: options.state.runId,
     roundId: options.roundId,
     contestantId: options.contestantId,
@@ -377,7 +377,7 @@ export async function persistContestantFeedback(options: {
   await options.store.writeImmutableJson(relative, feedback);
   const encoded = canonicalJson(feedback);
   const manifest = FeedbackManifestSchema.parse({
-    version: 2,
+    version: feedback.version >= 3 ? 3 : 2,
     runId: feedback.runId,
     roundId: feedback.roundId,
     contestantId: feedback.contestantId,

@@ -106,7 +106,7 @@ export function projectRoundStateDelta(
   // heal, so the projection carries the authoritative collection.
   const attacks = after.attacks;
   return RoundStateDeltaSchema.parse({
-    version: 2,
+    version: 3,
     runId: after.runId,
     roundId,
     attacks,
@@ -125,6 +125,9 @@ export function projectRoundStateDelta(
     reconciliationQueue: structuredClone(after.reconciliationQueue),
     submissionArtifacts: structuredClone(
       after.submissionArtifacts.slice(before.submissionArtifacts.length),
+    ),
+    repairJudgments: structuredClone(
+      after.repairJudgments.slice(before.repairJudgments.length),
     ),
     coordinator: {
       stage: after.stage,
@@ -179,6 +182,14 @@ export function applyCompletedRound(
         currentDamage: defect.currentDamage as Damage,
         evidenceHistory: structuredClone(defect.evidenceHistory),
         status: defect.status,
+        repairAllowance:
+          defect.repairAllowance ??
+          (defect.baseSeverity === "critical" || defect.baseSeverity === "high"
+            ? 3
+            : 2),
+        repairAttemptsUsed: defect.repairAttemptsUsed ?? 0,
+        repairAttemptIds: structuredClone(defect.repairAttemptIds ?? []),
+        regressionResets: defect.regressionResets ?? 0,
       }),
     );
     contestant.replacementCredits = structuredClone(
@@ -198,6 +209,11 @@ export function applyCompletedRound(
   state.submissionArtifacts.push(
     ...structuredClone(
       (delta.submissionArtifacts ?? []) as RunState["submissionArtifacts"],
+    ),
+  );
+  state.repairJudgments.push(
+    ...structuredClone(
+      (delta.repairJudgments ?? []) as RunState["repairJudgments"],
     ),
   );
   for (const entry of delta.invocations as TaggedValue[]) {

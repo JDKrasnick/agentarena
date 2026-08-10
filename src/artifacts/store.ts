@@ -15,15 +15,18 @@ import {
   RunStateV3Schema,
   RunStateV4Schema,
   RunStateV5Schema,
+  RunStateV6Schema,
   type RunState,
 } from "../core/types.js";
 import {
   AnyRunSummarySchema,
   RunSummaryV5Schema,
   RunSummaryV6Schema,
+  RunSummaryV7Schema,
   type AppliedEnvelope,
   type RunSummaryV5,
   type RunSummaryV6,
+  type RunSummaryV7,
 } from "../recovery/contracts.js";
 import { buildRunSummary, reconstructRunState } from "../recovery/durable.js";
 
@@ -200,6 +203,27 @@ export class ArtifactStore {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
+    if (state.schemaVersion === 6) {
+      if (existingVersion !== undefined && existingVersion !== 7)
+        throw new Error("Cannot replace an unsupported result schema");
+      const validated = RunStateV6Schema.parse(state);
+      const current = await this.readSummary();
+      const summary = await buildRunSummary({
+        store: this,
+        state: validated,
+        appliedEnvelopes: appliedEnvelopes ?? current?.appliedEnvelopes ?? [],
+        ...(current ? { provenance: current.provenance } : {}),
+      });
+      const target = this.resolve("result.json");
+      const temporary = this.resolve(`.result-${randomUUID()}.tmp`);
+      await writeFile(
+        temporary,
+        `${JSON.stringify(summary, null, 2)}\n`,
+        "utf8",
+      );
+      await rename(temporary, target);
+      return target;
+    }
     if (state.schemaVersion === 3 || existingVersion === 3) {
       const validated = RunStateV3Schema.parse(state);
       return this.replaceDerivedJson("result.json", validated);
@@ -239,7 +263,7 @@ export class ArtifactStore {
     ) as unknown;
     const version = (value as { schemaVersion?: unknown }).schemaVersion;
     const isDurableSummary =
-      (version === 5 || version === 6) &&
+      (version === 5 || version === 6 || version === 7) &&
       Array.isArray((value as { appliedEnvelopes?: unknown }).appliedEnvelopes);
     if (!isDurableSummary) return parseRunState(value);
     return reconstructRunState({
@@ -248,7 +272,9 @@ export class ArtifactStore {
     });
   }
 
-  async readSummary(): Promise<RunSummaryV5 | RunSummaryV6 | undefined> {
+  async readSummary(): Promise<
+    RunSummaryV5 | RunSummaryV6 | RunSummaryV7 | undefined
+  > {
     try {
       const value = JSON.parse(
         await readFile(this.resolve("result.json"), "utf8"),
@@ -258,13 +284,16 @@ export class ArtifactStore {
         appliedEnvelopes?: unknown;
       };
       if (
-        ![5, 6].includes(candidate.schemaVersion ?? -1) ||
+        ![5, 6, 7].includes(candidate.schemaVersion ?? -1) ||
         !Array.isArray(candidate.appliedEnvelopes)
       )
         return undefined;
-      return (value as { schemaVersion: number }).schemaVersion === 5
+      const version = (value as { schemaVersion: number }).schemaVersion;
+      return version === 5
         ? RunSummaryV5Schema.parse(value)
-        : RunSummaryV6Schema.parse(value);
+        : version === 6
+          ? RunSummaryV6Schema.parse(value)
+          : RunSummaryV7Schema.parse(value);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;

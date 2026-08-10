@@ -590,6 +590,26 @@ export const AdjudicationRecordSchema = z
   .readonly();
 export type AdjudicationRecord = z.infer<typeof AdjudicationRecordSchema>;
 
+export const RepairJudgmentRecordSchema = z
+  .object({
+    version: z.literal(1),
+    id: z.string().min(1),
+    round: RoundIdSchema,
+    canonicalDefectId: z.string().min(1),
+    contestantId: ContestantIdSchema,
+    attemptId: z.string().min(1),
+    patchDigest: z.string().length(64),
+    packetDigest: z.string().length(64),
+    decision: z.enum(["repaired", "not_repaired", "unable"]),
+    rationale: z.string(),
+    adjudicationId: z.string().min(1),
+    artifactRefs: z.array(z.string()),
+    createdAt: z.string().datetime(),
+  })
+  .strict()
+  .readonly();
+export type RepairJudgmentRecord = z.infer<typeof RepairJudgmentRecordSchema>;
+
 export const AttackSchema = z.object({
   id: z.string(),
   round: RoundIdSchema,
@@ -670,6 +690,10 @@ export const HealthLedgerSchema = z.object({
           }),
         ),
         status: z.enum(["active", "healed"]),
+        repairAllowance: z.number().int().positive().optional(),
+        repairAttemptsUsed: z.number().int().nonnegative().default(0),
+        repairAttemptIds: z.array(z.string()).default([]),
+        regressionResets: z.number().int().nonnegative().default(0),
       }),
     )
     .optional(),
@@ -698,7 +722,7 @@ export const ContestantRoundResultSchema = z.object({
   postAttackHealth: HealthPointSchema,
   postAttackStatus: z.enum(["active", "downed"]),
   repair: AgentInvocationSchema.optional(),
-  repairAttempts: z.array(AgentInvocationSchema).min(1).max(2).optional(),
+  repairAttempts: z.array(AgentInvocationSchema).min(1).max(3).optional(),
   endingHealth: HealthPointSchema,
   endingStatus: z.enum(["active", "eliminated"]),
 });
@@ -774,6 +798,14 @@ function normalizeBattleConfigInput(value: unknown): unknown {
       startingPatch: "none",
     }));
   }
+  if (input.judge === undefined) {
+    input.judge =
+      input.attackVerifier ??
+      (Array.isArray(input.contestants)
+        ? (input.contestants[0] as Record<string, unknown> | undefined)
+            ?.provider
+        : undefined);
+  }
   delete input.agents;
   if (input.mode === undefined) input.mode = "duel";
   return input;
@@ -792,13 +824,15 @@ const FightConfigBaseSchema = z
     pullRequestReferences: z.array(z.string()).default([]),
     taskReferences: z.array(TaskReferenceSchema).default([]),
     contestants: z.tuple([ContestantConfigSchema, ContestantConfigSchema]),
-    attackVerifier: AgentIdSchema,
-    qualityVerifier: AgentIdSchema.optional(),
-    harnessMaintainer: AgentIdSchema,
+    judge: AgentIdSchema,
+    /** @deprecated Read-only compatibility alias for pre-v6 run artifacts. */
+    attackVerifier: AgentIdSchema.optional(),
+    configWarnings: z.array(z.string()).default([]),
+    /** @deprecated Ignored for v6 new runs. */
+    maxHeldOutCasesPerDefect: z.number().int().min(0).max(2).default(0),
     rounds: z.literal(3),
     maxAttacksPerRound: z.literal(3),
     infrastructureRecoveryRound: z.literal(true),
-    maxHeldOutCasesPerDefect: z.number().int().min(0).max(2),
     testCommand: z.string().min(1),
     integrationProfile: IntegrationProfileSchema.optional(),
     repositoryRoot: z.string(),
@@ -1037,6 +1071,7 @@ export const PatchRecommendationSchema = z.object({
   contestantId: ContestantIdSchema.optional(),
   reason: z.enum([
     "correctness",
+    "patch_size",
     "implementation_quality",
     "arena_fallback",
     "draw",
@@ -1085,6 +1120,8 @@ export type ReviewPrompt = z.infer<typeof ReviewPromptSchema>;
 
 export const CoverageStageNameSchema = z.enum([
   "review",
+  "attack_submission",
+  "evidence_construction",
   "focused_description",
   "case_construction",
   "execution",
@@ -1094,7 +1131,7 @@ export const CoverageStageNameSchema = z.enum([
 export type CoverageStageName = z.infer<typeof CoverageStageNameSchema>;
 
 export const CoverageAttemptSchema = z.object({
-  attempt: z.union([z.literal(1), z.literal(2)]),
+  attempt: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   state: z.enum(["succeeded", "valid_empty", "failed", "not_applicable"]),
   reasonCode: z.string().min(1).optional(),
   evidencePaths: z.array(z.string()),
@@ -1104,7 +1141,7 @@ export type CoverageAttempt = z.infer<typeof CoverageAttemptSchema>;
 export const CoverageStageAssessmentSchema = z.object({
   stage: CoverageStageNameSchema,
   finalState: z.enum(["completed", "failed", "not_applicable"]),
-  attempts: z.array(CoverageAttemptSchema).min(1).max(2),
+  attempts: z.array(CoverageAttemptSchema).min(1).max(3),
 });
 
 export const CoverageLaneAssessmentSchema = z.object({
@@ -1132,7 +1169,7 @@ export type CoverageLaneAssessment = z.infer<
 >;
 
 export const CoverageAssessmentSchema = z.object({
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
   runId: z.string().min(1),
   mode: BattleModeSchema,
   confidence: z.enum(["full_confidence", "reduced_confidence", "provisional"]),
@@ -1213,6 +1250,7 @@ const RunStateCoreSchema = z.object({
   warnings: z.array(z.string()),
   reconciliationQueue: z.array(ReconciliationCandidateSchema).default([]),
   submissionArtifacts: z.array(SubmissionArtifactRecordSchema).default([]),
+  repairJudgments: z.array(RepairJudgmentRecordSchema).default([]),
   coverageAssessment: CoverageAssessmentSchema.optional(),
   coverageDecision: CoverageDecisionSchema.optional(),
 });
@@ -1272,11 +1310,30 @@ export const RunStateV5Schema = RunStateCoreSchema.extend({
   deliveryTarget: DeliveryTargetSchema.optional(),
   pullRequestFixture: PullRequestFixtureSchema.optional(),
 });
-export const RunStateSchema = RunStateV5Schema;
+export const RunStateV6Schema = RunStateCoreSchema.extend({
+  schemaVersion: z.literal(6),
+  runSpecHash: z.string().length(64),
+  contestants: z.partialRecord(ContestantIdSchema, ContestantResultSchema),
+  attacks: z.array(AttackSchema),
+  reviewInvocations: z.array(ReviewInvocationRecordSchema).default([]),
+  attackInvocations: z.array(AttackInvocationRecordSchema).default([]),
+  ranking: RankingSchema.optional(),
+  arenaOutcome: ArenaOutcomeSchema.optional(),
+  patchQualityFacts: z
+    .partialRecord(ContestantIdSchema, PatchQualityFactsSchema)
+    .default({}),
+  patchQualityVerdict: PatchQualityVerdictSchema.optional(),
+  patchRecommendation: PatchRecommendationSchema.optional(),
+  reviewPrompt: ReviewPromptSchema.optional(),
+  deliveryTarget: DeliveryTargetSchema.optional(),
+  pullRequestFixture: PullRequestFixtureSchema.optional(),
+});
+export const RunStateSchema = z.union([RunStateV5Schema, RunStateV6Schema]);
 export type RunStateV3 = z.infer<typeof RunStateV3Schema>;
 export type RunStateV4 = z.infer<typeof RunStateV4Schema>;
 export type RunStateV5 = z.infer<typeof RunStateV5Schema>;
-export type RunState = RunStateV3 | RunStateV4 | RunStateV5;
+export type RunStateV6 = z.infer<typeof RunStateV6Schema>;
+export type RunState = RunStateV3 | RunStateV4 | RunStateV5 | RunStateV6;
 
 // --- Legacy readers: in schema versions 1 and 2 the provider was the
 // contestant identity. They are migrated to contestant slots at load time. ---
@@ -1387,6 +1444,7 @@ export const AnyRunStateSchema = z.discriminatedUnion("schemaVersion", [
   RunStateV3Schema,
   RunStateV4Schema,
   RunStateV5Schema,
+  RunStateV6Schema,
 ]);
 export type AnyRunState = z.infer<typeof AnyRunStateSchema>;
 
@@ -1397,15 +1455,58 @@ export const AttackSubmissionEntrySchema = z.object({
   oracle: OracleCitationSchema,
   proposedSeverity: SeveritySchema,
   confidence: z.number().int().min(0).max(100),
-  reproduction: z.string().min(1),
+  /** @deprecated V1 description retained only for source compatibility. */
+  reproduction: z.string().min(1).optional(),
+  focusedCommand: z.string().min(1),
+  paths: z.array(z.string().min(1)).min(1),
   requiredCapabilities: z.array(z.string()).default([]),
 });
 
-export const AttackSubmissionSchema = z.object({
+export const AttackSubmissionV2Schema = z
+  .object({
+    version: z.literal(2),
+    sharedSupportPaths: z.array(z.string().min(1)).default([]),
+    attacks: z.array(AttackSubmissionEntrySchema).max(3),
+  })
+  .superRefine((submission, context) => {
+    const owners = new Map<string, number>();
+    submission.attacks.forEach((attack, index) => {
+      for (const attackPath of attack.paths) {
+        if (submission.sharedSupportPaths.includes(attackPath)) {
+          context.addIssue({
+            code: "custom",
+            path: ["attacks", index, "paths"],
+            message: `Rank-specific path ${attackPath} is also declared as shared support`,
+          });
+        }
+        const previous = owners.get(attackPath);
+        if (previous !== undefined) {
+          context.addIssue({
+            code: "custom",
+            path: ["attacks", index, "paths"],
+            message: `Rank-specific path ${attackPath} is also owned by attack ${String(previous + 1)}`,
+          });
+        } else owners.set(attackPath, index);
+      }
+    });
+  });
+const LegacyAttackSubmissionSchema = z.object({
   version: z.literal(1),
-  attacks: z.array(AttackSubmissionEntrySchema).max(3),
+  attacks: z
+    .array(
+      AttackSubmissionEntrySchema.omit({
+        focusedCommand: true,
+        paths: true,
+      }).extend({ reproduction: z.string().min(1) }),
+    )
+    .max(3),
 });
-export type AttackSubmission = z.infer<typeof AttackSubmissionSchema>;
+/** Reads completed legacy submissions; new-run parsing requires V2. */
+export const AttackSubmissionSchema = z.union([
+  LegacyAttackSubmissionSchema,
+  AttackSubmissionV2Schema,
+]);
+export type AttackSubmission = z.infer<typeof AttackSubmissionV2Schema>;
 
 export const StageSubmissionSchema = z.object({
   version: z.literal(1),

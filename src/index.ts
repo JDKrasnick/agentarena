@@ -28,6 +28,7 @@ export * from "./commands/apply.js";
 export * from "./commands/resolve-coverage.js";
 export * from "./confidence/assessment.js";
 export * from "./attacks/adjudicate.js";
+export * from "./judge/packets.js";
 export * from "./task/task-contract.js";
 export * from "./task/run-spec.js";
 export * from "./recovery/contracts.js";

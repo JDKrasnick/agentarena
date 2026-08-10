@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseFaultIsolatedSubmission,
+  declaredAttackPaths,
   isCorrectionEligible,
   mergeCorrectionFields,
   safelyRenderReceived,
@@ -55,6 +56,44 @@ describe("fault-isolated provider submissions", () => {
     expect(parsed.rejections.map((entry) => entry.code)).toEqual([
       "duplicate_rank",
       "duplicate_rank",
+    ]);
+  });
+
+  it("retains rejected V2 sibling paths for quarantine without materializing them", () => {
+    const parsed = parseFaultIsolatedSubmission(
+      "attack",
+      JSON.stringify({
+        version: 2,
+        sharedSupportPaths: ["test/support.ts"],
+        attacks: [
+          {
+            ...attack(1),
+            reproduction: undefined,
+            focusedCommand: "npm test -- one",
+            paths: ["test/one.test.ts"],
+          },
+          {
+            ...attack(1, { claim: "duplicate" }),
+            reproduction: undefined,
+            focusedCommand: "npm test -- duplicate",
+            paths: ["test/duplicate.test.ts"],
+          },
+          {
+            ...attack(3),
+            reproduction: undefined,
+            focusedCommand: "npm test -- three",
+            paths: ["test/three.test.ts"],
+          },
+        ],
+      }),
+    );
+
+    expect(parsed.value.attacks.map((entry) => entry.rank)).toEqual([3]);
+    expect(declaredAttackPaths(parsed)).toEqual([
+      "test/support.ts",
+      "test/one.test.ts",
+      "test/duplicate.test.ts",
+      "test/three.test.ts",
     ]);
   });
 

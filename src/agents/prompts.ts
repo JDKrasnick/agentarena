@@ -2,7 +2,6 @@ import { sha256 } from "../core/ids.js";
 import type {
   AgentId,
   AttackReviewArtifact,
-  AttackSubmission,
   ContestantId,
   FightConfig,
   PermissionPolicy,
@@ -140,11 +139,11 @@ export function composePrompt(context: PromptContext): string {
     common.push(
       "",
       "# Submission schema",
-      '{"version":1,"attacks":[{"rank":1,"claim":"...","impact":"...","oracle":{"expectedBehavior":"...","rationale":"Explain how the frozen task text supports this behavior"},"proposedSeverity":"high","confidence":90,"reproduction":"Public API call, concrete input, and expected observable result","requiredCapabilities":[]}]}',
-      "Attack ranks must be unique and contiguous. Submit a precise failure description; do not create or edit test files or production code.",
-      'Immediately write {"version":1,"attacks":[]} to .agent-arena-submission.json before doing any other work, so a bounded phase always has an explicit result.',
-      "The assigned worktree contains the frozen target patch. Start from the review packet, inspect the cited code and nearby tests as needed, and describe a deterministic public reproducer. Do not restart broad repository review.",
-      "A neutral case judge will independently write and execute any regression test. As soon as a defect is described, update the structured submission before investigating another. Leaving attacks: [] is the correct result when no reviewed finding reproduces.",
+      '{"version":2,"sharedSupportPaths":["test/support/arena.ts"],"attacks":[{"rank":1,"claim":"...","impact":"...","oracle":{"expectedBehavior":"...","rationale":"Explain how the frozen task text supports this behavior"},"proposedSeverity":"high","confidence":90,"focusedCommand":"npm test -- test/arena-rank-1.test.ts","paths":["test/arena-rank-1.test.ts"],"requiredCapabilities":[]}]}',
+      "Attack ranks must be unique values from 1 through 3 and may be sparse. Create executable test or fixture evidence, but never edit production code. Rank-specific paths must be disjoint; shared support paths are copied into every independently replayable overlay.",
+      'Immediately write {"version":2,"sharedSupportPaths":[],"attacks":[]} to .agent-arena-submission.json before doing any other work, so a bounded phase always has an explicit result.',
+      "The assigned worktree contains the frozen target patch. Start from the review packet, inspect the cited code and nearby tests as needed, and build deterministic executable evidence. Do not restart broad repository review.",
+      "Update the structured submission as each attack becomes executable. Leaving attacks: [] is the correct result when no reviewed finding reproduces.",
     );
   }
   if (context.round !== undefined) {
@@ -254,7 +253,7 @@ export function composeAttackReviewPrompt(
 export function composeNeutralCasePrompt(input: {
   runSpec: RunSpec;
   permissions: PermissionPolicy;
-  failure: AttackSubmission["attacks"][number];
+  failure: object;
   outputPath: string;
 }): string {
   return `${[

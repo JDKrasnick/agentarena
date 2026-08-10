@@ -22,6 +22,7 @@ import type {
   ContestantResult,
   RunState,
 } from "../../src/core/types.js";
+import { RunStateV6Schema } from "../../src/core/types.js";
 import { makeRunState } from "../helpers/run-state.js";
 import { reviewRun } from "../../src/review/service.js";
 
@@ -305,6 +306,52 @@ describe("coverage assessment", () => {
       stage: "repair",
       result: "succeeded",
     });
+  });
+
+  it("records all three v2 repair attempts and leaves an unable judge repair unresolved", () => {
+    const state = RunStateV6Schema.parse({
+      ...makeRunState(),
+      schemaVersion: 6,
+    });
+    addLaneRecords(state);
+    state.attackInvocations[0]!.parseOutcome = "valid";
+    state.attackInvocations[0]!.attackCount = 1;
+    state.attacks.push({
+      ...baseAttack(),
+      status: "landed",
+      rootDefectId: "repair-root",
+      severity: "high",
+      damage: 30,
+      damageActive: true,
+      evidenceProvenance: "judge_confirmed",
+    });
+    addRepairAttempts(state, "b", 1, ["succeeded", "succeeded", "succeeded"]);
+    state.repairJudgments.push({
+      version: 1,
+      id: "repair-judgment-1",
+      round: 1,
+      canonicalDefectId: "repair-root",
+      contestantId: "b",
+      attemptId: "repair-attempt-3",
+      patchDigest: "a".repeat(64),
+      packetDigest: "b".repeat(64),
+      decision: "unable",
+      rationale: "insufficient bounded evidence",
+      adjudicationId: "adjudication-1",
+      artifactRefs: [],
+      createdAt: "2026-08-09T00:00:00.000Z",
+    });
+
+    const assessment = assessBattleCoverage(state);
+    const repair = assessment.requiredLanes[0]?.stages.find(
+      (entry) => entry.stage === "repair",
+    );
+    expect(repair?.attempts.map((entry) => entry.attempt)).toEqual([1, 2, 3]);
+    expect(repair?.finalState).toBe("failed");
+    expect(assessment.requiredLanes[0]?.finalState).toBe("unresolved");
+    expect(assessment.requiredLanes[0]?.reasonCodes).toContain(
+      "repair_judge_unable",
+    );
   });
 
   it("does not reuse correction evidence across rounds", () => {
