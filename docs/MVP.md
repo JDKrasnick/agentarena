@@ -15,14 +15,14 @@ The MVP exists to prove one idea:
 The result is confidence-qualified. New runs use exactly two contestant adapters
 and one fresh, identity-blind judge adapter. Duel and catch-up require both
 directions in all three attack rounds; siege requires attacker-to-defender in
-all three. Every required coverage-v2 lane records `review`,
+all three. Every required coverage-v3 lane records `review`,
 `attack_submission`, `evidence_construction`, `execution`,
 `semantic_adjudication`, and `repair` when applicable. Direct overlay capture
 completes evidence construction without another model call; a schema-valid
 `attacks: []` completes the lane with downstream stages not applicable.
 
-Each failed stage or evidence path receives one targeted retry, shared with the
-existing correction, evidence-revision, and recovery mechanisms. Mechanical
+Each failed stage or evidence path receives one targeted retry from the failed
+stage, with validated upstream output reused. Mechanical
 confirmation is preferred. When that path still cannot execute, the neutral
 judge may confirm normal damage, reject the claim with ordinary rank recoil,
 decline to adjudicate with no score change, or award exact 35% damage only
@@ -82,8 +82,9 @@ violations, or programming invariants.
 `Arena`'s direct mechanism import allowlist is empty. Each terminal result is
 sealed in a digest-chained immutable envelope. Completed envelopes apply through
 an ordered exactly-once ledger; inconclusive, cancelled, and failed envelopes
-preserve evidence without advancing state. Schema-v5 summaries rebuild detailed
-state from the immutable preflight baseline and applied envelopes, while v1–v4
+preserve evidence without advancing state. Schema-v8 summaries rebuild detailed
+state from the immutable preflight baseline and applied V4 envelopes, while
+v1–v7
 runs retain their legacy authority model.
 
 ## Who it is for
@@ -143,11 +144,9 @@ Agent Arena then:
      for Medium/Low across the run.
    - After every attempt, the harness reruns required checks, all active
      reproducers, and healed regression checks; it stops early when all pass.
-8. Runs one recovery attack–repair round when infrastructure replacement credits
-   exist.
-9. Runs every final patch against the original suite, all active reproducers,
+8. Runs every final patch against the original suite, all active reproducers,
    and all healed-defect regression checks.
-10. Produces a recommendation, health timeline, test matrix, replayable run data,
+9. Produces a recommendation, health timeline, test matrix, replayable run data,
    a clickable HTML dossier with linked evidence, and a patch the developer can
    inspect or apply.
 
@@ -210,7 +209,6 @@ symmetrically.
 | Round 1 — contract and local correctness | Trace every acceptance criterion through the changed code. Look for wrong results, missing behavior, regressions, error handling, and input or boundary mistakes. | Examples, table tests, boundary tests, negative cases, and API assertions. |
 | Round 2 — systematic exploration | Look beyond obvious examples: state transitions, ordering, persistence, serialization, mutation survivors, generated inputs, concurrency schedules, cancellation, resource cleanup, and patch interactions. | Property-based tests, fuzz or generated cases, mutation-guided tests, schedule tests, static-analysis findings with executable reproducers, and state-machine tests. |
 | Round 3 — integration, resilience, and security | Exercise the patch across its real component boundaries with approved test dependencies. Vary configuration and dependency behavior; test authentication and authorization, retries, idempotency, timeouts, partial failure, recovery, and bounded load. | Ephemeral-service integration tests, protocol assertions, fault injection, security checks, recovery invariants, leak checks, and small deterministic stress tests. |
-| Recovery — infrastructure replacements only | Spend credits for attack slots lost to confirmed or unresolved infrastructure failure. Find new evidence against the post-round-3 patches; do not relitigate the failed claim. | The same evidence types, under the final approved capability manifest. |
 | Final validation | Re-run the required suite and every already accepted arena check. It discovers no score-changing surprise after the last repair opportunity. | A deterministic patch-by-check matrix and health-ledger replay. |
 
 Round 3 is the proactive integration round, but integration is not deferred until
@@ -310,7 +308,7 @@ unscored report finding.
 - Independently replayable target-relative attack overlays.
 - One implementation round.
 - Three attack–repair rounds.
-- One optional post-round-3 infrastructure recovery attack–repair round.
+- One targeted retry for each distinct stage or evidence-path failure.
 - Zero to three ordered attacks per agent in each round.
 - Durable two- or three-attempt repair allowances per canonical defect.
 - Process timeout and an optional per-agent spend hint.
@@ -503,26 +501,14 @@ Contestant hypotheses are accepted only for legacy-read compatibility and
 cannot affect scoring or attack validity. Unsupported versions, non-object
 envelopes, and unparseable JSON remain wholly invalid.
 
-An independently identifiable rejected contestant or house attack enters a
-versioned durable reconciliation queue. The original submission is attempt one;
-at the start of the next attack-bearing round each contestant receives one
-shared `attack_minutes` deadline for all its pending corrections and the neutral
-house receives one shared deadline. Correction is keyed by candidate ID,
-freezes every field that already validated, and permits only missing or rejected
-fields to change. Corrected evidence is evaluated against the current frozen
-patches in a separate carry-over lane, outside the three new contestant slots,
-with ordinary damage/recoil and the original rank; house evidence remains
-no-recoil. A missing, timed-out, tampered, or still-malformed second attempt is
-discarded permanently and recorded as lost coverage.
-
-Infrastructure recovery, when present, is the next correction opportunity. If
-the last attack-bearing round creates candidates, one optional `reconciliation`
-round runs correction, neutral case construction, attack validation,
-simultaneous scoring, repair, and required validation without new review,
-scouting, or attacks. It is skipped when no candidate is pending. Queue state is
-part of snapshots, results, replays, deltas, sealed recovery, and resume; legacy
-runs default to an empty queue. These outcomes preserve coverage telemetry for
-later confidence policy without changing winner or confidence policy here.
+An independently identifiable malformed attack path receives one immediate
+correction opportunity in the same transactional round against the same frozen
+patches. The original submission is attempt one. Correction freezes every
+field that already validated and permits only missing or rejected fields to
+change, so valid siblings continue normally. A missing, timed-out, tampered, or
+still-malformed second attempt is discarded permanently and recorded as lost
+coverage. No correction queue or later reconciliation round exists for new
+runs.
 
 ### Conservative attack acceptance
 
@@ -556,110 +542,35 @@ mechanics remain unavailable, an immutable digest-bound repair judgment records
 `repaired`, `not_repaired`, or `unable`; `unable` leaves damage active and
 degrades coverage.
 
-### Agent review and one evidence revision
+### Bounded failure handling and judge fallback
 
-An apparent infrastructure failure is provisional, not final. A real patch
-defect may crash a service, corrupt a fixture, exhaust a resource, or cause a
-timeout that initially looks like an environment problem.
+Every distinct model, parse, Git/filesystem, service, transport, capability, or
+command failure receives one targeted retry from the failed stage. Attempt one
+is persisted before attempt two begins, validated upstream artifacts are reused,
+and a third attempt is prohibited. Repeated evidence executions required for
+stability are validation samples, not retries.
 
-When the first retry and control runs cannot establish causality, mark the attack
-`provisional_infrastructure` and return the redacted failure packet to its
-author. The attacking agent must review its own evidence and choose:
+After attack mechanics exhaust that allowance, the neutral judge may receive
+only a schema-valid immutable attack with a claim, oracle, target, and concrete
+patch or evidence facts. Definitive confirmation deals full frozen-severity
+damage; semantic rejection applies ordinary rank recoil; task-supported,
+concretely evidenced but mechanically unavailable behavior deals exactly 35%;
+and `unable` changes no score while leaving coverage unresolved. A valid
+`unable` verdict is terminal. Implementation, repair availability, required
+validation, and final validation are never converted into contestant damage.
 
-- **Accept infrastructure:** withdraw the attack and request no-fault
-  confirmation. If the harness controls agree that the failure was not caused by
-  the submission, receive one replacement credit because the attempt does not
-  count against the attack allowance.
-- **Challenge classification:** use one bounded evidence revision to show that
-  the failure follows the target patch.
+The failure-handling ledger records the stage, two-attempt ceiling, diagnostic
+links, reused artifacts, terminal disposition, confidence effect, and exact
+score effect. Unresolved run-level validation preserves only a provisional
+ledger leader until the digest-bound coverage decision resolves the run.
 
-An evidence revision may change only:
+### Deterministic harness retries
 
-- Setup and teardown.
-- Isolation between runs.
-- Timeout thresholds within arena limits.
-- Logging, tracing, probes, and other observability.
-- The focused command needed to execute the same test.
-
-It may not change the claim, expected behavior, support rationale, target, rank, or
-root defect, and it may not introduce a different attack. The revision does not
-consume another attack slot and causes no immediate recoil.
-
-The harness then reruns the revised evidence against the same frozen pre-repair
-patches, with a fresh service instance for each patch when applicable:
-
-- Reproducible target-only failure while author and controls remain healthy:
-  contestant behavior; continue normal landing and severity adjudication.
-- Environment-wide failure independent of the patch: `infrastructure_error`;
-  no damage or recoil, and issue one replacement credit.
-- Causality still cannot be established: `execution_inconclusive`; no damage or
-  recoil, preserve the finding prominently, and issue one replacement credit.
-- Revision changes the claim or oracle: invalid attack and normal miss recoil.
-- Agent accepts infrastructure but controls identify a malformed or
-  agent-caused failure: invalid attack and normal miss recoil.
-
-Only attacks provisionally classified as infrastructure receive this revision.
-Blocked, self-defeating, unproven, duplicate, and ordinarily invalid attacks do
-not get a second attempt. Round health is not resolved until every provisional
-attack is reviewed and any challenge completes.
-
-### Optional infrastructure recovery round
-
-After normal round 3 and before declaring a winner, run one additional
-attack–repair recovery round if either agent holds replacement credits.
-
-- One confirmed or unresolved infrastructure attack produces one credit.
-- An agent may spend up to three credits on zero to three newly ranked
-  replacement attacks.
-- Replacement attacks follow the normal rank, recoil, oracle, severity, and
-  repair rules; only the lost infrastructure attempt was free.
-- Credits do not carry into another round, and no second recovery round exists.
-- A recovery attack that encounters another harness failure makes the run
-  inconclusive rather than silently consuming the credit.
-
-The recovery round uses the patches produced after normal round 3. If a
-contestant is downed but has a credit, final elimination is deferred until its
-recovery attacks and the corresponding repair phase finish. A contestant that
-failed a required validation command is still eliminated and cannot use credits.
-
-More than three replacement credits for one agent indicates a systemic harness
-problem. The run becomes inconclusive instead of discarding credits or running
-an unbounded accommodation loop.
-
-### Deterministic harness accommodations
-
-Contestants do not edit the referee. New runs use only deterministic,
-harness-owned accommodations and do not invoke a harness-maintainer model.
-Legacy accommodations may cover only run infrastructure:
-
-- Service startup, readiness, reset, and teardown.
-- Worktree or environment preparation.
-- Capability adapters and credential-broker wiring.
-- Timeouts, retries, resource limits, and diagnostic probes.
-- Test-runner invocation when the repository's official command is preserved.
-
-It may not edit contestant patches, attack assertions, expected behavior,
-oracles, severity, health, or ranking.
-
-During a fight, the maintainer produces a versioned run overlay rather than
-self-modifying the installed Agent Arena source. The harness applies an overlay
-only when:
-
-1. Its scope is symmetric for both contestants.
-2. The harness's own unit and integration checks pass.
-3. The original failure reproducer passes in clean author, target, and control
-   environments as appropriate.
-4. The exact overlay and validation evidence are recorded.
-5. Any new material permission is approved under the permission plan.
-
-Low-risk, already-authorized accommodations may apply automatically. Material
-scope, permission, or environment changes require user confirmation. If the
-overlay cannot be validated, the run is inconclusive.
-
-A defect in Agent Arena itself produces a proposed product patch and a permanent
-regression fixture, but the installed referee is not rewritten mid-fight. The
-product patch is reviewed and released normally, then the fight can be replayed
-from its saved state.
+Contestants do not edit the referee. New runs use deterministic, harness-owned
+service setup, worktree preparation, capability adapters, timeout enforcement,
+and diagnostics. They do not invoke a harness-maintainer model or apply a
+generated run overlay. A defect in Agent Arena produces diagnostics and a
+normal product fix; the installed referee is never rewritten mid-fight.
 
 The reliability target is:
 
@@ -717,9 +628,8 @@ between 0 and 100.
 A contestant is eliminated if its final patch cannot be applied or fails the
 configured original validation command; required-check elimination sets its
 health to 0 regardless of adversarial damage. A contestant that remains at 0 HP
-after a round's repair is also eliminated. If only one contestant remains and
-no downed contestant holds a replacement credit, the fight ends early.
-Otherwise, after three normal rounds and the optional recovery round:
+after a round's repair is also eliminated. If only one contestant remains, the
+fight ends early. Otherwise, after three normal rounds:
 
 1. Highest final HP wins.
 2. Lower final patch size wins only as a tie-breaker.
@@ -785,7 +695,6 @@ sources:
 limits:
   rounds: 3
   attacks_per_round: 3
-  infrastructure_recovery_round: true
   implementation_minutes: 15
   attack_minutes: 8
   verifier_minutes: 2
@@ -830,10 +739,8 @@ Round 1 asks the agent to map requirements to observable behavior. Round 2 asks
 for a diverse hypothesis portfolio and systematic probes rather than three
 variations of the same example. Round 3 supplies the approved integration
 topology, test identities, dependency contracts, fault controls, and
-steady-state invariants. The recovery prompt includes the exact number of
-credits and explains that another infrastructure failure ends the run as
-inconclusive. Repair and infrastructure-review prompts are separate because
-their allowed edits and success conditions differ.
+steady-state invariants. Repair and judge prompts remain separate because their
+allowed evidence and success conditions differ.
 
 Prompts, method-pack versions, tool versions, random seeds, and hashes are saved
 with the run. Contestants receive identical common and round prompts; only the
@@ -854,7 +761,7 @@ containing:
   base commit, topology, commands, budgets, permissions, and deterministic hash.
 - `permissions.json`: requested scopes, user decisions, leases, omitted checks,
   and redacted provisioning results.
-- `result.json`: compact schema-v7 status, stage, contestant health, outcome,
+- `result.json`: compact schema-v8 status, stage, contestant health, outcome,
   recommendation, warnings, artifact pointers, provenance, and ordered
   applied-envelope ledger. Detailed state is rebuilt from `baseline.json` and
   `rounds/<round>/envelope.json`; the immutable `finalization.json` projection
@@ -874,8 +781,8 @@ containing:
   drift checks.
 - `checkpoints/`: sealed-boundary descriptors for read-only replay and future
   fork UI. Invoking agents from history creates a fork with a new run ID.
-- `prompts/`: rendered common, implementation, attack-round, repair, recovery,
-  verifier, and infrastructure-review prompts with versions and hashes.
+- `prompts/`: rendered common, implementation, attack-round, repair, and judge
+  prompts with versions and hashes.
 - `submissions/<round>/<phase>/<actor>/raw.txt`: immutable exact provider bytes.
 - `submissions/<round>/<phase>/<actor>/parsed.json`: fault-isolated parse and coverage telemetry.
 - Legacy house and case artifacts remain readable but are not written by new runs.
@@ -883,10 +790,8 @@ containing:
 - `patches/<agent>.diff`: each final implementation.
 - `attacks/round-<n>/<agent>/<rank>.diff`: every ordered attack patch.
 - Each rank overlay includes its declared shared support and can replay independently.
-- `revisions/round-<n>/<agent>/<rank>.diff`: the single evidence revision for
-  each provisionally infrastructural attack, when used.
-- `harness-overlays/`: symmetric run accommodations, validation logs, and
-  proposed permanent harness fixes.
+- `rounds/<round>/failures/`: normalized bounded-failure records and diagnostic
+  artifact pointers.
 - `logs/`: harness command logs and provider transcripts.
 
 Generated worktrees are temporary and may be removed after the report is safely
@@ -912,9 +817,9 @@ Failures should be useful and recoverable:
   report explains why, and its author takes rank-based recoil.
 - Harness-owned failures are retried in a clean worktree and never cause damage,
   recoil, healing failure, or elimination.
-- An apparent attack-level infrastructure failure receives one evidence
-  revision before becoming `infrastructure_error` or `execution_inconclusive`;
-  neither final status has a health effect.
+- An attack-level infrastructure failure receives one targeted retry before an
+  eligible immutable attack may use judge fallback; unresolved coverage has no
+  health effect.
 - A user-denied optional capability marks the affected attack
   `capability_denied`; it has no health effect.
 - A denied or unavailable required capability blocks preflight unless the user
@@ -985,8 +890,8 @@ The MVP is ready when a new user can:
 3. Review one explicit permission plan and see which capabilities are agent,
    harness-only, approved, or denied.
 4. Receive two independently generated implementation patches.
-5. Observe three attack–repair rounds plus one recovery round when replacement
-   credits exist, unless an early elimination ends the fight.
+5. Observe three attack–repair rounds unless an early elimination ends the
+   fight, with at most one retry for each distinct failure.
 6. See zero to three ranked attacks per agent per round land or miss for a
    stated, reproducible reason.
 7. See severity damage, miss recoil, repairs, heals, and health after every

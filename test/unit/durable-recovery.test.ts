@@ -61,7 +61,7 @@ async function fixture() {
   after.warnings.push("sealed warning");
   const delta = projectRoundStateDelta(before, after, 1);
   const snapshotDraft = {
-    version: 1 as const,
+    version: 4 as const,
     runId: before.runId,
     roundId: 1 as const,
     snapshotHash: "0".repeat(64),
@@ -133,10 +133,10 @@ async function fixture() {
       health: 100,
       permanentRecoil: 0,
       activeDefects: [],
-      replacementCredits: [],
       status: "active" as const,
     })),
     knownDefects: [],
+    failureRecords: [],
     priorReplayHash: null,
   };
   snapshotDraft.snapshotHash = calculateSnapshotHash(snapshotDraft);
@@ -154,7 +154,7 @@ async function fixture() {
     sha256: sha256(deltaBytes),
   };
   const replayDraft = {
-    version: 1 as const,
+    version: 4 as const,
     runId: before.runId,
     roundId: 1 as const,
     snapshotHash: snapshot.snapshotHash,
@@ -165,6 +165,7 @@ async function fixture() {
     repairs: [],
     scoreEvents: [],
     diagnostics: [],
+    failureRecords: [],
     artifacts: [deltaArtifact],
     stateDeltaArtifactId: deltaArtifact.id,
     replayHash: "0".repeat(64),
@@ -180,7 +181,6 @@ async function fixture() {
     health: 100,
     permanentRecoil: 0,
     activeDefects: [],
-    replacementCredits: [],
     status: "active" as const,
   }));
   const resultFor = (status: RoundResult["status"]): RoundResult => {
@@ -202,19 +202,21 @@ async function fixture() {
     return RoundResultSchema.parse(
       status === "completed"
         ? {
-            version: 1,
+            version: 4,
             status,
             runId: before.runId,
             roundId: 1,
             resultingContestants: contestants,
+            failureRecords: [],
             replay,
           }
         : {
-            version: 1,
+            version: 4,
             status,
             runId: before.runId,
             roundId: 1,
             resultingContestants: contestants,
+            failureRecords: [],
             replay: exceptionalReplay,
             diagnostics: [diagnostic],
           },
@@ -300,7 +302,7 @@ describe("durable round recovery", () => {
     },
   );
 
-  it("rebuilds a v5 result from its immutable baseline and applied envelopes", async () => {
+  it("rebuilds a v8 result from its immutable baseline and applied envelopes", async () => {
     const { store, before, resultFor } = await fixture();
     await writeBaseline({
       store,
@@ -339,7 +341,7 @@ describe("durable round recovery", () => {
     const summary = JSON.parse(
       await readFile(store.resolve("result.json"), "utf8"),
     ) as { schemaVersion: number; appliedEnvelopes: unknown[] };
-    expect(summary.schemaVersion).toBe(6);
+    expect(summary.schemaVersion).toBe(8);
     expect(summary.appliedEnvelopes).toHaveLength(1);
     const rebuilt = await store.readState();
     expect(rebuilt.warnings).toEqual(["sealed warning"]);

@@ -6,9 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CommandAgentAdapter,
   CommandCaseBuilder,
-  CommandHarnessMaintainer,
   CommandHouseScout,
-  CommandInfrastructureReviewer,
   RuleBasedVerifier,
 } from "../../src/agents/adapter.js";
 import { Arena } from "../../src/core/arena.js";
@@ -173,7 +171,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(outcome.state.attacks).toEqual([]);
   });
 
-  it("reconciles only identifiable malformed attacks in a complete fight", async () => {
+  it("keeps valid siblings when a same-round correction remains malformed", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = FightConfigSchema.parse({
       task: "Normalize slug whitespace and lowercase input.",
@@ -225,21 +223,11 @@ describe("fake-adapter fight on a mocked real issue", () => {
     }).fight(config);
 
     expect(outcome.state.status).toBe("complete");
-    expect(outcome.state.reconciliationQueue).toEqual([
-      expect.objectContaining({
-        sourceRound: 3,
-        sourceEntryIndex: 1,
-        actor: "a",
-        status: "corrected",
-        attemptCount: 2,
-        correctionRound: "reconciliation",
-      }),
-    ]);
-    expect(outcome.state.reconciliationQueue[0]?.resultingAttackId).toBeTypeOf(
-      "string",
-    );
     expect(
-      outcome.state.attacks.find((attack) => attack.round === "reconciliation"),
+      outcome.state.attacks.find(
+        (attack) =>
+          attack.round === 3 && attack.claim.includes("Uppercase input"),
+      ),
     ).toMatchObject({
       origin: { kind: "contestant", contestant: "a" },
       rank: 1,
@@ -247,29 +235,17 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(outcome.state.submissionArtifacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          round: "reconciliation",
-          phase: "correction",
+          round: 3,
+          phase: "attack",
           actor: "a",
-          kind: "correction",
-          outcome: "valid",
+          kind: "attack",
+          outcome: "partial",
         }),
       ]),
     );
-    expect(
-      RoundReplaySchema.parse(
-        JSON.parse(
-          await readFile(
-            path.join(
-              outcome.state.artifacts.runDirectory!,
-              "rounds",
-              "reconciliation",
-              "replay.json",
-            ),
-            "utf8",
-          ),
-        ),
-      ).roundId,
-    ).toBe("reconciliation");
+    expect(outcome.state.failureRecords).toEqual(
+      expect.arrayContaining([expect.objectContaining({ stage: "parsing" })]),
+    );
   });
 
   it("returns an inconclusive round when implementation infrastructure fails", async () => {
@@ -576,7 +552,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         "utf8",
       ),
     ) as { schemaVersion: number; stage: string };
-    expect(result).toMatchObject({ schemaVersion: 7, stage: "complete" });
+    expect(result).toMatchObject({ schemaVersion: 8, stage: "complete" });
     const roundDirectory = path.join(
       outcome.state.artifacts.runDirectory!,
       "rounds",
@@ -671,8 +647,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       contentHash: string;
       task: { sources: Array<{ kind: string; snapshotPath: string }> };
     };
-    expect(outcome.state.schemaVersion).toBe(6);
-    if (outcome.state.schemaVersion !== 6) throw new Error("expected v6 state");
+    expect(outcome.state.schemaVersion).toBe(7);
+    if (outcome.state.schemaVersion !== 7) throw new Error("expected v7 state");
     expect(outcome.state.runSpecHash).toBe(runSpec.contentHash);
     const issueSnapshot = runSpec.task.sources.find(
       (source) => source.kind === "issue",
@@ -726,7 +702,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     ).toBe(0);
   });
 
-  it("grants a no-fault credit for verifier infrastructure and executes one bounded recovery round", async () => {
+  it("records judge-unable verifier infrastructure without an extra round", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = FightConfigSchema.parse({
       task: "Fix issue #87: collapse every whitespace run while keeping lowercase slugs.",
@@ -784,17 +760,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         executable: process.execPath,
         args: [fixtureAgent],
       }),
-      infrastructureReviewer: new CommandInfrastructureReviewer({
-        codex: { executable: process.execPath, args: [fixtureAgent] },
-        claude: { executable: process.execPath, args: [fixtureAgent] },
-      }),
-      harnessMaintainer: new CommandHarnessMaintainer("codex", {
-        executable: process.execPath,
-        args: [fixtureAgent],
-      }),
     }).fight(config);
-    const credit = outcome.state.contestants.a?.replacementCredits[0];
-    expect(credit).toBeUndefined();
     expect(outcome.state.coverageAssessment).toMatchObject({
       confidence: "provisional",
     });
@@ -805,6 +771,10 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(
       outcome.state.attacks.some((attack) => attack.status === "judge_unable"),
     ).toBe(true);
-    expect(outcome.state.harnessOverlays).toEqual([]);
+    expect(outcome.state.failureRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ terminalDisposition: "judge_unable" }),
+      ]),
+    );
   });
 });

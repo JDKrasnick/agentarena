@@ -492,47 +492,35 @@ export function renderBattleReport(state: RunState): string {
         ) ?? [],
     ),
     "",
-    "## Infrastructure recovery",
+    "## Failure handling ledger",
     "",
-    ...contestants.flatMap((contestant) =>
-      contestant.replacementCredits.length
-        ? contestant.replacementCredits.map(
-            (credit) =>
-              `- ${contestantLabel(state.config.contestants, contestant.id)}: credit ${credit.id} from ${credit.sourceAttackId} — ${credit.status}${credit.replacementAttackId ? ` by ${credit.replacementAttackId}` : ""}`,
-          )
-        : [
-            `- ${contestantLabel(state.config.contestants, contestant.id)}: no replacement credits`,
-          ],
-    ),
-    ...state.attacks
-      .filter(
-        (attack) =>
-          attack.infrastructureReview ||
-          [
-            "infrastructure_error",
-            "execution_inconclusive",
-            "provisional_infrastructure",
-          ].includes(attack.status),
-      )
-      .map(
-        (attack) =>
-          `- ${attack.id}: ${attack.status}; review ${attack.infrastructureReview ?? "not recorded"}`,
-      ),
-    ...(state.harnessOverlays.length
-      ? state.harnessOverlays.map(
-          (overlay) =>
-            `- Overlay ${overlay.id}: ${overlay.status}; scopes ${overlay.scopes.join(", ") || "none"}; validation ${overlay.validationChecks.map((check) => `${check.id}:${check.status}`).join(", ") || "none"}`,
-        )
-      : ["- No harness overlays applied."]),
-    "",
-    "## Submission reconciliation",
-    "",
-    ...(state.reconciliationQueue.length
-      ? state.reconciliationQueue.map(
-          (candidate) =>
-            `- ${candidate.id}: ${candidate.lane} ${candidate.actor} → ${candidate.target}, source ${String(candidate.sourceRound)} position ${String(candidate.sourceEntryIndex)}, attempt ${String(candidate.attemptCount)}/2 — ${candidate.status}${candidate.resultingAttackId ? ` as ${candidate.resultingAttackId}` : ""}${candidate.discardReason ? ` (${candidate.discardReason})` : ""}; attempt 1 ${artifactLink(state, "raw", candidate.rawArtifactPath)} · ${artifactLink(state, "parsed", candidate.parsedArtifactPath)}${candidate.correctionRawArtifactPath || candidate.correctionParsedArtifactPath ? `; attempt 2 ${artifactLink(state, "raw", candidate.correctionRawArtifactPath)} · ${artifactLink(state, "parsed", candidate.correctionParsedArtifactPath)}` : ""}`,
-        )
-      : ["- No reconciliation candidates were created."]),
+    "| Failure | Stage | Attempts | Retry outcome | Judge basis | Confidence effect | Score effect | Diagnostics |",
+    "| --- | --- | ---: | --- | --- | --- | --- | --- |",
+    ...(state.failureRecords.length
+      ? state.failureRecords.map((failure) => {
+          const disposition = failure.terminalDisposition ?? "coverage_lost";
+          const judgeBasis = disposition.startsWith("judge_")
+            ? disposition
+            : "—";
+          const confidence = [
+            "judge_partial",
+            "judge_unable",
+            "coverage_lost",
+            "run_level_coverage_lost",
+          ].includes(disposition)
+            ? "reduced or provisional"
+            : "none";
+          const score =
+            disposition === "judge_confirmed"
+              ? "full frozen severity"
+              : disposition === "judge_partial"
+                ? "35% frozen severity"
+                : disposition === "judge_rejected"
+                  ? "normal rank recoil"
+                  : "none";
+          return `| ${failure.failureId} | ${failure.stage} | ${String(failure.attempts.length)}/2 | ${disposition} | ${judgeBasis} | ${confidence} | ${score} | ${failure.diagnosticArtifactRefs.map((artifact) => artifactLink(state, "diagnostic", artifact)).join(" · ") || "—"} |`;
+        })
+      : ["| — | — | 0/2 | no failures recorded | — | none | none | — |"]),
     "",
     ...contestants.flatMap(contestantSection),
     "## Permissions and limitations",

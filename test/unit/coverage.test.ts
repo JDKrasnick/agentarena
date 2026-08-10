@@ -8,6 +8,7 @@ import {
 } from "../../src/attacks/adjudicate.js";
 import { ArtifactStore } from "../../src/artifacts/store.js";
 import { resolveCoverage } from "../../src/commands/resolve-coverage.js";
+import { writeBaseline } from "../../src/recovery/durable.js";
 import {
   assessBattleCoverage,
   assertTargetedRetryAllowed,
@@ -93,7 +94,6 @@ function contestant(id: "a" | "b"): ContestantResult {
     status: "survived",
     initialHealth: 100,
     finalHealth: 100,
-    replacementCredits: [],
     healthLedger: {
       permanentRecoil: 0,
       activeDefects: [],
@@ -200,7 +200,7 @@ describe("coverage assessment", () => {
     expect(recoveredAssessment.retryHistory).toContainEqual(
       expect.objectContaining({
         laneId: "round-1:a->b",
-        stage: "focused_description",
+        stage: "attack_submission",
         result: "succeeded",
       }),
     );
@@ -229,7 +229,7 @@ describe("coverage assessment", () => {
     expect(exhaustedAssessment.requiredLanes[0]?.finalState).toBe("unresolved");
     expect(
       exhaustedAssessment.requiredLanes[0]?.stages.find(
-        (entry) => entry.stage === "focused_description",
+        (entry) => entry.stage === "attack_submission",
       )?.attempts,
     ).toHaveLength(2);
   });
@@ -312,6 +312,8 @@ describe("coverage assessment", () => {
     const state = RunStateV6Schema.parse({
       ...makeRunState(),
       schemaVersion: 6,
+      harnessOverlays: [],
+      reconciliationQueue: [],
     });
     addLaneRecords(state);
     state.attackInvocations[0]!.parseOutcome = "valid";
@@ -417,6 +419,12 @@ describe("coverage assessment", () => {
     if (state.arenaOutcome) delete state.arenaOutcome.championId;
     const store = new ArtifactStore(artifactRoot, state.runId);
     await store.initialize();
+    await writeBaseline({
+      store,
+      state,
+      repositoryIdentity: "local:test",
+      now: new Date("2026-08-09T00:00:00.000Z"),
+    });
     await store.writeState(state);
     await expect(
       resolveCoverage({

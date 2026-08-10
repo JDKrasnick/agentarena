@@ -3,6 +3,7 @@ import { contestantLabel } from "./labels.js";
 import {
   AnyRunStateSchema,
   RunStateV3Schema,
+  RunStateV7Schema,
   type AgentId,
   type AnyRunState,
   type ContestantId,
@@ -162,5 +163,7 @@ export function parseRunState(value: unknown): RunState {
     case 5:
     case 6:
       return state;
+    case 7:
+      return RunStateV7Schema.parse(state);
   }
 }

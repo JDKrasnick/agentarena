@@ -324,7 +324,7 @@ export function projectContestantFeedback(options: {
     contestant.rounds.find((entry) => entry.round === options.roundId)
       ?.startingHealth ?? contestant.finalHealth;
   const feedbackDraft = {
-    version: options.state.schemaVersion === 6 ? 3 : 2,
+    version: options.state.schemaVersion >= 6 ? 3 : 2,
     runId: options.state.runId,
     roundId: options.roundId,
     contestantId: options.contestantId,

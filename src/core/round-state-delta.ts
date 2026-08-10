@@ -10,7 +10,6 @@ import type {
   ContestantResult,
   ContestantRoundResult,
   Damage,
-  HarnessOverlay,
   ReviewInvocationRecord,
   RoundId,
   RoundPromptManifest,
@@ -106,7 +105,7 @@ export function projectRoundStateDelta(
   // heal, so the projection carries the authoritative collection.
   const attacks = after.attacks;
   return RoundStateDeltaSchema.parse({
-    version: 3,
+    version: 4,
     runId: after.runId,
     roundId,
     attacks,
@@ -117,12 +116,13 @@ export function projectRoundStateDelta(
         : [],
     ),
     promptManifests: after.promptManifests.slice(before.promptManifests.length),
-    harnessOverlays: after.harnessOverlays.slice(before.harnessOverlays.length),
+    failureRecords: structuredClone(
+      after.failureRecords.slice(before.failureRecords.length),
+    ),
     checks,
     roundSummaries,
     healthEvents,
     patchMetadata,
-    reconciliationQueue: structuredClone(after.reconciliationQueue),
     submissionArtifacts: structuredClone(
       after.submissionArtifacts.slice(before.submissionArtifacts.length),
     ),
@@ -192,9 +192,6 @@ export function applyCompletedRound(
         regressionResets: defect.regressionResets ?? 0,
       }),
     );
-    contestant.replacementCredits = structuredClone(
-      resulting.replacementCredits,
-    );
     contestant.status =
       resulting.status === "eliminated"
         ? "eliminated"
@@ -205,7 +202,7 @@ export function applyCompletedRound(
   }
 
   state.attacks = structuredClone(delta.attacks as Attack[]);
-  state.reconciliationQueue = structuredClone(delta.reconciliationQueue ?? []);
+  state.failureRecords.push(...structuredClone(delta.failureRecords));
   state.submissionArtifacts.push(
     ...structuredClone(
       (delta.submissionArtifacts ?? []) as RunState["submissionArtifacts"],
@@ -229,7 +226,6 @@ export function applyCompletedRound(
   state.promptManifests.push(
     ...(delta.promptManifests as RoundPromptManifest[]),
   );
-  state.harnessOverlays.push(...(delta.harnessOverlays as HarnessOverlay[]));
   for (const entry of delta.checks as TaggedValue[]) {
     if (entry.contestantId)
       state.contestants[entry.contestantId]?.checks.push(entry.value as never);

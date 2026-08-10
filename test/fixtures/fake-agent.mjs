@@ -262,7 +262,7 @@ if (stage === "implement") {
               sourceLocation: "command-line task",
               rationale: "The task requires lowercase slugs",
             },
-            proposedSeverity: "catastrophic",
+            proposedSeverity: "medium",
             confidence: 70,
             reproduction:
               "Call slug with Alpha Beta; expect a lowercase alpha-beta slug.",

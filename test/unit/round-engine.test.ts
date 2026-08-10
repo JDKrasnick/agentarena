@@ -12,7 +12,7 @@ const HASH = "a".repeat(64);
 
 function snapshot(): RoundSnapshot {
   const draft = {
-    version: 1 as const,
+    version: 4 as const,
     runId: "run-1",
     roundId: 1 as const,
     snapshotHash: HASH,
@@ -82,7 +82,6 @@ function snapshot(): RoundSnapshot {
         health: 100,
         permanentRecoil: 0,
         activeDefects: [],
-        replacementCredits: [],
         status: "pending" as const,
       },
       {
@@ -91,11 +90,11 @@ function snapshot(): RoundSnapshot {
         health: 100,
         permanentRecoil: 0,
         activeDefects: [],
-        replacementCredits: [],
         status: "pending" as const,
       },
     ] as const,
     knownDefects: [],
+    failureRecords: [],
     priorReplayHash: null,
   };
   draft.snapshotHash = calculateSnapshotHash(draft);
@@ -115,7 +114,7 @@ function result(
     status: "active" as const,
   })) as [(typeof accepted.contestants)[0], (typeof accepted.contestants)[1]];
   const replay = {
-    version: 1 as const,
+    version: 4 as const,
     runId: accepted.runId,
     roundId: accepted.roundId,
     snapshotHash: accepted.snapshotHash,
@@ -126,6 +125,7 @@ function result(
     repairs: [],
     scoreEvents: [],
     diagnostics: [],
+    failureRecords: [],
     artifacts: [
       {
         id: "delta",
@@ -139,10 +139,11 @@ function result(
   };
   replay.replayHash = calculateReplayHash(replay);
   const base = {
-    version: 1 as const,
+    version: 4 as const,
     runId: accepted.runId,
     roundId: accepted.roundId,
     resultingContestants: contestants,
+    failureRecords: [],
     replay,
   };
   return status === "completed"

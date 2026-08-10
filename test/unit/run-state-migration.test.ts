@@ -9,6 +9,8 @@ describe("legacy run-state migration", () => {
       ...current,
       schemaVersion: 3,
       taskContractHash: "legacy-contract",
+      harnessOverlays: [],
+      reconciliationQueue: [],
     };
     Reflect.deleteProperty(legacy, "runSpecHash");
     const parsed = parseRunState(legacy);
@@ -33,6 +35,8 @@ describe("legacy run-state migration", () => {
       ...current,
       schemaVersion: 1,
       taskContractHash: "legacy-contract",
+      harnessOverlays: [],
+      reconciliationQueue: [],
       contestants: {
         codex: toLegacy(a, "codex"),
         claude: toLegacy(b, "claude"),

@@ -25,7 +25,6 @@ function contestant(
     status: "survived",
     initialHealth: 100,
     finalHealth: health,
-    replacementCredits: [],
     healthLedger: {
       permanentRecoil: recoil,
       activeDefects: activeDamage
@@ -101,7 +100,7 @@ export function makeRunState(
   codex.finalPatchPath = `${runDirectory}/patches/a.diff`;
   claude.finalPatchPath = `${runDirectory}/patches/b.diff`;
   const state = RunStateSchema.parse({
-    schemaVersion: 5,
+    schemaVersion: 7,
     runId: "run-12345678",
     harnessVersion: "0.1.0",
     status: "complete",

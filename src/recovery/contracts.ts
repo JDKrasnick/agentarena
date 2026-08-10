@@ -37,7 +37,7 @@ export type AppliedEnvelope = z.infer<typeof AppliedEnvelopeSchema>;
 
 export const RoundEnvelopeSchema = z
   .object({
-    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    version: z.literal(4),
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     sealedAt: IsoDateSchema,
@@ -234,6 +234,7 @@ export const RunSummaryV5Schema = z
       .strict()
       .optional(),
     contestants: z.tuple([SummaryContestantSchema, SummaryContestantSchema]),
+    ranking: JsonValueSchema.optional(),
     outcome: JsonValueSchema.optional(),
     recommendation: JsonValueSchema.optional(),
     coverageAssessment: JsonValueSchema.optional(),
@@ -268,10 +269,15 @@ export const RunSummaryV7Schema = RunSummaryV5Schema.unwrap()
   .omit({ schemaVersion: true })
   .extend({ schemaVersion: z.literal(7) });
 export type RunSummaryV7 = z.infer<typeof RunSummaryV7Schema>;
+export const RunSummaryV8Schema = RunSummaryV5Schema.unwrap()
+  .omit({ schemaVersion: true })
+  .extend({ schemaVersion: z.literal(8) });
+export type RunSummaryV8 = z.infer<typeof RunSummaryV8Schema>;
 export const AnyRunSummarySchema = z.discriminatedUnion("schemaVersion", [
   RunSummaryV5Schema,
   RunSummaryV6Schema,
   RunSummaryV7Schema,
+  RunSummaryV8Schema,
 ]);
 
 export const CheckpointDescriptorSchema = z

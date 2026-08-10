@@ -98,27 +98,27 @@ function contestant(contestantId: "a" | "b") {
     health: 100,
     permanentRecoil: 0,
     activeDefects: [],
-    replacementCredits: [],
     status: "active" as const,
   };
 }
 
 function snapshot() {
   return {
-    version: 1 as const,
+    version: 4 as const,
     runId: "run-1",
     roundId: 1 as const,
     snapshotHash: HASH,
     runSpec: runSpec(),
     contestants: [contestant("a"), contestant("b")] as const,
     knownDefects: [],
+    failureRecords: [],
     priorReplayHash: null,
   };
 }
 
 function replay() {
   return {
-    version: 1 as const,
+    version: 4 as const,
     runId: "run-1",
     roundId: 1 as const,
     snapshotHash: HASH,
@@ -129,6 +129,7 @@ function replay() {
     repairs: [],
     scoreEvents: [],
     diagnostics: [],
+    failureRecords: [],
     artifacts: [
       {
         id: "round-state-delta-1",
@@ -194,11 +195,12 @@ describe("round boundary contracts", () => {
     expect(roundTrip(RoundReplaySchema, replay()).replayHash).toBe(OTHER_HASH);
     expect(
       roundTrip(RoundResultSchema, {
-        version: 1,
+        version: 4,
         runId: "run-1",
         roundId: 1,
         status: "completed",
         resultingContestants: [contestant("a"), contestant("b")],
+        failureRecords: [],
         replay: replay(),
       }).status,
     ).toBe("completed");
@@ -223,11 +225,12 @@ describe("round boundary contracts", () => {
     expect(
       validateRoundResult(
         {
-          version: 1,
+          version: 4,
           runId: accepted.runId,
           roundId: accepted.roundId,
           status: "completed",
           resultingContestants: accepted.contestants,
+          failureRecords: [],
           replay: replayDraft,
         },
         accepted,
@@ -246,11 +249,12 @@ describe("round boundary contracts", () => {
     expect(() =>
       validateRoundResult(
         {
-          version: 1,
+          version: 4,
           runId: accepted.runId,
           roundId: accepted.roundId,
           status: "completed",
           resultingContestants: accepted.contestants,
+          failureRecords: [],
           replay: {
             ...replayDraft,
             diagnostics: [
@@ -282,11 +286,12 @@ describe("round boundary contracts", () => {
     ).toThrow(/Only round 1/);
     expect(() =>
       RoundResultSchema.parse({
-        version: 1,
+        version: 4,
         runId: "run-1",
         roundId: 1,
         status: "completed",
         resultingContestants: firstRound.contestants,
+        failureRecords: [],
         replay: replay(),
       }),
     ).toThrow(/cannot leave a contestant pending/);
@@ -345,11 +350,12 @@ describe("round boundary contracts", () => {
     ).toThrow(/runId/);
     expect(() =>
       RoundResultSchema.parse({
-        version: 1,
+        version: 4,
         runId: "run-1",
         roundId: 2,
         status: "completed",
         resultingContestants: [contestant("a"), contestant("b")],
+        failureRecords: [],
         replay: replay(),
       }),
     ).toThrow(/identities/);
@@ -361,11 +367,12 @@ describe("round boundary contracts", () => {
     ).toThrow(/topology order/);
     expect(() =>
       RoundResultSchema.parse({
-        version: 1,
+        version: 4,
         runId: "run-1",
         roundId: 1,
         status: "completed",
         resultingContestants: [contestant("b"), contestant("a")],
+        failureRecords: [],
         replay: replay(),
       }),
     ).toThrow(/ordered a then b/);
@@ -440,49 +447,22 @@ describe("round boundary contracts", () => {
     ).toThrow(/production-owning contestant/);
   });
 
-  it("requires available replacement-credit state for recovery rounds", () => {
+  it("restricts current rounds to the three attack-repair rounds", () => {
     expect(() =>
       RoundSnapshotSchema.parse({ ...snapshot(), roundId: "recovery" }),
-    ).toThrow(/available credit/);
-    const recovery = {
-      ...snapshot(),
-      roundId: "recovery" as const,
-      contestants: [
-        {
-          ...contestant("a"),
-          status: "downed" as const,
-          replacementCredits: [
-            {
-              id: "credit-1",
-              sourceAttackId: "attack-1",
-              issuedRound: 3 as const,
-              reason: "final_infrastructure" as const,
-              status: "available" as const,
-            },
-          ],
-        },
-        contestant("b"),
-      ] as const,
-    };
-    expect(() => RoundSnapshotSchema.parse(recovery)).not.toThrow();
-    expect(roundTrip(RoundSnapshotSchema, recovery).roundId).toBe("recovery");
+    ).toThrow();
     expect(() =>
-      RoundSnapshotSchema.parse({
-        ...recovery,
-        contestants: [
-          { ...recovery.contestants[0], status: "eliminated" },
-          recovery.contestants[1],
-        ],
-      }),
-    ).toThrow(/available credit/);
+      RoundSnapshotSchema.parse({ ...snapshot(), roundId: "reconciliation" }),
+    ).toThrow();
   });
 
   it("requires every outcome to include a replay and failure diagnostics", () => {
     const base = {
-      version: 1,
+      version: 4,
       runId: "run-1",
       roundId: 1,
       resultingContestants: [contestant("a"), contestant("b")],
+      failureRecords: [],
     };
     expect(() =>
       RoundResultSchema.parse({ ...base, status: "completed" }),

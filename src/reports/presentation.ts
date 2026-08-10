@@ -136,7 +136,7 @@ export function reportRounds(state: RunState): ReportRound[] {
     ids.push("recovery");
   }
   if (
-    state.reconciliationQueue.length > 0 ||
+    ("reconciliationQueue" in state && state.reconciliationQueue.length > 0) ||
     state.attacks.some((attack) => attack.round === "reconciliation") ||
     contestants.some((contestant) =>
       contestant.rounds.some((round) => round.round === "reconciliation"),
@@ -194,7 +194,9 @@ export function recordedArtifactPaths(state: RunState): Set<string> {
     if (record.rawArtifactPath) paths.add(record.rawArtifactPath);
     if (record.parsedArtifactPath) paths.add(record.parsedArtifactPath);
   }
-  for (const candidate of state.reconciliationQueue) {
+  for (const candidate of "reconciliationQueue" in state
+    ? state.reconciliationQueue
+    : []) {
     paths.add(candidate.rawArtifactPath);
     paths.add(candidate.parsedArtifactPath);
     if (candidate.correctionRawArtifactPath)

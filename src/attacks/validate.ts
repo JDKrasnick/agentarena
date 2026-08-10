@@ -17,7 +17,6 @@ import { changedPathsFromPatch, isAllowedAttackPath } from "../repo/git.js";
 import type { WorktreeManager } from "../repo/git.js";
 import { runShellCommand } from "../runner/process-runner.js";
 import { applyJudgeVerdict, suppressKnownJudgeDefect } from "./adjudicate.js";
-import { assertTargetedRetryAllowed } from "../confidence/assessment.js";
 
 interface ValidateAttackOptions {
   attack: Attack;
@@ -123,6 +122,18 @@ async function judgeFallback(
   reason: string,
   worktree?: string,
 ): Promise<Attack> {
+  if (
+    !attack.claim.trim() ||
+    !attack.targets.length ||
+    !attack.patchPath.trim() ||
+    !attack.oracle.rationale.trim()
+  ) {
+    return withOutcome(
+      attack,
+      "judge_unable",
+      "Judge fallback requires a schema-valid immutable attack with a claim, oracle, target, and concrete patch evidence",
+    );
+  }
   if (!options.verifier.adjudicate)
     return withOutcome(attack, "judge_unable", reason);
   const fallbackWorktree =
@@ -131,39 +142,30 @@ async function judgeFallback(
       `${String(attack.round)}-${attack.id}-judge-fallback`,
     ));
   const ownsWorktree = worktree === undefined;
-  let lastFailure = reason;
   try {
-    for (const attemptNumber of [1, 2] as const) {
-      try {
-        const verdict = await options.verifier.adjudicate({
-          attack: anonymizeAttackForVerifier(attack),
-          runSpec: options.runSpec,
-          mechanicalFailureReason: reason,
-          priorCanonicalDefects: options.priorCanonicalDefects ?? [],
-          worktree: fallbackWorktree,
-          promptPath: path.join(
-            options.logRoot,
-            `judge-fallback-attempt-${String(attemptNumber)}.prompt.md`,
-          ),
-          transcriptPrefix: path.join(
-            options.logRoot,
-            `judge-fallback-attempt-${String(attemptNumber)}`,
-          ),
-          timeoutMs: options.config.limits.verifierMs,
-          signal: options.signal,
-        });
-        const adjudicated = suppressKnownJudgeDefect(
-          applyJudgeVerdict(attack, verdict),
-          options.knownRootDefects,
-        );
-        if (adjudicated.status !== "judge_unable") return adjudicated;
-        lastFailure = adjudicated.outcomeReason ?? reason;
-      } catch (error) {
-        lastFailure = `Judge fallback failed: ${error instanceof Error ? error.message : String(error)}`;
-      }
-      if (attemptNumber === 1) assertTargetedRetryAllowed(attemptNumber);
+    try {
+      const verdict = await options.verifier.adjudicate({
+        attack: anonymizeAttackForVerifier(attack),
+        runSpec: options.runSpec,
+        mechanicalFailureReason: reason,
+        priorCanonicalDefects: options.priorCanonicalDefects ?? [],
+        worktree: fallbackWorktree,
+        promptPath: path.join(options.logRoot, "judge-fallback.prompt.md"),
+        transcriptPrefix: path.join(options.logRoot, "judge-fallback"),
+        timeoutMs: options.config.limits.verifierMs,
+        signal: options.signal,
+      });
+      return suppressKnownJudgeDefect(
+        applyJudgeVerdict(attack, verdict),
+        options.knownRootDefects,
+      );
+    } catch (error) {
+      return withOutcome(
+        attack,
+        "judge_unable",
+        `Judge fallback failed after its targeted retry: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
-    return withOutcome(attack, "judge_unable", lastFailure);
   } finally {
     if (ownsWorktree) await options.worktrees.remove(fallbackWorktree);
   }

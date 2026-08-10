@@ -18,7 +18,8 @@ const DurationLimitsSchema = z
     repair_minutes: z.number().positive().default(8),
     rounds: z.literal(3).default(3),
     attacks_per_round: z.literal(3).default(3),
-    infrastructure_recovery_round: z.literal(true).default(true),
+    /** @deprecated Accepted and ignored for legacy configuration. */
+    infrastructure_recovery_round: z.boolean().optional(),
     /** @deprecated Ignored for new runs. */
     held_out_cases_per_defect: z.number().int().min(0).max(2).default(2),
   })
@@ -31,7 +32,6 @@ const DurationLimitsSchema = z
     repair_minutes: 8,
     rounds: 3,
     attacks_per_round: 3,
-    infrastructure_recovery_round: true,
     held_out_cases_per_defect: 2,
   });
 
@@ -353,6 +353,19 @@ export async function loadFightConfig(
     )
       ? ["`held_out_cases_per_defect` is obsolete and ignored for new runs."]
       : []),
+    ...(fileValue &&
+    typeof fileValue === "object" &&
+    "limits" in fileValue &&
+    fileValue.limits &&
+    typeof fileValue.limits === "object" &&
+    Object.prototype.hasOwnProperty.call(
+      fileValue.limits,
+      "infrastructure_recovery_round",
+    )
+      ? [
+          "`limits.infrastructure_recovery_round` is obsolete and ignored; new runs always use exactly three rounds.",
+        ]
+      : []),
   ];
 
   return FightConfigSchema.parse({
@@ -432,7 +445,6 @@ export async function loadFightConfig(
     maxHeldOutCasesPerDefect: 0,
     rounds: 3,
     maxAttacksPerRound: 3,
-    infrastructureRecoveryRound: true,
     testCommand: overrides.testCommand ?? file.test,
     ...(file.integration
       ? {

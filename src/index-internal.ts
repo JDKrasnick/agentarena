@@ -4,8 +4,6 @@ export type {
   Availability,
   CaseBuilder,
   HouseScout,
-  HarnessMaintainer,
-  InfrastructureReviewer,
 } from "./agents/adapter.js";
 export type {
   IssueResolver,
