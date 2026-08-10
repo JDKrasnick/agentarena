@@ -126,6 +126,9 @@ export function projectRoundStateDelta(
     submissionArtifacts: structuredClone(
       after.submissionArtifacts.slice(before.submissionArtifacts.length),
     ),
+    repairJudgments: structuredClone(
+      after.repairJudgments.slice(before.repairJudgments.length),
+    ),
     coordinator: {
       stage: after.stage,
       ...(after.currentRound !== undefined
@@ -206,6 +209,11 @@ export function applyCompletedRound(
   state.submissionArtifacts.push(
     ...structuredClone(
       (delta.submissionArtifacts ?? []) as RunState["submissionArtifacts"],
+    ),
+  );
+  state.repairJudgments.push(
+    ...structuredClone(
+      (delta.repairJudgments ?? []) as RunState["repairJudgments"],
     ),
   );
   for (const entry of delta.invocations as TaggedValue[]) {

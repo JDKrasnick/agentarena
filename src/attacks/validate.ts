@@ -121,42 +121,52 @@ async function judgeFallback(
   options: ValidateAttackOptions,
   attack: Attack,
   reason: string,
-  worktree = options.config.repositoryRoot,
+  worktree?: string,
 ): Promise<Attack> {
   if (!options.verifier.adjudicate)
     return withOutcome(attack, "judge_unable", reason);
+  const fallbackWorktree =
+    worktree ??
+    (await options.worktrees.create(
+      `${String(attack.round)}-${attack.id}-judge-fallback`,
+    ));
+  const ownsWorktree = worktree === undefined;
   let lastFailure = reason;
-  for (const attemptNumber of [1, 2] as const) {
-    try {
-      const verdict = await options.verifier.adjudicate({
-        attack: anonymizeAttackForVerifier(attack),
-        runSpec: options.runSpec,
-        mechanicalFailureReason: reason,
-        priorCanonicalDefects: options.priorCanonicalDefects ?? [],
-        worktree,
-        promptPath: path.join(
-          options.logRoot,
-          `judge-fallback-attempt-${String(attemptNumber)}.prompt.md`,
-        ),
-        transcriptPrefix: path.join(
-          options.logRoot,
-          `judge-fallback-attempt-${String(attemptNumber)}`,
-        ),
-        timeoutMs: options.config.limits.verifierMs,
-        signal: options.signal,
-      });
-      const adjudicated = suppressKnownJudgeDefect(
-        applyJudgeVerdict(attack, verdict),
-        options.knownRootDefects,
-      );
-      if (adjudicated.status !== "judge_unable") return adjudicated;
-      lastFailure = adjudicated.outcomeReason ?? reason;
-    } catch (error) {
-      lastFailure = `Judge fallback failed: ${error instanceof Error ? error.message : String(error)}`;
+  try {
+    for (const attemptNumber of [1, 2] as const) {
+      try {
+        const verdict = await options.verifier.adjudicate({
+          attack: anonymizeAttackForVerifier(attack),
+          runSpec: options.runSpec,
+          mechanicalFailureReason: reason,
+          priorCanonicalDefects: options.priorCanonicalDefects ?? [],
+          worktree: fallbackWorktree,
+          promptPath: path.join(
+            options.logRoot,
+            `judge-fallback-attempt-${String(attemptNumber)}.prompt.md`,
+          ),
+          transcriptPrefix: path.join(
+            options.logRoot,
+            `judge-fallback-attempt-${String(attemptNumber)}`,
+          ),
+          timeoutMs: options.config.limits.verifierMs,
+          signal: options.signal,
+        });
+        const adjudicated = suppressKnownJudgeDefect(
+          applyJudgeVerdict(attack, verdict),
+          options.knownRootDefects,
+        );
+        if (adjudicated.status !== "judge_unable") return adjudicated;
+        lastFailure = adjudicated.outcomeReason ?? reason;
+      } catch (error) {
+        lastFailure = `Judge fallback failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      if (attemptNumber === 1) assertTargetedRetryAllowed(attemptNumber);
     }
-    if (attemptNumber === 1) assertTargetedRetryAllowed(attemptNumber);
+    return withOutcome(attack, "judge_unable", lastFailure);
+  } finally {
+    if (ownsWorktree) await options.worktrees.remove(fallbackWorktree);
   }
-  return withOutcome(attack, "judge_unable", lastFailure);
 }
 
 export async function validateAttack(

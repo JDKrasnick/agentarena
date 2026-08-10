@@ -717,6 +717,7 @@ export const RoundStateDeltaSchema = z
     patchMetadata: z.array(JsonValueSchema),
     reconciliationQueue: z.array(ReconciliationCandidateSchema).optional(),
     submissionArtifacts: z.array(JsonValueSchema).optional(),
+    repairJudgments: z.array(JsonValueSchema).optional(),
     coordinator: z
       .object({
         stage: IdentifierSchema,

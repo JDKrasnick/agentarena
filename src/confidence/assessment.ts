@@ -206,12 +206,26 @@ export function assessBattleCoverage(
     const repairAttempts =
       targetRound?.repairAttempts ??
       (targetRound?.repair ? [targetRound.repair] : []);
+    const repairJudgments = state.repairJudgments.filter(
+      (entry) =>
+        entry.round === round &&
+        entry.contestantId === target &&
+        attacks.some(
+          (attack) => attack.rootDefectId === entry.canonicalDefectId,
+        ),
+    );
+    const repairJudgeUnable = repairJudgments.some(
+      (entry) => entry.decision === "unable",
+    );
     const repairCompleted =
-      !repairRequired || repairAttempts.at(-1)?.status === "succeeded";
+      !repairRequired ||
+      (!repairJudgeUnable && repairAttempts.at(-1)?.status === "succeeded");
     if (repairRequired && !repairAttempts.length)
       reasonCodes.push("repair_missing");
     else if (repairRequired && !repairCompleted)
-      reasonCodes.push("repair_failed");
+      reasonCodes.push(
+        repairJudgeUnable ? "repair_judge_unable" : "repair_failed",
+      );
     const laneResolved = attackPathResolved && repairCompleted;
     const stages = [
       stage(
@@ -278,12 +292,19 @@ export function assessBattleCoverage(
           ? repairAttempts.length
             ? repairAttempts.slice(0, 3).map((entry, index) =>
                 attempt(
-                  entry.status === "succeeded" ? "succeeded" : "failed",
+                  entry.status === "succeeded" &&
+                    !(repairJudgeUnable && index === repairAttempts.length - 1)
+                    ? "succeeded"
+                    : "failed",
                   [entry.promptPath, entry.transcriptPath].filter(
                     (value): value is string => Boolean(value),
                   ),
-                  entry.status === "succeeded" ? undefined : "repair_failed",
-                  index === 0 ? 1 : 2,
+                  entry.status === "succeeded" && !repairJudgeUnable
+                    ? undefined
+                    : repairJudgeUnable && index === repairAttempts.length - 1
+                      ? "repair_judge_unable"
+                      : "repair_failed",
+                  (index + 1) as 1 | 2 | 3,
                 ),
               )
             : [attempt("failed", [], "repair_missing")]

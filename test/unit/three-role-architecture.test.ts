@@ -37,12 +37,23 @@ describe("three-role arena contracts", () => {
       claim: "data is lost",
       oracle: "saved data must remain",
       diagnostics: "x".repeat(30_000),
+      artifactPointers: [
+        {
+          artifactId: "issue-1",
+          sha256: "a".repeat(64),
+          description: "Frozen issue source",
+          path: "/tmp/frozen-sources/issue-1.md",
+        },
+      ],
     });
     expect(JSON.stringify(packet)).not.toContain("contestant");
     expect(Buffer.byteLength(JSON.stringify(packet))).toBeLessThanOrEqual(
       JUDGE_PACKET_MAX_BYTES,
     );
     expect(packet.diagnosticsTruncated).toBe(true);
+    expect(packet.artifactPointers[0]?.path).toBe(
+      "/tmp/frozen-sources/issue-1.md",
+    );
     expect(verifyJudgePacket(packet)).toBe(true);
   });
 

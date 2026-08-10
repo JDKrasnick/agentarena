@@ -1,4 +1,4 @@
-import { access, readFile, rm } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { constants } from "node:fs";
 import {
@@ -20,7 +20,7 @@ import {
   type ReviewSubmission,
   type Severity,
 } from "../core/types.js";
-import type { RunSpec } from "../contracts/round.js";
+import { calculateCanonicalHash, type RunSpec } from "../contracts/round.js";
 import { sha256 } from "../core/ids.js";
 import { buildJudgePacket } from "../judge/packets.js";
 import { runProcess, type ProcessRequest } from "../runner/process-runner.js";
@@ -115,6 +115,8 @@ export interface AttackVerifier {
   assess(input: AnonymizedAttackInput): Promise<AttackVerdict>;
   /** Optional semantic fallback used only after the approved mechanical path fails. */
   adjudicate?(input: JudgeAdjudicationInput): Promise<JudgeAttackVerdict>;
+  /** Optional repair fallback used only after mechanical repair checks remain unavailable. */
+  assessRepair?(input: JudgeRepairInput): Promise<JudgeRepairVerdict>;
 }
 
 export interface JudgeAdjudicationInput extends Omit<
@@ -141,6 +143,26 @@ export interface JudgeAttackVerdict {
   rootDefectId?: string;
   severity?: Severity;
   rationale: string;
+}
+
+export interface JudgeRepairInput {
+  attack: AnonymizedAttack;
+  runSpec: RunSpec;
+  canonicalDefectId: string;
+  adjudicationId: string;
+  candidatePatchPath: string;
+  mechanicalFailureReason: string;
+  worktree: string;
+  promptPath: string;
+  transcriptPrefix: string;
+  timeoutMs: number;
+  signal: AbortSignal;
+}
+
+export interface JudgeRepairVerdict {
+  decision: "repaired" | "not_repaired" | "unable";
+  rationale: string;
+  packetDigest: string;
 }
 
 export interface HarnessOverlayProposal {
@@ -493,6 +515,39 @@ const JudgeAttackVerdictSchema = z.object({
   rationale: z.string().min(1),
 });
 
+async function stageJudgeSources(
+  runSpec: RunSpec,
+  worktree: string,
+): Promise<
+  Array<{
+    artifactId: string;
+    sha256: string;
+    description: string;
+    path: string;
+  }>
+> {
+  const directory = path.join(worktree, ".agent-arena-judge-sources");
+  await mkdir(directory, { recursive: true });
+  return Promise.all(
+    runSpec.task.sources.map(async (source, index) => {
+      const bytes = await readFile(source.snapshotPath);
+      if (sha256(bytes) !== source.contentHash)
+        throw new Error(`Frozen judge source ${source.id} failed its digest`);
+      const stagedPath = path.join(
+        directory,
+        `source-${String(index + 1)}.txt`,
+      );
+      await writeFile(stagedPath, bytes);
+      return {
+        artifactId: source.id,
+        sha256: source.contentHash,
+        description: `Frozen ${source.kind} source`,
+        path: stagedPath,
+      };
+    }),
+  );
+}
+
 export class CommandAttackVerifier implements AttackVerifier {
   private readonly command: Omit<CommandAdapterOptions, "id">;
 
@@ -503,6 +558,10 @@ export class CommandAttackVerifier implements AttackVerifier {
   async assess(input: AnonymizedAttackInput): Promise<AttackVerdict> {
     const outputPath = path.join(input.worktree, ".agent-arena-verdict.json");
     const patchBytes = await readFile(input.attack.patchPath);
+    const sourcePointers = await stageJudgeSources(
+      input.runSpec,
+      input.worktree,
+    );
     const packet = buildJudgePacket({
       kind: "attack",
       task: {
@@ -513,11 +572,7 @@ export class CommandAttackVerifier implements AttackVerifier {
       oracle: JSON.stringify(input.attack.oracle),
       diagnostics: `authorPassed=${String(input.authorPassed)} targetFailed=${String(input.targetFailed)} impact=${input.attack.impact} assertionFingerprint=${input.attack.assertionFingerprint}`,
       artifactPointers: [
-        ...input.runSpec.task.sources.map((source) => ({
-          artifactId: source.id,
-          sha256: source.contentHash,
-          description: `Frozen ${source.kind} source`,
-        })),
+        ...sourcePointers,
         {
           artifactId: "attack-overlay",
           sha256: sha256(patchBytes),
@@ -533,6 +588,7 @@ export class CommandAttackVerifier implements AttackVerifier {
       "",
       "# Digest-linked identity-blind judge packet",
       JSON.stringify(packet, null, 2),
+      "Read any packet artifact path only as immutable evidence. Do not edit it or execute commands.",
       "",
       `Write only valid JSON to ${outputPath} with keys relevant, oracleSupported, oracleRationale, rootDefectId, severity, and rationale.`,
     ].join("\n");
@@ -579,6 +635,10 @@ export class CommandAttackVerifier implements AttackVerifier {
 
   async adjudicate(input: JudgeAdjudicationInput): Promise<JudgeAttackVerdict> {
     const outputPath = path.join(input.worktree, ".agent-arena-judgment.json");
+    const sourcePointers = await stageJudgeSources(
+      input.runSpec,
+      input.worktree,
+    );
     const packet = buildJudgePacket({
       kind: "attack",
       task: {
@@ -593,11 +653,7 @@ export class CommandAttackVerifier implements AttackVerifier {
         assertionFingerprint: input.attack.assertionFingerprint,
         priorCanonicalDefects: input.priorCanonicalDefects,
       }),
-      artifactPointers: input.runSpec.task.sources.map((source) => ({
-        artifactId: source.id,
-        sha256: source.contentHash,
-        description: `Frozen ${source.kind} source`,
-      })),
+      artifactPointers: sourcePointers,
     });
     const prompt = [
       "# Neutral Agent Arena semantic adjudication",
@@ -645,6 +701,90 @@ export class CommandAttackVerifier implements AttackVerifier {
     }
     throw new Error(
       `Judge fallback failed after two attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+    );
+  }
+
+  async assessRepair(input: JudgeRepairInput): Promise<JudgeRepairVerdict> {
+    const outputPath = path.join(
+      input.worktree,
+      ".agent-arena-repair-judgment.json",
+    );
+    const candidatePatch = await readFile(input.candidatePatchPath, "utf8");
+    const sourcePointers = await stageJudgeSources(
+      input.runSpec,
+      input.worktree,
+    );
+    const neutralCandidatePath = path.join(
+      input.worktree,
+      ".agent-arena-judge-candidate.diff",
+    );
+    await writeFile(neutralCandidatePath, candidatePatch, "utf8");
+    const packet = buildJudgePacket({
+      kind: "repair",
+      task: {
+        request: input.runSpec.task.task,
+        acceptanceCriteria: [...input.runSpec.task.acceptanceCriteria],
+      },
+      claim: input.attack.claim,
+      oracle: JSON.stringify(input.attack.oracle),
+      immutableAttackDigest: calculateCanonicalHash(input.attack),
+      diagnostics: JSON.stringify({
+        canonicalDefectId: input.canonicalDefectId,
+        adjudicationId: input.adjudicationId,
+        mechanicalFailureReason: input.mechanicalFailureReason,
+        candidatePatchDigest: sha256(candidatePatch),
+        candidatePatch,
+      }),
+      artifactPointers: [
+        ...sourcePointers,
+        {
+          artifactId: "candidate-patch",
+          sha256: sha256(candidatePatch),
+          description: "Identity-blind candidate repair patch",
+          path: neutralCandidatePath,
+        },
+      ],
+    });
+    const prompt = [
+      "# Neutral Agent Arena repair adjudication",
+      "Contestant identities are unavailable. Do not execute commands or modify evidence.",
+      "Decide repaired only when the candidate patch clearly fixes the immutable claim and oracle without changing their meaning. Decide not_repaired when it clearly does not. Decide unable when the bounded evidence is insufficient.",
+      "Read any packet artifact path only as immutable task evidence.",
+      JSON.stringify(packet, null, 2),
+      `Write only valid JSON to ${outputPath} with keys decision (repaired, not_repaired, or unable) and rationale.`,
+    ].join("\n\n");
+    await rm(outputPath, { force: true });
+    let lastError: unknown;
+    const schema = z.object({
+      decision: z.enum(["repaired", "not_repaired", "unable"]),
+      rationale: z.string().min(1),
+    });
+    for (const attempt of [1, 2]) {
+      const result = await runProcess({
+        executable: this.command.executable,
+        args: this.command.args,
+        input: prompt,
+        cwd: input.worktree,
+        timeoutMs: input.timeoutMs,
+        logPrefix: `${input.transcriptPrefix}-attempt-${String(attempt)}`,
+        signal: input.signal,
+      });
+      if (result.failureClass === "arena_infrastructure") {
+        lastError = new Error("Repair judge provider infrastructure failed");
+        continue;
+      }
+      try {
+        const verdict = parseModelSubmission(
+          schema,
+          await readFile(outputPath, "utf8"),
+        );
+        return { ...verdict, packetDigest: packet.packetDigest };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw new Error(
+      `Repair judge failed after two attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
     );
   }
 }

@@ -11,6 +11,7 @@ export const JudgeArtifactPointerSchema = z
     artifactId: z.string().min(1),
     sha256: Sha256Schema,
     description: z.string().min(1),
+    path: z.string().min(1).optional(),
   })
   .strict();
 

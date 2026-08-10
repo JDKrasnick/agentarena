@@ -394,6 +394,7 @@ export function healDefect(
   contestant: ContestantResult,
   rootDefectId: string,
   round: RoundId,
+  reason = `All accepted cases pass for ${rootDefectId}`,
 ): ContestantResult {
   const next = cloneContestant(contestant);
   const defect = next.healthLedger.activeDefects.find(
@@ -412,7 +413,7 @@ export function healDefect(
     round,
     type: "heal",
     amount: defect.damage,
-    reason: `All accepted cases pass for ${rootDefectId}`,
+    reason,
   });
   next.finalHealth = calculateHealth(next.healthLedger);
   return next;

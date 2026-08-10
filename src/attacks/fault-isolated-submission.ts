@@ -67,6 +67,29 @@ export interface ParsedSubmission<T> {
   normalizations: SubmissionNormalization[];
 }
 
+/**
+ * Return every independently schema-valid path declaration, including paths
+ * owned by an entry rejected for a different field or duplicate rank. This
+ * lets the caller quarantine that entry's edits without treating them as
+ * undeclared mutations that suppress valid siblings.
+ */
+export function declaredAttackPaths(
+  parsed: ParsedSubmission<AttackSubmission>,
+): string[] {
+  const shared = parsed.sections.sharedSupportPaths?.accepted.filter(
+    (entry): entry is string => typeof entry === "string",
+  );
+  const ranked = parsed.sections.attacks?.entries.flatMap((entry) => {
+    const paths = entry.validatedFields.paths;
+    return Array.isArray(paths)
+      ? paths.filter((candidate): candidate is string =>
+          Boolean(typeof candidate === "string" && candidate.length),
+        )
+      : [];
+  });
+  return [...new Set([...(shared ?? []), ...(ranked ?? [])])];
+}
+
 const secretPattern =
   /(?:password|passwd|secret|token|credential|api[_-]?key)/i;
 

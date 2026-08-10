@@ -29,6 +29,21 @@ describe("completed round state application", () => {
     after.currentRound = 1;
     after.updatedAt = "2026-08-08T01:00:00.000Z";
     after.warnings.push("round warning");
+    after.repairJudgments.push({
+      version: 1,
+      id: "repair-judgment-1",
+      round: 1,
+      canonicalDefectId: "defect-1",
+      contestantId: "a",
+      attemptId: "repair-attempt-1",
+      patchDigest: "c".repeat(64),
+      packetDigest: "d".repeat(64),
+      decision: "repaired",
+      rationale: "the patch fixes the immutable claim",
+      adjudicationId: "adjudication-1",
+      artifactRefs: ["/tmp/a-round-1.diff"],
+      createdAt: "2026-08-08T00:59:00.000Z",
+    });
     const contestant = after.contestants.a!;
     contestant.status = "survived";
     contestant.finalHealth = 85;
@@ -96,6 +111,12 @@ describe("completed round state application", () => {
       currentRound: 1,
       warnings: ["round warning"],
       updatedAt: "2026-08-08T01:00:00.000Z",
+      repairJudgments: [
+        expect.objectContaining({
+          id: "repair-judgment-1",
+          decision: "repaired",
+        }),
+      ],
     });
   });
 });

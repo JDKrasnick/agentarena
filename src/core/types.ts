@@ -594,6 +594,7 @@ export const RepairJudgmentRecordSchema = z
   .object({
     version: z.literal(1),
     id: z.string().min(1),
+    round: RoundIdSchema,
     canonicalDefectId: z.string().min(1),
     contestantId: ContestantIdSchema,
     attemptId: z.string().min(1),
