@@ -8,6 +8,14 @@ The central idea is:
 
 > Make coding agents fight for the merge.
 
+New MVP runs use exactly three model roles: two contestant adapters and one
+fresh, identity-blind judge adapter. The harness owns execution, retries,
+capability enforcement, and deterministic selection; the judge owns semantic
+validity, canonical defect identity, frozen severity, fallback adjudication,
+and repair judgments when mechanics remain unavailable. House scouting,
+case-building, quality comparison, held-out sibling generation, and harness
+maintenance are legacy-only extensions and are not invoked by new runs.
+
 Champion and patch-recommendation language is conditional on coverage. Duel
 and catch-up require both attack directions in each of the three rounds; siege
 requires the attacker-to-defender lane in each round. Optional neutral-house
@@ -82,9 +90,9 @@ configuration, invalid schemas, and programming invariants.
 
 `Arena` has no direct mechanism imports. Durable recovery treats the immutable
 preflight baseline and sealed per-round envelopes as authority. `result.json`
-is a compact schema-v6 summary with an ordered applied-envelope ledger. Runtime
-state is V5 and round snapshots, results, replays, envelopes, and state deltas
-are V2. Resume
+is a compact schema-v7 summary with an ordered applied-envelope ledger. Runtime
+state is V6 and round snapshots, results, replays, envelopes, and state deltas
+are V3. Resume
 validates the digest chain and runtime drift, applies a sealed boundary exactly
 once, and never reruns an interrupted unsealed round under the original run ID.
 Production prompts consume only persisted lane-safe `ContestantFeedback`.
@@ -255,14 +263,13 @@ Agents may use only approved `agent` or `both` capabilities directly;
 `harness_only` checks remain mediated by the harness.
 
 The same contestant then receives that packet alongside the standardized public
-context and frozen target patch during focused failure analysis. It may submit up
-to three ranked, structured failure descriptions with concrete public inputs,
-expected behavior, and a rationale grounded in the frozen text. A source ID and
-location may be included as optional compatibility metadata. It must create an early
-structured submission, and `attacks: []` is the explicit successful result when
-none of the reviewed hypotheses is credible. Submitting fewer than three is valid.
-The neutral case judge independently turns a description into an executable
-regression test; contestant-authored tests are not scoring evidence.
+context and frozen target patch. It may submit zero to three sparse, uniquely
+ranked `AttackSubmissionV2` entries. Each entry declares oracle metadata, a
+focused command, required capabilities, and disjoint test/fixture paths. Shared
+support paths may be declared once and are copied into every independently
+replayable target-relative overlay. A malformed rank does not suppress valid
+siblings; invalid shared support rejects only dependent attacks. `attacks: []`
+is explicit successful lane completion.
 
 Each round has its own symmetric, versioned prompt and investigation brief:
 
@@ -294,13 +301,11 @@ Any house-generated score-changing probe must be surfaced in a normal round so
 the target gets a repair opportunity. Final validation only reruns known checks;
 a novel late finding is reported but does not alter the winner.
 
-Ordinary contestant attacks are differential and therefore cannot expose a bug
-shared by both patches. The MVP permits at most one neutral house attack in
-round 2 and one in round 3. A house attack has no contestant author or rank,
-passes the same executable-evidence and oracle checks, and is evaluated
-independently against both frozen patches. It may deal the same
-severity-weighted root-defect damage to either or both contestants, causes no
-recoil, and gives every affected contestant the normal repair opportunity.
+Ordinary duel and catch-up attacks are differential: the overlay must pass on
+the author and fail on the target. Siege attacks instead record base/control
+diagnostics, defender failure, and semantic adjudication because the attacker
+has no production patch. Model-generated house attacks are not part of new MVP
+runs.
 
 The strongest attack is an executable test:
 
@@ -329,13 +334,12 @@ Both agents submit their ranked attack sets before any result is revealed. The h
 
 Structured provider output is fault-isolated. The harness preserves the exact
 submitted bytes before parsing or worktree cleanup, then validates review
-findings, contestant attacks, house hypotheses and attacks, and neutral cases
-independently. A malformed optional section or sibling cannot suppress valid
+findings and contestant attacks independently. A malformed optional section or sibling cannot suppress valid
 scoring evidence. Contestant attack ranks are unique values from 1 through 3;
 they may be sparse, are never renumbered, and every entry sharing a duplicate
 rank is rejected. Explicit empty sections remain distinct from missing or lost
-coverage. Contestant scouting portfolios are legacy non-scoring input; only
-house-scout hypotheses remain in the current artifact contract.
+coverage. House, case-builder, and contestant scouting inputs are legacy-only,
+non-scoring artifacts.
 
 Each independently identifiable rejected contestant or house attack receives
 one correction opportunity at the start of the next attack-bearing round. The
@@ -397,16 +401,10 @@ A lightweight verifier agent may help evaluate disputed attacks, but determinist
 
 The term **harness** should refer to deterministic orchestration and execution: worktrees, patches, processes, retries, and recorded pass/fail results. The **attack verifier** performs the narrow semantic judgment about oracle support, relevance, root-defect identity, and severity. Together they form the arena adjudication pipeline.
 
-For each landed defect, the visible attack is paired with up to two held-out
-sibling cases generated and frozen before repair. The siblings must exercise
-the same supported behavior and root defect, pass the attacker's patch and fail the
-target's frozen patch for a contestant attack, and pass the ordinary
-determinism and verifier checks. House siblings are evaluated independently per
-contestant. The repair prompt reveals the invariant, visible reproducer, and
-held-out case categories but not their exact inputs. Damage heals only when the
-repair passes the visible and held-out cases. A failed held-out case is revealed
-after that repair validation and every case is disclosed in the final report.
-Held-out cases never increase severity or stack damage.
+Each mechanically landed defect retains its executable reproducer. Repair
+validation reruns every active reproducer and each healed-defect regression
+check after every attempt. Judge-based defects use immutable digest-bound repair
+judgments only when mechanical confirmation remains unavailable.
 
 Harness-owned failures must never change health, but a true target defect must not be dismissed merely because it looks infrastructural. Git, filesystem, process-launch, environment, service, or provider failures are first retried in a clean worktree with author, target, base, and service-health controls.
 
@@ -416,7 +414,10 @@ A reproducible target-only failure returns to normal attack adjudication. A patc
 
 After normal round 3, one optional recovery attack–repair round lets each agent spend up to three replacement credits on newly ranked attacks. Replacement attacks use normal recoil and damage; only the infrastructure-lost slot is free. A second infrastructure failure in recovery makes the run inconclusive, and more than three credits for one agent is treated as a systemic harness failure rather than starting an unbounded loop.
 
-A separate harness-maintainer agent owns accommodations. It may propose symmetric, versioned run overlays for service lifecycle, worktree setup, capability adapters, broker wiring, timeouts, resource limits, retries, and diagnostics. It cannot alter contestant code, attack assertions, or scoring. An overlay is applied only after harness tests, clean replay, permission review, and symmetric validation pass. Product-level harness source patches are drafted with regression fixtures but are not loaded into the referee mid-fight.
+The deterministic harness owns symmetric, versioned run accommodations for
+service lifecycle, worktree setup, capability adapters, broker wiring,
+timeouts, resource limits, retries, and diagnostics. New runs do not invoke a
+harness-maintainer model.
 
 If an individual attack cannot be generated at all, it causes neither damage nor recoil. If implementation, repair, required validation, or final validation cannot be trusted after harness retries and controls, the whole run is inconclusive; the system must not eliminate a contestant or declare a winner from infrastructure failure.
 
@@ -432,11 +433,16 @@ For each attack, it must:
 
 Agents should heal damage for acknowledging and repairing valid defects. The system should not reward stubborn rhetorical defense.
 
-Each contestant receives one bounded repair opportunity per round. A successful
-repair must pass the visible reproducer and all accepted held-out sibling cases
-before it heals the severity damage for that defect. Miss recoil is permanent.
-The next round attacks the repaired patches, and all previously landed cases
-remain in the validation set.
+Every canonical Critical/High defect receives three total repair attempts across
+the run; Medium/Low receives two. Each non-infrastructure terminal invocation
+consumes one attempt for every included defect and receives the full configured
+`repair_minutes` timeout. Required checks, all active reproducers, and healed
+regression checks run after each attempt; success stops the loop early. A healed
+defect that regresses gets a fresh allowance, while corroboration does not.
+Mechanically evidenced repairs are confirmed by execution. When mechanics remain
+unavailable, the judge persists a digest-bound `repaired`, `not_repaired`, or
+`unable` record without changing the original claim, oracle, canonical ID,
+severity, or multiplier.
 
 ### 7. Final validation and ranking
 
@@ -444,8 +450,7 @@ All revised patches run against:
 
 * The original repository test suite.
 * Their own submitted tests.
-* The union of validated visible and held-out adversarial cases.
-* Validated neutral house cases from rounds 2 and 3.
+* Every active reproducer and healed-defect regression check.
 * Optional integration, security, and performance checks.
 
 Correctness should dominate the ranking through a health system. Every contestant starts at 100 HP. A landed attack deals damage based on the severity of the defect it proves, rather than awarding points for the raw number of tests an agent submits:
@@ -459,9 +464,9 @@ Correctness should dominate the ranking through a health system. Every contestan
 
 Multiple cases proving the same root defect deal target damage once. A blocked
 or otherwise missed contestant attack deals no target damage and instead
-applies rank-based recoil to its author; neutral house attacks never recoil. A
-successful repair heals only after all accepted visible and held-out cases for
-the defect pass. An unresolved failure leaves the damage active, and a later
+applies rank-based recoil to its author. A successful repair heals only after
+the required check and applicable defect evidence pass. An unresolved failure
+leaves the damage active, and a later
 regression can reactivate it without stacking it. Recoil cannot be healed.
 
 Health is calculated from a ledger: `100 - permanent recoil - active distinct defect damage`, clamped between 0 and 100. Round events resolve simultaneously. A contestant downed by the combined round resolution still receives that round's repair opportunity and is eliminated only if it remains at 0 afterward. A final patch that cannot be applied or fails a required repository check is eliminated and set to 0 HP regardless of its remaining health.
@@ -625,8 +630,7 @@ agents:
   - codex
   - gemini
 
-attack_verifier: codex
-harness_maintainer: codex
+judge: codex
 
 limits:
   rounds: 3

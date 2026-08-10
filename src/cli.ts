@@ -124,12 +124,10 @@ program
       .choices(["auto", "confirm", "deny"])
       .default("confirm"),
   )
-  .option("--verifier <agent>", "Neutral verifier provider")
-  .option(
-    "--quality-verifier <agent>",
-    "Neutral patch-quality verifier provider",
-  )
-  .option("--maintainer <agent>", "Harness-maintainer provider")
+  .option("--judge <agent>", "Identity-blind judge provider")
+  .option("--verifier <agent>", "Deprecated alias for --judge")
+  .option("--quality-verifier <agent>", "Deprecated; ignored for new runs")
+  .option("--maintainer <agent>", "Deprecated; ignored for new runs")
   .option("--yes", "Approve the displayed confirm-mode plan noninteractively")
   .option("--accept-reduced-validation", "Allow required capability denials")
   .option("--keep-worktrees", "Preserve temporary worktrees for debugging")
@@ -151,6 +149,7 @@ program
         baseFromPr?: string;
         acceptance?: string[];
         permissions: "auto" | "confirm" | "deny";
+        judge?: string;
         verifier?: string;
         qualityVerifier?: string;
         maintainer?: string;
@@ -181,6 +180,7 @@ program
           ? { acceptanceCriteria: options.acceptance }
           : {}),
         permissionMode: options.permissions,
+        ...(options.judge ? { judge: options.judge } : {}),
         ...(options.verifier ? { verifier: options.verifier } : {}),
         ...(options.qualityVerifier
           ? { qualityVerifier: options.qualityVerifier }
@@ -222,7 +222,8 @@ program
       .choices(["auto", "confirm", "deny"])
       .default("confirm"),
   )
-  .option("--verifier <agent>", "Neutral verifier provider")
+  .option("--judge <agent>", "Identity-blind judge provider")
+  .option("--verifier <agent>", "Deprecated alias for --judge")
   .option(
     "--quality-verifier <agent>",
     "Ignored in siege mode; retained for shared config",
@@ -243,6 +244,7 @@ program
       issue?: string[];
       acceptance?: string[];
       permissions: "auto" | "confirm" | "deny";
+      judge?: string;
       verifier?: string;
       qualityVerifier?: string;
       maintainer?: string;
@@ -265,6 +267,7 @@ program
           ? { acceptanceCriteria: options.acceptance }
           : {}),
         permissionMode: options.permissions,
+        ...(options.judge ? { judge: options.judge } : {}),
         ...(options.verifier ? { verifier: options.verifier } : {}),
         ...(options.qualityVerifier
           ? { qualityVerifier: options.qualityVerifier }

@@ -9,7 +9,9 @@ import type {
   RoundId,
 } from "../core/types.js";
 
-export function validateAttackOrdering(submission: AttackSubmission): void {
+export function validateAttackOrdering(submission: {
+  attacks: ReadonlyArray<{ rank: 1 | 2 | 3 }>;
+}): void {
   const ranks = submission.attacks.map((attack) => attack.rank);
   if (new Set(ranks).size !== ranks.length)
     throw new Error("Attack ranks must be unique values from 1 through 3");

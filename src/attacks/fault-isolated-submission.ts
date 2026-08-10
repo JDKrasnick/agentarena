@@ -13,6 +13,11 @@ import {
 
 export const SUBMISSION_PARSER_VERSION = 1 as const;
 
+const LegacyAttackEntrySchema = AttackSubmissionEntrySchema.omit({
+  focusedCommand: true,
+  paths: true,
+}).extend({ reproduction: z.string().min(1) });
+
 export type SubmissionKind = "review" | "attack" | "house" | "case";
 export type ParseOutcome = "valid" | "valid_empty" | "partial" | "invalid";
 export type EntryOutcome = "accepted" | "normalized" | "rejected";
@@ -492,7 +497,7 @@ export function parseFaultIsolatedSubmission(
     kind === "review"
       ? { version: 1 as const, findings: [] }
       : kind === "attack"
-        ? { version: 1 as const, attacks: [] }
+        ? { version: 2 as const, sharedSupportPaths: [], attacks: [] }
         : kind === "house"
           ? { version: 1 as const, hypotheses: [], attacks: [] }
           : { version: 1 as const, cases: [] };
@@ -523,7 +528,8 @@ export function parseFaultIsolatedSubmission(
       ),
     );
   const envelope = decoded as Record<string, unknown>;
-  if (envelope.version !== 1)
+  const supportedVersions = kind === "attack" ? [1, 2] : [1];
+  if (!supportedVersions.includes(Number(envelope.version)))
     return invalidSubmission(
       kind,
       empty,
@@ -531,8 +537,8 @@ export function parseFaultIsolatedSubmission(
         "$.version",
         envelope.version,
         "unsupported_version",
-        "Only submission version 1 is supported",
-        ["1"],
+        `Only submission version ${supportedVersions.join(" or ")} is supported`,
+        supportedVersions.map(String),
       ),
     );
 
@@ -546,14 +552,41 @@ export function parseFaultIsolatedSubmission(
       limit: 12,
     });
   } else if (kind === "attack") {
-    sections.attacks = parseEntries({
+    sections.attacks = parseEntries<unknown>({
       envelope,
       key: "attacks",
-      schema: AttackSubmissionEntrySchema,
-      fieldSchema: AttackSubmissionEntrySchema,
+      schema: (envelope.version === 1
+        ? LegacyAttackEntrySchema
+        : AttackSubmissionEntrySchema) as z.ZodType<unknown>,
+      fieldSchema:
+        envelope.version === 1
+          ? LegacyAttackEntrySchema
+          : AttackSubmissionEntrySchema,
       limit: Number.MAX_SAFE_INTEGER,
       duplicateRanks: true,
     });
+    const shared = z
+      .array(z.string().min(1))
+      .safeParse(
+        envelope.version === 1 ? [] : (envelope.sharedSupportPaths ?? []),
+      );
+    sections.sharedSupportPaths = shared.success
+      ? {
+          path: "$.sharedSupportPaths",
+          outcome: shared.data.length ? "valid" : "valid_empty",
+          entries: [],
+          accepted: shared.data,
+          rejections: [],
+        }
+      : {
+          path: "$.sharedSupportPaths",
+          outcome: "invalid",
+          entries: [],
+          accepted: [],
+          rejections: zodRejections(shared.error, envelope.sharedSupportPaths, [
+            "sharedSupportPaths",
+          ]),
+        };
     // Contestant hypotheses are legacy, non-scoring input. Their shape cannot
     // invalidate or improve attack coverage.
     if ("hypotheses" in envelope) {
@@ -566,6 +599,81 @@ export function parseFaultIsolatedSubmission(
         accepted: [],
         rejections: [],
       };
+    }
+    const attacks = sections.attacks;
+    if (envelope.version === 2 && attacks) {
+      const invalid = new Map<number, SubmissionRejection[]>();
+      if (!shared.success) {
+        for (const entry of attacks.entries) {
+          invalid.set(entry.index, [
+            reject(
+              "$.sharedSupportPaths",
+              envelope.sharedSupportPaths,
+              "invalid_shared_support",
+              "Invalid shared support rejects every dependent attack",
+            ),
+          ]);
+        }
+      } else {
+        const pathOwners = new Map<string, number[]>();
+        for (const entry of attacks.entries) {
+          const entryValue = entry.value as { paths?: string[] } | undefined;
+          for (const attackPath of entryValue?.paths ?? []) {
+            const owners = pathOwners.get(attackPath) ?? [];
+            owners.push(entry.index);
+            pathOwners.set(attackPath, owners);
+          }
+        }
+        for (const [attackPath, owners] of pathOwners) {
+          if (owners.length > 1) {
+            for (const owner of owners) {
+              const entries = invalid.get(owner) ?? [];
+              entries.push(
+                reject(
+                  `$.attacks[${String(owner)}].paths`,
+                  attackPath,
+                  "rank_path_overlap",
+                  `Rank-specific path ${attackPath} belongs to multiple attacks`,
+                ),
+              );
+              invalid.set(owner, entries);
+            }
+          }
+          if (shared.data.includes(attackPath)) {
+            for (const owner of owners) {
+              const entries = invalid.get(owner) ?? [];
+              entries.push(
+                reject(
+                  `$.attacks[${String(owner)}].paths`,
+                  attackPath,
+                  "shared_path_overlap",
+                  `Rank-specific path ${attackPath} is also shared support`,
+                ),
+              );
+              invalid.set(owner, entries);
+            }
+          }
+        }
+      }
+      for (const entry of attacks.entries) {
+        const entryRejections = invalid.get(entry.index);
+        if (!entryRejections) continue;
+        entry.outcome = "rejected";
+        entry.value = undefined;
+        entry.rejections.push(...entryRejections);
+        entry.editablePaths.push(...entryRejections.map((item) => item.path));
+      }
+      attacks.accepted = attacks.entries.flatMap((entry) =>
+        entry.value === undefined ? [] : [entry.value],
+      );
+      attacks.rejections = attacks.entries.flatMap((entry) => entry.rejections);
+      attacks.outcome = attacks.rejections.length
+        ? attacks.accepted.length
+          ? "partial"
+          : "invalid"
+        : attacks.accepted.length
+          ? "valid"
+          : "valid_empty";
     }
   } else if (kind === "house") {
     const hypothesisSchema = HouseSubmissionSchema.shape.hypotheses.element;
@@ -609,8 +717,23 @@ export function parseFaultIsolatedSubmission(
         }
       : kind === "attack"
         ? {
-            version: 1 as const,
-            attacks: sections.attacks!.accepted as AttackSubmission["attacks"],
+            version: 2 as const,
+            sharedSupportPaths: sections.sharedSupportPaths!
+              .accepted as string[],
+            attacks: (
+              sections.attacks!.accepted as Array<Record<string, unknown>>
+            ).map((entry) => ({
+              ...entry,
+              focusedCommand:
+                typeof entry.focusedCommand === "string"
+                  ? entry.focusedCommand
+                  : typeof entry.reproduction === "string"
+                    ? entry.reproduction
+                    : "",
+              paths: Array.isArray(entry.paths)
+                ? entry.paths
+                : ["legacy/attack-evidence"],
+            })) as AttackSubmission["attacks"],
           }
         : kind === "house"
           ? {

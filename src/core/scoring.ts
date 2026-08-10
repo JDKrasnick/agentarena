@@ -27,6 +27,10 @@ export const PARTIAL_DAMAGE_BY_SEVERITY = {
 
 export const RECOIL_BY_RANK = { 1: 5, 2: 10, 3: 15 } as const;
 
+export function repairAllowanceForSeverity(severity: Severity): 2 | 3 {
+  return severity === "critical" || severity === "high" ? 3 : 2;
+}
+
 function expectedRecoil(attack: Attack): 0 | 5 | 10 | 15 {
   return attack.origin.kind === "contestant" && attack.rank
     ? RECOIL_BY_RANK[attack.rank]
@@ -247,6 +251,10 @@ export function resolveRound(
                 : DAMAGE_BY_SEVERITY[adjudication.severity],
             evidenceHistory: [],
             status: "active",
+            repairAllowance: repairAllowanceForSeverity(adjudication.severity),
+            repairAttemptsUsed: 0,
+            repairAttemptIds: [],
+            regressionResets: 0,
           } as NonNullable<typeof ledger.canonicalDefects>[number];
           ledger.canonicalDefects.push(newCanonical);
           canonical = newCanonical;
@@ -297,6 +305,9 @@ export function resolveRound(
             adjudication.duplicateState === "regression"
           ) {
             canonical.status = "active";
+            canonical.repairAttemptsUsed = 0;
+            canonical.repairAttemptIds = [];
+            canonical.regressionResets += 1;
             ledger.activeDefects.push({
               rootDefectId: canonical.rootDefectId,
               attackId: attack.id,
@@ -319,6 +330,9 @@ export function resolveRound(
           adjudication.duplicateState === "regression"
         ) {
           canonical.status = "active";
+          canonical.repairAttemptsUsed = 0;
+          canonical.repairAttemptIds = [];
+          canonical.regressionResets += 1;
           ledger.activeDefects.push({
             rootDefectId: canonical.rootDefectId,
             attackId: attack.id,

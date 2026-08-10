@@ -106,7 +106,7 @@ export function projectRoundStateDelta(
   // heal, so the projection carries the authoritative collection.
   const attacks = after.attacks;
   return RoundStateDeltaSchema.parse({
-    version: 2,
+    version: 3,
     runId: after.runId,
     roundId,
     attacks,
@@ -179,6 +179,14 @@ export function applyCompletedRound(
         currentDamage: defect.currentDamage as Damage,
         evidenceHistory: structuredClone(defect.evidenceHistory),
         status: defect.status,
+        repairAllowance:
+          defect.repairAllowance ??
+          (defect.baseSeverity === "critical" || defect.baseSeverity === "high"
+            ? 3
+            : 2),
+        repairAttemptsUsed: defect.repairAttemptsUsed ?? 0,
+        repairAttemptIds: structuredClone(defect.repairAttemptIds ?? []),
+        regressionResets: defect.regressionResets ?? 0,
       }),
     );
     contestant.replacementCredits = structuredClone(

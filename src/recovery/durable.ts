@@ -15,6 +15,7 @@ import { applyCompletedRound } from "../core/round-state-delta.js";
 import {
   RunStateV4Schema,
   RunStateV5Schema,
+  RunStateV6Schema,
   type CheckResult,
   type RunState,
 } from "../core/types.js";
@@ -24,6 +25,7 @@ import {
   RoundEnvelopeSchema,
   RunBaselineSchema,
   RunSummaryV6Schema,
+  RunSummaryV7Schema,
   type RunSummaryV5,
   type AppliedEnvelope,
   type CheckpointDescriptor,
@@ -31,6 +33,7 @@ import {
   type RoundEnvelope,
   type RunBaseline,
   type RunSummaryV6,
+  type RunSummaryV7,
 } from "./contracts.js";
 
 function hashWithout(value: object, field: string): string {
@@ -83,8 +86,8 @@ export async function writeBaseline(options: {
   repositoryIdentity: string;
   now?: Date;
 }): Promise<RunBaseline> {
-  if (options.state.schemaVersion !== 5)
-    throw new Error("Only v5 runtime state can seed a v6 durable baseline");
+  if (options.state.schemaVersion !== 5 && options.state.schemaVersion !== 6)
+    throw new Error("Only v5/v6 runtime state can seed a durable baseline");
   const draft = {
     version: 1 as const,
     runId: options.state.runId,
@@ -184,7 +187,7 @@ export async function sealRoundEnvelope(options: {
   if (sha256(deltaBytes) !== delta.sha256)
     throw new Error("Cannot seal a round with a corrupt state delta");
   const draft = {
-    version: 2 as const,
+    version: 3 as const,
     runId: options.result.runId,
     roundId: options.result.roundId,
     sealedAt: (options.now ?? new Date()).toISOString(),
@@ -348,7 +351,7 @@ export async function applyEnvelopeExactlyOnce(options: {
 
 export async function reconstructRunState(options: {
   store: ArtifactStore;
-  summary: RunSummaryV5 | RunSummaryV6;
+  summary: RunSummaryV5 | RunSummaryV6 | RunSummaryV7;
 }): Promise<RunState> {
   const baseline = await readBaseline(options.store);
   if (options.summary.baseline) {
@@ -366,7 +369,9 @@ export async function reconstructRunState(options: {
   const state =
     baselineState.schemaVersion === 4
       ? RunStateV4Schema.parse(baselineState)
-      : RunStateV5Schema.parse(baselineState);
+      : baselineState.schemaVersion === 5
+        ? RunStateV5Schema.parse(baselineState)
+        : RunStateV6Schema.parse(baselineState);
   let ledger: AppliedEnvelope[] = [];
   const envelopes = await readEnvelopeChain(options.store);
   for (const [index, expected] of options.summary.appliedEnvelopes.entries()) {
@@ -496,17 +501,21 @@ export async function reconstructRunState(options: {
   }
   return state.schemaVersion === 4
     ? RunStateV4Schema.parse(state)
-    : RunStateV5Schema.parse(state);
+    : state.schemaVersion === 5
+      ? RunStateV5Schema.parse(state)
+      : RunStateV6Schema.parse(state);
 }
 
 export async function buildRunSummary(options: {
   store: ArtifactStore;
   state: RunState;
   appliedEnvelopes: readonly AppliedEnvelope[];
-  provenance?: RunSummaryV6["provenance"];
-}): Promise<RunSummaryV6> {
-  if (options.state.schemaVersion !== 5)
-    throw new Error("Only new v5 runtime state may be written as schema v6");
+  provenance?: RunSummaryV7["provenance"];
+}): Promise<RunSummaryV6 | RunSummaryV7> {
+  if (options.state.schemaVersion !== 5 && options.state.schemaVersion !== 6)
+    throw new Error(
+      "Only v5/v6 runtime state may be written as a durable summary",
+    );
   const baselinePath = options.store.resolve("baseline.json");
   let baseline: { path: string; sha256: string } | undefined;
   try {
@@ -548,8 +557,9 @@ export async function buildRunSummary(options: {
       };
     }),
   );
-  return RunSummaryV6Schema.parse({
-    schemaVersion: 6,
+  const schemaVersion = options.state.schemaVersion === 6 ? 7 : 6;
+  const summary = {
+    schemaVersion,
     runId: options.state.runId,
     harnessVersion: options.state.harnessVersion,
     status: options.state.status,
@@ -586,7 +596,10 @@ export async function buildRunSummary(options: {
       competitivelyComparable: true,
       driftApprovalHashes: [],
     },
-  });
+  };
+  return schemaVersion === 7
+    ? RunSummaryV7Schema.parse(summary)
+    : RunSummaryV6Schema.parse(summary);
 }
 
 export async function writeCheckpoint(options: {

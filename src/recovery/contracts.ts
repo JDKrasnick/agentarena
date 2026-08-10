@@ -37,7 +37,7 @@ export type AppliedEnvelope = z.infer<typeof AppliedEnvelopeSchema>;
 
 export const RoundEnvelopeSchema = z
   .object({
-    version: z.union([z.literal(1), z.literal(2)]),
+    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     sealedAt: IsoDateSchema,
@@ -264,9 +264,14 @@ export const RunSummaryV6Schema = RunSummaryV5Schema.unwrap()
     schemaVersion: z.literal(6),
   });
 export type RunSummaryV6 = z.infer<typeof RunSummaryV6Schema>;
+export const RunSummaryV7Schema = RunSummaryV5Schema.unwrap()
+  .omit({ schemaVersion: true })
+  .extend({ schemaVersion: z.literal(7) });
+export type RunSummaryV7 = z.infer<typeof RunSummaryV7Schema>;
 export const AnyRunSummarySchema = z.discriminatedUnion("schemaVersion", [
   RunSummaryV5Schema,
   RunSummaryV6Schema,
+  RunSummaryV7Schema,
 ]);
 
 export const CheckpointDescriptorSchema = z

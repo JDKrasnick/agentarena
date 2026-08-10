@@ -290,7 +290,7 @@ export function renderBattleReport(state: RunState): string {
     "",
     `Mode: **${state.config.mode}**`,
     "",
-    state.schemaVersion === 4 || state.schemaVersion === 5
+    "runSpecHash" in state
       ? `Run specification: \`${state.runSpecHash}\``
       : `Legacy task contract: \`${state.taskContractHash}\``,
     "",

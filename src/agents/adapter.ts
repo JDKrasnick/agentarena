@@ -3,7 +3,7 @@ import path from "node:path";
 import { constants } from "node:fs";
 import {
   AgentInvocationSchema,
-  AttackSubmissionSchema,
+  AttackSubmissionV2Schema,
   InfrastructureReviewSubmissionSchema,
   ReviewSubmissionSchema,
   SeveritySchema,
@@ -21,6 +21,8 @@ import {
   type Severity,
 } from "../core/types.js";
 import type { RunSpec } from "../contracts/round.js";
+import { sha256 } from "../core/ids.js";
+import { buildJudgePacket } from "../judge/packets.js";
 import { runProcess, type ProcessRequest } from "../runner/process-runner.js";
 import { z } from "zod";
 
@@ -210,7 +212,7 @@ export async function readAttackSubmission(
 ): Promise<AttackSubmission> {
   const submissionPath = path.join(worktree, ".agent-arena-submission.json");
   return parseModelSubmission(
-    AttackSubmissionSchema,
+    AttackSubmissionV2Schema,
     await readFile(submissionPath, "utf8"),
   );
 }
@@ -481,6 +483,16 @@ const AttackVerdictSchema = z.object({
   rationale: z.string().min(1),
 });
 
+const JudgeAttackVerdictSchema = z.object({
+  decision: z.enum(["confirmed", "supported_untestable", "rejected", "unable"]),
+  relevant: z.boolean(),
+  expectedBehaviorClearlySupported: z.boolean(),
+  evidencePointsToDefect: z.boolean(),
+  rootDefectId: z.string().min(1).optional(),
+  severity: SeveritySchema.optional(),
+  rationale: z.string().min(1),
+});
+
 export class CommandAttackVerifier implements AttackVerifier {
   private readonly command: Omit<CommandAdapterOptions, "id">;
 
@@ -490,29 +502,37 @@ export class CommandAttackVerifier implements AttackVerifier {
 
   async assess(input: AnonymizedAttackInput): Promise<AttackVerdict> {
     const outputPath = path.join(input.worktree, ".agent-arena-verdict.json");
+    const patchBytes = await readFile(input.attack.patchPath);
+    const packet = buildJudgePacket({
+      kind: "attack",
+      task: {
+        request: input.runSpec.task.task,
+        acceptanceCriteria: [...input.runSpec.task.acceptanceCriteria],
+      },
+      claim: input.attack.claim,
+      oracle: JSON.stringify(input.attack.oracle),
+      diagnostics: `authorPassed=${String(input.authorPassed)} targetFailed=${String(input.targetFailed)} impact=${input.attack.impact} assertionFingerprint=${input.attack.assertionFingerprint}`,
+      artifactPointers: [
+        ...input.runSpec.task.sources.map((source) => ({
+          artifactId: source.id,
+          sha256: source.contentHash,
+          description: `Frozen ${source.kind} source`,
+        })),
+        {
+          artifactId: "attack-overlay",
+          sha256: sha256(patchBytes),
+          description: "Executable attack overlay",
+        },
+      ],
+    });
     const prompt = [
       "# Neutral Agent Arena attack adjudication",
       "You do not know either contestant's identity. Mechanical execution already established an author-side pass and target-side failure.",
       "Assess only oracle support, task relevance, canonical root-defect identity, and the lowest fully supported severity.",
       "Do not infer correctness from the test or the presence of a source ID. Read the frozen task and source text and confirm that it clearly supports the claimed expected behavior. Critical means security bypass/data loss/corruption/catastrophic failure; High means a core criterion, normal crash/hang, or major wrong result; Medium is a realistic edge or secondary requirement; Low is narrow robustness/performance impact. Ambiguous High/Critical must be capped at Medium.",
       "",
-      "# Immutable run specification",
-      JSON.stringify(input.runSpec, null, 2),
-      "",
-      "# Anonymized attack",
-      JSON.stringify(
-        {
-          claim: input.attack.claim,
-          impact: input.attack.impact,
-          oracle: input.attack.oracle,
-          assertionFingerprint: input.attack.assertionFingerprint,
-          testPatchPath: input.attack.patchPath,
-          authorPassed: input.authorPassed,
-          targetFailed: input.targetFailed,
-        },
-        null,
-        2,
-      ),
+      "# Digest-linked identity-blind judge packet",
+      JSON.stringify(packet, null, 2),
       "",
       `Write only valid JSON to ${outputPath} with keys relevant, oracleSupported, oracleRationale, rootDefectId, severity, and rationale.`,
     ].join("\n");
@@ -554,6 +574,77 @@ export class CommandAttackVerifier implements AttackVerifier {
     }
     throw new Error(
       `Verifier failed after two attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+    );
+  }
+
+  async adjudicate(input: JudgeAdjudicationInput): Promise<JudgeAttackVerdict> {
+    const outputPath = path.join(input.worktree, ".agent-arena-judgment.json");
+    const packet = buildJudgePacket({
+      kind: "attack",
+      task: {
+        request: input.runSpec.task.task,
+        acceptanceCriteria: [...input.runSpec.task.acceptanceCriteria],
+      },
+      claim: input.attack.claim,
+      oracle: JSON.stringify(input.attack.oracle),
+      diagnostics: JSON.stringify({
+        mechanicalFailureReason: input.mechanicalFailureReason,
+        impact: input.attack.impact,
+        assertionFingerprint: input.attack.assertionFingerprint,
+        priorCanonicalDefects: input.priorCanonicalDefects,
+      }),
+      artifactPointers: input.runSpec.task.sources.map((source) => ({
+        artifactId: source.id,
+        sha256: source.contentHash,
+        description: `Frozen ${source.kind} source`,
+      })),
+    });
+    const prompt = [
+      "# Neutral Agent Arena semantic adjudication",
+      "Contestant identities are unavailable. Do not execute commands or modify evidence.",
+      "Use confirmed only for definitive semantic evidence, supported_untestable only when the task clearly supports the oracle and evidence points to the defect, rejected when unsupported, and unable when evidence is insufficient.",
+      JSON.stringify(packet, null, 2),
+      `Write only valid JSON to ${outputPath} with keys decision, relevant, expectedBehaviorClearlySupported, evidencePointsToDefect, optional rootDefectId, optional severity, and rationale.`,
+    ].join("\n\n");
+    await rm(outputPath, { force: true });
+    let lastError: unknown;
+    for (const attempt of [1, 2]) {
+      const result = await runProcess({
+        executable: this.command.executable,
+        args: this.command.args,
+        input: prompt,
+        cwd: input.worktree,
+        timeoutMs: input.timeoutMs,
+        logPrefix: `${input.transcriptPrefix}-attempt-${String(attempt)}`,
+        signal: input.signal,
+      });
+      if (result.failureClass === "arena_infrastructure") {
+        lastError = new Error("Judge provider infrastructure failed");
+        continue;
+      }
+      try {
+        const verdict = parseModelSubmission(
+          JudgeAttackVerdictSchema,
+          await readFile(outputPath, "utf8"),
+        );
+        return {
+          decision: verdict.decision,
+          relevant: verdict.relevant,
+          expectedBehaviorClearlySupported:
+            verdict.expectedBehaviorClearlySupported,
+          evidencePointsToDefect: verdict.evidencePointsToDefect,
+          rationale: verdict.rationale,
+          ...(verdict.rootDefectId
+            ? { rootDefectId: verdict.rootDefectId }
+            : {}),
+          ...(verdict.severity ? { severity: verdict.severity } : {}),
+        };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw new Error(
+      `Judge fallback failed after two attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
     );
   }
 }

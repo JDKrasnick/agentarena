@@ -2,13 +2,8 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import {
   CommandAttackVerifier,
-  CommandCaseBuilder,
-  CommandHouseScout,
-  CommandHarnessMaintainer,
-  CommandInfrastructureReviewer,
   createProviderAdapter,
 } from "../agents/adapter.js";
-import { CommandPatchQualityVerifier } from "../quality/verifier.js";
 import {
   loadFightConfig,
   type CliConfigOverrides,
@@ -57,14 +52,7 @@ function createArena(
     adapters,
     adapterFactory: (contestant) =>
       createProviderAdapter(contestant.provider, contestant.model),
-    verifier: new CommandAttackVerifier(config.attackVerifier),
-    qualityVerifier: new CommandPatchQualityVerifier(
-      config.qualityVerifier ?? config.attackVerifier,
-    ),
-    houseScout: new CommandHouseScout(config.attackVerifier),
-    caseBuilder: new CommandCaseBuilder(config.attackVerifier),
-    infrastructureReviewer: new CommandInfrastructureReviewer(),
-    harnessMaintainer: new CommandHarnessMaintainer(config.harnessMaintainer),
+    verifier: new CommandAttackVerifier(config.judge),
     onProgress: (message) => stdout.write(`${message}\n`),
   });
 }

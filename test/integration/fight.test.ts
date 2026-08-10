@@ -576,7 +576,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         "utf8",
       ),
     ) as { schemaVersion: number; stage: string };
-    expect(result).toMatchObject({ schemaVersion: 6, stage: "complete" });
+    expect(result).toMatchObject({ schemaVersion: 7, stage: "complete" });
     const roundDirectory = path.join(
       outcome.state.artifacts.runDirectory!,
       "rounds",
@@ -671,8 +671,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       contentHash: string;
       task: { sources: Array<{ kind: string; snapshotPath: string }> };
     };
-    expect(outcome.state.schemaVersion).toBe(5);
-    if (outcome.state.schemaVersion !== 5) throw new Error("expected v5 state");
+    expect(outcome.state.schemaVersion).toBe(6);
+    if (outcome.state.schemaVersion !== 6) throw new Error("expected v6 state");
     expect(outcome.state.runSpecHash).toBe(runSpec.contentHash);
     const issueSnapshot = runSpec.task.sources.find(
       (source) => source.kind === "issue",
