@@ -31,6 +31,11 @@ export interface ProcessRequest {
   env?: Record<string, string>;
   signal?: AbortSignal;
   attempts?: number;
+  secrets?: readonly string[];
+  onOutput?: (
+    stream: "stdout" | "stderr",
+    text: string,
+  ) => void | Promise<void>;
 }
 
 function minimalEnvironment(
@@ -55,6 +60,34 @@ export function redact(value: string, secrets: readonly string[] = []): string {
       /\b(?:ghp|github_pat|sk|xox[baprs])[-_A-Za-z0-9]{12,}\b/g,
       "[REDACTED_CREDENTIAL]",
     );
+}
+
+/** Delays a small tail so credentials split across process chunks are redacted. */
+export class StreamingRedactor {
+  private pending = "";
+  private readonly retainedCharacters: number;
+
+  constructor(private readonly secrets: readonly string[] = []) {
+    this.retainedCharacters = Math.max(
+      256,
+      ...secrets.map((secret) => secret.length + 16),
+    );
+  }
+
+  push(chunk: string): string {
+    this.pending += chunk;
+    if (this.pending.length <= this.retainedCharacters) return "";
+    const splitAt = this.pending.length - this.retainedCharacters;
+    const output = this.pending.slice(0, splitAt);
+    this.pending = this.pending.slice(splitAt);
+    return redact(output, this.secrets);
+  }
+
+  flush(): string {
+    const output = redact(this.pending, this.secrets);
+    this.pending = "";
+    return output;
+  }
 }
 
 function classifySpawnError(error: unknown): FailureClass | undefined {
@@ -114,6 +147,8 @@ interface SupervisedOptions {
   env: Record<string, string>;
   timeoutMs: number;
   signal?: AbortSignal;
+  secrets?: readonly string[];
+  onOutput?: ProcessRequest["onOutput"];
 }
 
 interface SupervisedResult {
@@ -171,6 +206,29 @@ async function supervise(
     };
   }
 
+  let stdout = "";
+  let stderr = "";
+  const redactors = {
+    stdout: new StreamingRedactor(options.secrets),
+    stderr: new StreamingRedactor(options.secrets),
+  };
+  const publish = (stream: "stdout" | "stderr", text: string): void => {
+    if (!text) return;
+    if (stream === "stdout") stdout += text;
+    else stderr += text;
+    void options.onOutput?.(stream, text);
+  };
+  const flushStreams = (): void => {
+    publish("stdout", redactors.stdout.flush());
+    publish("stderr", redactors.stderr.flush());
+  };
+  subprocess.stdout?.on("data", (chunk: Buffer) =>
+    publish("stdout", redactors.stdout.push(chunk.toString("utf8"))),
+  );
+  subprocess.stderr?.on("data", (chunk: Buffer) =>
+    publish("stderr", redactors.stderr.push(chunk.toString("utf8"))),
+  );
+
   const supervisor =
     subprocess.pid === undefined
       ? undefined
@@ -209,10 +267,11 @@ async function supervise(
 
   try {
     const result = await subprocess;
+    flushStreams();
     const cleanupResult = cleanup === undefined ? undefined : await cleanup;
     return {
-      stdout: result.stdout,
-      stderr: result.stderr,
+      stdout,
+      stderr,
       exitCode: result.exitCode ?? null,
       signal: result.signal ?? null,
       timedOut: expiredAt !== undefined,
@@ -221,10 +280,11 @@ async function supervise(
         : {}),
     };
   } catch (spawnError) {
+    flushStreams();
     const cleanupResult = cleanup === undefined ? undefined : await cleanup;
     return {
-      stdout: "",
-      stderr: "",
+      stdout,
+      stderr,
       exitCode: null,
       signal: null,
       timedOut: expiredAt !== undefined,
@@ -259,6 +319,8 @@ async function run(
     timeoutMs: request.timeoutMs,
     ...(request.input === undefined ? {} : { input: request.input }),
     ...(request.signal === undefined ? {} : { signal: request.signal }),
+    ...(request.secrets === undefined ? {} : { secrets: request.secrets }),
+    ...(request.onOutput === undefined ? {} : { onOutput: request.onOutput }),
   });
   const failureClass = result.spawnError
     ? (classifySpawnError(result.spawnError) ?? "arena_infrastructure")
@@ -268,7 +330,8 @@ async function run(
         ? timeoutFailureClass
         : undefined;
   if (result.spawnError) {
-    result.stderr = describeError(result.spawnError);
+    result.stderr = redact(describeError(result.spawnError), request.secrets);
+    void request.onOutput?.("stderr", result.stderr);
   }
   const stdoutPath = `${request.logPrefix}.stdout.log`;
   const stderrPath = `${request.logPrefix}.stderr.log`;

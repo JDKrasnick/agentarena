@@ -1,0 +1,288 @@
+import { EventEmitter } from "node:events";
+import type {
+  ArenaEvent,
+  ArenaEventInput,
+  ArenaObserver,
+} from "../observability/events.js";
+import type { RoundId, Stage } from "../core/types.js";
+
+export interface DashboardContestant {
+  provider: string;
+  model?: string;
+  health: number;
+  status: string;
+  activity: string;
+  checks: Array<{ id: string; status: string }>;
+  invocations: Array<{ id: string; stage: string; status: string }>;
+  output: Array<{ stream: "stdout" | "stderr"; text: string }>;
+  lastHealthChange?: {
+    sequence: number;
+    amount: number;
+    reason: string;
+  };
+  healthChanges: Array<{
+    sequence: number;
+    amount: number;
+    health: number;
+    reason: string;
+    round?: RoundId;
+    attackId?: string;
+  }>;
+}
+
+export interface DashboardAttackActivity {
+  id: string;
+  round?: RoundId;
+  phase: "mounting" | "landed" | "revised" | "resolved";
+  status: string;
+  attacker?: string;
+  target?: string;
+  severity?: string;
+  damage?: number;
+  detail?: string;
+}
+
+export interface DashboardState {
+  runId?: string;
+  task: string;
+  startedAt?: string;
+  stage: Stage;
+  round?: RoundId;
+  status: string;
+  assisted: boolean;
+  warnings: string[];
+  contestants: { a: DashboardContestant; b: DashboardContestant };
+  systemOutput: Array<{ source: string; stream: string; text: string }>;
+  attacks: DashboardAttackActivity[];
+  result?: {
+    roundsCompleted?: number;
+    championId?: string;
+    recommendedId?: string;
+    recommendationReason?: string;
+    coverageConfidence?: string;
+    contestants?: Array<{
+      id: "a" | "b";
+      health: number;
+      status: string;
+      checksPassed: number;
+      checksTotal: number;
+    }>;
+  };
+  links: Array<{
+    kind: "pull_request" | "issue" | "spec" | "artifacts";
+    label: string;
+    url: string;
+  }>;
+}
+
+function contestant(): DashboardContestant {
+  return {
+    provider: "unknown",
+    health: 100,
+    status: "pending",
+    activity: "Waiting",
+    checks: [],
+    invocations: [],
+    output: [],
+    healthChanges: [],
+  };
+}
+
+export function initialDashboardState(): DashboardState {
+  return {
+    task: "Preparing battle…",
+    stage: "preflight",
+    status: "running",
+    assisted: false,
+    warnings: [],
+    contestants: { a: contestant(), b: contestant() },
+    systemOutput: [],
+    attacks: [],
+    links: [],
+  };
+}
+
+function appendBounded<T>(items: T[], item: T, maximum = 2_000): void {
+  items.push(item);
+  if (items.length > maximum) items.splice(0, items.length - maximum);
+}
+
+export function projectEvent(state: DashboardState, event: ArenaEvent): void {
+  switch (event.type) {
+    case "battle_started":
+      state.runId = event.runId;
+      state.task = event.task;
+      state.startedAt = event.timestamp;
+      state.links = event.links ?? [];
+      for (const configured of event.contestants ?? []) {
+        state.contestants[configured.id].provider = configured.provider;
+        if (configured.model)
+          state.contestants[configured.id].model = configured.model;
+      }
+      return;
+    case "stage_changed":
+      state.stage = event.stage;
+      if (event.round !== undefined) state.round = event.round;
+      return;
+    case "round_started":
+      state.round = event.round;
+      return;
+    case "invocation_started":
+      if (event.contestantId) {
+        const target = state.contestants[event.contestantId];
+        target.activity = event.stage;
+        target.status = "working";
+        appendBounded(target.invocations, {
+          id: event.invocationId,
+          stage: event.stage,
+          status: "running",
+        });
+      }
+      return;
+    case "invocation_finished":
+      if (event.contestantId) {
+        const target = state.contestants[event.contestantId];
+        target.status = event.status;
+        target.activity = "Waiting";
+        const invocation = target.invocations.find(
+          (entry) => entry.id === event.invocationId,
+        );
+        if (invocation) invocation.status = event.status;
+      }
+      return;
+    case "output":
+      if (event.contestantId) {
+        appendBounded(state.contestants[event.contestantId].output, {
+          stream: event.stream,
+          text: event.text,
+        });
+      } else {
+        appendBounded(state.systemOutput, {
+          source: event.source,
+          stream: event.stream,
+          text: event.text,
+        });
+      }
+      return;
+    case "health_changed":
+      state.contestants[event.contestantId].health = event.health;
+      state.contestants[event.contestantId].lastHealthChange = {
+        sequence: event.sequence,
+        amount: event.amount,
+        reason: event.reason,
+      };
+      appendBounded(state.contestants[event.contestantId].healthChanges, {
+        sequence: event.sequence,
+        amount: event.amount,
+        health: event.health,
+        reason: event.reason,
+        ...(event.round ? { round: event.round } : {}),
+        ...(event.attackId ? { attackId: event.attackId } : {}),
+      });
+      return;
+    case "check_completed":
+      if (event.contestantId) {
+        appendBounded(state.contestants[event.contestantId].checks, {
+          id: event.checkId,
+          status: event.status,
+        });
+      }
+      return;
+    case "attack_mounted":
+      appendBounded(state.attacks, {
+        id: event.attackId,
+        round: event.round,
+        phase: "mounting",
+        status: "mounting",
+        ...(event.attackerId ? { attacker: event.attackerId } : {}),
+        ...(event.targetId ? { target: event.targetId } : {}),
+        ...(event.claim ? { detail: event.claim } : {}),
+      });
+      return;
+    case "attack_revised":
+      appendBounded(state.attacks, {
+        id: event.attackId,
+        round: event.round,
+        phase: "revised",
+        status: "revised",
+        ...(event.attackerId ? { attacker: event.attackerId } : {}),
+        ...(event.targetId ? { target: event.targetId } : {}),
+        detail: event.explanation,
+      });
+      return;
+    case "attack_resolved":
+      appendBounded(state.attacks, {
+        id: event.attackId,
+        ...(event.round ? { round: event.round } : {}),
+        phase: event.status === "landed" ? "landed" : "resolved",
+        status: event.status,
+        ...(event.attackerId ? { attacker: event.attackerId } : {}),
+        ...(event.targetId ? { target: event.targetId } : {}),
+        ...(event.severity ? { severity: event.severity } : {}),
+        ...(event.damage === undefined ? {} : { damage: event.damage }),
+      });
+      return;
+    case "warning":
+      appendBounded(state.warnings, event.message, 20);
+      return;
+    case "steering_applied":
+      state.assisted = true;
+      return;
+    case "cancellation_requested":
+      state.status = "cancelling";
+      return;
+    case "cancellation_completed":
+      state.status = "cancelled";
+      return;
+    case "battle_completed":
+      state.status = event.status;
+      state.result = {
+        ...(event.roundsCompleted === undefined
+          ? {}
+          : { roundsCompleted: event.roundsCompleted }),
+        ...(event.championId ? { championId: event.championId } : {}),
+        ...(event.recommendedId ? { recommendedId: event.recommendedId } : {}),
+        ...(event.recommendationReason
+          ? { recommendationReason: event.recommendationReason }
+          : {}),
+        ...(event.coverageConfidence
+          ? { coverageConfidence: event.coverageConfidence }
+          : {}),
+        ...(event.contestants ? { contestants: event.contestants } : {}),
+      };
+      for (const final of event.contestants ?? []) {
+        const target = state.contestants[final.id];
+        target.health = final.health;
+        target.status = final.status;
+      }
+      return;
+    default:
+      return;
+  }
+}
+
+export class DashboardObserver implements ArenaObserver {
+  private readonly emitter = new EventEmitter();
+  private sequence = 0;
+  readonly state = initialDashboardState();
+
+  publish(input: ArenaEventInput): void {
+    const event = {
+      ...input,
+      version: 1 as const,
+      sequence: ++this.sequence,
+      timestamp: new Date().toISOString(),
+    } as ArenaEvent;
+    projectEvent(this.state, event);
+    this.emitter.emit("change");
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.emitter.on("change", listener);
+    return () => this.emitter.off("change", listener);
+  }
+
+  snapshot(): DashboardState {
+    return structuredClone(this.state);
+  }
+}

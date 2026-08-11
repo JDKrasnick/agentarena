@@ -102,6 +102,51 @@ mirror matches, for example `--agents codex,codex --models model-a,model-b`.
 
 Explicit CLI flags override YAML.
 
+## Live battle observatory
+
+Interactive `fight` and `defend` runs open a compact terminal-native
+observatory. It follows the same restrained approach as coding-agent CLIs:
+crisp text, small provider sigils, selective color, live tool output, and no
+bitmap logo wells. Use `--display auto|dashboard|terminal|plain` explicitly:
+`dashboard` launches the optional loopback-only React view, `terminal` forces
+the Ink observatory, and `plain` keeps stable line-oriented output for CI.
+
+Both rich displays show contestant output, rounds, evidence, checks, warnings,
+and PR/spec/artifact links. They support cancellation and one-time steering for
+the next eligible agent invocation. Applied steering marks the result
+**Assisted — not competitively comparable** without discarding its evidence.
+
+Provider and command output is redacted before it reaches either display,
+`events.ndjson`, or final transcript logs. The overview keeps live counts for
+mounted and landed attacks and evidence revisions. Terminal damage uses a brief
+red glyph/HP cue; reduced-motion mode keeps the numeric cue without animation.
+
+The terminal uses a yellow-orange `✦` Spark sigil for Claude and compact textual
+marks for other providers. The optional React view uses crisp browser-native
+artwork, including the official orange Claude mark. The registry also covers
+Gemini, Grok, Mistral, DeepSeek, Cohere, Perplexity, Meta AI, GitHub Copilot,
+Amazon Bedrock, Qwen, NVIDIA, Azure AI, Groq, Hugging Face, Together AI,
+Fireworks AI, OpenRouter, and Cursor. No third-party game art is used.
+
+A persistent status rail identifies the current opening, numbered round,
+recovery, or final phase; names the exact stage in plain language; explains its
+current objective; and highlights progress through `scout → mount → verify →
+damage → repair`. Battle-log entries retain the round in which each move occurred.
+
+On completion, the dashboard opens an evidence-backed result area. It
+shows final HP, status, and checks for both fighters; the champion and
+recommended patch when coverage resolves them; verified defects caught before
+ship; health-restoring improvements that survived replay; and the exact review
+command. Choose
+**Finish session** after review to close the local server.
+
+Run either mock without provider credentials:
+
+```bash
+npm run demo:dashboard
+npm run demo:web
+```
+
 ## Battle modes
 
 The default duel gives both contestant slots a fresh implementation:
@@ -172,6 +217,7 @@ Each run is persisted atomically under `.agent-arena/runs/<run-id>/`:
   and compact schema-v8 `result.json`
 - immutable `baseline.json`, sealed round envelopes, runtime drift manifest,
   envelope-head-bound finalization, and checkpoint descriptors
+- ordered append-only `events.ndjson` for live observability and replay
 - immutable `run-spec.json` and source snapshots
 - redacted `permissions.json`
 - implementation, attack, diagnostic, and final patches

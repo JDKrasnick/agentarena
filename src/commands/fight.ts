@@ -11,6 +11,11 @@ import {
 import { Arena } from "../core/arena.js";
 import { FightConfigSchema } from "../core/types.js";
 import { discoverCapabilities } from "../permissions/policy.js";
+import { ArenaBattleControl } from "../observability/control.js";
+import type { ArenaObserver } from "../observability/events.js";
+import type { WebDashboard } from "../dashboard/web-server.js";
+
+export type DisplayMode = "auto" | "dashboard" | "terminal" | "plain";
 
 async function approvePermissionPlan(
   config: Awaited<ReturnType<typeof loadFightConfig>>,
@@ -41,6 +46,10 @@ async function approvePermissionPlan(
 
 function createArena(
   config: Awaited<ReturnType<typeof loadFightConfig>>,
+  observability?: {
+    observer?: ArenaObserver;
+    battleControl?: ArenaBattleControl;
+  },
 ): Arena {
   const adapters = Object.fromEntries(
     config.contestants.map((contestant) => [
@@ -48,27 +57,83 @@ function createArena(
       createProviderAdapter(contestant.provider, contestant.model),
     ]),
   );
+  const observer = observability?.observer;
   return new Arena({
     adapters,
     adapterFactory: (contestant) =>
       createProviderAdapter(contestant.provider, contestant.model),
     verifier: new CommandAttackVerifier(config.judge),
-    onProgress: (message) => stdout.write(`${message}\n`),
+    onProgress: observer
+      ? () => undefined
+      : (message) => stdout.write(`${message}\n`),
+    ...(observer ? { observer } : {}),
+    ...(observability?.battleControl
+      ? { battleControl: observability.battleControl }
+      : {}),
   });
 }
 
-export async function runFight(overrides: CliConfigOverrides): Promise<string> {
+export async function runFight(
+  overrides: CliConfigOverrides,
+  display: DisplayMode = "auto",
+): Promise<string> {
   const config = await approvePermissionPlan(await loadFightConfig(overrides));
-  const arena = createArena(config);
+  const interactive = Boolean(stdout.isTTY && stdin.isTTY);
+  const useWebDashboard = display === "dashboard";
+  const useTerminalDashboard =
+    display === "terminal" || (display === "auto" && interactive);
+  if (useTerminalDashboard && !interactive) {
+    throw new Error(
+      "--display terminal requires an interactive TTY; use --display plain for redirected output or CI",
+    );
+  }
   const controller = new AbortController();
-  const cancel = (): void => controller.abort(new Error("Interrupted"));
+  const control = new ArenaBattleControl(controller);
+  let dashboard: { unmount(): void } | undefined;
+  let webDashboard: WebDashboard | undefined;
+  let observer: ArenaObserver | undefined;
+  if (useWebDashboard) {
+    const { startWebDashboard } = await import("../dashboard/web-server.js");
+    webDashboard = await startWebDashboard(control);
+    observer = webDashboard.observer;
+    stdout.write(`Agent Arena dashboard: ${webDashboard.url}\n`);
+  } else if (useTerminalDashboard) {
+    const [{ DashboardObserver }, { startDashboard }] = await Promise.all([
+      import("../dashboard/state.js"),
+      import("../dashboard/app.js"),
+    ]);
+    const dashboardObserver = new DashboardObserver();
+    observer = dashboardObserver;
+    dashboard = startDashboard(dashboardObserver, control);
+  }
+  const arena = createArena(config, {
+    ...(observer ? { observer } : {}),
+    battleControl: control,
+  });
+  const cancel = (): void => {
+    void observer?.publish({
+      type: "cancellation_requested",
+      reason: "Interrupted",
+    });
+    control.cancel(new Error("Interrupted"));
+    void webDashboard?.close();
+  };
   process.once("SIGINT", cancel);
   process.once("SIGTERM", cancel);
   try {
-    return (await arena.fight(config, controller.signal)).summary;
+    const summary = (await arena.fight(config, controller.signal)).summary;
+    if (webDashboard) {
+      stdout.write(
+        "Battle complete. Review the dashboard, then choose Finish session.\n",
+      );
+      await webDashboard.waitUntilClosed();
+    }
+    return summary;
   } finally {
     process.removeListener("SIGINT", cancel);
     process.removeListener("SIGTERM", cancel);
+    dashboard?.unmount();
+    await webDashboard?.close();
   }
 }
 

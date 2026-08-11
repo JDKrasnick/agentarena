@@ -131,6 +131,11 @@ program
   .option("--yes", "Approve the displayed confirm-mode plan noninteractively")
   .option("--accept-reduced-validation", "Allow required capability denials")
   .option("--keep-worktrees", "Preserve temporary worktrees for debugging")
+  .addOption(
+    new Option("--display <mode>", "Display mode")
+      .choices(["auto", "dashboard", "terminal", "plain"])
+      .default("auto"),
+  )
   .action(
     async (
       task: string,
@@ -156,40 +161,44 @@ program
         yes?: boolean;
         acceptReducedValidation?: boolean;
         keepWorktrees?: boolean;
+        display: "auto" | "dashboard" | "terminal" | "plain";
       },
     ) => {
       if (options.rounds !== "3") {
         throw new Error("The MVP requires exactly three attack–repair rounds");
       }
-      const summary = await runFight({
-        task,
-        configPath: options.config,
-        ...(options.agents ? { agents: options.agents } : {}),
-        ...(options.models ? { models: options.models } : {}),
-        ...(options.test ? { testCommand: options.test } : {}),
-        ...(options.spec ? { specPaths: options.spec } : {}),
-        ...(options.issue ? { issueReferences: options.issue } : {}),
-        ...(options.pr ? { pullRequestReferences: options.pr } : {}),
-        ...(options.incumbentFromPr ? { mode: "catch_up" as const } : {}),
-        ...(options.challenger ? { challenger: options.challenger } : {}),
-        ...(options.incumbent ? { incumbent: options.incumbent } : {}),
-        ...(options.baseFromPr
-          ? { baseFromPullRequest: options.baseFromPr }
-          : {}),
-        ...(options.acceptance
-          ? { acceptanceCriteria: options.acceptance }
-          : {}),
-        permissionMode: options.permissions,
-        ...(options.judge ? { judge: options.judge } : {}),
-        ...(options.verifier ? { verifier: options.verifier } : {}),
-        ...(options.qualityVerifier
-          ? { qualityVerifier: options.qualityVerifier }
-          : {}),
-        ...(options.maintainer ? { maintainer: options.maintainer } : {}),
-        nonInteractiveApproval: options.yes ?? false,
-        reducedValidationAccepted: options.acceptReducedValidation ?? false,
-        keepWorktrees: options.keepWorktrees ?? false,
-      });
+      const summary = await runFight(
+        {
+          task,
+          configPath: options.config,
+          ...(options.agents ? { agents: options.agents } : {}),
+          ...(options.models ? { models: options.models } : {}),
+          ...(options.test ? { testCommand: options.test } : {}),
+          ...(options.spec ? { specPaths: options.spec } : {}),
+          ...(options.issue ? { issueReferences: options.issue } : {}),
+          ...(options.pr ? { pullRequestReferences: options.pr } : {}),
+          ...(options.incumbentFromPr ? { mode: "catch_up" as const } : {}),
+          ...(options.challenger ? { challenger: options.challenger } : {}),
+          ...(options.incumbent ? { incumbent: options.incumbent } : {}),
+          ...(options.baseFromPr
+            ? { baseFromPullRequest: options.baseFromPr }
+            : {}),
+          ...(options.acceptance
+            ? { acceptanceCriteria: options.acceptance }
+            : {}),
+          permissionMode: options.permissions,
+          ...(options.judge ? { judge: options.judge } : {}),
+          ...(options.verifier ? { verifier: options.verifier } : {}),
+          ...(options.qualityVerifier
+            ? { qualityVerifier: options.qualityVerifier }
+            : {}),
+          ...(options.maintainer ? { maintainer: options.maintainer } : {}),
+          nonInteractiveApproval: options.yes ?? false,
+          reducedValidationAccepted: options.acceptReducedValidation ?? false,
+          keepWorktrees: options.keepWorktrees ?? false,
+        },
+        options.display,
+      );
       process.stdout.write(`${summary}\n`);
     },
   );
@@ -229,6 +238,11 @@ program
   .option("--yes", "Approve the displayed confirm-mode plan noninteractively")
   .option("--accept-reduced-validation", "Allow required capability denials")
   .option("--keep-worktrees", "Preserve temporary worktrees for debugging")
+  .addOption(
+    new Option("--display <mode>", "Display mode")
+      .choices(["auto", "dashboard", "terminal", "plain"])
+      .default("auto"),
+  )
   .action(
     async (options: {
       pr: string;
@@ -248,32 +262,36 @@ program
       yes?: boolean;
       acceptReducedValidation?: boolean;
       keepWorktrees?: boolean;
+      display: "auto" | "dashboard" | "terminal" | "plain";
     }) => {
-      const summary = await runFight({
-        task: `Defend pull request #${options.pr}`,
-        configPath: options.config,
-        mode: "siege",
-        pullRequestReferences: [options.pr],
-        attacker: options.attacker,
-        defender: options.defender,
-        ...(options.models ? { models: options.models } : {}),
-        ...(options.test ? { testCommand: options.test } : {}),
-        ...(options.spec ? { specPaths: options.spec } : {}),
-        ...(options.issue ? { issueReferences: options.issue } : {}),
-        ...(options.acceptance
-          ? { acceptanceCriteria: options.acceptance }
-          : {}),
-        permissionMode: options.permissions,
-        ...(options.judge ? { judge: options.judge } : {}),
-        ...(options.verifier ? { verifier: options.verifier } : {}),
-        ...(options.qualityVerifier
-          ? { qualityVerifier: options.qualityVerifier }
-          : {}),
-        ...(options.maintainer ? { maintainer: options.maintainer } : {}),
-        nonInteractiveApproval: options.yes ?? false,
-        reducedValidationAccepted: options.acceptReducedValidation ?? false,
-        keepWorktrees: options.keepWorktrees ?? false,
-      });
+      const summary = await runFight(
+        {
+          task: `Defend pull request #${options.pr}`,
+          configPath: options.config,
+          mode: "siege",
+          pullRequestReferences: [options.pr],
+          attacker: options.attacker,
+          defender: options.defender,
+          ...(options.models ? { models: options.models } : {}),
+          ...(options.test ? { testCommand: options.test } : {}),
+          ...(options.spec ? { specPaths: options.spec } : {}),
+          ...(options.issue ? { issueReferences: options.issue } : {}),
+          ...(options.acceptance
+            ? { acceptanceCriteria: options.acceptance }
+            : {}),
+          permissionMode: options.permissions,
+          ...(options.judge ? { judge: options.judge } : {}),
+          ...(options.verifier ? { verifier: options.verifier } : {}),
+          ...(options.qualityVerifier
+            ? { qualityVerifier: options.qualityVerifier }
+            : {}),
+          ...(options.maintainer ? { maintainer: options.maintainer } : {}),
+          nonInteractiveApproval: options.yes ?? false,
+          reducedValidationAccepted: options.acceptReducedValidation ?? false,
+          keepWorktrees: options.keepWorktrees ?? false,
+        },
+        options.display,
+      );
       process.stdout.write(`${summary}\n`);
     },
   );

@@ -35,6 +35,18 @@ Completed runs live under `.agent-arena/runs/<run-id>/`.
   text replay and handoff, and `BATTLE.svg` is a deterministic share image.
   Links are relative to the run directory and only reference recorded artifacts
   contained by that directory.
+- Existing artifacts default to competitive integrity with no
+  operator interventions. New runs persist `integrity` and the complete
+  queued/applied/expired intervention ledger additively; `result.json` remains
+  the authoritative state snapshot.
+- `events.ndjson` is an ordered, append-only version-1 observability stream.
+  Every record has a monotonic sequence number and timestamp and covers stage,
+  round, invocation, redacted output, check, attack, health, warning,
+  cancellation, steering, and completion activity. It is a replay/audit feed,
+  not a replacement for `result.json`.
+- Provider, verifier, test, integration, and harness streams cross the same
+  redaction boundary before display or persistence. Final stdout/stderr files
+  remain complete transcripts of the redacted stream.
 - `pull-request/pull-request.json` and `pull-request/incumbent.patch` freeze the
   binary-safe base-to-head change,
   repository identity, metadata, hashes, and authorship evidence used by

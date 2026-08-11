@@ -56,6 +56,45 @@ The user receives:
   scoring, and handoff.
 * A command to apply the winning solution.
 
+Interactive fights automatically open a compact terminal-native battle
+observatory. It uses crisp text, small provider sigils, selective ANSI color,
+and live output rather than rasterized bitmap logos. Use
+`--display auto|dashboard|terminal|plain`; `dashboard` launches the optional
+loopback-only React view, `terminal` forces Ink, and `plain` keeps CI output
+line-oriented. Both rich displays support cancellation and one-time queued
+contestant steering, but not pause, stage skipping, or arbitrary retries.
+
+Attack telemetry distinguishes mounting, landed, and evidence-revision events.
+The observatory shows their live counts and timeline, and uses a brief red
+health-card pulse when damage lands. Reduced-motion terminals receive the same
+numeric damage cue without animated frames.
+The overview uses a game-like battle presentation—opposing fighter cards, HP
+bars, a VS divider, and move narration—without hiding provider identity,
+checks, current work, or the underlying engineering event log.
+The arena uses a restrained game-battle structure: opposing provider identities,
+separate status/HP regions, a VS divider, live agent output, and an evidence
+rail. The terminal represents Claude with a yellow-orange Spark sigil and keeps
+provider names primary. The optional browser dashboard uses the orange Claude
+product mark and native PNG rendering. No web page is opened unless the user
+explicitly selects `--display dashboard`.
+The registry covers the supported providers plus widely used providers and
+coding-agent products for future adapters. No third-party game characters or
+sprite assets are used.
+Persistent wayfinding shows the numbered round (or opening, recovery, and final
+phase), a plain-language stage name and objective, and the active step within
+the round attack loop. Attack events retain their originating round.
+Completion automatically opens an evidence-backed success screen with both
+final fighter states, the arena champion and recommended patch, landed defects,
+verified health-restoring improvements, and the next human-review command. Its
+product-value statement is derived from recorded attack and repair evidence,
+not unverified agent narration.
+
+Applying an operator steering note changes run integrity from `competitive` to
+`assisted`. The health ledger and review recommendation remain available, but
+reports describe only an assisted leader and prominently state “Assisted — not
+competitively comparable.” Empty notes are rejected and notes with no future
+eligible invocation expire unapplied.
+
 The project is intended to be both useful and entertaining. The adversarial testing provides engineering value, while the competition format creates a memorable and shareable GitHub project.
 
 ### Execution architecture

@@ -290,6 +290,12 @@ export function renderBattleReport(state: RunState): string {
     "",
     `Mode: **${state.config.mode}**`,
     "",
+    ...(state.integrity === "assisted"
+      ? [
+          "> **Assisted — not competitively comparable.** Operator steering was applied during this run.",
+          "",
+        ]
+      : []),
     "runSpecHash" in state
       ? `Run specification: \`${state.runSpecHash}\``
       : `Legacy task contract: \`${state.taskContractHash}\``,
@@ -317,7 +323,7 @@ export function renderBattleReport(state: RunState): string {
       !state.coverageDecision)
       ? "Arena champion: **not published** (coverage unresolved or finalized inconclusive)"
       : state.arenaOutcome
-        ? `Arena champion: **${state.arenaOutcome.championId ?? "draw"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
+        ? `${state.integrity === "assisted" ? "Assisted leader" : "Arena champion"}: **${state.arenaOutcome.championId ?? "draw"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
         : "Arena champion: unavailable",
     state.config.mode === "siege"
       ? "Production artifact: **defender final patch only** (patch comparison disabled)"
@@ -535,6 +541,11 @@ export function renderBattleReport(state: RunState): string {
     ...contestants.flatMap(contestantSection),
     "## Permissions and limitations",
     "",
+    ...(state.operatorInterventions.length
+      ? [
+          `- Operator interventions: ${state.operatorInterventions.map((note) => `${note.contestantId}:${note.status}${note.appliedStage ? `@${note.appliedStage}` : ""}`).join(", ")}.`,
+        ]
+      : []),
     "- Agent worktrees isolate accidental changes but are not hostile-code sandboxes.",
     "- Credential/service delivery is brokered where declared; advisory restrictions are not OS-enforced.",
     "- No novel final-validation finding can change health after the last repair opportunity.",
