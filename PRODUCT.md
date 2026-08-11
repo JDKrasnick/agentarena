@@ -129,6 +129,14 @@ The same evidence and health system supports three topologies:
   pull-request patch and a defender owns its production lineage and repairs.
   Only the defender's final patch is reviewable or deliverable.
 
+Before any review or attack work, implementation eligibility is sealed as
+schema-v7 terminal metadata. In a duel, exactly one production patch that
+applies and passes required validation wins by forfeit and is the only
+reviewable recommendation; no eligible patch is inconclusive. Provider,
+transport, authentication, reconnect, and harness failures are inconclusive,
+not forfeits. A failed frozen incumbent in catch-up ends inconclusively before
+the challenger is invoked, and siege never recommends its test-only attacker.
+
 Pull-request authorship is provenance metadata, not proof of who wrote the
 code. Explicit bot, co-author, generator, title, or branch signals may select a
 provider only under published attribution rules; conflicts remain unknown and

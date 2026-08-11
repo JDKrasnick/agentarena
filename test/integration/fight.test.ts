@@ -113,7 +113,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(attackB.targets).toEqual(["a"]);
   });
 
-  it("completes when one implementation times out without a patch", async () => {
+  it("promotes the sole eligible implementation by pre-review forfeit", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = FightConfigSchema.parse({
       task: "Normalize slug whitespace.",
@@ -161,6 +161,12 @@ describe("fake-adapter fight on a mocked real issue", () => {
     }).fight(config);
 
     expect(outcome.state.status).toBe("complete");
+    expect(outcome.state.terminalOutcome).toMatchObject({
+      phase: "pre_review",
+      kind: "forfeit",
+      reasonCode: "implementation_empty_patch",
+      eligibleContestantIds: ["b"],
+    });
     expect(outcome.state.contestants.a).toMatchObject({
       status: "failed",
       finalHealth: 0,
@@ -171,6 +177,14 @@ describe("fake-adapter fight on a mocked real issue", () => {
       finalHealth: 100,
     });
     expect(outcome.state.attacks).toEqual([]);
+    expect(outcome.state.patchRecommendation).toMatchObject({
+      contestantId: "b",
+    });
+    expect(outcome.state.reviewPrompt?.choices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ contestantId: "b", eligible: true }),
+      ]),
+    );
   });
 
   it("reconciles only identifiable malformed attacks in a complete fight", async () => {

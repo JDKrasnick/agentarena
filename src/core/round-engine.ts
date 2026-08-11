@@ -118,6 +118,8 @@ import {
   type RoundId,
   type RunState,
   type Stage,
+  type TerminalOutcome,
+  TerminalOutcomeSchema,
 } from "./types.js";
 import {
   calculateReplayHash,
@@ -319,6 +321,18 @@ function latestRequiredPass(contestant: ContestantResult): boolean {
     [...contestant.checks].reverse().find((check) => check.kind === "required")
       ?.status === "passed"
   );
+}
+
+function preReviewArtifactPaths(contestant: ContestantResult): string[] {
+  return [
+    contestant.implementation?.promptPath,
+    contestant.implementation?.transcriptPath,
+    contestant.implementation?.submissionPath,
+    ...contestant.checks.flatMap((check) => [
+      check.command?.stdoutPath,
+      check.command?.stderrPath,
+    ]),
+  ].filter((path): path is string => Boolean(path));
 }
 
 function opponentOf(
@@ -628,7 +642,7 @@ export class RoundEngine {
           },
         );
         const { result } = transaction;
-        if (result.status !== "completed") {
+        if (result.status !== "completed" || result.terminalOutcome) {
           return this.finishTerminalRound(context, result);
         }
         await this.applyRoundTransaction(context, result);
@@ -662,7 +676,7 @@ export class RoundEngine {
           { recovery: true },
         );
         const { result } = transaction;
-        if (result.status !== "completed")
+        if (result.status !== "completed" || result.terminalOutcome)
           return this.finishTerminalRound(context, result);
         await this.applyRoundTransaction(context, result);
         priorReplayHash = result.replay.replayHash;
@@ -690,7 +704,7 @@ export class RoundEngine {
           beforeRound,
           {},
         );
-        if (transaction.result.status !== "completed")
+        if (transaction.result.status !== "completed" || transaction.result.terminalOutcome)
           return this.finishTerminalRound(context, transaction.result);
         await this.applyRoundTransaction(context, transaction.result);
       }
@@ -875,7 +889,55 @@ export class RoundEngine {
 
     const envelopes = await readEnvelopeChain(store);
     let ledger = [...summary.appliedEnvelopes];
+    if (summary.terminalOutcome) {
+      state.terminalOutcome = TerminalOutcomeSchema.parse(summary.terminalOutcome);
+      state.status =
+        state.terminalOutcome.kind === "forfeit"
+          ? "complete"
+          : state.terminalOutcome.kind;
+      state.stage = state.status === "complete" ? "report" : state.status;
+      state.completedAt ??= this.now().toISOString();
+      state.updatedAt = this.now().toISOString();
+      await store.writeState(state, ledger);
+      return {
+        state,
+        summary:
+          options.display === "json"
+            ? JSON.stringify(await store.readSummary(), null, 2)
+            : renderConsoleSummary(state, this.dependencies.consoleOptions),
+      };
+    }
     for (const envelope of envelopes.slice(ledger.length)) {
+      if (envelope.result.terminalOutcome) {
+        if (envelope.result.status === "completed") {
+          const application = await applyEnvelopeExactlyOnce({
+            store,
+            state,
+            envelope,
+            ledger,
+          });
+          ledger = application.ledger;
+        }
+        state.terminalOutcome = TerminalOutcomeSchema.parse(
+          envelope.result.terminalOutcome,
+        );
+        const terminalStatus =
+          envelope.result.status === "completed"
+            ? "complete"
+            : envelope.result.status;
+        state.status = terminalStatus;
+        state.stage = terminalStatus === "complete" ? "report" : terminalStatus;
+        state.completedAt = this.now().toISOString();
+        state.updatedAt = state.completedAt;
+        await store.writeState(state, ledger);
+        await store.writeText("BATTLE.md", renderBattleReport(state));
+        await store.writeText("BATTLE.html", renderBattleHtml(state));
+        await store.writeText("BATTLE.svg", renderBattleVisual(state));
+        return {
+          state,
+          summary: renderConsoleSummary(state, this.dependencies.consoleOptions),
+        };
+      }
       if (envelope.result.status !== "completed") {
         const completedAt = this.now().toISOString();
         state.status = envelope.result.status;
@@ -1042,7 +1104,7 @@ export class RoundEngine {
               : {}),
           },
         );
-        if (transaction.result.status !== "completed") {
+        if (transaction.result.status !== "completed" || transaction.result.terminalOutcome) {
           return this.finishTerminalRound(context, transaction.result);
         }
         await this.applyRoundTransaction(context, transaction.result);
@@ -1074,7 +1136,7 @@ export class RoundEngine {
           beforeRound,
           { recovery: true },
         );
-        if (transaction.result.status !== "completed") {
+        if (transaction.result.status !== "completed" || transaction.result.terminalOutcome) {
           return this.finishTerminalRound(context, transaction.result);
         }
         await this.applyRoundTransaction(context, transaction.result);
@@ -1103,7 +1165,7 @@ export class RoundEngine {
           beforeRound,
           {},
         );
-        if (transaction.result.status !== "completed")
+        if (transaction.result.status !== "completed" || transaction.result.terminalOutcome)
           return this.finishTerminalRound(context, transaction.result);
         await this.applyRoundTransaction(context, transaction.result);
       }
@@ -1205,9 +1267,17 @@ export class RoundEngine {
             protectedContestant.id,
           );
           if (!latestRequiredPass(protectedState)) {
-            const check = protectedState.checks.at(-1);
-            throw new Error(
-              `Frozen PR patch failed required validation; preflight cannot award a free win${check?.reason ? `: ${check.reason}` : check?.command?.stderrPath ? ` (stderr: ${check.command.stderrPath})` : ""}`,
+            const disposition = this.preReviewDisposition(context);
+            return this.persistRoundBoundary(
+              context,
+              snapshot,
+              before,
+              "inconclusive",
+              new Error("Frozen incumbent patch failed initial validation"),
+              disposition?.kind === "inconclusive" &&
+              disposition.reasonCode === "provider_transport_failure"
+                ? disposition
+                : this.preReviewDisposition(context, "frozen_incumbent_invalid"),
             );
           }
         }
@@ -1219,6 +1289,17 @@ export class RoundEngine {
               (agent) =>
                 getContestant(context.state, agent).role !== "incumbent",
             ),
+          );
+        }
+        const disposition = this.preReviewDisposition(context);
+        if (disposition) {
+          return this.persistRoundBoundary(
+            context,
+            snapshot,
+            before,
+            disposition.kind === "forfeit" ? "completed" : disposition.kind,
+            new Error(disposition.reason),
+            disposition,
           );
         }
       }
@@ -1255,6 +1336,96 @@ export class RoundEngine {
         error,
       );
     }
+  }
+
+  /** Resolve production-patch eligibility before any attack, repair, or quality work. */
+  private preReviewDisposition(
+    context: ArenaContext,
+    forcedReason?: TerminalOutcome["reasonCode"],
+  ): TerminalOutcome | undefined {
+    const production = context.config.agents.filter(
+      (id) => getContestant(context.state, id).role !== "attacker",
+    );
+    const contestants = production.map((id) => getContestant(context.state, id));
+    const artifactPaths = contestants.flatMap(preReviewArtifactPaths);
+    if (context.controller.signal.aborted) {
+      return {
+        version: 1,
+        phase: "pre_review",
+        kind: "cancelled",
+        reasonCode: "external_cancellation",
+        affectedContestantIds: production,
+        eligibleContestantIds: [],
+        artifactPaths,
+        reason: "The run was cancelled during implementation or initial validation.",
+      };
+    }
+    const infrastructure = contestants.some(
+      (contestant) =>
+        contestant.implementation?.status === "infrastructure_error" ||
+        contestant.checks.some(
+          (check) => check.status === "infrastructure_error",
+        ),
+    );
+    if (infrastructure) {
+      return {
+        version: 1,
+        phase: "pre_review",
+        kind: "inconclusive",
+        reasonCode: "provider_transport_failure",
+        affectedContestantIds: production,
+        eligibleContestantIds: [],
+        artifactPaths,
+        reason: "Provider or harness infrastructure failed during implementation or initial validation.",
+      };
+    }
+    const eligible = contestants
+      .filter(
+        (contestant) =>
+          contestant.status !== "failed" &&
+          contestant.patchSize > 0 &&
+          Boolean(contestant.currentPatchPath) &&
+          latestRequiredPass(contestant),
+      )
+      .map((contestant) => contestant.id);
+    if (forcedReason) {
+      return {
+        version: 1,
+        phase: "pre_review",
+        kind: "inconclusive",
+        reasonCode: forcedReason,
+        affectedContestantIds: production,
+        eligibleContestantIds: eligible,
+        artifactPaths,
+        reason: "The frozen incumbent patch is not eligible, so the challenger is not run.",
+      };
+    }
+    if (eligible.length === production.length) return undefined;
+    const failed = contestants.find((contestant) => !eligible.includes(contestant.id));
+    const reasonCode: TerminalOutcome["reasonCode"] = !failed?.currentPatchPath || failed.patchSize === 0
+      ? "implementation_empty_patch"
+      : failed.checks.some((check) => check.kind === "apply" && check.status === "failed")
+        ? "implementation_unapplicable_patch"
+        : failed.checks.some((check) => check.kind === "required" && check.status === "failed")
+          ? "initial_validation_failed"
+          : failed?.implementation?.status === "timed_out"
+            ? "implementation_timeout"
+            : "implementation_failed";
+    const isForfeit = eligible.length === 1 && context.config.mode !== "siege";
+    return {
+      version: 1,
+      phase: "pre_review",
+      kind: isForfeit ? "forfeit" : "inconclusive",
+      reasonCode,
+      affectedContestantIds: contestants
+        .filter((contestant) => !eligible.includes(contestant.id))
+        .map((contestant) => contestant.id),
+      eligibleContestantIds: eligible,
+      artifactPaths,
+      reason: isForfeit
+        ? "Exactly one production patch passed initial validation; it wins by forfeit before review."
+        : "No eligible production patch is available for a pre-review comparison.",
+    };
   }
 
   private async applyRoundTransaction(
@@ -1617,6 +1788,7 @@ export class RoundEngine {
     before: RunState,
     status: "completed" | "inconclusive" | "cancelled" | "failed" = "completed",
     error?: unknown,
+    terminalOutcome?: TerminalOutcome,
   ): Promise<RoundResult> {
     const roundId = snapshot.roundId;
     const delta = projectRoundStateDelta(before, context.state, roundId);
@@ -1907,11 +2079,12 @@ export class RoundEngine {
     } as const;
     const result = RoundResultSchema.parse(
       status === "completed"
-        ? { ...baseResult, status }
+        ? { ...baseResult, status, ...(terminalOutcome ? { terminalOutcome } : {}) }
         : {
             ...baseResult,
             status,
             diagnostics: replay.diagnostics,
+            ...(terminalOutcome ? { terminalOutcome } : {}),
           },
     );
     const envelope = await sealRoundEnvelope({
@@ -1938,16 +2111,46 @@ export class RoundEngine {
 
   private async finishTerminalRound(
     context: ArenaContext,
-    result: Exclude<RoundResult, { status: "completed" }>,
+    result: RoundResult,
   ): Promise<FightOutcome> {
+    if (result.status === "completed" && !result.terminalOutcome)
+      throw new Error("Only terminal round results may finish a run");
+    if (result.status === "completed") await this.applyRoundTransaction(context, result);
     const completedAt = this.now().toISOString();
-    context.state.status = result.status;
-    context.state.stage = result.status;
+    if (result.terminalOutcome)
+      context.state.terminalOutcome = TerminalOutcomeSchema.parse(
+        result.terminalOutcome,
+      );
+    const forfeit = result.terminalOutcome?.kind === "forfeit";
+    if (forfeit) {
+      const winner = result.terminalOutcome.eligibleContestantIds[0];
+      if (!winner) throw new Error("Forfeit result has no eligible contestant");
+      const contestant = getContestant(context.state, winner);
+      contestant.finalPatchPath = contestant.currentPatchPath;
+      context.state.ranking = rankContestants(
+        context.config.agents.map((agent) => getContestant(context.state, agent)),
+        { patchSizeTieBreaker: context.config.mode !== "siege" },
+      );
+      context.state.arenaOutcome = deriveArenaOutcome(context.state);
+      context.state.patchRecommendation = selectRecommendedPatch({
+        contestants: context.state.contestants,
+        championId: winner,
+      });
+      context.state.reviewPrompt = buildReviewPrompt(context.state);
+      await context.store.writeImmutableJson(
+        "review-prompt.json",
+        context.state.reviewPrompt,
+      );
+    }
+    const terminalStatus = result.status === "completed" ? "complete" : result.status;
+    context.state.status = forfeit ? "complete" : terminalStatus;
+    context.state.stage = forfeit ? "report" : terminalStatus;
     context.state.completedAt = completedAt;
     context.state.updatedAt = completedAt;
-    context.state.warnings.push(
-      ...result.diagnostics.map((entry) => entry.message),
-    );
+    if ("diagnostics" in result)
+      context.state.warnings.push(
+        ...result.diagnostics.map((entry) => entry.message),
+      );
     await context.store.writeState(context.state, context.appliedEnvelopes);
     await context.store.writeText(
       "BATTLE.md",

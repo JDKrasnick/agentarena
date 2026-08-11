@@ -268,6 +268,9 @@ export function renderBattleHtml(state: RunState): string {
         state.patchRecommendation.contestantId,
       )
     : "No patch recommendation";
+  const terminalNotice = state.terminalOutcome
+    ? `<section class="section"><div class="callout"><strong>Pre-review ${escapeHtml(state.terminalOutcome.kind)} · ${escapeHtml(state.terminalOutcome.reasonCode)}</strong><p>${escapeHtml(state.terminalOutcome.reason)}</p><p class="note">No review, attack, repair, quality, or coverage work was run.</p></div></section>`
+    : "";
   const submissionArtifacts = state.submissionArtifacts
     .map(
       (record) =>
@@ -286,6 +289,7 @@ export function renderBattleHtml(state: RunState): string {
 <header class="masthead"><div><p class="eyebrow">AGENT ARENA · EVIDENCE-LINKED BATTLE DOSSIER</p><h1>${escapeHtml(outcomeHeading)}</h1><p class="summary">${escapeHtml(state.ranking?.reason ?? "This run did not reach a final ranking.")} This dossier separates proven defects, unsuccessful attacks, verified checks, and the recommendation so the score is explainable.</p></div><nav class="artifacts" aria-label="Battle artifacts">${link(state, "Full report", state.artifacts.battle)} · ${link(state, "Raw result", state.artifacts.result)} · ${link(state, "Share image", state.artifacts.battleVisual)}</nav></header>
 <section class="section"><h2>Final decision</h2><div class="contestants">${contestantCards}</div></section>
 ${laneCoverage}
+${terminalNotice}
 <section class="section decision"><div class="callout"><strong>${escapeHtml(decisionHeading)}</strong><p>${escapeHtml(state.ranking?.reason ?? "No final ranking reason was recorded.")}</p><p class="note">The champion is determined by remaining health. Health starts at 100, then subtracts missed-attack recoil and active, un-repaired defect damage. Patch quality only breaks an equal-correctness tie.</p></div><div class="score"><dl><dt>Verified required suites</dt><dd>${requiredPassed ? chip("Both pass", "pass") : chip("Review failures", "fail")}</dd><dt>Proven defects</dt><dd>${String(defects.length)} (${String(unresolved.length)} unresolved, ${String(repaired.length)} repaired)</dd><dt>Deciding factors</dt><dd>${escapeHtml(state.arenaOutcome?.decidingFactors.join(", ") || "ranking")}</dd><dt>Recommended patch</dt><dd>${escapeHtml(recommendation)}</dd></dl></div></section>
 <section class="section"><h2>Verified test coverage</h2><p class="note">These results apply to each named final patch in this run. “Not run” is intentionally not shown as a pass. Open stdout/stderr to inspect the harness evidence.</p><div class="table-wrap" tabindex="0"><table><caption>Recorded checks by contestant and exact command</caption><thead><tr><th>Check / command</th>${contestants.map((contestant) => `<th>${escapeHtml(contestantLabel(state.config.contestants, contestant.id))}</th>`).join("")}</tr></thead><tbody>${coverageRows}</tbody></table></div></section>
 <section class="section"><h2>What happened in each round</h2><div class="table-wrap" tabindex="0"><table><caption>Round outcomes and health after repair</caption><thead><tr><th>Investigation</th><th>Attack outcome</th><th>Health after repair</th><th>Artifacts</th></tr></thead><tbody>${roundRows}</tbody></table></div></section>

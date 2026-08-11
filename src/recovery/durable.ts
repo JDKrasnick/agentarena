@@ -579,6 +579,9 @@ export async function buildRunSummary(options: {
     ...(options.state.arenaOutcome
       ? { outcome: options.state.arenaOutcome }
       : {}),
+    ...(options.state.terminalOutcome
+      ? { terminalOutcome: options.state.terminalOutcome }
+      : {}),
     ...(options.state.patchRecommendation
       ? { recommendation: options.state.patchRecommendation }
       : {}),
