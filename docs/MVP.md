@@ -74,6 +74,14 @@ The boundary carries only strict, versioned, JSON-safe contracts:
   incoming attacks and visible reproducers, own-attack outcomes, and healed or
   unresolved defect IDs.
 
+Round 1 first seals implementation eligibility. A local implementation timeout,
+failed exit, empty or unappliable patch, or failed required validation is a
+forfeit; provider/harness transport, authentication, or reconnect failures are
+inconclusive. A one-sided duel promotes the eligible validated patch directly
+to review without producing review, attack, repair, quality, or coverage
+artifacts. The persisted pre-review terminal outcome controls resume and CLI
+status reporting.
+
 Runtime services, callbacks, worktree objects, abort controllers, and mutable
 `RunState` never enter these serialized contracts. Expected execution failures
 are terminal result values; throws indicate invalid configuration, schema

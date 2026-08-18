@@ -42,6 +42,21 @@ export function renderConsoleSummary(
 ): string {
   const color = options.color ?? false;
   const hyperlinks = options.hyperlinks ?? false;
+  if (state.terminalOutcome) {
+    const terminal = state.terminalOutcome;
+    const winner = terminal.eligibleContestantIds[0];
+    return [
+      style("Agent Arena — pre-review terminal result", ANSI.bold, color),
+      `Status: ${terminal.kind.toUpperCase()} (${terminal.reasonCode})`,
+      `Reason: ${terminal.reason}`,
+      `Eligible patch: ${winner ? contestantLabel(state.config.contestants, winner) : "none"}`,
+      terminal.kind === "forfeit"
+        ? `Recommended patch: ${winner ? contestantLabel(state.config.contestants, winner) : "none"} (forfeit; no attack, repair, quality, or coverage work ran)`
+        : "Recommended patch: none",
+      terminalLink("Open HTML dossier", state.artifacts.battleHtml, hyperlinks),
+      terminalLink("Open Markdown report", state.artifacts.battle, hyperlinks),
+    ].join("\n");
+  }
   const contestants = reportContestants(state);
   const defects = reportDefects(state);
   const unresolved = defects.filter((defect) => defect.active);
