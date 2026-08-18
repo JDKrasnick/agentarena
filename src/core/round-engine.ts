@@ -179,6 +179,10 @@ import {
   assessBattleCoverage,
   assertTargetedRetryAllowed,
 } from "../confidence/assessment.js";
+import {
+  executeBrowserValidation,
+  type BrowserAdapter,
+} from "../browser/executor.js";
 
 export type { ReconnaissanceSnapshot } from "../task/task-contract.js";
 
@@ -202,6 +206,9 @@ export interface ArenaDependencies {
   consoleOptions?: ConsoleRenderOptions;
   /** Transactional executor hook used by isolated RoundEngine tests/adapters. */
   executeRound?: (snapshot: RoundSnapshot) => Promise<RoundResult>;
+  browserAdapters?: Partial<
+    Record<"playwright" | "cypress" | "custom", BrowserAdapter>
+  >;
 }
 
 /** Read-only legacy hooks kept out of the public runtime dependency surface. */
@@ -2752,11 +2759,61 @@ export class RoundEngine {
           throw new Error(
             `Initial required validation infrastructure failed for ${agent}`,
           );
+        await this.validateBrowserForContestant(
+          context,
+          contestant,
+          worktree,
+          "initial",
+        );
       } finally {
         await context.worktrees.remove(worktree);
       }
     }
     await this.persist(context);
+  }
+
+  private async validateBrowserForContestant(
+    context: ArenaContext,
+    contestant: ContestantResult,
+    worktree: string,
+    phase: "initial" | "final",
+  ): Promise<void> {
+    const validation = context.runSpec.browserValidation;
+    if (!validation) return;
+    const adapter = validation.profile
+      ? this.dependencies.browserAdapters?.[validation.profile.runner]
+      : undefined;
+    const result = await executeBrowserValidation({
+      plan: validation,
+      decision: validation.decision,
+      ...(adapter ? { adapter } : {}),
+      worktree,
+      signal: context.controller.signal,
+    });
+    contestant.browserValidation = result;
+    const artifactPath = await context.store.writeJson(
+      `browser/${contestant.id}/${phase}-result.json`,
+      result,
+    );
+    context.state.artifacts[`browser-${contestant.id}-${phase}`] = artifactPath;
+    contestant.checks.push({
+      id: `${phase}-browser`,
+      kind: "browser",
+      status:
+        result.status === "verified"
+          ? "passed"
+          : result.status === "failed"
+            ? "failed"
+            : "skipped",
+      ...(result.reason ? { reason: result.reason } : {}),
+    });
+    if (validation.decision === "approved" && result.status === "unverified") {
+      const capability = context.permissions.capabilities.find(
+        (entry) => entry.id === "browser_dom_validation",
+      );
+      if (capability) capability.status = "provisioning_failed";
+      await context.store.writeJson("permissions.json", context.permissions);
+    }
   }
 
   private shouldStop(context: ArenaContext): boolean {
@@ -6216,6 +6273,13 @@ export class RoundEngine {
         } else {
           contestant.status = "survived";
         }
+        if (contestant.status !== "eliminated")
+          await this.validateBrowserForContestant(
+            context,
+            contestant,
+            worktree,
+            "final",
+          );
         if (contestant.status !== "eliminated") {
           for (const attack of context.state.attacks.filter(
             (candidate) =>

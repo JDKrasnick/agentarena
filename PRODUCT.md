@@ -223,6 +223,32 @@ restrictions:
 
 Agents may still explore the codebase, but they do not need to rediscover basic commands or available tools independently.
 
+Browser and DOM planning consumes only the frozen task sources and bounded
+repository evidence. Task language about visible UI, interaction, responsive
+behavior, accessibility, persistence, browser, or DOM behavior makes browser
+validation required even when tooling is unavailable; repository-only frontend
+evidence makes it optional. Resolution prefers an explicit Arena profile, then
+literal Playwright or Cypress configuration, then recognized package scripts.
+Ambiguous monorepos remain unresolved rather than selecting an application.
+
+Approved browser execution is `harness_only` and brokered to exact commands and
+loopback origins. Arena never installs packages or browser binaries and treats
+every non-local origin as a separate capability. Each contestant gets an
+isolated server and fresh browser storage for independent probes. Generated
+checks cover Chromium desktop at 1440×900, mobile at 390×844 with touch, and
+320 CSS-pixel reflow, plus declared repository projects. Probe families cover
+interaction, responsive layout, keyboard/focus, semantics, task-declared
+persistence, runtime DOM integrity, risk-triggered inert DOM-XSS canaries, and
+unchanged repository-owned visual baselines. New screenshots are diagnostics,
+not pass/fail baselines.
+
+Functional assertions run once. Browser/server infrastructure may receive one
+bounded retry with guaranteed teardown; a first-fail/second-pass assertion is
+flaky, not clean. Application failures are valid findings, while denied,
+missing, or failed harness capability leaves browser coverage unverified and
+cannot damage a contestant. Required gaps enter provisional coverage unless
+the exact reduced-validation contract was accepted.
+
 ### 2. Independent implementation
 
 Each contestant receives:

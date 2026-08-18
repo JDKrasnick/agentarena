@@ -5,6 +5,10 @@ import {
   type PermissionPolicy,
 } from "../core/types.js";
 import type { ReconnaissanceSnapshot } from "../task/task-contract.js";
+import {
+  browserCapabilityScopes,
+  planBrowserValidation,
+} from "../browser/planner.js";
 
 const HARD_DENIES = new Set([
   "production_credentials",
@@ -22,13 +26,13 @@ export interface CapabilityRequest {
   role: "agent" | "harness_only" | "both";
   enforcement: "enforced" | "brokered" | "advisory";
   scopes: string[];
+  available?: boolean;
 }
 
 export function discoverCapabilities(
   config: FightConfig,
   _reconnaissance?: ReconnaissanceSnapshot,
 ): CapabilityRequest[] {
-  void _reconnaissance;
   const requests: CapabilityRequest[] = [
     {
       id: "repository_read_write",
@@ -76,6 +80,24 @@ export function discoverCapabilities(
       });
     }
   }
+  if (_reconnaissance) {
+    const browser = planBrowserValidation(config, _reconnaissance);
+    if (browser) {
+      const profile = browser.profile;
+      requests.push({
+        id: browser.capabilityId,
+        reason: profile
+          ? `Browser/DOM validation via ${profile.runner}; startup ${profile.startupCommand}; health ${profile.healthUrl}; base ${profile.baseUrl}; tests ${profile.testCommand}; projects ${profile.projects.join(", ") || "default"}; evidence ${browser.evidence.map((entry) => entry.location).join(", ")}`
+          : `Browser/DOM validation is ${browser.requirement} but unavailable: ${browser.unavailableReason}`,
+        risk: "medium",
+        requirement: browser.requirement,
+        role: browser.role,
+        enforcement: browser.enforcement,
+        scopes: browserCapabilityScopes(browser),
+        available: Boolean(profile),
+      });
+    }
+  }
   return requests;
 }
 
@@ -83,11 +105,18 @@ function decide(
   request: CapabilityRequest,
   config: FightConfig,
 ): CapabilityDecision {
+  if (request.available === false) {
+    const { available: _available, ...decision } = request;
+    void _available;
+    return { ...decision, mode: config.permissionMode, status: "unavailable" };
+  }
+  const { available: _available, ...decisionRequest } = request;
+  void _available;
   if (
     HARD_DENIES.has(request.id) ||
     config.permissionDeny.includes(request.id)
   ) {
-    return { ...request, mode: "deny", status: "denied" };
+    return { ...decisionRequest, mode: "deny", status: "denied" };
   }
   const explicit = config.permissionAllow[request.id];
   const mode = explicit?.mode ?? config.permissionMode;
@@ -95,13 +124,13 @@ function decide(
   const role = explicit?.role ?? request.role;
 
   if (mode === "deny")
-    return { ...request, scopes, role, mode, status: "denied" };
+    return { ...decisionRequest, scopes, role, mode, status: "denied" };
   if (mode === "auto") {
     const exactAllow = explicit !== undefined;
     const safeBoundary =
       request.enforcement === "enforced" || request.enforcement === "brokered";
     return {
-      ...request,
+      ...decisionRequest,
       scopes,
       role,
       mode,
@@ -109,7 +138,7 @@ function decide(
     };
   }
   return {
-    ...request,
+    ...decisionRequest,
     scopes,
     role,
     mode,

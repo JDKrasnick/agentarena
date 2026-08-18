@@ -108,6 +108,19 @@ const FileConfigSchema = z
       })
       .strict()
       .optional(),
+    browser: z
+      .object({
+        runner: z.enum(["playwright", "cypress", "custom"]),
+        startup: z.string().trim().min(1),
+        health_url: z.string().url(),
+        base_url: z.string().url(),
+        test: z.string().trim().min(1),
+        teardown: z.string().trim().min(1).optional(),
+        projects: z.array(z.string().trim().min(1)).default([]),
+        allowed_origins: z.array(z.string().url()).min(1),
+      })
+      .strict()
+      .optional(),
     permissions: z
       .object({
         default: z.enum(["auto", "confirm", "deny"]).default("confirm"),
@@ -456,6 +469,22 @@ export async function loadFightConfig(
             capabilityIds: file.integration.capability_ids,
             steadyStateInvariants: file.integration.steady_state_invariants,
             faultControls: file.integration.fault_controls,
+          },
+        }
+      : {}),
+    ...(file.browser
+      ? {
+          browserProfile: {
+            runner: file.browser.runner,
+            startupCommand: file.browser.startup,
+            healthUrl: file.browser.health_url,
+            baseUrl: file.browser.base_url,
+            testCommand: file.browser.test,
+            ...(file.browser.teardown
+              ? { teardownCommand: file.browser.teardown }
+              : {}),
+            projects: file.browser.projects,
+            allowedOrigins: file.browser.allowed_origins,
           },
         }
       : {}),

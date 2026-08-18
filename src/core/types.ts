@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { FailureRecordSchema } from "../contracts/failure.js";
+import { BrowserValidationResultSchema } from "../contracts/browser.js";
 
 export const AGENT_IDS = ["codex", "claude", "gemini"] as const;
 export const AgentIdSchema = z.enum(AGENT_IDS);
@@ -194,6 +195,7 @@ export const CheckResultSchema = z.object({
     "focused",
     "held_out",
     "service_health",
+    "browser",
     "apply",
   ]),
   status: z.enum(["passed", "failed", "infrastructure_error", "skipped"]),
@@ -766,6 +768,7 @@ export const ContestantResultSchema = z.object({
   implementation: AgentInvocationSchema.optional(),
   rounds: z.array(ContestantRoundResultSchema),
   checks: z.array(CheckResultSchema),
+  browserValidation: BrowserValidationResultSchema.optional(),
 });
 export type ContestantResult = z.infer<typeof ContestantResultSchema>;
 
@@ -811,6 +814,20 @@ export const IntegrationProfileSchema = z.object({
   ),
 });
 export type IntegrationProfile = z.infer<typeof IntegrationProfileSchema>;
+
+export const BrowserProfileSchema = z
+  .object({
+    runner: z.enum(["playwright", "cypress", "custom"]),
+    startupCommand: z.string().trim().min(1),
+    healthUrl: z.string().url(),
+    baseUrl: z.string().url(),
+    testCommand: z.string().trim().min(1),
+    teardownCommand: z.string().trim().min(1).optional(),
+    projects: z.array(z.string().trim().min(1)).default([]),
+    allowedOrigins: z.array(z.string().url()).min(1),
+  })
+  .strict();
+export type BrowserProfile = z.infer<typeof BrowserProfileSchema>;
 
 function normalizeBattleConfigInput(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
@@ -859,6 +876,7 @@ const FightConfigBaseSchema = z
     maxAttacksPerRound: z.literal(3),
     testCommand: z.string().min(1),
     integrationProfile: IntegrationProfileSchema.optional(),
+    browserProfile: BrowserProfileSchema.optional(),
     repositoryRoot: z.string(),
     artifactRoot: z.string(),
     baseCommit: z.string().optional(),

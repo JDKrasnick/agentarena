@@ -414,6 +414,44 @@ The user can choose one overall mode:
   change, or deny each material capability.
 - `deny`: deny capabilities unless explicitly allowed in configuration.
 
+### Browser and DOM validation
+
+The static browser planner consumes the approved reconnaissance snapshot and
+never executes configuration. Task evidence makes `browser_dom_validation`
+required when it names visible UI, interaction, responsive behavior,
+accessibility, persistence, browser, or DOM requirements. Frontend evidence
+found only in manifests, scripts, routes, or literal browser configuration
+makes the capability optional; otherwise it is absent.
+
+Profile resolution uses this order: explicit `browser` configuration, literal
+Playwright/Cypress configuration, recognized package scripts, then unavailable.
+Arena does not guess between monorepo applications. An explicit profile names
+`runner`, `startup`, `health_url`, `base_url`, `test`, optional `teardown`,
+projects, and allowed loopback origins. The permission request is
+`harness_only`, brokered, and scoped to those exact commands and origins;
+package installation, browser downloads, wildcard origins, and external sites
+are never implied.
+
+Each contestant runs in its own patched worktree and service process. Readiness
+polling, timeouts, process-group teardown, fresh contexts, and clean storage are
+harness responsibilities. Generated probes use Chromium desktop 1440×900,
+mobile 390×844 with touch, and a 320 CSS-pixel reflow check, then add repository
+projects. Requests outside approved origins are blocked and recorded.
+
+Probe families cover role/name/label-based interaction, responsive overflow and
+clipping, keyboard/focus behavior, accessible semantics, declared persistence,
+console/runtime/hydration/DOM integrity, risk-triggered inert DOM-XSS canaries,
+and existing visual snapshots without creating or updating baselines. Core
+accessibility checks do not constitute automated WCAG conformance.
+
+Functional assertions are not retried. Browser/server infrastructure gets one
+bounded retry; teardown runs after every attempt. Results are `verified`,
+`failed`, or `unverified`, with structured reasons for denial, missing tools or
+browsers, launch/health failure, blocked origins, and interruption. Real
+application failures remain valid evidence. Harness failures cause no damage;
+required unverified coverage flows into the provisional/inconclusive process,
+while optional gaps remain diagnostic.
+
 `auto` is never permission to use production credentials, deploy infrastructure,
 access unrelated home-directory files, expose an SSH agent, or perform
 destructive cloud writes. Those remain hard-denied unless the user explicitly

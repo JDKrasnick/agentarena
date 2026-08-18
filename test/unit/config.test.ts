@@ -5,6 +5,34 @@ import { describe, expect, it } from "vitest";
 import { loadFightConfig } from "../../src/config/load-config.js";
 
 describe("configuration", () => {
+  it("loads an explicit bounded browser profile", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-config-browser-"));
+    await writeFile(
+      path.join(root, "agent-arena.yaml"),
+      [
+        "test: npm test",
+        "browser:",
+        "  runner: playwright",
+        "  startup: npm run dev",
+        "  health_url: http://127.0.0.1:4173/health",
+        "  base_url: http://127.0.0.1:4173",
+        "  test: npm run test:e2e",
+        "  projects: [chromium]",
+        "  allowed_origins: [http://127.0.0.1:4173]",
+      ].join("\n"),
+    );
+    await expect(
+      loadFightConfig({ task: "Fix mobile UI", repositoryRoot: root }),
+    ).resolves.toMatchObject({
+      browserProfile: {
+        runner: "playwright",
+        startupCommand: "npm run dev",
+        testCommand: "npm run test:e2e",
+        projects: ["chromium"],
+      },
+    });
+  });
+
   it("lets CLI values override YAML and normalizes duration limits", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-config-"));
     await writeFile(

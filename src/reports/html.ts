@@ -143,6 +143,7 @@ export function renderBattleHtml(state: RunState): string {
       <div class="model">${escapeHtml(contestant.model ?? `${contestant.provider} default`)}</div>
       <div class="hp">${String(contestant.finalHealth)} <small>HP</small></div>
       <div class="ledger">100 − ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil)} recoil − ${String(outcome?.activeDefectDamage ?? 0)} unresolved damage</div>
+      <div class="ledger">Browser: ${escapeHtml(contestant.browserValidation?.status ?? "not run")}${contestant.browserValidation?.reason ? ` · ${escapeHtml(contestant.browserValidation.reason)}` : ""}</div>
       <div class="card-links">${link(state, "Final patch", contestant.finalPatchPath)} · ${contestant.status}</div>
     </article>`;
     })

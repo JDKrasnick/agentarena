@@ -14,6 +14,7 @@ import {
 } from "../core/types.js";
 import { RunSpecSchema, type RunSpec } from "../contracts/round.js";
 import { discoverInstructions } from "../repo/instructions.js";
+import { planBrowserValidation } from "../browser/planner.js";
 
 export interface ResolvedIssue {
   origin: string;
@@ -659,6 +660,20 @@ export async function buildRunSpec(
   options: BuildRunSpecOptions,
 ): Promise<RunSpec> {
   const config = FightConfigSchema.parse(options.config);
+  const reconnaissance =
+    options.reconnaissance ??
+    (await collectFightReconnaissance(config, {
+      ...(options.issueResolver
+        ? { issueResolver: options.issueResolver }
+        : {}),
+      ...(options.pullRequestResolver
+        ? { pullRequestResolver: options.pullRequestResolver }
+        : {}),
+      ...(options.localSpecResolver
+        ? { localSpecResolver: options.localSpecResolver }
+        : {}),
+      ...(options.now ? { now: options.now } : {}),
+    }));
   const snapshot = await buildTaskContract({
     ...options,
     task: config.task,
@@ -667,6 +682,7 @@ export async function buildRunSpec(
     issueReferences: config.issueReferences,
     pullRequestReferences: config.pullRequestReferences,
     taskReferences: config.taskReferences,
+    reconnaissance,
   });
   const commands: RunSpec["commands"] = [
     {
@@ -702,6 +718,39 @@ export async function buildRunSpec(
       },
     );
   }
+  const browserValidation = planBrowserValidation(config, reconnaissance);
+  if (browserValidation?.profile) {
+    commands.push(
+      {
+        id: "browser-startup",
+        kind: "browser_startup",
+        command: browserValidation.profile.startupCommand,
+        timeoutMs: config.limits.attackMs,
+        required: browserValidation.requirement === "required",
+      },
+      {
+        id: "browser-test",
+        kind: "browser_test",
+        command: browserValidation.profile.testCommand,
+        timeoutMs: config.limits.attackMs,
+        required: browserValidation.requirement === "required",
+      },
+      ...(browserValidation.profile.teardownCommand
+        ? [
+            {
+              id: "browser-teardown",
+              kind: "browser_teardown" as const,
+              command: browserValidation.profile.teardownCommand,
+              timeoutMs: config.limits.attackMs,
+              required: false,
+            },
+          ]
+        : []),
+    );
+  }
+  const browserCapability = options.permissions.capabilities.find(
+    (capability) => capability.id === "browser_dom_validation",
+  );
   const base = {
     version: 1 as const,
     runId: options.runId,
@@ -740,6 +789,18 @@ export async function buildRunSpec(
         scopes: capability.scopes,
       })),
     },
+    ...(browserValidation && browserCapability
+      ? {
+          browserValidation: {
+            ...browserValidation,
+            decision: browserCapability.status,
+            approvedScopes:
+              browserCapability.status === "approved"
+                ? browserCapability.scopes
+                : [],
+          },
+        }
+      : {}),
   } satisfies Omit<RunSpec, "contentHash">;
   return RunSpecSchema.parse({
     ...base,

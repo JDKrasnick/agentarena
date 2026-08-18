@@ -365,6 +365,17 @@ export function renderBattleReport(state: RunState): string {
         ]
       : ["Confidence: **legacy / unknown** (no coverage claim is inferred)."]),
     "",
+    ...(contestants.some((contestant) => contestant.browserValidation)
+      ? [
+          `Browser coverage: ${contestants
+            .map(
+              (contestant) =>
+                `${contestantLabel(state.config.contestants, contestant.id)} **${contestant.browserValidation?.status ?? "not run"}**${contestant.browserValidation?.reason ? ` (${contestant.browserValidation.reason})` : ""}`,
+            )
+            .join(" · ")}`,
+        ]
+      : []),
+    "",
     "## Developer takeaway",
     "",
     `- **Ledger result:** ${state.ranking?.draw ? "Draw" : `${contestantLabel(state.config.contestants, state.coverageDecision?.decision === "inconclusive" ? (state.ranking?.order[0] ?? "a") : (state.ranking?.winner ?? "a"))} — ${state.ranking?.reason ?? "run incomplete"}`}.`,

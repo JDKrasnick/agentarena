@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { BrowserPlanSchema } from "./browser.js";
 import { FailureRecordSchema } from "./failure.js";
 
 const PointValueSchema = z.number().min(0).max(100).multipleOf(0.25);
@@ -178,6 +179,9 @@ const RunCommandSchema = z
       "integration_setup",
       "integration_check",
       "integration_teardown",
+      "browser_startup",
+      "browser_test",
+      "browser_teardown",
     ]),
     command: z.string().min(1),
     timeoutMs: z.number().int().positive(),
@@ -222,6 +226,16 @@ const RunPermissionsSchema = z
   })
   .strict();
 
+const BrowserValidationSchema = BrowserPlanSchema.extend({
+  decision: z.enum([
+    "approved",
+    "denied",
+    "unavailable",
+    "provisioning_failed",
+  ]),
+  approvedScopes: z.array(z.string()),
+}).strict();
+
 /** Immutable, JSON-safe input shared by all rounds in a battle. */
 export const RunSpecSchema = z
   .object({
@@ -233,6 +247,7 @@ export const RunSpecSchema = z
     commands: z.array(RunCommandSchema).min(1),
     budgets: RunBudgetsSchema,
     permissions: RunPermissionsSchema,
+    browserValidation: BrowserValidationSchema.optional(),
     contentHash: Sha256Schema,
   })
   .strict()

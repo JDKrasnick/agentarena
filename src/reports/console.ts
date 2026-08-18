@@ -99,6 +99,16 @@ export function renderConsoleSummary(
             : []),
         ]
       : ["Coverage: legacy/unknown"]),
+    ...(contestants.some((contestant) => contestant.browserValidation)
+      ? [
+          `Browser coverage: ${contestants
+            .map(
+              (contestant) =>
+                `${contestantLabel(state.config.contestants, contestant.id)} ${contestant.browserValidation?.status ?? "not run"}${contestant.browserValidation?.reason ? ` (${contestant.browserValidation.reason})` : ""}`,
+            )
+            .join("; ")}`,
+        ]
+      : []),
     "",
     "Contestant   Required suite  Final HP  Unresolved  Recoil",
     ...contestants.map((contestant) => {
