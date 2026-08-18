@@ -8,7 +8,10 @@ import {
   FightConfigSchema,
   OracleCitationSchema,
 } from "../../src/core/types.js";
-import { RuleBasedVerifier } from "../../src/agents/adapter.js";
+import {
+  CommandAttackVerifier,
+  RuleBasedVerifier,
+} from "../../src/agents/adapter.js";
 
 function config(
   root: string,
@@ -49,6 +52,88 @@ const permissions = {
 };
 
 describe("run specification", () => {
+  it("runs one command per policy-owned judge attempt and stages concrete fallback evidence", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-judge-evidence-"));
+    const fightConfig = config(
+      root,
+      ["Normalize whitespace"],
+      [],
+      "Normalize whitespace",
+    );
+    const runSpec = await buildRunSpec({
+      runId: "run-judge",
+      baseCommit: "b".repeat(40),
+      config: fightConfig,
+      permissions,
+      repositoryRoot: root,
+      sourceDirectory: path.join(root, "snapshots"),
+    });
+    const attackPath = path.join(root, "attack.diff");
+    const targetPath = path.join(root, "target.diff");
+    const diagnosticPath = path.join(root, "diagnostic.log");
+    const countPath = path.join(root, "calls.txt");
+    const promptCapturePath = path.join(root, "prompt.txt");
+    const scriptPath = path.join(root, "judge.mjs");
+    await writeFile(attackPath, "attack evidence\n");
+    await writeFile(targetPath, "target patch\n");
+    await writeFile(diagnosticPath, "mechanical failure\n");
+    await writeFile(
+      scriptPath,
+      [
+        'import { appendFileSync, writeFileSync } from "node:fs";',
+        'import path from "node:path";',
+        'let prompt = "";',
+        "for await (const chunk of process.stdin) prompt += chunk;",
+        'appendFileSync(process.argv[2], "1\\n");',
+        "writeFileSync(process.argv[3], prompt);",
+        'writeFileSync(path.join(process.cwd(), ".agent-arena-judgment.json"), JSON.stringify({ decision: "supported_untestable", relevant: true, expectedBehaviorClearlySupported: true, evidencePointsToDefect: true, rootDefectId: "whitespace", severity: "medium", rationale: "concrete evidence" }));',
+      ].join("\n"),
+    );
+    const verifier = new CommandAttackVerifier("codex", {
+      executable: process.execPath,
+      args: [scriptPath, countPath, promptCapturePath],
+    });
+
+    await expect(
+      verifier.adjudicate({
+        attack: {
+          claim: "Whitespace is mishandled",
+          impact: "Unstable output",
+          oracle: {
+            expectedBehavior: "Normalize whitespace",
+            rationale: "The task requires it",
+          },
+          assertionFingerprint: "whitespace",
+          patchPath: attackPath,
+        },
+        runSpec,
+        mechanicalFailureReason: "command infrastructure failed",
+        targetPatchPath: targetPath,
+        mechanicalDiagnosticArtifactRefs: [diagnosticPath],
+        priorCanonicalDefects: [],
+        worktree: root,
+        promptPath: path.join(root, "judge.prompt.md"),
+        transcriptPrefix: path.join(root, "judge"),
+        timeoutMs: 1_000,
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ decision: "supported_untestable" });
+
+    expect((await readFile(countPath, "utf8")).trim().split("\n")).toEqual([
+      "1",
+    ]);
+    const prompt = await readFile(promptCapturePath, "utf8");
+    expect(prompt).toContain('"artifactId": "attack-overlay"');
+    expect(prompt).toContain('"artifactId": "target-patch"');
+    expect(prompt).toContain('"artifactId": "mechanical-diagnostic-1"');
+    expect(
+      await readFile(
+        path.join(root, ".agent-arena-judge-evidence/target-patch.diff"),
+        "utf8",
+      ),
+    ).toBe("target patch\n");
+  });
+
   it("snapshots exact task sources without extracting checklist criteria", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-contract-"));
     await writeFile(path.join(root, "AGENTS.md"), "Keep changes focused.\n");

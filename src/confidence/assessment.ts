@@ -68,7 +68,7 @@ export function assessBattleCoverage(
   state: RunState,
   permissionPolicy?: PermissionPolicy,
 ): CoverageAssessment {
-  const coverageV2 = state.schemaVersion === 6;
+  const coverageV2 = state.schemaVersion >= 6;
   const lanes: CoverageLaneAssessment[] = requiredCoverageLanes(
     state.config.mode,
   ).map(({ round, attacker, target }) => {
@@ -110,7 +110,9 @@ export function assessBattleCoverage(
     const partial = attacks.filter(
       (entry) => entry.evidenceProvenance === "judge_partial",
     );
-    const retryCandidate = state.reconciliationQueue.find(
+    const retryCandidate = (
+      "reconciliationQueue" in state ? state.reconciliationQueue : []
+    ).find(
       (entry) =>
         entry.actor === attacker &&
         entry.target === target &&
@@ -412,7 +414,12 @@ export function assessBattleCoverage(
     ),
   );
   const draft = {
-    version: coverageV2 ? (2 as const) : (1 as const),
+    version:
+      state.schemaVersion >= 7
+        ? (3 as const)
+        : coverageV2
+          ? (2 as const)
+          : (1 as const),
     runId: state.runId,
     mode: state.config.mode,
     confidence:

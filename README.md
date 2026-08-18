@@ -57,9 +57,7 @@ An optional `agent-arena.yaml` stores repeatable settings:
 test: npm test
 agents: [codex, claude]
 models: [gpt-5.2-codex, claude-opus-4-6]
-attack_verifier: codex
-quality_verifier: codex
-harness_maintainer: codex
+judge: codex
 sources:
   - github_issue: 241
   # - github_pr: 87
@@ -84,7 +82,6 @@ integration:
 limits:
   rounds: 3
   attacks_per_round: 3
-  infrastructure_recovery_round: true
   implementation_minutes: 15
   review_minutes: 8
   attack_minutes: 8
@@ -161,9 +158,8 @@ contestants.
 - A contestant attack must pass twice on its author and fail twice on its target.
 - Ranks 1, 2, and 3 recoil for 5, 10, and 15 HP when they miss.
 - Critical, High, Medium, and Low defects deal 50, 30, 15, and 5 HP.
-- A neutral house scout may submit one unranked shared-defect attack in rounds 2 and 3.
-- A landed defect may receive two pre-repair held-out sibling cases. Healing requires the visible and all accepted sibling cases to pass.
-- Infrastructure has no health effect. The author can accept it or challenge once with a scope-limited evidence revision; confirmed attempts receive one recovery-round credit.
+- Each distinct stage failure receives one targeted retry with validated upstream artifacts reused.
+- After mechanics exhaust that retry, only a schema-valid immutable attack may use the identity-blind judge fallback; judge evidence is labeled separately from mechanical evidence.
 - HP is reconstructed from permanent recoil and distinct active defects, so repeated evidence cannot stack damage and healing never restores recoil.
 
 Round 3 executes an approved integration profile symmetrically against both frozen patches. If the profile is absent or denied, the round degrades to local contract, security, and resilience probes without a health event.
@@ -173,12 +169,12 @@ Round 3 executes an approved integration profile symmetrically against both froz
 Each run is persisted atomically under `.agent-arena/runs/<run-id>/`:
 
 - `BATTLE.md`, the clickable `BATTLE.html` dossier, deterministic `BATTLE.svg`,
-  and compact schema-v5 `result.json`
+  and compact schema-v8 `result.json`
 - immutable `baseline.json`, sealed round envelopes, runtime drift manifest,
   envelope-head-bound finalization, and checkpoint descriptors
 - immutable `run-spec.json` and source snapshots
 - redacted `permissions.json`
-- implementation, attack, revision, held-out case, and final patches
+- implementation, attack, diagnostic, and final patches
 - rendered prompts, prompt manifests, method-pack seeds, hypotheses, command logs, and provider transcripts
 - deterministic quality facts, anonymized verifier input/output, and a
   chat-ready review prompt

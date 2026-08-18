@@ -1,5 +1,10 @@
 # Evidence-Linked Battle Results & Round Replay Design
 
+> New runs render one failure-handling ledger with stage, up to two attempts,
+> diagnostic links, retry outcome, judge basis, confidence effect, and score
+> effect. Recovery credits, infrastructure debate, reconciliation, evidence
+> revisions, and harness overlays are legacy-only report sections.
+
 ## Purpose
 
 Make Agent Arena's result feel like an evidence-backed engineering win, not a

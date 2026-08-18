@@ -1,14 +1,12 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { execa } from "execa";
 import { describe, expect, it, vi } from "vitest";
 import {
   CommandAgentAdapter,
   CommandCaseBuilder,
-  CommandHarnessMaintainer,
   CommandHouseScout,
-  CommandInfrastructureReviewer,
   RuleBasedVerifier,
 } from "../../src/agents/adapter.js";
 import { Arena } from "../../src/core/arena.js";
@@ -232,7 +230,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(resumed.state.reviewPrompt).toEqual(outcome.state.reviewPrompt);
   });
 
-  it("reconciles only identifiable malformed attacks in a complete fight", async () => {
+  it("keeps valid siblings when a same-round correction remains malformed", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = FightConfigSchema.parse({
       task: "Normalize slug whitespace and lowercase input.",
@@ -268,7 +266,10 @@ describe("fake-adapter fight on a mocked real issue", () => {
           id: "codex",
           executable: process.execPath,
           args: [fixtureAgent],
-          environment: { AGENT_ARENA_FAKE_RECONCILIATION: "1" },
+          environment: {
+            AGENT_ARENA_FAKE_RECONCILIATION: "1",
+            AGENT_ARENA_FAKE_RETRY_ONCE: "1",
+          },
         }),
         claude: new CommandAgentAdapter({
           id: "claude",
@@ -284,21 +285,11 @@ describe("fake-adapter fight on a mocked real issue", () => {
     }).fight(config);
 
     expect(outcome.state.status).toBe("complete");
-    expect(outcome.state.reconciliationQueue).toEqual([
-      expect.objectContaining({
-        sourceRound: 3,
-        sourceEntryIndex: 1,
-        actor: "a",
-        status: "corrected",
-        attemptCount: 2,
-        correctionRound: "reconciliation",
-      }),
-    ]);
-    expect(outcome.state.reconciliationQueue[0]?.resultingAttackId).toBeTypeOf(
-      "string",
-    );
     expect(
-      outcome.state.attacks.find((attack) => attack.round === "reconciliation"),
+      outcome.state.attacks.find(
+        (attack) =>
+          attack.round === 3 && attack.claim.includes("Uppercase input"),
+      ),
     ).toMatchObject({
       origin: { kind: "contestant", contestant: "a" },
       rank: 1,
@@ -306,29 +297,42 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(outcome.state.submissionArtifacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          round: "reconciliation",
-          phase: "correction",
+          round: 3,
+          phase: "attack",
           actor: "a",
-          kind: "correction",
-          outcome: "valid",
+          kind: "attack",
+          outcome: "partial",
         }),
       ]),
     );
-    expect(
-      RoundReplaySchema.parse(
-        JSON.parse(
-          await readFile(
-            path.join(
-              outcome.state.artifacts.runDirectory!,
-              "rounds",
-              "reconciliation",
-              "replay.json",
-            ),
-            "utf8",
-          ),
-        ),
-      ).roundId,
-    ).toBe("reconciliation");
+    const parsingFailure = outcome.state.failureRecords.find(
+      (record) =>
+        record.stage === "parsing" &&
+        record.contestantId === "a" &&
+        record.terminalDisposition === "coverage_lost",
+    );
+    expect(parsingFailure).toMatchObject({
+      terminalDisposition: "coverage_lost",
+      attempts: [
+        { attempt: 1, status: "failed" },
+        { attempt: 2, status: "failed" },
+      ],
+    });
+    expect(parsingFailure?.attempts[0]?.diagnosticArtifactRefs).not.toEqual(
+      parsingFailure?.attempts[1]?.diagnosticArtifactRefs,
+    );
+    expect(outcome.state.failureRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "parsing",
+          terminalDisposition: "recovered",
+          attempts: [
+            expect.objectContaining({ attempt: 1, status: "failed" }),
+            expect.objectContaining({ attempt: 2, status: "succeeded" }),
+          ],
+        }),
+      ]),
+    );
   });
 
   it("returns an inconclusive round when implementation infrastructure fails", async () => {
@@ -367,20 +371,22 @@ describe("fake-adapter fight on a mocked real issue", () => {
       executable: process.execPath,
       args: [fixtureAgent],
     });
-    vi.spyOn(failed, "implement").mockImplementation((input) =>
-      Promise.resolve({
-        agent: "codex",
-        contestantId: input.contestantId,
-        role: "solver",
-        stage: "implement",
-        startedAt: "2026-08-08T00:00:00.000Z",
-        finishedAt: "2026-08-08T00:00:01.000Z",
-        durationMs: 1_000,
-        status: "infrastructure_error",
-        promptPath: input.promptPath,
-        transcriptPath: `${input.transcriptPrefix}.stderr.log`,
-      }),
-    );
+    const implement = vi
+      .spyOn(failed, "implement")
+      .mockImplementation((input) =>
+        Promise.resolve({
+          agent: "codex",
+          contestantId: input.contestantId,
+          role: "solver",
+          stage: "implement",
+          startedAt: "2026-08-08T00:00:00.000Z",
+          finishedAt: "2026-08-08T00:00:01.000Z",
+          durationMs: 1_000,
+          status: "infrastructure_error",
+          promptPath: input.promptPath,
+          transcriptPath: `${input.transcriptPrefix}.stderr.log`,
+        }),
+      );
 
     const outcome = await new Arena({
       adapters: {
@@ -402,8 +408,22 @@ describe("fake-adapter fight on a mocked real issue", () => {
       eligibleContestantIds: [],
     });
     expect(run).toHaveBeenCalledOnce();
+    expect(implement).toHaveBeenCalledTimes(2);
     expect(outcome.state.attacks).toEqual([]);
     expect(outcome.state.contestants.a?.currentPatchPath).toBeUndefined();
+    expect(outcome.state.failureRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "implementation",
+          terminalDisposition: "run_level_coverage_lost",
+          attempts: [
+            expect.objectContaining({ attempt: 1, status: "failed" }),
+            expect.objectContaining({ attempt: 2, status: "failed" }),
+          ],
+        }),
+      ]),
+    );
+    implement.mockRestore();
     run.mockRestore();
   });
 
@@ -494,6 +514,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
 
   it("runs three rounds, lands and heals evidence, recoils a miss, and writes replayable artifacts", async () => {
     const repositoryRoot = await createSlugRepository();
+    const integrationRetryMarker = `${repositoryRoot}-integration-retry`;
     const issueResolver: IssueResolver = {
       resolve(reference) {
         return Promise.resolve({
@@ -529,8 +550,15 @@ describe("fake-adapter fight on a mocked real issue", () => {
       maxHeldOutCasesPerDefect: 2,
       testCommand: "node --test",
       integrationProfile: {
-        setupCommand:
-          "node -e \"require('node:fs').writeFileSync('.arena-service', 'ready')\"",
+        setupCommand: `node -e ${JSON.stringify(
+          [
+            "const fs = require('node:fs')",
+            `const marker = ${JSON.stringify(integrationRetryMarker)}`,
+            "if (fs.existsSync('.contaminated')) process.exit(2)",
+            "if (!fs.existsSync(marker)) { fs.writeFileSync(marker, 'retry'); fs.writeFileSync('.contaminated', '1'); process.exit(1) }",
+            "fs.writeFileSync('.arena-service', 'ready')",
+          ].join("; "),
+        )}`,
         checkCommand:
           "node -e \"if (!require('node:fs').existsSync('.arena-service')) process.exit(1)\"",
         teardownCommand:
@@ -567,21 +595,60 @@ describe("fake-adapter fight on a mocked real issue", () => {
         args: [fixtureAgent],
       }),
     };
+    const houseScout = new CommandHouseScout("codex", {
+      executable: process.execPath,
+      args: [fixtureAgent],
+    });
+    const scout = vi
+      .spyOn(houseScout, "scout")
+      .mockRejectedValueOnce(new Error("transient house scout outage"));
+    const caseBuilder = new CommandCaseBuilder("codex", {
+      executable: process.execPath,
+      args: [fixtureAgent],
+    });
+    const originalBuild = caseBuilder.build.bind(caseBuilder);
+    let heldOutFailedOnce = false;
+    vi.spyOn(caseBuilder, "build").mockImplementation((input) => {
+      if (
+        !heldOutFailedOnce &&
+        input.prompt.includes("Held-out sibling case builder")
+      ) {
+        heldOutFailedOnce = true;
+        return Promise.reject(new Error("transient held-out builder outage"));
+      }
+      return originalBuild(input);
+    });
     const outcome = await new Arena({
       adapters,
       verifier: new RuleBasedVerifier("codex"),
-      houseScout: new CommandHouseScout("codex", {
-        executable: process.execPath,
-        args: [fixtureAgent],
-      }),
-      caseBuilder: new CommandCaseBuilder("codex", {
-        executable: process.execPath,
-        args: [fixtureAgent],
-      }),
+      houseScout,
+      caseBuilder,
       issueResolver,
     }).fight(config);
+    await rm(integrationRetryMarker, { force: true });
 
     expect(outcome.state.status).toBe("complete");
+    expect(scout.mock.calls.length).toBeGreaterThan(1);
+    const houseRetry = outcome.state.failureRecords.find((record) =>
+      record.subject.startsWith("house-scout:"),
+    );
+    expect(houseRetry).toMatchObject({
+      terminalDisposition: "recovered",
+      attempts: [
+        expect.objectContaining({ attempt: 1, status: "failed" }),
+        expect.objectContaining({ attempt: 2, status: "succeeded" }),
+      ],
+    });
+    const caseBuilderRetry = outcome.state.failureRecords.find((record) =>
+      record.subject.startsWith("held-out-case-generation:"),
+    );
+    expect(caseBuilderRetry).toMatchObject({
+      terminalDisposition: "recovered",
+      attempts: [
+        expect.objectContaining({ attempt: 1, status: "failed" }),
+        expect.objectContaining({ attempt: 2, status: "succeeded" }),
+      ],
+    });
     expect(outcome.state.promptManifests).toHaveLength(3);
     expect(
       new Set(
@@ -718,7 +785,27 @@ describe("fake-adapter fight on a mocked real issue", () => {
       outcome.state.contestants.a?.checks.filter(
         (check) => check.kind === "service_health",
       ),
-    ).toHaveLength(6);
+    ).toHaveLength(8);
+    expect(outcome.state.failureRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "service",
+          subject: "integration-a-setup",
+          terminalDisposition: "recovered",
+          attempts: [
+            expect.objectContaining({ attempt: 1, status: "failed" }),
+            expect.objectContaining({ attempt: 2, status: "succeeded" }),
+          ],
+        }),
+      ]),
+    );
+    expect(outcome.state.warnings).not.toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "Integration profile did not pass symmetrically",
+        ),
+      ]),
+    );
 
     const result = JSON.parse(
       await readFile(
@@ -726,7 +813,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         "utf8",
       ),
     ) as { schemaVersion: number; stage: string };
-    expect(result).toMatchObject({ schemaVersion: 7, stage: "complete" });
+    expect(result).toMatchObject({ schemaVersion: 8, stage: "complete" });
     const roundDirectory = path.join(
       outcome.state.artifacts.runDirectory!,
       "rounds",
@@ -821,8 +908,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       contentHash: string;
       task: { sources: Array<{ kind: string; snapshotPath: string }> };
     };
-    expect(outcome.state.schemaVersion).toBe(6);
-    if (outcome.state.schemaVersion !== 6) throw new Error("expected v6 state");
+    expect(outcome.state.schemaVersion).toBe(7);
+    if (outcome.state.schemaVersion !== 7) throw new Error("expected v7 state");
     expect(outcome.state.runSpecHash).toBe(runSpec.contentHash);
     const issueSnapshot = runSpec.task.sources.find(
       (source) => source.kind === "issue",
@@ -876,7 +963,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     ).toBe(0);
   });
 
-  it("grants a no-fault credit for verifier infrastructure and executes one bounded recovery round", async () => {
+  it("records judge-unable verifier infrastructure without an extra round", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = FightConfigSchema.parse({
       task: "Fix issue #87: collapse every whitespace run while keeping lowercase slugs.",
@@ -934,17 +1021,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         executable: process.execPath,
         args: [fixtureAgent],
       }),
-      infrastructureReviewer: new CommandInfrastructureReviewer({
-        codex: { executable: process.execPath, args: [fixtureAgent] },
-        claude: { executable: process.execPath, args: [fixtureAgent] },
-      }),
-      harnessMaintainer: new CommandHarnessMaintainer("codex", {
-        executable: process.execPath,
-        args: [fixtureAgent],
-      }),
     }).fight(config);
-    const credit = outcome.state.contestants.a?.replacementCredits[0];
-    expect(credit).toBeUndefined();
     expect(outcome.state.coverageAssessment).toMatchObject({
       confidence: "provisional",
     });
@@ -955,6 +1032,10 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(
       outcome.state.attacks.some((attack) => attack.status === "judge_unable"),
     ).toBe(true);
-    expect(outcome.state.harnessOverlays).toEqual([]);
+    expect(outcome.state.failureRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ terminalDisposition: "judge_unable" }),
+      ]),
+    );
   });
 });

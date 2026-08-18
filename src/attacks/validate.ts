@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -5,6 +6,11 @@ import {
   type AttackVerifier,
   type JudgeAdjudicationInput,
 } from "../agents/adapter.js";
+import {
+  FailureRecordSchema,
+  type FailureAttempt,
+  type FailureRecord,
+} from "../contracts/failure.js";
 import { DAMAGE_BY_SEVERITY } from "../core/scoring.js";
 import type {
   Attack,
@@ -17,7 +23,6 @@ import { changedPathsFromPatch, isAllowedAttackPath } from "../repo/git.js";
 import type { WorktreeManager } from "../repo/git.js";
 import { runShellCommand } from "../runner/process-runner.js";
 import { applyJudgeVerdict, suppressKnownJudgeDefect } from "./adjudicate.js";
-import { assertTargetedRetryAllowed } from "../confidence/assessment.js";
 
 interface ValidateAttackOptions {
   attack: Attack;
@@ -32,6 +37,7 @@ interface ValidateAttackOptions {
   signal: AbortSignal;
   knownRootDefects: ReadonlySet<string>;
   priorCanonicalDefects?: JudgeAdjudicationInput["priorCanonicalDefects"];
+  persistFailureRecord?: (record: FailureRecord) => Promise<void>;
 }
 
 interface RepeatedCheck {
@@ -41,6 +47,11 @@ interface RepeatedCheck {
   infrastructure: boolean;
 }
 
+type AttackAssessment = Awaited<ReturnType<AttackVerifier["assess"]>>;
+
+class AttackPatchApplicationError extends Error {}
+class WorktreePreparationInfrastructureError extends Error {}
+
 async function runTwice(
   id: string,
   kind: CheckResult["kind"],
@@ -49,30 +60,108 @@ async function runTwice(
   config: FightConfig,
   logRoot: string,
   signal: AbortSignal,
+  failureOptions: Pick<
+    ValidateAttackOptions,
+    "attack" | "persistFailureRecord"
+  >,
 ): Promise<RepeatedCheck> {
   const results = [];
-  for (const attempt of [1, 2]) {
-    results.push(
-      await runShellCommand(command, {
+  const samples = [];
+  let infrastructure = false;
+  for (const sample of [1, 2] as const) {
+    let record: FailureRecord | undefined;
+    for (const attempt of [1, 2] as const) {
+      const startedAt = new Date().toISOString();
+      const result = await runShellCommand(command, {
         cwd,
         timeoutMs: config.limits.attackMs,
-        logPrefix: path.join(logRoot, `${id}-attempt-${String(attempt)}`),
+        logPrefix: path.join(
+          logRoot,
+          `${id}-sample-${String(sample)}-attempt-${String(attempt)}`,
+        ),
         signal,
         attempts: attempt,
-      }),
-    );
+      });
+      const diagnosticArtifactRefs = [result.stdoutPath, result.stderrPath];
+      results.push(result);
+      if (result.failureClass !== "arena_infrastructure") {
+        samples.push(result);
+        if (record) {
+          record = FailureRecordSchema.parse({
+            ...record,
+            attempts: [
+              ...record.attempts,
+              {
+                attempt: 2,
+                startedAt,
+                finishedAt: new Date().toISOString(),
+                status: "succeeded",
+                diagnosticArtifactRefs,
+              },
+            ],
+            diagnosticArtifactRefs: [
+              ...new Set([
+                ...record.diagnosticArtifactRefs,
+                ...diagnosticArtifactRefs,
+              ]),
+            ],
+            terminalDisposition: "recovered",
+          });
+          await failureOptions.persistFailureRecord?.(record);
+        }
+        break;
+      }
+      const causalDigest = createHash("sha256")
+        .update(
+          JSON.stringify({
+            attackId: failureOptions.attack.id,
+            evidencePath: id,
+            sample,
+          }),
+        )
+        .digest("hex");
+      record = FailureRecordSchema.parse({
+        version: 1,
+        failureId: `failure-evidence-${causalDigest.slice(0, 24)}`,
+        stage: "evidence_execution",
+        subject: `${id}:sample-${String(sample)}`,
+        attackId: failureOptions.attack.id,
+        category:
+          record?.category ??
+          (result.timedOut ? "timeout" : "command_execution"),
+        causalDigest,
+        attempts: [
+          ...(record?.attempts ?? []),
+          {
+            attempt,
+            startedAt,
+            finishedAt: new Date().toISOString(),
+            status: "failed",
+            diagnosticArtifactRefs,
+          },
+        ],
+        reusedArtifactRefs: [failureOptions.attack.patchPath],
+        diagnosticArtifactRefs: [
+          ...new Set([
+            ...(record?.diagnosticArtifactRefs ?? []),
+            ...diagnosticArtifactRefs,
+          ]),
+        ],
+        ...(attempt === 2 ? { terminalDisposition: "coverage_lost" } : {}),
+      });
+      await failureOptions.persistFailureRecord?.(record);
+      if (attempt === 2) infrastructure = true;
+    }
+    if (infrastructure) break;
   }
-  const infrastructure = results.some(
-    (result) => result.failureClass === "arena_infrastructure",
-  );
-  const exits = results.map(
+  const exits = samples.map(
     (result) => `${String(result.exitCode)}:${String(result.timedOut)}`,
   );
-  const stable = exits[0] === exits[1];
+  const stable = samples.length === 2 && exits[0] === exits[1];
   const passed =
     stable &&
     !infrastructure &&
-    results.every((result) => result.exitCode === 0);
+    samples.every((result) => result.exitCode === 0);
   return {
     checks: results.map((commandResult, index) => ({
       id: `${id}-${String(index + 1)}`,
@@ -96,17 +185,101 @@ async function prepare(
   name: string,
   implementationPatch: string | undefined,
   attackPatch: string,
+  failureOptions: Pick<
+    ValidateAttackOptions,
+    "attack" | "persistFailureRecord"
+  >,
+  expectedAttackPatchFailure = false,
 ): Promise<string> {
-  const worktree = await worktrees.create(name);
-  try {
-    if (implementationPatch)
-      await worktrees.applyPatch(worktree, implementationPatch);
-    await worktrees.applyPatch(worktree, attackPatch);
-    return worktree;
-  } catch (error) {
-    await worktrees.remove(worktree);
-    throw error;
+  const causalDigest = createHash("sha256")
+    .update(JSON.stringify({ attackId: failureOptions.attack.id, name }))
+    .digest("hex");
+  let record: FailureRecord | undefined;
+  let lastError: unknown;
+  let attackPatchFailed = false;
+  for (const attempt of [1, 2] as const) {
+    const startedAt = new Date().toISOString();
+    let worktree: string | undefined;
+    let operation: "create" | "implementation_patch" | "attack_patch" =
+      "create";
+    try {
+      worktree = await worktrees.create(
+        `${name}-prepare-attempt-${String(attempt)}`,
+      );
+      if (implementationPatch) {
+        operation = "implementation_patch";
+        await worktrees.applyPatch(worktree, implementationPatch);
+      }
+      operation = "attack_patch";
+      await worktrees.applyPatch(worktree, attackPatch);
+      if (record) {
+        record = FailureRecordSchema.parse({
+          ...record,
+          attempts: [
+            ...record.attempts,
+            {
+              attempt: 2,
+              startedAt,
+              finishedAt: new Date().toISOString(),
+              status: "succeeded",
+              diagnosticArtifactRefs: [
+                ...(implementationPatch ? [implementationPatch] : []),
+                attackPatch,
+              ],
+            },
+          ],
+          terminalDisposition: "recovered",
+        });
+        await failureOptions.persistFailureRecord?.(record);
+      }
+      return worktree;
+    } catch (error) {
+      lastError = error;
+      attackPatchFailed = operation === "attack_patch";
+      if (worktree) await worktrees.remove(worktree).catch(() => undefined);
+      if (!(expectedAttackPatchFailure && attackPatchFailed)) {
+        const diagnosticArtifactRefs = [
+          ...(implementationPatch ? [implementationPatch] : []),
+          attackPatch,
+        ];
+        record = FailureRecordSchema.parse({
+          version: 1,
+          failureId: `failure-prepare-${causalDigest.slice(0, 24)}`,
+          stage: "git",
+          subject: `prepare:${name}`,
+          attackId: failureOptions.attack.id,
+          category: "git_operation",
+          causalDigest,
+          attempts: [
+            ...(record?.attempts ?? []),
+            {
+              attempt,
+              startedAt,
+              finishedAt: new Date().toISOString(),
+              status: "failed",
+              diagnosticArtifactRefs,
+            },
+          ],
+          reusedArtifactRefs: [
+            ...(implementationPatch ? [implementationPatch] : []),
+            attackPatch,
+          ],
+          diagnosticArtifactRefs,
+          ...(attempt === 2 && !attackPatchFailed
+            ? { terminalDisposition: "coverage_lost" }
+            : {}),
+        });
+        await failureOptions.persistFailureRecord?.(record);
+      }
+    }
   }
+  if (attackPatchFailed)
+    throw new AttackPatchApplicationError(
+      `Attack patch did not apply after the targeted retry: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+    );
+  throw new WorktreePreparationInfrastructureError(
+    `Worktree preparation infrastructure failed after the targeted retry: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
 }
 
 function withOutcome(
@@ -118,55 +291,291 @@ function withOutcome(
 }
 
 async function judgeFallback(
-  options: ValidateAttackOptions,
+  options: Omit<ValidateAttackOptions, "authorPatch" | "targetPatch">,
   attack: Attack,
   reason: string,
+  targetPatchPath: string | undefined,
   worktree?: string,
 ): Promise<Attack> {
+  if (
+    !attack.claim.trim() ||
+    !attack.targets.length ||
+    !attack.patchPath.trim() ||
+    !targetPatchPath?.trim() ||
+    !attack.oracle.rationale.trim()
+  ) {
+    return withOutcome(
+      attack,
+      "judge_unable",
+      "Judge fallback requires a schema-valid immutable attack with a claim, oracle, target, and concrete patch evidence",
+    );
+  }
   if (!options.verifier.adjudicate)
     return withOutcome(attack, "judge_unable", reason);
-  const fallbackWorktree =
-    worktree ??
-    (await options.worktrees.create(
-      `${String(attack.round)}-${attack.id}-judge-fallback`,
-    ));
+  let fallbackWorktree = worktree;
   const ownsWorktree = worktree === undefined;
-  let lastFailure = reason;
+  if (!fallbackWorktree) {
+    const subject = `judge-worktree:${attack.id}`;
+    const causalDigest = createHash("sha256").update(subject).digest("hex");
+    let preparationRecord: FailureRecord | undefined;
+    let lastError: unknown;
+    for (const attempt of [1, 2] as const) {
+      const startedAt = new Date().toISOString();
+      try {
+        fallbackWorktree = await options.worktrees.create(
+          `${String(attack.round)}-${attack.id}-judge-fallback-attempt-${String(attempt)}`,
+        );
+        if (preparationRecord) {
+          preparationRecord = FailureRecordSchema.parse({
+            ...preparationRecord,
+            attempts: [
+              ...preparationRecord.attempts,
+              {
+                attempt: 2,
+                startedAt,
+                finishedAt: new Date().toISOString(),
+                status: "succeeded",
+                diagnosticArtifactRefs: [],
+              },
+            ],
+            terminalDisposition: "recovered",
+          });
+          await options.persistFailureRecord?.(preparationRecord);
+        }
+        break;
+      } catch (error) {
+        lastError = error;
+        preparationRecord = FailureRecordSchema.parse({
+          version: 1,
+          failureId: `failure-judge-worktree-${causalDigest.slice(0, 24)}`,
+          stage: "git",
+          subject,
+          attackId: attack.id,
+          category: "git_operation",
+          causalDigest,
+          attempts: [
+            ...(preparationRecord?.attempts ?? []),
+            {
+              attempt,
+              startedAt,
+              finishedAt: new Date().toISOString(),
+              status: "failed",
+              diagnosticArtifactRefs: [],
+            },
+          ],
+          reusedArtifactRefs: [attack.patchPath],
+          diagnosticArtifactRefs: [],
+          ...(attempt === 2 ? { terminalDisposition: "judge_unable" } : {}),
+        });
+        await options.persistFailureRecord?.(preparationRecord);
+      }
+    }
+    if (!fallbackWorktree) {
+      return withOutcome(
+        attack,
+        "judge_unable",
+        `Judge fallback worktree failed after the targeted retry: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+      );
+    }
+  }
   try {
-    for (const attemptNumber of [1, 2] as const) {
+    const promptPath = path.join(options.logRoot, "judge-fallback.prompt.md");
+    const transcriptPrefix = path.join(options.logRoot, "judge-fallback");
+    const causalDigest = createHash("sha256")
+      .update(JSON.stringify({ attackId: attack.id, reason }))
+      .digest("hex");
+    const failureId = `failure-judge-${causalDigest.slice(0, 24)}`;
+    let record: FailureRecord | undefined;
+    let lastFailure = reason;
+    let retryReason: string | undefined;
+    const mechanicalDiagnosticArtifactRefs = attack.checks.flatMap((check) =>
+      check.command ? [check.command.stdoutPath, check.command.stderrPath] : [],
+    );
+    for (const attempt of [1, 2] as const) {
+      const startedAt = new Date().toISOString();
+      const attemptTranscriptPrefix = `${transcriptPrefix}-attempt-${String(attempt)}`;
+      const diagnosticArtifactRefs = [promptPath, attemptTranscriptPrefix];
+      let status: FailureAttempt["status"] = "failed";
       try {
         const verdict = await options.verifier.adjudicate({
           attack: anonymizeAttackForVerifier(attack),
           runSpec: options.runSpec,
           mechanicalFailureReason: reason,
+          targetPatchPath,
+          mechanicalDiagnosticArtifactRefs,
           priorCanonicalDefects: options.priorCanonicalDefects ?? [],
           worktree: fallbackWorktree,
-          promptPath: path.join(
-            options.logRoot,
-            `judge-fallback-attempt-${String(attemptNumber)}.prompt.md`,
-          ),
-          transcriptPrefix: path.join(
-            options.logRoot,
-            `judge-fallback-attempt-${String(attemptNumber)}`,
-          ),
+          promptPath,
+          transcriptPrefix: attemptTranscriptPrefix,
           timeoutMs: options.config.limits.verifierMs,
           signal: options.signal,
+          ...(retryReason ? { retryReason } : {}),
         });
         const adjudicated = suppressKnownJudgeDefect(
           applyJudgeVerdict(attack, verdict),
           options.knownRootDefects,
         );
-        if (adjudicated.status !== "judge_unable") return adjudicated;
+        if (adjudicated.status !== "judge_unable") {
+          status = "succeeded";
+          if (record) {
+            record = FailureRecordSchema.parse({
+              ...record,
+              attempts: [
+                ...record.attempts,
+                {
+                  attempt,
+                  startedAt,
+                  finishedAt: new Date().toISOString(),
+                  status,
+                  diagnosticArtifactRefs,
+                },
+              ],
+              diagnosticArtifactRefs: [
+                ...new Set([
+                  ...record.diagnosticArtifactRefs,
+                  ...diagnosticArtifactRefs,
+                ]),
+              ],
+              terminalDisposition: "recovered",
+            });
+            await options.persistFailureRecord?.(record);
+          }
+          return adjudicated;
+        }
         lastFailure = adjudicated.outcomeReason ?? reason;
+        retryReason = lastFailure;
       } catch (error) {
         lastFailure = `Judge fallback failed: ${error instanceof Error ? error.message : String(error)}`;
+        retryReason = lastFailure;
       }
-      if (attemptNumber === 1) assertTargetedRetryAllowed(attemptNumber);
+      const failureAttempt: FailureAttempt = {
+        attempt,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        status,
+        diagnosticArtifactRefs,
+      };
+      record = FailureRecordSchema.parse({
+        version: 1,
+        failureId,
+        stage: "model_invocation",
+        subject: `judge-fallback:${attack.id}`,
+        attackId: attack.id,
+        category: "transport",
+        causalDigest,
+        attempts: [...(record?.attempts ?? []), failureAttempt],
+        reusedArtifactRefs: [attack.patchPath],
+        diagnosticArtifactRefs: [
+          ...new Set([
+            ...(record?.diagnosticArtifactRefs ?? []),
+            ...diagnosticArtifactRefs,
+          ]),
+        ],
+        ...(attempt === 2 ? { terminalDisposition: "judge_unable" } : {}),
+      });
+      await options.persistFailureRecord?.(record);
+      if (attempt === 2) {
+        return withOutcome(attack, "judge_unable", lastFailure);
+      }
     }
-    return withOutcome(attack, "judge_unable", lastFailure);
+    throw new Error("Unreachable judge fallback retry state");
   } finally {
     if (ownsWorktree) await options.worktrees.remove(fallbackWorktree);
   }
+}
+
+async function assessWithRetry(
+  options: Omit<ValidateAttackOptions, "authorPatch" | "targetPatch">,
+  attack: Attack,
+  worktree: string,
+): Promise<AttackAssessment> {
+  const promptPath = path.join(options.logRoot, "verifier.prompt.md");
+  const causalDigest = createHash("sha256")
+    .update(JSON.stringify({ attackId: attack.id, stage: "verifier-assess" }))
+    .digest("hex");
+  let record: FailureRecord | undefined;
+  let lastError: unknown;
+  let retryReason: string | undefined;
+  for (const attempt of [1, 2] as const) {
+    const startedAt = new Date().toISOString();
+    const transcriptPrefix = path.join(
+      options.logRoot,
+      `verifier-attempt-${String(attempt)}`,
+    );
+    const diagnosticArtifactRefs = [promptPath, transcriptPrefix];
+    try {
+      const verdict = await options.verifier.assess({
+        attack: anonymizeAttackForVerifier(attack),
+        runSpec: options.runSpec,
+        authorPassed: true,
+        targetFailed: true,
+        worktree,
+        promptPath,
+        transcriptPrefix,
+        timeoutMs: options.config.limits.verifierMs,
+        signal: options.signal,
+        ...(retryReason ? { retryReason } : {}),
+      });
+      if (record) {
+        record = FailureRecordSchema.parse({
+          ...record,
+          attempts: [
+            ...record.attempts,
+            {
+              attempt: 2,
+              startedAt,
+              finishedAt: new Date().toISOString(),
+              status: "succeeded",
+              diagnosticArtifactRefs,
+            },
+          ],
+          diagnosticArtifactRefs: [
+            ...new Set([
+              ...record.diagnosticArtifactRefs,
+              ...diagnosticArtifactRefs,
+            ]),
+          ],
+          terminalDisposition: "recovered",
+        });
+        await options.persistFailureRecord?.(record);
+      }
+      return verdict;
+    } catch (error) {
+      lastError = error;
+      retryReason = error instanceof Error ? error.message : String(error);
+      record = FailureRecordSchema.parse({
+        version: 1,
+        failureId: `failure-assess-${causalDigest.slice(0, 24)}`,
+        stage: "model_invocation",
+        subject: `verifier-assess:${attack.id}`,
+        attackId: attack.id,
+        category: "transport",
+        causalDigest,
+        attempts: [
+          ...(record?.attempts ?? []),
+          {
+            attempt,
+            startedAt,
+            finishedAt: new Date().toISOString(),
+            status: "failed",
+            diagnosticArtifactRefs,
+          },
+        ],
+        reusedArtifactRefs: [attack.patchPath],
+        diagnosticArtifactRefs: [
+          ...new Set([
+            ...(record?.diagnosticArtifactRefs ?? []),
+            ...diagnosticArtifactRefs,
+          ]),
+        ],
+        ...(attempt === 2 ? { terminalDisposition: "coverage_lost" } : {}),
+      });
+      await options.persistFailureRecord?.(record);
+    }
+  }
+  throw new Error(
+    `Verifier assessment failed after the targeted retry: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
 }
 
 export async function validateAttack(
@@ -223,6 +632,8 @@ export async function validateAttack(
         `${baseName}-base`,
         undefined,
         attack.patchPath,
+        options,
+        true,
       );
       created.push(baseline);
     } catch {
@@ -238,6 +649,7 @@ export async function validateAttack(
         options.config,
         options.logRoot,
         options.signal,
+        options,
       );
       attack.checks.push(...baselineResult.checks);
       if (baselineResult.infrastructure) {
@@ -245,6 +657,7 @@ export async function validateAttack(
           options,
           attack,
           "Baseline execution infrastructure failed after the targeted retry",
+          options.targetPatch,
           baseline,
         );
       }
@@ -265,15 +678,27 @@ export async function validateAttack(
         `${baseName}-author`,
         options.authorPatch,
         attack.patchPath,
+        options,
       );
+      created.push(author);
       target = await prepare(
         options.worktrees,
         `${baseName}-target`,
         options.targetPatch,
         attack.patchPath,
+        options,
       );
-      created.push(author, target);
+      created.push(target);
     } catch (error) {
+      if (error instanceof WorktreePreparationInfrastructureError) {
+        return judgeFallback(
+          options,
+          attack,
+          error.message,
+          options.targetPatch,
+          created.at(-1),
+        );
+      }
       return withOutcome(
         attack,
         "invalid",
@@ -292,6 +717,7 @@ export async function validateAttack(
             options.config,
             options.logRoot,
             options.signal,
+            options,
           );
           const full = await runTwice(
             "author-required",
@@ -301,6 +727,7 @@ export async function validateAttack(
             options.config,
             options.logRoot,
             options.signal,
+            options,
           );
           return [focused, full] as const;
         })(),
@@ -313,6 +740,7 @@ export async function validateAttack(
             options.config,
             options.logRoot,
             options.signal,
+            options,
           );
           const full = await runTwice(
             "target-required",
@@ -322,6 +750,7 @@ export async function validateAttack(
             options.config,
             options.logRoot,
             options.signal,
+            options,
           );
           return [focused, full] as const;
         })(),
@@ -342,6 +771,7 @@ export async function validateAttack(
         options,
         attack,
         "Comparative execution had an infrastructure failure after the targeted retry",
+        options.targetPatch,
         target,
       );
     }
@@ -372,17 +802,7 @@ export async function validateAttack(
       );
     }
 
-    const verdict = await options.verifier.assess({
-      attack: anonymizeAttackForVerifier(attack),
-      runSpec: options.runSpec,
-      authorPassed: true,
-      targetFailed: true,
-      worktree: target,
-      promptPath: path.join(options.logRoot, "verifier.prompt.md"),
-      transcriptPrefix: path.join(options.logRoot, "verifier"),
-      timeoutMs: options.config.limits.verifierMs,
-      signal: options.signal,
-    });
+    const verdict = await assessWithRetry(options, attack, target);
     if (!verdict.oracleSupported) {
       return withOutcome(attack, "unproven", verdict.oracleRationale);
     }
@@ -417,6 +837,7 @@ export async function validateAttack(
       options,
       attack,
       `Harness exception during attack validation after the targeted retry: ${error instanceof Error ? error.message : String(error)}`,
+      options.targetPatch,
     );
   } finally {
     for (const worktree of created) await options.worktrees.remove(worktree);
@@ -443,6 +864,9 @@ export async function validateHouseAttack(
     );
   }
   const created: string[] = [];
+  const judgeTargetPatch = attack.targets
+    .map((target) => options.targetPatches[target])
+    .find((candidate): candidate is string => Boolean(candidate));
   try {
     let baseline: string | undefined;
     try {
@@ -451,6 +875,8 @@ export async function validateHouseAttack(
         `house-${String(attack.round)}-${attack.id}-base`,
         undefined,
         attack.patchPath,
+        options,
+        true,
       );
       created.push(baseline);
     } catch {
@@ -466,13 +892,16 @@ export async function validateHouseAttack(
         options.config,
         options.logRoot,
         options.signal,
+        options,
       );
       attack.checks.push(...baselineResult.checks);
       if (baselineResult.infrastructure) {
-        return withOutcome(
+        return judgeFallback(
+          options,
           attack,
-          "infrastructure_error",
           "House baseline infrastructure failed",
+          judgeTargetPatch,
+          baseline,
         );
       }
       if (!baselineResult.stable)
@@ -484,12 +913,21 @@ export async function validateHouseAttack(
     for (const target of attack.targets) {
       const implementationPatch = options.targetPatches[target];
       if (!implementationPatch) continue;
-      const targetTree = await prepare(
-        options.worktrees,
-        `house-${String(attack.round)}-${attack.id}-${target}`,
-        implementationPatch,
-        attack.patchPath,
-      );
+      let targetTree: string;
+      try {
+        targetTree = await prepare(
+          options.worktrees,
+          `house-${String(attack.round)}-${attack.id}-${target}`,
+          implementationPatch,
+          attack.patchPath,
+          options,
+        );
+      } catch (error) {
+        if (error instanceof AttackPatchApplicationError) {
+          return withOutcome(attack, "invalid", error.message);
+        }
+        throw error;
+      }
       created.push(targetTree);
       const focused = await runTwice(
         `house-${target}-focused`,
@@ -499,6 +937,7 @@ export async function validateHouseAttack(
         options.config,
         options.logRoot,
         options.signal,
+        options,
       );
       const full = await runTwice(
         `house-${target}-required`,
@@ -508,13 +947,16 @@ export async function validateHouseAttack(
         options.config,
         options.logRoot,
         options.signal,
+        options,
       );
       attack.checks.push(...focused.checks, ...full.checks);
       if (focused.infrastructure || full.infrastructure) {
-        return withOutcome(
+        return judgeFallback(
+          options,
           attack,
-          "infrastructure_error",
           "House comparison infrastructure failed",
+          implementationPatch,
+          targetTree,
         );
       }
       if (!focused.stable || !full.stable) {
@@ -536,17 +978,7 @@ export async function validateHouseAttack(
         "Both patches block the house attack",
       );
     if (!verifierTree) throw new Error("Missing house verifier worktree");
-    const verdict = await options.verifier.assess({
-      attack: anonymizeAttackForVerifier(attack),
-      runSpec: options.runSpec,
-      authorPassed: true,
-      targetFailed: true,
-      worktree: verifierTree,
-      promptPath: path.join(options.logRoot, "verifier.prompt.md"),
-      transcriptPrefix: path.join(options.logRoot, "verifier"),
-      timeoutMs: options.config.limits.verifierMs,
-      signal: options.signal,
-    });
+    const verdict = await assessWithRetry(options, attack, verifierTree);
     if (!verdict.oracleSupported)
       return withOutcome(attack, "unproven", verdict.oracleRationale);
     if (!verdict.relevant)
@@ -578,10 +1010,11 @@ export async function validateHouseAttack(
       outcomeReason: `Neutral house evidence failed on ${affected.join(", ")}`,
     };
   } catch (error) {
-    return withOutcome(
+    return judgeFallback(
+      options,
       attack,
-      "infrastructure_error",
       `House validation failed: ${error instanceof Error ? error.message : String(error)}`,
+      judgeTargetPatch,
     );
   } finally {
     for (const worktree of created) await options.worktrees.remove(worktree);

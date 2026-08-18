@@ -61,7 +61,7 @@ async function fixture() {
   after.warnings.push("sealed warning");
   const delta = projectRoundStateDelta(before, after, 1);
   const snapshotDraft = {
-    version: 1 as const,
+    version: 4 as const,
     runId: before.runId,
     roundId: 1 as const,
     snapshotHash: "0".repeat(64),
@@ -133,10 +133,10 @@ async function fixture() {
       health: 100,
       permanentRecoil: 0,
       activeDefects: [],
-      replacementCredits: [],
       status: "active" as const,
     })),
     knownDefects: [],
+    failureRecords: [],
     priorReplayHash: null,
   };
   snapshotDraft.snapshotHash = calculateSnapshotHash(snapshotDraft);
@@ -154,7 +154,7 @@ async function fixture() {
     sha256: sha256(deltaBytes),
   };
   const replayDraft = {
-    version: 1 as const,
+    version: 4 as const,
     runId: before.runId,
     roundId: 1 as const,
     snapshotHash: snapshot.snapshotHash,
@@ -165,6 +165,7 @@ async function fixture() {
     repairs: [],
     scoreEvents: [],
     diagnostics: [],
+    failureRecords: [],
     artifacts: [deltaArtifact],
     stateDeltaArtifactId: deltaArtifact.id,
     replayHash: "0".repeat(64),
@@ -180,7 +181,6 @@ async function fixture() {
     health: 100,
     permanentRecoil: 0,
     activeDefects: [],
-    replacementCredits: [],
     status: "active" as const,
   }));
   const resultFor = (status: RoundResult["status"]): RoundResult => {
@@ -202,19 +202,21 @@ async function fixture() {
     return RoundResultSchema.parse(
       status === "completed"
         ? {
-            version: 1,
+            version: 4,
             status,
             runId: before.runId,
             roundId: 1,
             resultingContestants: contestants,
+            failureRecords: [],
             replay,
           }
         : {
-            version: 1,
+            version: 4,
             status,
             runId: before.runId,
             roundId: 1,
             resultingContestants: contestants,
+            failureRecords: [],
             replay: exceptionalReplay,
             diagnostics: [diagnostic],
           },
@@ -239,6 +241,114 @@ describe("durable round recovery", () => {
       expect(await readEnvelopeChain(store)).toEqual([envelope]);
     },
   );
+
+  it("reads and applies completed pre-V4 durable envelopes", async () => {
+    const { store, before, resultFor } = await fixture();
+    const current = await sealRoundEnvelope({
+      store,
+      result: resultFor("completed"),
+      priorEnvelopeHash: null,
+    });
+
+    const snapshot = JSON.parse(
+      await readFile(store.resolve("rounds/1/snapshot.json"), "utf8"),
+    ) as Record<string, unknown>;
+    snapshot.version = 3;
+    Reflect.deleteProperty(snapshot, "failureRecords");
+    snapshot.reconciliationQueue = [];
+    snapshot.contestants = (
+      snapshot.contestants as Record<string, unknown>[]
+    ).map((contestant) => ({ ...contestant, replacementCredits: [] }));
+    snapshot.snapshotHash = calculateSnapshotHash(snapshot);
+    await store.writeJson("rounds/1/snapshot.json", snapshot);
+
+    const delta = JSON.parse(
+      await readFile(store.resolve("rounds/1/state-delta.json"), "utf8"),
+    ) as Record<string, unknown>;
+    delta.version = 3;
+    Reflect.deleteProperty(delta, "failureRecords");
+    delta.harnessOverlays = [];
+    delta.reconciliationQueue = [];
+    const deltaText = `${JSON.stringify(delta, null, 2)}\n`;
+    await store.writeText("rounds/1/state-delta.json", deltaText);
+
+    const envelope = structuredClone(current) as unknown as Record<
+      string,
+      unknown
+    >;
+    envelope.version = 3;
+    envelope.snapshotHash = snapshot.snapshotHash;
+    const result = envelope.result as Record<string, unknown>;
+    result.version = 3;
+    result.reconciliationQueue = [];
+    Reflect.deleteProperty(result, "failureRecords");
+    result.resultingContestants = (
+      result.resultingContestants as Record<string, unknown>[]
+    ).map((contestant) => ({ ...contestant, replacementCredits: [] }));
+    const replay = result.replay as Record<string, unknown>;
+    replay.version = 3;
+    replay.snapshotHash = snapshot.snapshotHash;
+    replay.reconciliationQueue = [];
+    Reflect.deleteProperty(replay, "failureRecords");
+    const updateDeltaArtifact = (artifact: Record<string, unknown>) =>
+      artifact.id === "delta-1"
+        ? { ...artifact, sha256: sha256(deltaText) }
+        : artifact;
+    replay.artifacts = (replay.artifacts as Record<string, unknown>[]).map(
+      updateDeltaArtifact,
+    );
+    replay.replayHash = calculateReplayHash(replay);
+    envelope.replayHash = replay.replayHash;
+    envelope.stateDelta = updateDeltaArtifact(
+      envelope.stateDelta as Record<string, unknown>,
+    );
+    envelope.artifacts = (envelope.artifacts as Record<string, unknown>[]).map(
+      updateDeltaArtifact,
+    );
+    envelope.envelopeHash = calculateEnvelopeHash(envelope);
+    await store.writeJson("rounds/1/envelope.json", envelope);
+
+    const [legacy] = await readEnvelopeChain(store);
+    expect(legacy?.version).toBe(3);
+    const state = structuredClone(before);
+    const application = await applyEnvelopeExactlyOnce({
+      store,
+      state,
+      envelope: legacy!,
+      ledger: [],
+    });
+    expect(application.applied).toBe(true);
+    expect(state.warnings).toEqual(["sealed warning"]);
+
+    delta.roundId = "recovery";
+    delta.coordinator = {
+      ...(delta.coordinator as Record<string, unknown>),
+      currentRound: "recovery",
+    };
+    const recoveryDeltaText = `${JSON.stringify(delta, null, 2)}\n`;
+    await store.writeText("rounds/1/state-delta.json", recoveryDeltaText);
+    const recoveryEnvelope = structuredClone(legacy) as unknown as Record<
+      string,
+      unknown
+    >;
+    recoveryEnvelope.roundId = "recovery";
+    recoveryEnvelope.stateDelta = {
+      ...(recoveryEnvelope.stateDelta as Record<string, unknown>),
+      sha256: sha256(recoveryDeltaText),
+    };
+    const recoveryResult = recoveryEnvelope.result as Record<string, unknown>;
+    recoveryResult.roundId = "recovery";
+    (recoveryResult.replay as Record<string, unknown>).roundId = "recovery";
+    const recoveryState = structuredClone(before);
+    await expect(
+      applyEnvelopeExactlyOnce({
+        store,
+        state: recoveryState,
+        envelope: recoveryEnvelope as never,
+        ledger: [],
+      }),
+    ).resolves.toMatchObject({ applied: true });
+  });
 
   it("applies an envelope once, no-ops an identical replay, and rejects a conflict", async () => {
     const { store, before, resultFor } = await fixture();
@@ -300,7 +410,7 @@ describe("durable round recovery", () => {
     },
   );
 
-  it("rebuilds a v5 result from its immutable baseline and applied envelopes", async () => {
+  it("rebuilds a v8 result from its immutable baseline and applied envelopes", async () => {
     const { store, before, resultFor } = await fixture();
     await writeBaseline({
       store,
@@ -330,6 +440,34 @@ describe("durable round recovery", () => {
       kind: "required",
       status: "passed",
     });
+    applied.failureRecords.push({
+      version: 1,
+      failureId: "failure-final-validation",
+      stage: "final_validation",
+      contestantId: "a",
+      subject: "final-required:a",
+      category: "command_execution",
+      causalDigest: "f".repeat(64),
+      attempts: [
+        {
+          attempt: 1,
+          startedAt: "2026-08-08T02:00:00.000Z",
+          finishedAt: "2026-08-08T02:00:01.000Z",
+          status: "failed",
+          diagnosticArtifactRefs: ["final-attempt-1.log"],
+        },
+        {
+          attempt: 2,
+          startedAt: "2026-08-08T02:00:01.000Z",
+          finishedAt: "2026-08-08T02:00:02.000Z",
+          status: "succeeded",
+          diagnosticArtifactRefs: ["final-attempt-2.log"],
+        },
+      ],
+      reusedArtifactRefs: ["patches/a.diff"],
+      diagnosticArtifactRefs: ["final-attempt-1.log", "final-attempt-2.log"],
+      terminalDisposition: "recovered",
+    });
     await writeFinalizationRecord({
       store,
       state: applied,
@@ -339,13 +477,14 @@ describe("durable round recovery", () => {
     const summary = JSON.parse(
       await readFile(store.resolve("result.json"), "utf8"),
     ) as { schemaVersion: number; appliedEnvelopes: unknown[] };
-    expect(summary.schemaVersion).toBe(6);
+    expect(summary.schemaVersion).toBe(8);
     expect(summary.appliedEnvelopes).toHaveLength(1);
     const rebuilt = await store.readState();
     expect(rebuilt.warnings).toEqual(["sealed warning"]);
     expect(rebuilt.currentRound).toBe(1);
     expect(rebuilt.ranking?.reason).toBe("final fixture ranking");
     expect(rebuilt.contestants.a?.checks.at(-1)?.id).toBe("final-required");
+    expect(rebuilt.failureRecords).toEqual(applied.failureRecords);
   });
 
   it("writes the same checkpoint when recovery repeats after state application", async () => {

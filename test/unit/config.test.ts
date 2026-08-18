@@ -140,4 +140,26 @@ describe("configuration", () => {
       }),
     ).rejects.toThrow(/Unrecognized key/);
   });
+
+  it("accepts the legacy recovery flag once without persisting it", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-config-legacy-"));
+    await writeFile(
+      path.join(root, "agent-arena.yaml"),
+      [
+        "test: npm test",
+        "limits:",
+        "  infrastructure_recovery_round: false",
+      ].join("\n"),
+    );
+    const config = await loadFightConfig({
+      task: "do work",
+      repositoryRoot: root,
+    });
+    expect(config).not.toHaveProperty("infrastructureRecoveryRound");
+    expect(
+      config.configWarnings.filter((warning) =>
+        warning.includes("infrastructure_recovery_round"),
+      ),
+    ).toHaveLength(1);
+  });
 });

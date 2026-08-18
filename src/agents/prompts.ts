@@ -14,7 +14,7 @@ import type { MethodSelection } from "../methods/catalog.js";
 const COMMON_VERSION = "common@1";
 const OVERLAY_VERSION: Record<RoundId, string> = {
   1: "round-1-contract@1",
-  2: "round-2-systematic@1",
+  2: "round-2-systematic@2",
   3: "round-3-integration@1",
   recovery: "recovery@1",
   reconciliation: "reconciliation@1",
@@ -22,7 +22,7 @@ const OVERLAY_VERSION: Record<RoundId, string> = {
 
 const OVERLAYS: Record<RoundId, string> = {
   1: "Trace each acceptance criterion through observable behavior. Prefer focused examples, boundaries, negative cases, error paths, and regressions.",
-  2: "Build a diverse concise hypothesis portfolio across state, lifecycle, data integrity, generated inputs, concurrency, cancellation, and cleanup. Commit only executable evidence.",
+  2: "Build a diverse concise hypothesis portfolio across state, lifecycle, data integrity, generated inputs, concurrency, cancellation, and cleanup. When the patch touches versioned contracts or durable artifacts, consider testing a genuine prior-version fixture against the new reader. When it introduces retry, recovery, or persistence policy, consider tracing a real production path through failure, retry, recovery, persistence, and resume rather than testing only its helper. These are advisory options: pursue them only when the changed surfaces make them relevant, and commit only executable evidence.",
   3: "Exercise approved component boundaries, configuration, trust boundaries, dependency faults, retry/idempotency, recovery, and bounded resources. Degrade to local resilience probes when integration is unavailable.",
   recovery:
     "Use replacement credits only for new attacks against the post-round-3 patches. Another infrastructure failure makes the run inconclusive.",

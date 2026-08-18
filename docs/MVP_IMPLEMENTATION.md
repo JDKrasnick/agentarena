@@ -1,5 +1,30 @@
 # Agent Arena MVP: Implementation Plan
 
+## Current bounded-failure contract (issue #36)
+
+New runs use exactly three attack–repair rounds and one shared failure policy.
+Each distinct failure is keyed by stage, subject, normalized category, and
+causal digest; attempt one is persisted before one retry starts from the failed
+stage, reusing validated upstream artifacts. `FailureRecord` stores up to two
+attempts plus diagnostic links and a terminal disposition. No third attempt,
+correction queue, evidence revision, recovery/reconciliation round, replacement
+credit, generated harness overlay, infrastructure-reviewer role, or
+harness-maintainer role exists on the active path.
+
+Current schemas are round contracts V4, runtime state V7, result summary V8,
+and coverage assessment V3. `RunSpec` remains V1. `RoundId` for current runs is
+`1 | 2 | 3`. Completed older artifacts remain read-only; interrupted pre-V7
+runs must restart. References later in this historical implementation plan to
+recovery credits, reconciliation, evidence revisions, or harness overlays
+describe legacy-readable records only and do not authorize new-run behavior.
+
+After an eligible immutable attack exhausts mechanical retry, the identity-
+blind judge may confirm full frozen-severity damage, reject with ordinary rank
+recoil, award exact 35% damage for task-supported concrete but mechanically
+unavailable evidence, or return terminal `unable` with no score effect and lost
+coverage. Implementation, repair availability, required validation, and final
+validation failures become run-level coverage loss and never contestant damage.
+
 ## Technical direction
 
 Build Agent Arena as a TypeScript CLI for Node.js 22 or newer. Ship it as an npm
@@ -25,7 +50,7 @@ matches the developer's repository.
 
 ### Implemented battle topology
 
-The persisted schema is version 3. It separates stable contestant identity from
+The active persisted runtime schema is version 7. It separates stable contestant identity from
 provider identity and normalizes all input into two slots:
 
 ```ts

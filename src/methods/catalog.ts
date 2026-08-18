@@ -25,7 +25,12 @@ export function selectMethods(
   const methodPackIds = [`${profile}@1`];
   const probeCardIds = [`boundary-table@1`];
   if (round === 2) {
-    methodPackIds.push("state-machine@1", "generated-inputs@1");
+    methodPackIds.push(
+      "state-machine@1",
+      "generated-inputs@1",
+      "versioned-contract-compatibility@1",
+      "policy-wiring-lifecycle@1",
+    );
     probeCardIds.push(
       facts.has("typescript") ? "mutation-js@1" : "property-cases@1",
     );

@@ -108,6 +108,7 @@ export interface AnonymizedAttackInput {
   transcriptPrefix: string;
   timeoutMs: number;
   signal: AbortSignal;
+  retryReason?: string;
 }
 
 export interface AttackVerifier {
@@ -124,6 +125,8 @@ export interface JudgeAdjudicationInput extends Omit<
   "authorPassed" | "targetFailed"
 > {
   mechanicalFailureReason: string;
+  targetPatchPath: string;
+  mechanicalDiagnosticArtifactRefs: readonly string[];
   priorCanonicalDefects: ReadonlyArray<{
     canonicalDefectId: string;
     severity: Severity;
@@ -157,6 +160,7 @@ export interface JudgeRepairInput {
   transcriptPrefix: string;
   timeoutMs: number;
   signal: AbortSignal;
+  retryReason?: string;
 }
 
 export interface JudgeRepairVerdict {
@@ -551,8 +555,11 @@ async function stageJudgeSources(
 export class CommandAttackVerifier implements AttackVerifier {
   private readonly command: Omit<CommandAdapterOptions, "id">;
 
-  constructor(readonly id: AgentId) {
-    this.command = providerCommand(id);
+  constructor(
+    readonly id: AgentId,
+    command?: Omit<CommandAdapterOptions, "id">,
+  ) {
+    this.command = command ?? providerCommand(id);
   }
 
   async assess(input: AnonymizedAttackInput): Promise<AttackVerdict> {
@@ -591,46 +598,38 @@ export class CommandAttackVerifier implements AttackVerifier {
       "Read any packet artifact path only as immutable evidence. Do not edit it or execute commands.",
       "",
       `Write only valid JSON to ${outputPath} with keys relevant, oracleSupported, oracleRationale, rootDefectId, severity, and rationale.`,
+      ...(input.retryReason
+        ? [
+            "",
+            "The prior bounded attempt failed.",
+            `Retry reason: ${input.retryReason}`,
+            "Return one corrected JSON object using the exact requested keys.",
+          ]
+        : []),
     ].join("\n");
     await rm(outputPath, { force: true });
-    let lastError: unknown;
-    let attemptPrompt = prompt;
-    for (const attempt of [1, 2]) {
-      const result = await runProcess({
-        executable: this.command.executable,
-        args: this.command.args,
-        input: attemptPrompt,
-        cwd: input.worktree,
-        timeoutMs: input.timeoutMs,
-        logPrefix: `${input.transcriptPrefix}-attempt-${String(attempt)}`,
-        signal: input.signal,
-      });
-      if (result.failureClass === "arena_infrastructure") {
-        lastError = new Error("Verifier provider infrastructure failed");
-        continue;
-      }
-      try {
-        return parseModelSubmission(
-          AttackVerdictSchema,
-          await readFile(outputPath, "utf8"),
-        );
-      } catch (error) {
-        lastError = error;
-        // Only ask again after local recovery has exhausted unambiguous fixes.
-        // This is intentionally short: it is a formatting repair, not a new
-        // adjudication that could change the evidence or outcome.
-        attemptPrompt = [
-          prompt,
-          "",
-          "Your prior submission could not be validated.",
-          `Validation problem: ${error instanceof Error ? error.message : String(error)}`,
-          `Rewrite ${outputPath} now as one JSON object using the exact requested keys and severity values: critical, high, medium, or low.`,
-        ].join("\n");
-      }
+    const result = await runProcess({
+      executable: this.command.executable,
+      args: this.command.args,
+      input: prompt,
+      cwd: input.worktree,
+      timeoutMs: input.timeoutMs,
+      logPrefix: input.transcriptPrefix,
+      signal: input.signal,
+    });
+    if (result.failureClass === "arena_infrastructure")
+      throw new Error("Verifier provider infrastructure failed");
+    try {
+      return parseModelSubmission(
+        AttackVerdictSchema,
+        await readFile(outputPath, "utf8"),
+      );
+    } catch (error) {
+      throw new Error(
+        `Verifier output was invalid: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
-    throw new Error(
-      `Verifier failed after two attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
-    );
   }
 
   async adjudicate(input: JudgeAdjudicationInput): Promise<JudgeAttackVerdict> {
@@ -639,6 +638,56 @@ export class CommandAttackVerifier implements AttackVerifier {
       input.runSpec,
       input.worktree,
     );
+    const evidenceDirectory = path.join(
+      input.worktree,
+      ".agent-arena-judge-evidence",
+    );
+    await mkdir(evidenceDirectory, { recursive: true });
+    const stageEvidence = async (
+      sourcePath: string,
+      name: string,
+      artifactId: string,
+      description: string,
+    ) => {
+      const bytes = await readFile(sourcePath);
+      const stagedPath = path.join(evidenceDirectory, name);
+      await writeFile(stagedPath, bytes);
+      return {
+        artifactId,
+        sha256: sha256(bytes),
+        description,
+        path: stagedPath,
+      };
+    };
+    const attackEvidence = await stageEvidence(
+      input.attack.patchPath,
+      "attack-overlay.diff",
+      "attack-overlay",
+      "Immutable executable attack overlay",
+    );
+    const targetEvidence = await stageEvidence(
+      input.targetPatchPath,
+      "target-patch.diff",
+      "target-patch",
+      "Identity-blind frozen target patch",
+    );
+    const diagnosticPointers = [];
+    for (const [index, artifactPath] of input.mechanicalDiagnosticArtifactRefs
+      .slice(0, 16)
+      .entries()) {
+      try {
+        diagnosticPointers.push(
+          await stageEvidence(
+            artifactPath,
+            `mechanical-diagnostic-${String(index + 1)}.txt`,
+            `mechanical-diagnostic-${String(index + 1)}`,
+            "Mechanical execution diagnostic",
+          ),
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
     const packet = buildJudgePacket({
       kind: "attack",
       task: {
@@ -647,61 +696,68 @@ export class CommandAttackVerifier implements AttackVerifier {
       },
       claim: input.attack.claim,
       oracle: JSON.stringify(input.attack.oracle),
+      immutableAttackDigest: calculateCanonicalHash(input.attack),
       diagnostics: JSON.stringify({
         mechanicalFailureReason: input.mechanicalFailureReason,
         impact: input.attack.impact,
         assertionFingerprint: input.attack.assertionFingerprint,
         priorCanonicalDefects: input.priorCanonicalDefects,
       }),
-      artifactPointers: sourcePointers,
+      artifactPointers: [
+        ...sourcePointers,
+        attackEvidence,
+        targetEvidence,
+        ...diagnosticPointers,
+      ],
     });
     const prompt = [
       "# Neutral Agent Arena semantic adjudication",
       "Contestant identities are unavailable. Do not execute commands or modify evidence.",
       "Use confirmed only for definitive semantic evidence, supported_untestable only when the task clearly supports the oracle and evidence points to the defect, rejected when unsupported, and unable when evidence is insufficient.",
       JSON.stringify(packet, null, 2),
+      "Read the digest-linked target patch, attack overlay, and diagnostics from the packet artifact paths before deciding.",
       `Write only valid JSON to ${outputPath} with keys decision, relevant, expectedBehaviorClearlySupported, evidencePointsToDefect, optional rootDefectId, optional severity, and rationale.`,
+      ...(input.retryReason
+        ? [
+            "The prior bounded attempt failed.",
+            `Retry reason: ${input.retryReason}`,
+            "Return one corrected JSON object using the exact requested keys.",
+          ]
+        : []),
     ].join("\n\n");
     await rm(outputPath, { force: true });
-    let lastError: unknown;
-    for (const attempt of [1, 2]) {
-      const result = await runProcess({
-        executable: this.command.executable,
-        args: this.command.args,
-        input: prompt,
-        cwd: input.worktree,
-        timeoutMs: input.timeoutMs,
-        logPrefix: `${input.transcriptPrefix}-attempt-${String(attempt)}`,
-        signal: input.signal,
-      });
-      if (result.failureClass === "arena_infrastructure") {
-        lastError = new Error("Judge provider infrastructure failed");
-        continue;
-      }
-      try {
-        const verdict = parseModelSubmission(
-          JudgeAttackVerdictSchema,
-          await readFile(outputPath, "utf8"),
-        );
-        return {
-          decision: verdict.decision,
-          relevant: verdict.relevant,
-          expectedBehaviorClearlySupported:
-            verdict.expectedBehaviorClearlySupported,
-          evidencePointsToDefect: verdict.evidencePointsToDefect,
-          rationale: verdict.rationale,
-          ...(verdict.rootDefectId
-            ? { rootDefectId: verdict.rootDefectId }
-            : {}),
-          ...(verdict.severity ? { severity: verdict.severity } : {}),
-        };
-      } catch (error) {
-        lastError = error;
-      }
+    const result = await runProcess({
+      executable: this.command.executable,
+      args: this.command.args,
+      input: prompt,
+      cwd: input.worktree,
+      timeoutMs: input.timeoutMs,
+      logPrefix: input.transcriptPrefix,
+      signal: input.signal,
+    });
+    if (result.failureClass === "arena_infrastructure")
+      throw new Error("Judge provider infrastructure failed");
+    try {
+      const verdict = parseModelSubmission(
+        JudgeAttackVerdictSchema,
+        await readFile(outputPath, "utf8"),
+      );
+      return {
+        decision: verdict.decision,
+        relevant: verdict.relevant,
+        expectedBehaviorClearlySupported:
+          verdict.expectedBehaviorClearlySupported,
+        evidencePointsToDefect: verdict.evidencePointsToDefect,
+        rationale: verdict.rationale,
+        ...(verdict.rootDefectId ? { rootDefectId: verdict.rootDefectId } : {}),
+        ...(verdict.severity ? { severity: verdict.severity } : {}),
+      };
+    } catch (error) {
+      throw new Error(
+        `Judge fallback output was invalid: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
-    throw new Error(
-      `Judge fallback failed after two attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
-    );
   }
 
   async assessRepair(input: JudgeRepairInput): Promise<JudgeRepairVerdict> {
@@ -752,40 +808,42 @@ export class CommandAttackVerifier implements AttackVerifier {
       "Read any packet artifact path only as immutable task evidence.",
       JSON.stringify(packet, null, 2),
       `Write only valid JSON to ${outputPath} with keys decision (repaired, not_repaired, or unable) and rationale.`,
+      ...(input.retryReason
+        ? [
+            "The prior bounded attempt failed.",
+            `Retry reason: ${input.retryReason}`,
+            "Return one corrected JSON object using the exact requested keys.",
+          ]
+        : []),
     ].join("\n\n");
     await rm(outputPath, { force: true });
-    let lastError: unknown;
     const schema = z.object({
       decision: z.enum(["repaired", "not_repaired", "unable"]),
       rationale: z.string().min(1),
     });
-    for (const attempt of [1, 2]) {
-      const result = await runProcess({
-        executable: this.command.executable,
-        args: this.command.args,
-        input: prompt,
-        cwd: input.worktree,
-        timeoutMs: input.timeoutMs,
-        logPrefix: `${input.transcriptPrefix}-attempt-${String(attempt)}`,
-        signal: input.signal,
-      });
-      if (result.failureClass === "arena_infrastructure") {
-        lastError = new Error("Repair judge provider infrastructure failed");
-        continue;
-      }
-      try {
-        const verdict = parseModelSubmission(
-          schema,
-          await readFile(outputPath, "utf8"),
-        );
-        return { ...verdict, packetDigest: packet.packetDigest };
-      } catch (error) {
-        lastError = error;
-      }
+    const result = await runProcess({
+      executable: this.command.executable,
+      args: this.command.args,
+      input: prompt,
+      cwd: input.worktree,
+      timeoutMs: input.timeoutMs,
+      logPrefix: input.transcriptPrefix,
+      signal: input.signal,
+    });
+    if (result.failureClass === "arena_infrastructure")
+      throw new Error("Repair judge provider infrastructure failed");
+    try {
+      const verdict = parseModelSubmission(
+        schema,
+        await readFile(outputPath, "utf8"),
+      );
+      return { ...verdict, packetDigest: packet.packetDigest };
+    } catch (error) {
+      throw new Error(
+        `Repair judge output was invalid: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
-    throw new Error(
-      `Repair judge failed after two attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
-    );
   }
 }
 

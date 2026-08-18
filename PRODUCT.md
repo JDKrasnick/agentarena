@@ -90,9 +90,9 @@ configuration, invalid schemas, and programming invariants.
 
 `Arena` has no direct mechanism imports. Durable recovery treats the immutable
 preflight baseline and sealed per-round envelopes as authority. `result.json`
-is a compact schema-v7 summary with an ordered applied-envelope ledger. Runtime
-state is V6 and round snapshots, results, replays, envelopes, and state deltas
-are V3. Resume
+is a compact schema-v8 summary with an ordered applied-envelope ledger. Runtime
+state is V7 and round snapshots, results, replays, envelopes, and state deltas
+are V4. Resume
 validates the digest chain and runtime drift, applies a sealed boundary exactly
 once, and never reruns an interrupted unsealed round under the original run ID.
 Production prompts consume only persisted lane-safe `ContestantFeedback`.
@@ -284,7 +284,7 @@ Each round has its own symmetric, versioned prompt and investigation brief:
 | Round | Focus | Injected bug-finding methods |
 | --- | --- | --- |
 | 1 — Contract and local correctness | Acceptance criteria, wrong output, regressions, negative cases, boundaries, and error handling. | Requirement-to-code tracing, examples, table tests, boundary analysis, and focused API assertions. |
-| 2 — Systematic exploration | State transitions, persistence, serialization, ordering, concurrency, cleanup, cancellation, and test-suite blind spots. | Property and state-machine tests, generated inputs, fuzzing, mutation-guided probes, static leads, and controlled schedules. |
+| 2 — Systematic exploration | State transitions, persistence, serialization, ordering, concurrency, cleanup, cancellation, and test-suite blind spots. | Property and state-machine tests, generated inputs, fuzzing, mutation-guided probes, static leads, controlled schedules, and—when relevant—prior-version artifact compatibility or full retry/persistence lifecycle probes. |
 | 3 — Integration, resilience, and security | Real component boundaries, dependency contracts, configuration, authentication and authorization, timeouts, retries, idempotency, partial failure, recovery, and resource behavior. | Approved ephemeral services, protocol checks, fault injection, security checks, deterministic stress, and steady-state invariants. |
 
 Required repository integration checks still run at baseline and after every
@@ -349,20 +349,13 @@ rank is rejected. Explicit empty sections remain distinct from missing or lost
 coverage. House, case-builder, and contestant scouting inputs are legacy-only,
 non-scoring artifacts.
 
-Each independently identifiable rejected contestant or house attack receives
-one correction opportunity at the start of the next attack-bearing round. The
-original malformed entry is attempt one. Correction uses a separate lane with
-one shared attack deadline per contestant and one for the house, does not
-consume new attack slots, freezes every field that already validated, and lets
-the provider supply only missing or rejected fields. A corrected attack is
-tested against that round's current frozen patches and receives ordinary
-damage/recoil semantics while retaining its original rank; corrected house
-attacks remain no-recoil. A missing, timed-out, tampered, or malformed second
-attempt is permanently discarded as lost coverage. Infrastructure recovery is
-the next correction opportunity when it runs. If candidates are first created
-in the final attack-bearing round, one correction-only reconciliation round
-runs neutral case construction, validation, simultaneous scoring, repair, and
-required validation; it is skipped when the queue is empty.
+Each independently identifiable malformed attack path receives one immediate
+correction opportunity in the same transactional round against the same frozen
+patches. The original malformed entry is attempt one. Correction freezes every
+field that already validated and supplies only missing or rejected fields;
+valid siblings continue normally. A missing, timed-out, tampered, or malformed
+second attempt is permanently recorded as lost coverage. No correction work is
+carried into another round.
 
 Case-judge worktrees start from the frozen base implementation. The case judge
 receives an anonymized failure description and immutable RunSpec, snapshots
@@ -375,9 +368,17 @@ Every attack prompt is composed from a fixed common contract, the round brief,
 and a deterministic repository method pack. The common portion includes the
 immutable task sources, frozen patches, prior attacks and root defects, current
 health, permission manifest, budgets, recoil table, and output schema. Prompts,
-method versions, tool versions, seeds, and hashes are run artifacts. Recovery,
-repair, verifier, and infrastructure-review invocations use separate prompts
-because they have different allowed actions.
+method versions, tool versions, seeds, and hashes are run artifacts. Repair and
+judge invocations use separate prompts because they have different allowed
+evidence and actions.
+
+Round 2 method packs expose versioned-contract compatibility and policy-wiring
+lifecycle probes as advisory options. Agents may pursue them when the frozen
+patch changes schema versions, durable readers or writers, retry behavior,
+recovery, or persistence. They are not required for unrelated patches. A
+compatibility probe should prefer a genuine prior-version fixture; a lifecycle
+probe should exercise a production path through failure, retry, recovery,
+persistence, and resume rather than testing only an isolated helper.
 
 ### 5. Attack validation
 
@@ -416,11 +417,13 @@ judgments only when mechanical confirmation remains unavailable.
 
 Harness-owned failures must never change health, but a true target defect must not be dismissed merely because it looks infrastructural. Git, filesystem, process-launch, environment, service, or provider failures are first retried in a clean worktree with author, target, base, and service-health controls.
 
-If attack causality remains unclear, the result is `provisional_infrastructure` and the attacker reviews its own failure packet. It may accept the infrastructure diagnosis and request no-fault withdrawal, or challenge the diagnosis with exactly one bounded evidence revision. Acceptance creates a replacement credit only when harness controls confirm the failure was patch-independent rather than malformed or agent-caused. A revision may improve setup, teardown, isolation, timeout limits, logging, tracing, probes, or the focused command, but may not change the claim, expected behavior, oracle, assertion, target, rank, or root defect. The harness then reruns both frozen patches with isolated service instances.
-
-A reproducible target-only failure returns to normal attack adjudication. A patch-independent environment failure becomes `infrastructure_error`. Evidence that remains causally ambiguous becomes `execution_inconclusive`. Either final no-fault status creates one replacement credit, while a revision that changes the original claim or assertion is an invalid miss. Round health waits for all provisional attacks to finish review so resolution remains simultaneous.
-
-After normal round 3, one optional recovery attack–repair round lets each agent spend up to three replacement credits on newly ranked attacks. Replacement attacks use normal recoil and damage; only the infrastructure-lost slot is free. A second infrastructure failure in recovery makes the run inconclusive, and more than three credits for one agent is treated as a systemic harness failure rather than starting an unbounded loop.
+If attack mechanics remain unavailable after the one targeted retry, the
+neutral judge may adjudicate only a schema-valid immutable attack with a claim,
+oracle, target, and concrete patch or evidence facts. Definitive confirmation
+deals full frozen-severity damage, semantic rejection applies ordinary rank
+recoil, task-supported concrete but mechanically unavailable evidence deals
+exactly 35%, and `unable` changes no score while leaving coverage unresolved.
+The retry and disposition are persisted in the failure-handling ledger.
 
 The deterministic harness owns symmetric, versioned run accommodations for
 service lifecycle, worktree setup, capability adapters, broker wiring,
@@ -481,7 +484,7 @@ Health is calculated from a ledger: `100 - permanent recoil - active distinct de
 
 Attackers may propose a severity, but they do not control damage. A neutral verifier should apply the published rubric to anonymized executable evidence, choose the lowest level fully supported, and provide a saved rationale. Ambiguous High or Critical ratings should be capped at Medium. The harness then calculates health deterministically from landed tests, persisted severity verdicts, recoil, and repair results.
 
-After three normal attack–repair rounds and any required infrastructure recovery round, the surviving contestant with the most HP wins. Patch simplicity may break an HP tie; otherwise the result is a draw. If only one contestant survives earlier and no downed opponent holds replacement credits, the fight ends early. Cost and duration are reported but do not change health.
+After three attack–repair rounds, the surviving contestant with the most HP wins. Patch simplicity may break an HP tie; otherwise the result is a draw. If only one contestant survives earlier, the fight ends early. Cost and duration are reported but do not change health.
 
 The **arena champion** remains this health-ledger result. After final
 validation, Agent Arena separately derives deterministic patch-quality facts
@@ -643,7 +646,6 @@ judge: codex
 limits:
   rounds: 3
   attacks_per_round: 3
-  infrastructure_recovery_round: true
   timeout_minutes: 20
 
 permissions:
@@ -720,8 +722,8 @@ agent-arena fight "fix issue #241" \
 ```
 
 The MVP supports two agents, one initial implementation, three attack–repair
-rounds, up to three ranked attacks per agent per round, one optional
-infrastructure recovery round, one required validation command, and at most one
+rounds, up to three ranked attacks per agent per round, one targeted retry per
+distinct failure, one required validation command, and at most one
 approved ephemeral integration profile.
 
 ---
@@ -740,8 +742,7 @@ Game mechanics should map directly to real engineering events:
 * **Recoil:** A missed rank 1, 2, or 3 attack costs its author 5, 10, or 15 HP.
 * **Holdout:** A repair passes the visible reproducer but remains damaged because
   a pre-frozen sibling case still fails.
-* **Review:** A provisionally infrastructural attack is accepted as no-fault or challenged with one evidence revision.
-* **Freebie:** A confirmed infrastructure attempt earns one recovery-round replacement credit.
+* **Fallback:** After one failed mechanical retry, an eligible immutable attack may receive a clearly labeled judge verdict.
 * **Heal:** A repaired patch restores the exact HP lost to that attack.
 * **Elimination:** A required check remains failing and health becomes 0.
 * **Draw:** Multiple patches finish with equal HP and tie-breakers.

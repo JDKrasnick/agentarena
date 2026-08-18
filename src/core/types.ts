@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FailureRecordSchema } from "../contracts/failure.js";
 
 export const AGENT_IDS = ["codex", "claude", "gemini"] as const;
 export const AgentIdSchema = z.enum(AGENT_IDS);
@@ -115,6 +116,26 @@ export const StageSchema = z.enum([
   "cancelled",
 ]);
 export type Stage = z.infer<typeof StageSchema>;
+
+export const CurrentStageSchema = z.enum([
+  "preflight",
+  "resolve_permissions",
+  "implement",
+  "initial_validate",
+  "review_attacks",
+  "collect_attacks",
+  "validate_attacks",
+  "assign_severity",
+  "resolve_damage",
+  "repair",
+  "validate_repairs",
+  "final_validate",
+  "report",
+  "complete",
+  "inconclusive",
+  "failed",
+  "cancelled",
+]);
 
 export const CommandResultSchema = z.object({
   command: z.string(),
@@ -736,7 +757,6 @@ export const ContestantResultSchema = z.object({
   status: z.enum(["pending", "survived", "eliminated", "failed"]),
   initialHealth: z.literal(100),
   finalHealth: HealthPointSchema,
-  replacementCredits: z.array(ReplacementCreditSchema),
   healthLedger: HealthLedgerSchema,
   healthEvents: z.array(HealthEventSchema),
   initialPatchPath: z.string().optional(),
@@ -748,6 +768,11 @@ export const ContestantResultSchema = z.object({
   checks: z.array(CheckResultSchema),
 });
 export type ContestantResult = z.infer<typeof ContestantResultSchema>;
+
+/** Legacy contestant state retained for V1-V6 artifact readers. */
+const LegacyCreditedContestantResultSchema = ContestantResultSchema.extend({
+  replacementCredits: z.array(ReplacementCreditSchema).default([]),
+});
 
 export const RoundPromptManifestSchema = z.object({
   round: RoundIdSchema,
@@ -832,7 +857,6 @@ const FightConfigBaseSchema = z
     maxHeldOutCasesPerDefect: z.number().int().min(0).max(2).default(0),
     rounds: z.literal(3),
     maxAttacksPerRound: z.literal(3),
-    infrastructureRecoveryRound: z.literal(true),
     testCommand: z.string().min(1),
     integrationProfile: IntegrationProfileSchema.optional(),
     repositoryRoot: z.string(),
@@ -1169,7 +1193,7 @@ export type CoverageLaneAssessment = z.infer<
 >;
 
 export const CoverageAssessmentSchema = z.object({
-  version: z.union([z.literal(1), z.literal(2)]),
+  version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   runId: z.string().min(1),
   mode: BattleModeSchema,
   confidence: z.enum(["full_confidence", "reduced_confidence", "provisional"]),
@@ -1274,6 +1298,7 @@ const RunStateCoreSchema = z.object({
   reconciliationQueue: z.array(ReconciliationCandidateSchema).default([]),
   submissionArtifacts: z.array(SubmissionArtifactRecordSchema).default([]),
   repairJudgments: z.array(RepairJudgmentRecordSchema).default([]),
+  failureRecords: z.array(FailureRecordSchema).default([]),
   coverageAssessment: CoverageAssessmentSchema.optional(),
   coverageDecision: CoverageDecisionSchema.optional(),
   terminalOutcome: TerminalOutcomeSchema.optional(),
@@ -1282,7 +1307,10 @@ const RunStateCoreSchema = z.object({
 export const RunStateV3Schema = RunStateCoreSchema.extend({
   schemaVersion: z.literal(3),
   taskContractHash: z.string(),
-  contestants: z.partialRecord(ContestantIdSchema, ContestantResultSchema),
+  contestants: z.partialRecord(
+    ContestantIdSchema,
+    LegacyCreditedContestantResultSchema,
+  ),
   attacks: z.array(AttackSchema),
   reviewInvocations: z.array(ReviewInvocationRecordSchema).default([]),
   attackInvocations: z.array(AttackInvocationRecordSchema).default([]),
@@ -1301,7 +1329,10 @@ export const RunStateV3Schema = RunStateCoreSchema.extend({
 export const RunStateV4Schema = RunStateCoreSchema.extend({
   schemaVersion: z.literal(4),
   runSpecHash: z.string().length(64),
-  contestants: z.partialRecord(ContestantIdSchema, ContestantResultSchema),
+  contestants: z.partialRecord(
+    ContestantIdSchema,
+    LegacyCreditedContestantResultSchema,
+  ),
   attacks: z.array(AttackSchema),
   reviewInvocations: z.array(ReviewInvocationRecordSchema).default([]),
   attackInvocations: z.array(AttackInvocationRecordSchema).default([]),
@@ -1319,7 +1350,10 @@ export const RunStateV4Schema = RunStateCoreSchema.extend({
 export const RunStateV5Schema = RunStateCoreSchema.extend({
   schemaVersion: z.literal(5),
   runSpecHash: z.string().length(64),
-  contestants: z.partialRecord(ContestantIdSchema, ContestantResultSchema),
+  contestants: z.partialRecord(
+    ContestantIdSchema,
+    LegacyCreditedContestantResultSchema,
+  ),
   attacks: z.array(AttackSchema),
   reviewInvocations: z.array(ReviewInvocationRecordSchema).default([]),
   attackInvocations: z.array(AttackInvocationRecordSchema).default([]),
@@ -1337,6 +1371,37 @@ export const RunStateV5Schema = RunStateCoreSchema.extend({
 export const RunStateV6Schema = RunStateCoreSchema.extend({
   schemaVersion: z.literal(6),
   runSpecHash: z.string().length(64),
+  contestants: z.partialRecord(
+    ContestantIdSchema,
+    LegacyCreditedContestantResultSchema,
+  ),
+  attacks: z.array(AttackSchema),
+  reviewInvocations: z.array(ReviewInvocationRecordSchema).default([]),
+  attackInvocations: z.array(AttackInvocationRecordSchema).default([]),
+  ranking: RankingSchema.optional(),
+  arenaOutcome: ArenaOutcomeSchema.optional(),
+  patchQualityFacts: z
+    .partialRecord(ContestantIdSchema, PatchQualityFactsSchema)
+    .default({}),
+  patchQualityVerdict: PatchQualityVerdictSchema.optional(),
+  patchRecommendation: PatchRecommendationSchema.optional(),
+  reviewPrompt: ReviewPromptSchema.optional(),
+  deliveryTarget: DeliveryTargetSchema.optional(),
+  pullRequestFixture: PullRequestFixtureSchema.optional(),
+});
+const RunStateV7CoreSchema = RunStateCoreSchema.omit({
+  harnessOverlays: true,
+  reconciliationQueue: true,
+  stage: true,
+  currentRound: true,
+}).extend({
+  stage: CurrentStageSchema,
+  currentRound: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+});
+
+export const RunStateV7Schema = RunStateV7CoreSchema.extend({
+  schemaVersion: z.literal(7),
+  runSpecHash: z.string().length(64),
   contestants: z.partialRecord(ContestantIdSchema, ContestantResultSchema),
   attacks: z.array(AttackSchema),
   reviewInvocations: z.array(ReviewInvocationRecordSchema).default([]),
@@ -1352,17 +1417,19 @@ export const RunStateV6Schema = RunStateCoreSchema.extend({
   deliveryTarget: DeliveryTargetSchema.optional(),
   pullRequestFixture: PullRequestFixtureSchema.optional(),
 });
-export const RunStateSchema = z.union([RunStateV5Schema, RunStateV6Schema]);
+export const RunStateSchema = RunStateV7Schema;
 export type RunStateV3 = z.infer<typeof RunStateV3Schema>;
 export type RunStateV4 = z.infer<typeof RunStateV4Schema>;
 export type RunStateV5 = z.infer<typeof RunStateV5Schema>;
 export type RunStateV6 = z.infer<typeof RunStateV6Schema>;
-export type RunState = RunStateV3 | RunStateV4 | RunStateV5 | RunStateV6;
+export type RunStateV7 = z.infer<typeof RunStateV7Schema>;
+export type RunState =
+  RunStateV3 | RunStateV4 | RunStateV5 | RunStateV6 | RunStateV7;
 
 // --- Legacy readers: in schema versions 1 and 2 the provider was the
 // contestant identity. They are migrated to contestant slots at load time. ---
 
-const LegacyContestantResultSchema = ContestantResultSchema.omit({
+const LegacyContestantResultSchema = LegacyCreditedContestantResultSchema.omit({
   id: true,
   provider: true,
   role: true,
@@ -1469,6 +1536,7 @@ export const AnyRunStateSchema = z.discriminatedUnion("schemaVersion", [
   RunStateV4Schema,
   RunStateV5Schema,
   RunStateV6Schema,
+  RunStateV7Schema,
 ]);
 export type AnyRunState = z.infer<typeof AnyRunStateSchema>;
 

@@ -16,7 +16,6 @@ function contestant(id: "a" | "b", patchSize = 20): ContestantResult {
     status: "pending",
     initialHealth: 100,
     finalHealth: 100,
-    replacementCredits: [],
     healthLedger: {
       permanentRecoil: 0,
       activeDefects: [],

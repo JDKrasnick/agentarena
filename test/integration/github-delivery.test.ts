@@ -11,6 +11,7 @@ import {
 import type { GitHubDeliveryAdapter } from "../../src/delivery/github.js";
 import type { DeliveryPlan } from "../../src/delivery/types.js";
 import { reviewRun } from "../../src/review/service.js";
+import { writeBaseline } from "../../src/recovery/durable.js";
 import { hashValue } from "../../src/review/store.js";
 import { makeRunState } from "../helpers/run-state.js";
 
@@ -52,6 +53,11 @@ async function acceptedIssueRun(
   state.contestants.b!.finalPatchPath = patchPath;
   state.patchQualityFacts.b!.patchSha256 = hashValue(patch);
   state.reviewPrompt = undefined;
+  await writeBaseline({
+    store,
+    state,
+    repositoryIdentity: "local:test",
+  });
   await store.writeState(state);
   const prompt = await reviewRun({
     runId: state.runId,

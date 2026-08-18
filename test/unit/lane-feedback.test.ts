@@ -135,7 +135,7 @@ describe("lane-safe contestant feedback", () => {
     expect(encoded).not.toContain("PRIVATE SEVERITY RATIONALE");
     expect(encoded).not.toContain("SECRET-INPUT");
     expect(encoded).not.toContain("opponent-own");
-    expect(projected.version).toBe(2);
+    expect(projected.version).toBe(3);
     expect(() => validateContestantFeedback(projected)).not.toThrow();
     expect(() =>
       validateContestantFeedback({

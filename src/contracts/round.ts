@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { FailureRecordSchema } from "./failure.js";
 
 const PointValueSchema = z.number().min(0).max(100).multipleOf(0.25);
 const DamageValueSchema = z.number().positive().max(50).multipleOf(0.25);
-const ContractVersionSchema = z.union([
+const ContractVersionSchema = z.literal(4);
+const FeedbackVersionSchema = z.union([
   z.literal(1),
   z.literal(2),
   z.literal(3),
@@ -76,13 +78,7 @@ const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
 );
 
 const ContestantIdSchema = z.enum(["a", "b"]);
-const RoundIdSchema = z.union([
-  z.literal(1),
-  z.literal(2),
-  z.literal(3),
-  z.literal("recovery"),
-  z.literal("reconciliation"),
-]);
+const RoundIdSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
 const SeveritySchema = z.enum(["critical", "high", "medium", "low"]);
 
 const FrozenSourceSchema = z
@@ -286,21 +282,6 @@ const CanonicalDefectSchema = z
   })
   .strict();
 
-const ReplacementCreditStateSchema = z
-  .object({
-    id: IdentifierSchema,
-    sourceAttackId: IdentifierSchema,
-    issuedRound: z.union([z.literal(1), z.literal(2), z.literal(3)]),
-    reason: z.enum([
-      "accepted_infrastructure",
-      "final_infrastructure",
-      "inconclusive",
-    ]),
-    status: z.enum(["available", "spent", "void"]),
-    replacementAttackId: IdentifierSchema.optional(),
-  })
-  .strict();
-
 export const RoundContestantStateSchema = z
   .object({
     contestantId: ContestantIdSchema,
@@ -309,7 +290,6 @@ export const RoundContestantStateSchema = z
     permanentRecoil: PointValueSchema,
     activeDefects: z.array(ActiveDefectSchema),
     canonicalDefects: z.array(CanonicalDefectSchema).optional(),
-    replacementCredits: z.array(ReplacementCreditStateSchema),
     status: z.enum(["pending", "active", "downed", "eliminated"]),
   })
   .strict();
@@ -329,40 +309,6 @@ const KnownDefectSchema = z
   })
   .strict();
 
-const ReconciliationCandidateSchema = z
-  .object({
-    version: z.literal(1),
-    id: IdentifierSchema,
-    lane: z.enum(["contestant", "house"]),
-    sourceRound: RoundIdSchema,
-    sourceEntryIndex: z.number().int().nonnegative(),
-    actor: z.union([ContestantIdSchema, z.literal("house")]),
-    target: ContestantIdSchema,
-    attemptCount: z.union([z.literal(1), z.literal(2)]),
-    rawArtifactPath: z.string().min(1),
-    parsedArtifactPath: z.string().min(1),
-    correctionRawArtifactPath: z.string().optional(),
-    correctionParsedArtifactPath: z.string().optional(),
-    diagnostics: z.array(
-      z
-        .object({
-          path: z.string().min(1),
-          received: z.string(),
-          code: z.string().min(1),
-          message: z.string().min(1),
-          allowedValues: z.array(z.string()).optional(),
-        })
-        .strict(),
-    ),
-    validatedFields: z.record(z.string(), JsonValueSchema),
-    editablePaths: z.array(z.string()),
-    status: z.enum(["pending", "corrected", "discarded"]),
-    correctionRound: RoundIdSchema.optional(),
-    resultingAttackId: IdentifierSchema.optional(),
-    discardReason: z.string().optional(),
-  })
-  .strict();
-
 /** A complete, serializable input for exactly one transactional round. */
 export const RoundSnapshotSchema = z
   .object({
@@ -376,7 +322,7 @@ export const RoundSnapshotSchema = z
       RoundContestantStateSchema,
     ]),
     knownDefects: z.array(KnownDefectSchema),
-    reconciliationQueue: z.array(ReconciliationCandidateSchema).optional(),
+    failureRecords: z.array(FailureRecordSchema),
     priorReplayHash: Sha256Schema.nullable(),
   })
   .strict()
@@ -420,35 +366,6 @@ export const RoundSnapshotSchema = z
         });
       }
     });
-    if (
-      snapshot.roundId === "recovery" &&
-      !snapshot.contestants.some(
-        (contestant) =>
-          contestant.status !== "eliminated" &&
-          contestant.replacementCredits.some(
-            (credit) => credit.status === "available",
-          ),
-      )
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["contestants"],
-        message: "A recovery round requires at least one available credit",
-      });
-    }
-    if (
-      snapshot.roundId === "reconciliation" &&
-      !(snapshot.reconciliationQueue ?? []).some(
-        (candidate) => candidate.status === "pending",
-      )
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["reconciliationQueue"],
-        message:
-          "A reconciliation round requires at least one pending candidate",
-      });
-    }
   })
   .readonly();
 export type RoundSnapshot = z.infer<typeof RoundSnapshotSchema>;
@@ -465,6 +382,7 @@ export const ArtifactReferenceSchema = z
       "case",
       "diagnostic",
       "submission",
+      "failure_record",
       "round_state_delta",
     ]),
     path: z.string().min(1),
@@ -580,7 +498,7 @@ export const RoundReplaySchema = z
     repairs: z.array(ReplayRepairSchema),
     scoreEvents: z.array(ReplayScoreEventSchema),
     diagnostics: z.array(RoundDiagnosticSchema),
-    reconciliationQueue: z.array(ReconciliationCandidateSchema).optional(),
+    failureRecords: z.array(FailureRecordSchema),
     artifacts: z.array(ArtifactReferenceSchema),
     stateDeltaArtifactId: IdentifierSchema,
     replayHash: Sha256Schema,
@@ -610,7 +528,7 @@ const RoundResultBaseSchema = z
       RoundContestantStateSchema,
       RoundContestantStateSchema,
     ]),
-    reconciliationQueue: z.array(ReconciliationCandidateSchema).optional(),
+    failureRecords: z.array(FailureRecordSchema),
     replay: RoundReplaySchema,
     terminalOutcome: z
       .object({
@@ -733,12 +651,11 @@ export const RoundStateDeltaSchema = z
     invocations: z.array(JsonValueSchema),
     cases: z.array(JsonValueSchema),
     promptManifests: z.array(JsonValueSchema),
-    harnessOverlays: z.array(JsonValueSchema),
+    failureRecords: z.array(FailureRecordSchema),
     checks: z.array(JsonValueSchema),
     roundSummaries: z.array(JsonValueSchema),
     healthEvents: z.array(JsonValueSchema),
     patchMetadata: z.array(JsonValueSchema),
-    reconciliationQueue: z.array(ReconciliationCandidateSchema).optional(),
     submissionArtifacts: z.array(JsonValueSchema).optional(),
     repairJudgments: z.array(JsonValueSchema).optional(),
     coordinator: z
@@ -827,11 +744,11 @@ const OwnAttackOutcomeSchema = z
 /** Deliberately narrow, contestant-visible projection of round evidence. */
 export const ContestantFeedbackSchema = z
   .object({
-    version: ContractVersionSchema,
+    version: FeedbackVersionSchema,
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     contestantId: ContestantIdSchema,
-    phase: z.enum(["review", "attack", "repair", "recovery"]),
+    phase: z.enum(["review", "attack", "repair"]),
     health: z
       .object({
         starting: PointValueSchema,

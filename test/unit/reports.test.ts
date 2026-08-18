@@ -192,7 +192,7 @@ describe("battle reports", () => {
     expect(visual).not.toContain("Winner:");
   });
 
-  it("renders implementation, round phases, infrastructure, and review in causal order", () => {
+  it("renders implementation, round phases, failures, and review in causal order", () => {
     const state = makeRunState();
     state.attacks = [
       attack(state, {
@@ -210,7 +210,7 @@ describe("battle reports", () => {
       "### Repair",
       "### Validation",
       "### Health ledger",
-      "## Infrastructure recovery",
+      "## Failure handling ledger",
     ].map((heading) => report.indexOf(heading));
     expect(headings.every((index) => index >= 0)).toBe(true);
     expect(headings).toEqual([...headings].sort((left, right) => left - right));

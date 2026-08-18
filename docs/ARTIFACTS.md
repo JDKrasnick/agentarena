@@ -4,10 +4,10 @@ Completed runs live under `.agent-arena/runs/<run-id>/`.
 
 ## Immutable battle evidence
 
-- New `result.json` files use compact schema version 5. The immutable
+- New `result.json` files use compact schema version 8. The immutable
   `baseline.json` and digest-chained `rounds/<round>/envelope.json` files are the
-  authoritative history; the summary records the ordered snapshot, replay, and
-  envelope hashes already applied. Versions 1–4 remain readable without being
+  authoritative history; current round records use contract V4 and the summary records the ordered snapshot, replay, and
+  envelope hashes already applied. Versions 1–7 remain readable without being
   converted to the new authority model. Version 1 and 2 states still migrate
   provider-keyed contestants into stable `a` and `b` slots in memory.
 - `finalization.json` is an immutable, envelope-head-bound projection of final
@@ -56,9 +56,9 @@ Completed runs live under `.agent-arena/runs/<run-id>/`.
   evidence.
 - `operations/<idempotency-key-hash>.json` maps one key and payload hash to its
   immutable result. Reusing a key with another payload is an error.
-- `events/lifecycle.ndjson` records typed resume, drift, approval, and recovery
+- `events/lifecycle.ndjson` records typed resume, drift, approval, and durable-replay
   events with continuing sequence numbers. One torn trailing record is safely
-  discarded on recovery.
+  discarded when reconstructing the log.
 
 `delivery/plan.json` and `delivery/status.json` are atomically replaced derived
 caches; they are never the audit source of truth. All artifact paths pass
