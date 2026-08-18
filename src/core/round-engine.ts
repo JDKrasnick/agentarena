@@ -4783,6 +4783,7 @@ export class RoundEngine {
               | Awaited<ReturnType<NonNullable<AttackVerifier["assessRepair"]>>>
               | undefined;
             let judgeFailure: FailureRecord | undefined;
+            let judgeRetryReason: string | undefined;
             if (verifier.assessRepair) {
               for (const retry of [1, 2] as const) {
                 const startedAt = this.now().toISOString();
@@ -4801,6 +4802,9 @@ export class RoundEngine {
                     transcriptPrefix: attemptTranscriptPrefix,
                     timeoutMs: context.config.limits.verifierMs,
                     signal: context.controller.signal,
+                    ...(judgeRetryReason
+                      ? { retryReason: judgeRetryReason }
+                      : {}),
                   });
                   if (verdict.decision !== "unable") {
                     if (judgeFailure) {
@@ -4829,6 +4833,7 @@ export class RoundEngine {
                   failureReason =
                     error instanceof Error ? error.message : String(error);
                 }
+                judgeRetryReason = failureReason;
                 judgeFailure = await this.recordFailureAttempt(context, {
                   stage: "model_invocation",
                   subject: `repair-judge:${attack.rootDefectId}`,

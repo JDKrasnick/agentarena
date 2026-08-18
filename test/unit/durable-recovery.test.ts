@@ -440,6 +440,34 @@ describe("durable round recovery", () => {
       kind: "required",
       status: "passed",
     });
+    applied.failureRecords.push({
+      version: 1,
+      failureId: "failure-final-validation",
+      stage: "final_validation",
+      contestantId: "a",
+      subject: "final-required:a",
+      category: "command_execution",
+      causalDigest: "f".repeat(64),
+      attempts: [
+        {
+          attempt: 1,
+          startedAt: "2026-08-08T02:00:00.000Z",
+          finishedAt: "2026-08-08T02:00:01.000Z",
+          status: "failed",
+          diagnosticArtifactRefs: ["final-attempt-1.log"],
+        },
+        {
+          attempt: 2,
+          startedAt: "2026-08-08T02:00:01.000Z",
+          finishedAt: "2026-08-08T02:00:02.000Z",
+          status: "succeeded",
+          diagnosticArtifactRefs: ["final-attempt-2.log"],
+        },
+      ],
+      reusedArtifactRefs: ["patches/a.diff"],
+      diagnosticArtifactRefs: ["final-attempt-1.log", "final-attempt-2.log"],
+      terminalDisposition: "recovered",
+    });
     await writeFinalizationRecord({
       store,
       state: applied,
@@ -456,6 +484,7 @@ describe("durable round recovery", () => {
     expect(rebuilt.currentRound).toBe(1);
     expect(rebuilt.ranking?.reason).toBe("final fixture ranking");
     expect(rebuilt.contestants.a?.checks.at(-1)?.id).toBe("final-required");
+    expect(rebuilt.failureRecords).toEqual(applied.failureRecords);
   });
 
   it("writes the same checkpoint when recovery repeats after state application", async () => {

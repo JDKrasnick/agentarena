@@ -41,6 +41,7 @@ export async function provisionIntegrationProfile(options: {
       reason: "No integration profile configured",
     };
   const checks: CheckResult[] = [];
+  const terminalPhaseOutcomes: boolean[] = [];
   const now = options.now ?? (() => new Date());
 
   const runPhase = async (
@@ -93,10 +94,14 @@ export async function provisionIntegrationProfile(options: {
             : { terminalDisposition: "recovered" as const }),
         });
       }
-      if (!failed) return true;
+      if (!failed) {
+        terminalPhaseOutcomes.push(true);
+        return true;
+      }
       failedOnce = true;
       if (attempt === 1) await beforeRetry?.();
     }
+    terminalPhaseOutcomes.push(false);
     return false;
   };
 
@@ -204,7 +209,7 @@ export async function provisionIntegrationProfile(options: {
       await options.worktrees.remove(worktree);
     }
   }
-  const ready = checks.every((check) => check.status === "passed");
+  const ready = terminalPhaseOutcomes.every(Boolean);
   return {
     ready,
     checks,

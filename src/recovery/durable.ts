@@ -148,6 +148,7 @@ export async function writeFinalizationRecord(options: {
       patchRecommendation: options.state.patchRecommendation,
       reviewPrompt: options.state.reviewPrompt,
       coverageAssessment: options.state.coverageAssessment,
+      failureRecords: options.state.failureRecords,
       contestants: Object.fromEntries(
         (["a", "b"] as const).map((contestantId) => {
           const contestant = options.state.contestants[contestantId];
@@ -604,6 +605,7 @@ export async function reconstructRunState(options: {
       patchRecommendation?: RunState["patchRecommendation"];
       reviewPrompt?: RunState["reviewPrompt"];
       coverageAssessment?: RunState["coverageAssessment"];
+      failureRecords?: RunState["failureRecords"];
       contestants?: Record<
         "a" | "b",
         {
@@ -626,6 +628,8 @@ export async function reconstructRunState(options: {
     if (projection.reviewPrompt) state.reviewPrompt = projection.reviewPrompt;
     if (projection.coverageAssessment)
       state.coverageAssessment = projection.coverageAssessment;
+    if (projection.failureRecords)
+      state.failureRecords = structuredClone(projection.failureRecords);
     for (const contestantId of ["a", "b"] as const) {
       const compact = projection.contestants?.[contestantId];
       const contestant = state.contestants[contestantId];

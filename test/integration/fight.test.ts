@@ -649,6 +649,13 @@ describe("fake-adapter fight on a mocked real issue", () => {
         }),
       ]),
     );
+    expect(outcome.state.warnings).not.toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "Integration profile did not pass symmetrically",
+        ),
+      ]),
+    );
 
     const result = JSON.parse(
       await readFile(

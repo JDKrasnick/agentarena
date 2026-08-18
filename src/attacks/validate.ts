@@ -294,12 +294,14 @@ async function judgeFallback(
   options: Omit<ValidateAttackOptions, "authorPatch" | "targetPatch">,
   attack: Attack,
   reason: string,
+  targetPatchPath: string | undefined,
   worktree?: string,
 ): Promise<Attack> {
   if (
     !attack.claim.trim() ||
     !attack.targets.length ||
     !attack.patchPath.trim() ||
+    !targetPatchPath?.trim() ||
     !attack.oracle.rationale.trim()
   ) {
     return withOutcome(
@@ -385,6 +387,10 @@ async function judgeFallback(
     const failureId = `failure-judge-${causalDigest.slice(0, 24)}`;
     let record: FailureRecord | undefined;
     let lastFailure = reason;
+    let retryReason: string | undefined;
+    const mechanicalDiagnosticArtifactRefs = attack.checks.flatMap((check) =>
+      check.command ? [check.command.stdoutPath, check.command.stderrPath] : [],
+    );
     for (const attempt of [1, 2] as const) {
       const startedAt = new Date().toISOString();
       const attemptTranscriptPrefix = `${transcriptPrefix}-attempt-${String(attempt)}`;
@@ -395,12 +401,15 @@ async function judgeFallback(
           attack: anonymizeAttackForVerifier(attack),
           runSpec: options.runSpec,
           mechanicalFailureReason: reason,
+          targetPatchPath,
+          mechanicalDiagnosticArtifactRefs,
           priorCanonicalDefects: options.priorCanonicalDefects ?? [],
           worktree: fallbackWorktree,
           promptPath,
           transcriptPrefix: attemptTranscriptPrefix,
           timeoutMs: options.config.limits.verifierMs,
           signal: options.signal,
+          ...(retryReason ? { retryReason } : {}),
         });
         const adjudicated = suppressKnownJudgeDefect(
           applyJudgeVerdict(attack, verdict),
@@ -434,8 +443,10 @@ async function judgeFallback(
           return adjudicated;
         }
         lastFailure = adjudicated.outcomeReason ?? reason;
+        retryReason = lastFailure;
       } catch (error) {
         lastFailure = `Judge fallback failed: ${error instanceof Error ? error.message : String(error)}`;
+        retryReason = lastFailure;
       }
       const failureAttempt: FailureAttempt = {
         attempt,
@@ -484,6 +495,7 @@ async function assessWithRetry(
     .digest("hex");
   let record: FailureRecord | undefined;
   let lastError: unknown;
+  let retryReason: string | undefined;
   for (const attempt of [1, 2] as const) {
     const startedAt = new Date().toISOString();
     const transcriptPrefix = path.join(
@@ -502,6 +514,7 @@ async function assessWithRetry(
         transcriptPrefix,
         timeoutMs: options.config.limits.verifierMs,
         signal: options.signal,
+        ...(retryReason ? { retryReason } : {}),
       });
       if (record) {
         record = FailureRecordSchema.parse({
@@ -529,6 +542,7 @@ async function assessWithRetry(
       return verdict;
     } catch (error) {
       lastError = error;
+      retryReason = error instanceof Error ? error.message : String(error);
       record = FailureRecordSchema.parse({
         version: 1,
         failureId: `failure-assess-${causalDigest.slice(0, 24)}`,
@@ -643,6 +657,7 @@ export async function validateAttack(
           options,
           attack,
           "Baseline execution infrastructure failed after the targeted retry",
+          options.targetPatch,
           baseline,
         );
       }
@@ -676,7 +691,13 @@ export async function validateAttack(
       created.push(target);
     } catch (error) {
       if (error instanceof WorktreePreparationInfrastructureError) {
-        return judgeFallback(options, attack, error.message, created.at(-1));
+        return judgeFallback(
+          options,
+          attack,
+          error.message,
+          options.targetPatch,
+          created.at(-1),
+        );
       }
       return withOutcome(
         attack,
@@ -750,6 +771,7 @@ export async function validateAttack(
         options,
         attack,
         "Comparative execution had an infrastructure failure after the targeted retry",
+        options.targetPatch,
         target,
       );
     }
@@ -815,6 +837,7 @@ export async function validateAttack(
       options,
       attack,
       `Harness exception during attack validation after the targeted retry: ${error instanceof Error ? error.message : String(error)}`,
+      options.targetPatch,
     );
   } finally {
     for (const worktree of created) await options.worktrees.remove(worktree);
@@ -841,6 +864,9 @@ export async function validateHouseAttack(
     );
   }
   const created: string[] = [];
+  const judgeTargetPatch = attack.targets
+    .map((target) => options.targetPatches[target])
+    .find((candidate): candidate is string => Boolean(candidate));
   try {
     let baseline: string | undefined;
     try {
@@ -874,6 +900,7 @@ export async function validateHouseAttack(
           options,
           attack,
           "House baseline infrastructure failed",
+          judgeTargetPatch,
           baseline,
         );
       }
@@ -928,6 +955,7 @@ export async function validateHouseAttack(
           options,
           attack,
           "House comparison infrastructure failed",
+          implementationPatch,
           targetTree,
         );
       }
@@ -986,6 +1014,7 @@ export async function validateHouseAttack(
       options,
       attack,
       `House validation failed: ${error instanceof Error ? error.message : String(error)}`,
+      judgeTargetPatch,
     );
   } finally {
     for (const worktree of created) await options.worktrees.remove(worktree);
