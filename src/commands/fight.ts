@@ -11,14 +11,19 @@ import {
 import { Arena } from "../core/arena.js";
 import { FightConfigSchema } from "../core/types.js";
 import { discoverCapabilities } from "../permissions/policy.js";
+import {
+  collectFightReconnaissance,
+  type ReconnaissanceSnapshot,
+} from "../task/task-contract.js";
 
 async function approvePermissionPlan(
   config: Awaited<ReturnType<typeof loadFightConfig>>,
+  reconnaissance: ReconnaissanceSnapshot,
 ) {
   if (config.permissionMode !== "confirm" || config.nonInteractiveApproval)
     return config;
   stdout.write("Agent Arena permission plan\n");
-  for (const request of discoverCapabilities(config)) {
+  for (const request of discoverCapabilities(config, reconnaissance)) {
     stdout.write(
       `- ${request.id}: ${request.requirement}, ${request.risk} risk, ${request.role}, ${request.enforcement}\n  ${request.reason}\n  scopes: ${request.scopes.join(", ")}\n`,
     );
@@ -58,14 +63,17 @@ function createArena(
 }
 
 export async function runFight(overrides: CliConfigOverrides): Promise<string> {
-  const config = await approvePermissionPlan(await loadFightConfig(overrides));
+  const loadedConfig = await loadFightConfig(overrides);
+  const reconnaissance = await collectFightReconnaissance(loadedConfig);
+  const config = await approvePermissionPlan(loadedConfig, reconnaissance);
   const arena = createArena(config);
   const controller = new AbortController();
   const cancel = (): void => controller.abort(new Error("Interrupted"));
   process.once("SIGINT", cancel);
   process.once("SIGTERM", cancel);
   try {
-    return (await arena.fight(config, controller.signal)).summary;
+    return (await arena.fight(config, controller.signal, reconnaissance))
+      .summary;
   } finally {
     process.removeListener("SIGINT", cancel);
     process.removeListener("SIGTERM", cancel);

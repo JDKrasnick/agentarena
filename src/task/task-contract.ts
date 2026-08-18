@@ -81,9 +81,15 @@ export class FileLocalSpecResolver implements LocalSpecResolver {
     reference: string,
     repositoryRoot: string,
   ): Promise<ResolvedLocalSpec> {
+    const resolved = path.resolve(repositoryRoot, reference);
+    const relative = path.relative(repositoryRoot, resolved);
+    if (relative.startsWith("..") || path.isAbsolute(relative))
+      throw new Error(
+        `Specification path escapes the repository: ${reference}`,
+      );
     return {
       origin: reference,
-      content: await readFile(path.resolve(repositoryRoot, reference), "utf8"),
+      content: await readFile(resolved, "utf8"),
     };
   }
 }
@@ -243,55 +249,166 @@ interface BuildTaskContractOptions {
   localSpecResolver?: LocalSpecResolver;
   now?: Date;
   warnings?: string[];
+  reconnaissance?: ReconnaissanceSnapshot;
 }
 
-async function snapshotSource(
-  sourceDirectory: string,
-  source: Omit<TaskSource, "contentHash" | "snapshotPath">,
-  content: string,
-): Promise<TaskSource> {
-  const hash = sha256(content);
-  const snapshotPath = path.join(sourceDirectory, `${source.id}.md`);
-  await writeFile(snapshotPath, content, "utf8");
-  return { ...source, contentHash: hash, snapshotPath };
+export interface ReconnaissanceSource extends Omit<TaskSource, "snapshotPath"> {
+  content: string;
 }
 
-export async function buildTaskContract(
-  options: BuildTaskContractOptions,
-): Promise<TaskContract> {
-  const now = (options.now ?? new Date()).toISOString();
+export interface RepositoryEvidence {
+  path: string;
+  content: string;
+  contentHash: string;
+}
+
+export interface ReconnaissanceSnapshot {
+  version: 1;
+  task: string;
+  acceptanceCriteria: string[];
+  capturedAt: string;
+  sources: ReconnaissanceSource[];
+  repositoryEvidence: RepositoryEvidence[];
+  resolvedPullRequests: Record<string, ResolvedPullRequest>;
+  inputHash: string;
+}
+
+export function validateReconnaissance(
+  snapshot: ReconnaissanceSnapshot,
+  config?: Pick<FightConfig, "task" | "acceptanceCriteria">,
+): ReconnaissanceSnapshot {
+  const { inputHash, ...input } = snapshot;
+  if (sha256(canonicalJson(input)) !== inputHash)
+    throw new Error("Reconnaissance input hash does not match its contents");
+  if (
+    config &&
+    (snapshot.task !== config.task ||
+      canonicalJson(snapshot.acceptanceCriteria) !==
+        canonicalJson(config.acceptanceCriteria))
+  )
+    throw new Error("Reconnaissance does not match the approved fight task");
+  for (const source of snapshot.sources) {
+    if (sha256(source.content) !== source.contentHash)
+      throw new Error(`Reconnaissance source hash drifted: ${source.origin}`);
+  }
+  for (const evidence of snapshot.repositoryEvidence) {
+    if (sha256(evidence.content) !== evidence.contentHash)
+      throw new Error(`Reconnaissance evidence hash drifted: ${evidence.path}`);
+  }
+  return snapshot;
+}
+
+export type CollectReconnaissanceOptions = Omit<
+  BuildTaskContractOptions,
+  "sourceDirectory" | "reconnaissance"
+>;
+
+export async function collectFightReconnaissance(
+  configValue: FightConfig,
+  options: Pick<
+    CollectReconnaissanceOptions,
+    "issueResolver" | "pullRequestResolver" | "localSpecResolver" | "now"
+  > = {},
+): Promise<ReconnaissanceSnapshot> {
+  const config = FightConfigSchema.parse(configValue);
+  return collectReconnaissance({
+    task: config.task,
+    acceptanceCriteria: config.acceptanceCriteria,
+    specPaths: config.specPaths,
+    issueReferences: config.issueReferences,
+    pullRequestReferences: config.pullRequestReferences,
+    taskReferences: config.taskReferences,
+    repositoryRoot: config.repositoryRoot,
+    ...options,
+  });
+}
+
+const RECONNAISSANCE_PATHS = [
+  "package.json",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
+  "yarn.lock",
+  "bun.lock",
+  "bun.lockb",
+  "deno.json",
+  "deno.jsonc",
+  "playwright.config.ts",
+  "playwright.config.js",
+  "playwright.config.mjs",
+  "playwright.config.cjs",
+  "cypress.config.ts",
+  "cypress.config.js",
+  "vite.config.ts",
+  "vite.config.js",
+  "next.config.ts",
+  "next.config.js",
+  "next.config.mjs",
+  "angular.json",
+  "src/routes.ts",
+  "src/router.ts",
+  "app/routes.ts",
+] as const;
+
+async function collectRepositoryEvidence(
+  repositoryRoot: string,
+  maxBytes = 512 * 1024,
+): Promise<RepositoryEvidence[]> {
+  const evidence: RepositoryEvidence[] = [];
+  let total = 0;
+  for (const relativePath of RECONNAISSANCE_PATHS) {
+    try {
+      const content = await readFile(
+        path.join(repositoryRoot, relativePath),
+        "utf8",
+      );
+      total += Buffer.byteLength(content);
+      if (total > maxBytes)
+        throw new Error(`Repository reconnaissance exceeds ${maxBytes} bytes`);
+      evidence.push({
+        path: relativePath,
+        content,
+        contentHash: sha256(content),
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  return evidence;
+}
+
+export async function collectReconnaissance(
+  options: CollectReconnaissanceOptions,
+): Promise<ReconnaissanceSnapshot> {
+  const capturedAt = (options.now ?? new Date()).toISOString();
   const issueResolver = options.issueResolver ?? new GitHubIssueResolver();
   const pullRequestResolver =
     options.pullRequestResolver ?? new GitHubPullRequestResolver();
   const localSpecResolver =
     options.localSpecResolver ?? new FileLocalSpecResolver();
-  await mkdir(options.sourceDirectory, { recursive: true });
-  const sources: TaskSource[] = [];
-  const criteria = [...options.acceptanceCriteria];
-
-  sources.push(
-    await snapshotSource(
-      options.sourceDirectory,
-      {
-        id: "task-user",
-        kind: "user_task",
-        origin: "command-line task",
-        retrievedAt: now,
-        visibility: "shared",
-      },
-      `${options.task}\n`,
-    ),
-  );
+  const sources: ReconnaissanceSource[] = [
+    {
+      id: "task-user",
+      kind: "user_task",
+      origin: "command-line task",
+      retrievedAt: capturedAt,
+      visibility: "shared",
+      content: `${options.task}\n`,
+      contentHash: sha256(`${options.task}\n`),
+    },
+  ];
+  const resolvedPullRequests: Record<string, ResolvedPullRequest> = {};
 
   for (const reference of options.issueReferences) {
     let issue: ResolvedIssue;
     try {
       issue = await issueResolver.resolve(reference, options.repositoryRoot);
     } catch (error) {
-      options.warnings?.push(
-        `Official issue ${reference} could not be retrieved and was not included in the contract: ${error instanceof Error ? error.message : String(error)}`,
+      throw new Error(
+        `Explicit issue ${reference} could not be retrieved: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
       );
-      continue;
     }
     const content = [
       `# ${issue.title}`,
@@ -305,36 +422,32 @@ export async function buildTaskContract(
       ]),
       "",
     ].join("\n");
-    sources.push(
-      await snapshotSource(
-        options.sourceDirectory,
-        {
-          id: stableId("issue", issue.origin),
-          kind: "issue",
-          origin: issue.origin,
-          retrievedAt: now,
-          visibility: "shared",
-          ...(options.taskReferences?.find(
-            (candidate) =>
-              candidate.kind === "github_issue" &&
-              candidate.reference === reference,
-          )?.primary
-            ? { primary: true }
-            : {}),
-          ...(issue.repository && issue.number && issue.url
-            ? {
-                github: {
-                  repository: issue.repository,
-                  number: issue.number,
-                  url: issue.url,
-                  ...(issue.baseBranch ? { baseBranch: issue.baseBranch } : {}),
-                },
-              }
-            : {}),
-        },
-        content,
-      ),
-    );
+    sources.push({
+      id: stableId("issue", issue.origin),
+      kind: "issue",
+      origin: issue.origin,
+      retrievedAt: capturedAt,
+      visibility: "shared",
+      content,
+      contentHash: sha256(content),
+      ...(options.taskReferences?.find(
+        (candidate) =>
+          candidate.kind === "github_issue" &&
+          candidate.reference === reference,
+      )?.primary
+        ? { primary: true }
+        : {}),
+      ...(issue.repository && issue.number && issue.url
+        ? {
+            github: {
+              repository: issue.repository,
+              number: issue.number,
+              url: issue.url,
+              ...(issue.baseBranch ? { baseBranch: issue.baseBranch } : {}),
+            },
+          }
+        : {}),
+    });
   }
 
   for (const reference of options.pullRequestReferences ?? []) {
@@ -345,11 +458,12 @@ export async function buildTaskContract(
         options.repositoryRoot,
       );
     } catch (error) {
-      options.warnings?.push(
-        `Official pull request ${reference} could not be retrieved and was not included in the contract: ${error instanceof Error ? error.message : String(error)}`,
+      throw new Error(
+        `Explicit pull request ${reference} could not be retrieved: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
       );
-      continue;
     }
+    resolvedPullRequests[reference] = pullRequest;
     const content = [
       `# ${pullRequest.title}`,
       "",
@@ -370,89 +484,136 @@ export async function buildTaskContract(
       ]),
       "",
     ].join("\n");
-    sources.push(
-      await snapshotSource(
-        options.sourceDirectory,
-        {
-          id: stableId("pull-request", pullRequest.origin),
-          kind: "pull_request",
-          origin: pullRequest.origin,
-          retrievedAt: now,
-          visibility: "shared",
-          ...(options.taskReferences?.find(
-            (candidate) =>
-              candidate.kind === "github_pull_request" &&
-              candidate.reference === reference,
-          )?.primary
-            ? { primary: true }
-            : {}),
-          github: {
-            repository: pullRequest.repository,
-            number: pullRequest.number,
-            url: pullRequest.url,
-            baseBranch: pullRequest.baseBranch,
-            headBranch: pullRequest.headBranch,
-            headRepository: pullRequest.headRepository,
-            headCommit: pullRequest.headCommit,
-          },
-        },
-        content,
-      ),
-    );
+    sources.push({
+      id: stableId("pull-request", pullRequest.origin),
+      kind: "pull_request",
+      origin: pullRequest.origin,
+      retrievedAt: capturedAt,
+      visibility: "shared",
+      content,
+      contentHash: sha256(content),
+      ...(options.taskReferences?.find(
+        (candidate) =>
+          candidate.kind === "github_pull_request" &&
+          candidate.reference === reference,
+      )?.primary
+        ? { primary: true }
+        : {}),
+      github: {
+        repository: pullRequest.repository,
+        number: pullRequest.number,
+        url: pullRequest.url,
+        baseBranch: pullRequest.baseBranch,
+        headBranch: pullRequest.headBranch,
+        headRepository: pullRequest.headRepository,
+        headCommit: pullRequest.headCommit,
+      },
+    });
   }
 
   for (const configuredPath of options.specPaths) {
-    const resolvedSpec = await localSpecResolver.resolve(
-      configuredPath,
-      options.repositoryRoot,
-    );
-    const content = resolvedSpec.content;
-    sources.push(
-      await snapshotSource(
-        options.sourceDirectory,
-        {
-          id: stableId("spec", configuredPath),
-          kind: "repo_spec",
-          origin: resolvedSpec.origin,
-          retrievedAt: now,
-          visibility: "shared",
-          ...(options.taskReferences?.find(
-            (candidate) =>
-              candidate.kind === "repo_spec" &&
-              candidate.path === configuredPath,
-          )?.primary
-            ? { primary: true }
-            : {}),
-        },
-        content,
-      ),
-    );
+    let resolvedSpec: ResolvedLocalSpec;
+    try {
+      resolvedSpec = await localSpecResolver.resolve(
+        configuredPath,
+        options.repositoryRoot,
+      );
+    } catch (error) {
+      throw new Error(
+        `Explicit specification ${configuredPath} could not be retrieved: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    sources.push({
+      id: stableId("spec", configuredPath),
+      kind: "repo_spec",
+      origin: resolvedSpec.origin,
+      retrievedAt: capturedAt,
+      visibility: "shared",
+      content: resolvedSpec.content,
+      contentHash: sha256(resolvedSpec.content),
+      ...(options.taskReferences?.find(
+        (candidate) =>
+          candidate.kind === "repo_spec" && candidate.path === configuredPath,
+      )?.primary
+        ? { primary: true }
+        : {}),
+    });
   }
 
   for (const instruction of await discoverInstructions(
     options.repositoryRoot,
   )) {
-    sources.push(
-      await snapshotSource(
-        options.sourceDirectory,
-        {
-          id: stableId("instructions", instruction.path),
-          kind: "repo_spec",
-          origin: instruction.path,
-          retrievedAt: now,
-          visibility: "shared",
-        },
-        instruction.content,
-      ),
+    sources.push({
+      id: stableId("instructions", instruction.path),
+      kind: "repo_spec",
+      origin: instruction.path,
+      retrievedAt: capturedAt,
+      visibility: "shared",
+      content: instruction.content,
+      contentHash: sha256(instruction.content),
+    });
+  }
+
+  const repositoryEvidence = await collectRepositoryEvidence(
+    options.repositoryRoot,
+  );
+  const input = {
+    version: 1 as const,
+    task: options.task,
+    acceptanceCriteria: [...options.acceptanceCriteria],
+    capturedAt,
+    sources,
+    repositoryEvidence,
+    resolvedPullRequests,
+  };
+  return validateReconnaissance({
+    ...input,
+    inputHash: sha256(canonicalJson(input)),
+  });
+}
+
+async function snapshotSource(
+  sourceDirectory: string,
+  source: Omit<TaskSource, "contentHash" | "snapshotPath">,
+  content: string,
+): Promise<TaskSource> {
+  const hash = sha256(content);
+  const snapshotPath = path.join(sourceDirectory, `${source.id}.md`);
+  await writeFile(snapshotPath, content, "utf8");
+  return { ...source, contentHash: hash, snapshotPath };
+}
+
+export async function buildTaskContract(
+  options: BuildTaskContractOptions,
+): Promise<TaskContract> {
+  const reconnaissance = validateReconnaissance(
+    options.reconnaissance ?? (await collectReconnaissance(options)),
+    {
+      task: options.task,
+      acceptanceCriteria: options.acceptanceCriteria,
+    },
+  );
+  await mkdir(options.sourceDirectory, { recursive: true });
+  const sources: TaskSource[] = [];
+  for (const source of reconnaissance.sources) {
+    const { content, contentHash: expectedHash, ...metadata } = source;
+    const persisted = await snapshotSource(
+      options.sourceDirectory,
+      metadata,
+      content,
     );
+    if (persisted.contentHash !== expectedHash)
+      throw new Error(`Reconnaissance source drifted: ${source.origin}`);
+    sources.push(persisted);
   }
 
   const base = {
     version: 1 as const,
-    task: options.task,
-    acceptanceCriteria: criteria,
+    task: reconnaissance.task,
+    acceptanceCriteria: reconnaissance.acceptanceCriteria,
     sources,
-    createdAt: now,
+    createdAt: reconnaissance.capturedAt,
   };
   const contractHash = sha256(JSON.stringify(base));
   return TaskContractSchema.parse({ ...base, contractHash });

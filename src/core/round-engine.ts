@@ -78,8 +78,11 @@ import { provisionIntegrationProfile } from "../runner/integration.js";
 import {
   buildRunSpec,
   calculateRunSpecHash,
+  collectFightReconnaissance,
   GitHubPullRequestResolver,
   type ResolvedPullRequest,
+  type ReconnaissanceSnapshot,
+  validateReconnaissance,
 } from "../task/task-contract.js";
 import type { RunSpec } from "../contracts/round.js";
 import {
@@ -176,6 +179,8 @@ import {
   assessBattleCoverage,
   assertTargetedRetryAllowed,
 } from "../confidence/assessment.js";
+
+export type { ReconnaissanceSnapshot } from "../task/task-contract.js";
 
 export interface ArenaDependencies {
   adapters: Partial<Record<AgentId, AgentAdapter>>;
@@ -416,16 +421,36 @@ export class RoundEngine {
   async fight(
     rawConfig: FightConfig,
     externalSignal?: AbortSignal,
+    suppliedReconnaissance?: ReconnaissanceSnapshot,
   ): Promise<FightOutcome> {
     for (const contestantId of Object.keys(
       this.generatedContestantAdapters,
     ) as ContestantId[])
       delete this.generatedContestantAdapters[contestantId];
-    const repositoryRoot = await resolveRepositoryRoot(
-      rawConfig.repositoryRoot,
+    let config = FightConfigSchema.parse({
+      ...rawConfig,
+      repositoryRoot: path.resolve(rawConfig.repositoryRoot),
+    });
+    const reconnaissance = validateReconnaissance(
+      suppliedReconnaissance ??
+        (await collectFightReconnaissance(config, {
+          ...(this.dependencies.issueResolver
+            ? { issueResolver: this.dependencies.issueResolver }
+            : {}),
+          ...(this.dependencies.pullRequestResolver
+            ? { pullRequestResolver: this.dependencies.pullRequestResolver }
+            : {}),
+          now: this.now(),
+        })),
+      config,
     );
+    const permissions = resolvePermissionPolicy(
+      config,
+      discoverCapabilities(config, reconnaissance),
+    );
+    const repositoryRoot = await resolveRepositoryRoot(config.repositoryRoot);
     await assertCleanRepository(repositoryRoot);
-    let config = FightConfigSchema.parse({ ...rawConfig, repositoryRoot });
+    config = FightConfigSchema.parse({ ...config, repositoryRoot });
     const runId = createRunId(this.now());
     const store = new ArtifactStore(config.artifactRoot, runId, {
       durableV5: true,
@@ -439,10 +464,11 @@ export class RoundEngine {
       const reference = config.pullRequestReferences[0];
       if (!reference)
         throw new Error(`${config.mode} mode requires a pull request`);
-      const resolver =
-        this.dependencies.pullRequestResolver ??
-        new GitHubPullRequestResolver();
-      frozenModePullRequest = await resolver.resolve(reference, repositoryRoot);
+      frozenModePullRequest = reconnaissance.resolvedPullRequests[reference];
+      if (!frozenModePullRequest)
+        throw new Error(
+          `Approved reconnaissance is missing pull request ${reference}`,
+        );
       pullRequestFixture = await (
         this.dependencies.freezePullRequest ?? freezePullRequest
       )({
@@ -470,13 +496,12 @@ export class RoundEngine {
       });
       baseCommit = pullRequestFixture.base.commit;
     } else if (rawConfig.baseFromPullRequest) {
-      const resolver =
-        this.dependencies.pullRequestResolver ??
-        new GitHubPullRequestResolver();
-      frozenBasePullRequest = await resolver.resolve(
-        rawConfig.baseFromPullRequest,
-        repositoryRoot,
-      );
+      frozenBasePullRequest =
+        reconnaissance.resolvedPullRequests[rawConfig.baseFromPullRequest];
+      if (!frozenBasePullRequest)
+        throw new Error(
+          `Approved reconnaissance is missing pull request ${rawConfig.baseFromPullRequest}`,
+        );
       baseCommit = await fetchRemoteCommit(
         repositoryRoot,
         frozenBasePullRequest.headRepository,
@@ -510,10 +535,6 @@ export class RoundEngine {
     try {
       this.progress("Preflight: snapshotting run specification");
       const contractWarnings: string[] = [];
-      const permissions = resolvePermissionPolicy(
-        config,
-        discoverCapabilities(config),
-      );
       const runSpec = await buildRunSpec({
         runId,
         baseCommit,
@@ -550,7 +571,9 @@ export class RoundEngine {
             : {}),
         now: this.now(),
         warnings: contractWarnings,
+        reconnaissance,
       });
+      await store.writeImmutableJson("reconnaissance.json", reconnaissance);
       await store.writeImmutableJson("run-spec.json", runSpec);
       const repositoryIdentity =
         await resolveGitHubRepositoryIdentity(repositoryRoot);

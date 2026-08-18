@@ -258,34 +258,30 @@ describe("run specification", () => {
     ).toThrow();
   });
 
-  it("never invents a missing official issue and retains an explicit task with a warning", async () => {
+  it("stops when an explicit official issue cannot be retrieved", async () => {
     const root = await mkdtemp(
       path.join(os.tmpdir(), "arena-contract-missing-"),
     );
-    const warnings: string[] = [];
     const fightConfig = config(
       root,
       ["Return a stable result"],
       ["404"],
       "Use the supplied local behavior instead",
     );
-    const runSpec = await buildRunSpec({
-      runId: "run-2",
-      baseCommit: "b".repeat(40),
-      config: fightConfig,
-      permissions,
-      repositoryRoot: root,
-      sourceDirectory: path.join(root, "snapshots"),
-      issueResolver: {
-        resolve() {
-          return Promise.reject(new Error("not found"));
+    await expect(
+      buildRunSpec({
+        runId: "run-2",
+        baseCommit: "b".repeat(40),
+        config: fightConfig,
+        permissions,
+        repositoryRoot: root,
+        sourceDirectory: path.join(root, "snapshots"),
+        issueResolver: {
+          resolve() {
+            return Promise.reject(new Error("not found"));
+          },
         },
-      },
-      warnings,
-    });
-    expect(runSpec.task.sources.map((source) => source.kind)).toEqual([
-      "user_task",
-    ]);
-    expect(warnings[0]).toMatch(/could not be retrieved/);
+      }),
+    ).rejects.toThrow("Explicit issue 404 could not be retrieved");
   });
 });

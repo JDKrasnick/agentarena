@@ -4,6 +4,7 @@ import {
   type FightConfig,
   type PermissionPolicy,
 } from "../core/types.js";
+import type { ReconnaissanceSnapshot } from "../task/task-contract.js";
 
 const HARD_DENIES = new Set([
   "production_credentials",
@@ -23,7 +24,11 @@ export interface CapabilityRequest {
   scopes: string[];
 }
 
-export function discoverCapabilities(config: FightConfig): CapabilityRequest[] {
+export function discoverCapabilities(
+  config: FightConfig,
+  _reconnaissance?: ReconnaissanceSnapshot,
+): CapabilityRequest[] {
+  void _reconnaissance;
   const requests: CapabilityRequest[] = [
     {
       id: "repository_read_write",

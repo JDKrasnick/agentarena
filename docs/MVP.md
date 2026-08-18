@@ -119,12 +119,13 @@ agent-arena fight "fix the refresh-token race condition" \
 
 Agent Arena then:
 
-1. Freezes the exact task, explicitly supplied acceptance criteria, referenced
-   issue/PR/specification text, repository instructions, and reproducibility
-   metadata into an immutable RunSpec.
-2. Discovers required capabilities and presents a permission and authentication
-   plan for the user to approve, modify, or deny.
-3. Checks the repository, Git state, required executables, and test command.
+1. Reads and hashes the exact task, explicitly supplied acceptance criteria,
+   referenced issue/PR/specification text, repository instructions, and bounded
+   static repository evidence in memory.
+2. Discovers the complete required capability set and presents one permission
+   and authentication plan for the user to approve, modify, or deny.
+3. After approval, freezes the in-memory inputs into an immutable RunSpec, then
+   checks the repository, Git state, required executables, and test command.
 4. Creates an isolated Git worktree for each contestant at the same commit.
 5. Gives both agents the same RunSpec, repository instructions, limits,
    and test command.
@@ -368,10 +369,20 @@ contestants unless the user explicitly requests that. Reference tests and
 known-good outputs remain separate harness evidence with recorded provenance;
 they are not hidden RunSpec sources.
 
-If an issue or PR cannot be fetched, preflight must not silently invent its
-contents. The user must provide a local specification with `--spec`, supply the
-task text directly, or proceed with a report warning that the RunSpec sources are
-incomplete.
+If an explicitly referenced issue, PR, or specification cannot be fetched,
+preflight stops before approval. The user must make the source retrievable,
+provide a local specification with `--spec`, or supply the complete task text
+directly; a new run never proceeds with an incomplete task contract.
+
+Pre-permission reconnaissance is a narrow read boundary. It may inspect only
+the exact task sources, known manifests and lockfiles, browser-test
+configuration, literal package scripts, framework route metadata, and known
+instruction files. It keeps all content in memory and hashes the full input.
+It must not create artifacts or worktrees, inspect repository cleanliness,
+resolve or fetch commits, execute repository commands or project code, start
+agents, launch browsers or servers, or install packages. After consolidated
+approval, the harness persists `reconnaissance.json`, source snapshots, and the
+resolved permission policy before performing Git and runtime preflight.
 
 ### Fair starting conditions
 
@@ -771,6 +782,8 @@ containing:
 - `BATTLE.svg`: deterministic share image with the result and round digest.
 - `run-spec.json`: exact task text, explicit acceptance criteria, frozen sources,
   base commit, topology, commands, budgets, permissions, and deterministic hash.
+- `reconnaissance.json`: approved in-memory task sources, bounded repository
+  evidence, provenance, and the pre-permission input hash.
 - `permissions.json`: requested scopes, user decisions, leases, omitted checks,
   and redacted provisioning results.
 - `result.json`: compact schema-v8 status, stage, contestant health, outcome,

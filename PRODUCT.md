@@ -148,7 +148,19 @@ attribution never changes scoring.
 
 ### 1. Repository reconnaissance
 
-Before the agents begin, Agent Arena inspects the repository and creates a shared execution contract.
+Before permission resolution, Agent Arena performs bounded, read-only
+reconnaissance and creates the proposed shared execution contract in memory.
+It may read only the exact user-supplied task and references, known manifests
+and lockfiles, browser-test configuration, literal package scripts, framework
+route metadata, and repository instruction files. The harness hashes these
+inputs and stops when an explicit task source cannot be retrieved.
+
+This phase does not create run artifacts or worktrees, inspect Git state,
+resolve or fetch commits, execute repository commands or project code, start
+agents, launch browsers or servers, or install packages. Those actions begin
+only after one consolidated capability plan is approved. After approval, the
+harness persists the frozen task sources, reconnaissance evidence, and resolved
+permission policy before continuing with repository and Git preflight.
 
 It also creates an immutable `RunSpec` from the user's exact prompt, explicitly
 supplied acceptance criteria, and frozen source text. When a task points to an

@@ -4,7 +4,7 @@ import {
   type FightOutcome,
 } from "./round-engine.js";
 import type { FightConfig } from "./types.js";
-import type { ResumeOptions } from "./round-engine.js";
+import type { ReconnaissanceSnapshot, ResumeOptions } from "./round-engine.js";
 
 export type { ArenaDependencies, FightOutcome } from "./round-engine.js";
 
@@ -19,8 +19,9 @@ export class Arena {
   fight(
     config: FightConfig,
     externalSignal?: AbortSignal,
+    reconnaissance?: ReconnaissanceSnapshot,
   ): Promise<FightOutcome> {
-    return this.roundEngine.fight(config, externalSignal);
+    return this.roundEngine.fight(config, externalSignal, reconnaissance);
   }
 
   resume(
