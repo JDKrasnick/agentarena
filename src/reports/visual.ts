@@ -30,6 +30,27 @@ function latestRequired(contestant: ContestantResult): string {
 
 /** A deterministic, self-contained visual companion to BATTLE.md. */
 export function renderBattleVisual(state: RunState): string {
+  if (state.terminalOutcome) {
+    const terminal = state.terminalOutcome;
+    const recommended =
+      terminal.kind === "forfeit" && terminal.eligibleContestantIds[0]
+        ? contestantLabel(
+            state.config.contestants,
+            terminal.eligibleContestantIds[0],
+          )
+        : "none";
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="520" viewBox="0 0 1240 520" role="img" aria-label="Agent Arena pre-review terminal result">
+<style>.title{font:700 30px ui-monospace,Menlo,monospace;fill:#f5f7fa}.label{font:700 20px ui-monospace,Menlo,monospace;fill:#9ac0ff}.body{font:17px ui-monospace,Menlo,monospace;fill:#d7e0ea}.muted{font:15px ui-monospace,Menlo,monospace;fill:#b4c1cd}</style>
+<rect width="1240" height="520" fill="#070c12"/><text x="54" y="78" class="title">AGENT ARENA — PRE-REVIEW RESULT</text>
+<rect x="54" y="122" width="1132" height="300" rx="16" fill="#121b26" stroke="#294056"/>
+<text x="84" y="176" class="label">${escapeXml(terminal.kind.toUpperCase())} · ${escapeXml(terminal.reasonCode)}</text>
+<text x="84" y="226" class="body">Eligible production patch: ${escapeXml(recommended)}</text>
+<text x="84" y="274" class="body">${escapeXml(truncateReportText(terminal.reason, 108))}</text>
+<text x="84" y="330" class="muted">Review, attack, repair, quality comparison, and coverage stages were not run.</text>
+<text x="84" y="382" class="muted">Generated from result.json · See BATTLE.md for diagnostic artifacts.</text>
+</svg>`;
+  }
   const contestants = reportContestants(state);
   const blocks = contestants
     .map((contestant, index) => {

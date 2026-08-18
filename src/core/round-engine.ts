@@ -108,6 +108,7 @@ import {
   AdjudicationRecordSchema,
   FightConfigSchema,
   PermissionPolicySchema,
+  PatchRecommendationSchema,
   RepairJudgmentRecordSchema,
   type AgentId,
   type AgentInvocation,
@@ -217,6 +218,14 @@ export interface ResumeOptions {
   approveDriftHash?: string;
   approvedBy?: string;
   display?: "console" | "json";
+}
+
+export interface ReplacementFightOptions {
+  parentRunId: string;
+  restartOrdinal: 1 | 2;
+  runSpec: RunSpec;
+  permissions: PermissionPolicy;
+  pullRequestFixture?: PullRequestFixture;
 }
 
 interface ArenaContext {
@@ -416,6 +425,7 @@ export class RoundEngine {
   async fight(
     rawConfig: FightConfig,
     externalSignal?: AbortSignal,
+    replacement?: ReplacementFightOptions,
   ): Promise<FightOutcome> {
     for (const contestantId of Object.keys(
       this.generatedContestantAdapters,
@@ -435,7 +445,23 @@ export class RoundEngine {
     let frozenBasePullRequest: ResolvedPullRequest | undefined;
     let frozenModePullRequest: ResolvedPullRequest | undefined;
     let baseCommit: string;
-    if (config.mode === "catch_up" || config.mode === "siege") {
+    if (replacement) {
+      baseCommit = replacement.runSpec.baseCommit;
+      config = FightConfigSchema.parse({ ...config, baseCommit });
+      if (replacement.pullRequestFixture) {
+        const patchBytes = await readFile(
+          replacement.pullRequestFixture.patchPath,
+        );
+        const patchPath = await store.writeImmutableBytes(
+          "pull-request/frozen.patch",
+          patchBytes,
+        );
+        pullRequestFixture = {
+          ...replacement.pullRequestFixture,
+          patchPath,
+        };
+      }
+    } else if (config.mode === "catch_up" || config.mode === "siege") {
       const reference = config.pullRequestReferences[0];
       if (!reference)
         throw new Error(`${config.mode} mode requires a pull request`);
@@ -510,47 +536,52 @@ export class RoundEngine {
     try {
       this.progress("Preflight: snapshotting run specification");
       const contractWarnings: string[] = [];
-      const permissions = resolvePermissionPolicy(
-        config,
-        discoverCapabilities(config),
-      );
-      const runSpec = await buildRunSpec({
-        runId,
-        baseCommit,
-        config,
-        permissions,
-        repositoryRoot,
-        sourceDirectory: store.resolve("sources"),
-        ...(this.dependencies.issueResolver
-          ? { issueResolver: this.dependencies.issueResolver }
-          : {}),
-        ...(frozenBasePullRequest || frozenModePullRequest
-          ? {
-              pullRequestResolver: {
-                resolve: (reference: string) => {
-                  if (
-                    frozenBasePullRequest &&
-                    reference === rawConfig.baseFromPullRequest
-                  )
-                    return Promise.resolve(frozenBasePullRequest);
-                  if (
-                    frozenModePullRequest &&
-                    reference === String(config.pullRequestReferences[0])
-                  )
-                    return Promise.resolve(frozenModePullRequest);
-                  return (
-                    this.dependencies.pullRequestResolver ??
-                    new GitHubPullRequestResolver()
-                  ).resolve(reference, repositoryRoot);
-                },
-              },
-            }
-          : this.dependencies.pullRequestResolver
-            ? { pullRequestResolver: this.dependencies.pullRequestResolver }
-            : {}),
-        now: this.now(),
-        warnings: contractWarnings,
-      });
+      const permissions = replacement
+        ? PermissionPolicySchema.parse(replacement.permissions)
+        : resolvePermissionPolicy(config, discoverCapabilities(config));
+      const runSpec = replacement
+        ? await this.copyReplacementRunSpec({
+            source: replacement.runSpec,
+            runId,
+            store,
+          })
+        : await buildRunSpec({
+            runId,
+            baseCommit,
+            config,
+            permissions,
+            repositoryRoot,
+            sourceDirectory: store.resolve("sources"),
+            ...(this.dependencies.issueResolver
+              ? { issueResolver: this.dependencies.issueResolver }
+              : {}),
+            ...(frozenBasePullRequest || frozenModePullRequest
+              ? {
+                  pullRequestResolver: {
+                    resolve: (reference: string) => {
+                      if (
+                        frozenBasePullRequest &&
+                        reference === rawConfig.baseFromPullRequest
+                      )
+                        return Promise.resolve(frozenBasePullRequest);
+                      if (
+                        frozenModePullRequest &&
+                        reference === String(config.pullRequestReferences[0])
+                      )
+                        return Promise.resolve(frozenModePullRequest);
+                      return (
+                        this.dependencies.pullRequestResolver ??
+                        new GitHubPullRequestResolver()
+                      ).resolve(reference, repositoryRoot);
+                    },
+                  },
+                }
+              : this.dependencies.pullRequestResolver
+                ? { pullRequestResolver: this.dependencies.pullRequestResolver }
+                : {}),
+            now: this.now(),
+            warnings: contractWarnings,
+          });
       await store.writeImmutableJson("run-spec.json", runSpec);
       const repositoryIdentity =
         await resolveGitHubRepositoryIdentity(repositoryRoot);
@@ -618,6 +649,18 @@ export class RoundEngine {
         appliedEnvelopes: [],
       };
       await this.persist(context);
+      if (replacement) {
+        const summary = await store.readSummary();
+        if (!summary) throw new Error("Replacement result summary is missing");
+        await store.replaceDerivedJson("result.json", {
+          ...summary,
+          provenance: {
+            ...summary.provenance,
+            parentRunId: replacement.parentRunId,
+            transportRestartOrdinal: replacement.restartOrdinal,
+          },
+        });
+      }
 
       await this.preflight(context);
       await writeDependencyManifest({
@@ -1106,6 +1149,39 @@ export class RoundEngine {
     }
   }
 
+  private async copyReplacementRunSpec(options: {
+    source: RunSpec;
+    runId: string;
+    store: ArtifactStore;
+  }): Promise<RunSpec> {
+    const sources = await Promise.all(
+      options.source.task.sources.map(async (source, index) => {
+        const bytes = await readFile(source.snapshotPath);
+        if (sha256(bytes) !== source.contentHash)
+          throw new Error(`Frozen source ${source.id} failed its digest`);
+        const snapshotPath = await options.store.writeImmutableBytes(
+          `sources/${String(index + 1).padStart(2, "0")}-${path.basename(source.snapshotPath)}`,
+          bytes,
+        );
+        return { ...source, snapshotPath };
+      }),
+    );
+    const withoutHash: Omit<RunSpec, "contentHash"> = {
+      version: options.source.version,
+      runId: options.runId,
+      task: { ...options.source.task, sources },
+      baseCommit: options.source.baseCommit,
+      topology: options.source.topology,
+      commands: options.source.commands,
+      budgets: options.source.budgets,
+      permissions: options.source.permissions,
+    };
+    return RunSpecSchema.parse({
+      ...withoutHash,
+      contentHash: calculateRunSpecHash(withoutHash),
+    });
+  }
+
   private async executeLiveRound(
     coordinator: ArenaContext,
     snapshot: RoundSnapshot,
@@ -1256,52 +1332,6 @@ export class RoundEngine {
       getContestant(context.state, id),
     );
     const artifactPaths = contestants.flatMap(preReviewArtifactPaths);
-    if (context.controller.signal.aborted) {
-      return {
-        version: 1,
-        phase: "pre_review",
-        kind: "cancelled",
-        reasonCode: "external_cancellation",
-        affectedContestantIds: production,
-        eligibleContestantIds: [],
-        artifactPaths,
-        reason:
-          "The run was cancelled during implementation or initial validation.",
-      };
-    }
-    const providerInfrastructure = contestants.some(
-      (contestant) =>
-        contestant.implementation?.status === "infrastructure_error",
-    );
-    if (providerInfrastructure) {
-      return {
-        version: 1,
-        phase: "pre_review",
-        kind: "inconclusive",
-        reasonCode: "provider_transport_failure",
-        affectedContestantIds: production,
-        eligibleContestantIds: [],
-        artifactPaths,
-        reason: "Provider transport failed during implementation.",
-      };
-    }
-    const harnessInfrastructure = contestants.some((contestant) =>
-      contestant.checks.some(
-        (check) => check.status === "infrastructure_error",
-      ),
-    );
-    if (harnessInfrastructure) {
-      return {
-        version: 1,
-        phase: "pre_review",
-        kind: "inconclusive",
-        reasonCode: "harness_infrastructure_failure",
-        affectedContestantIds: production,
-        eligibleContestantIds: [],
-        artifactPaths,
-        reason: "Harness infrastructure failed during initial validation.",
-      };
-    }
     const eligible = contestants
       .filter(
         (contestant) =>
@@ -1311,58 +1341,181 @@ export class RoundEngine {
           latestRequiredPass(contestant),
       )
       .map((contestant) => contestant.id);
+    const contestantReason = (
+      contestant: ContestantResult,
+    ):
+      | Exclude<
+          NonNullable<
+            Extract<
+              TerminalOutcome,
+              { version: 2 }
+            >["contestants"][number]["reasonCode"]
+          >,
+          "test_only_role"
+        >
+      | undefined => {
+      if (eligible.includes(contestant.id)) return undefined;
+      if (
+        contestant.implementation?.status === "cancelled" &&
+        !context.controller.signal.aborted
+      )
+        return "peer_cancelled_due_to_transport";
+      if (
+        contestant.implementation?.status === "infrastructure_error" &&
+        contestant.implementation.command?.failureClass ===
+          "arena_infrastructure"
+      )
+        return "harness_infrastructure_failure";
+      if (
+        contestant.implementation?.command?.transportFailures?.length ||
+        contestant.implementation?.status === "infrastructure_error"
+      )
+        return "provider_transport_failure";
+      if (contestant.implementation?.status === "timed_out")
+        return "implementation_timeout";
+      if (contestant.implementation?.status === "failed")
+        return "implementation_failed";
+      if (
+        contestant.checks.some(
+          (check) => check.kind === "apply" && check.status === "failed",
+        )
+      )
+        return "implementation_unapplicable_patch";
+      if (!contestant.currentPatchPath || contestant.patchSize === 0)
+        return "implementation_empty_patch";
+      if (
+        contestant.checks.some(
+          (check) => check.kind === "required" && check.status === "failed",
+        )
+      )
+        return "initial_validation_failed";
+      return "implementation_failed";
+    };
+    const dispositions: Extract<
+      TerminalOutcome,
+      { version: 2 }
+    >["contestants"] = context.config.agents.map((id) => {
+      const contestant = getContestant(context.state, id);
+      if (contestant.role === "attacker")
+        return {
+          contestantId: id,
+          eligible: false,
+          reasonCode: "test_only_role" as const,
+          artifactPaths: preReviewArtifactPaths(contestant),
+        };
+      const reasonCode = contestantReason(contestant);
+      return {
+        contestantId: id,
+        eligible: eligible.includes(id),
+        ...(reasonCode ? { reasonCode } : {}),
+        artifactPaths: preReviewArtifactPaths(contestant),
+      };
+    });
+    const makeOutcome = (options: {
+      kind: "forfeit" | "inconclusive" | "cancelled";
+      reasonCode: Extract<TerminalOutcome, { version: 2 }>["reasonCode"];
+      affectedContestantIds: ContestantId[];
+      reason: string;
+    }): TerminalOutcome => ({
+      version: 2,
+      phase: "pre_review",
+      kind: options.kind,
+      status:
+        options.kind === "forfeit"
+          ? "completed"
+          : options.kind === "cancelled"
+            ? "cancelled"
+            : "inconclusive",
+      reasonCode: options.reasonCode,
+      affectedContestantIds: options.affectedContestantIds,
+      eligibleContestantIds: eligible,
+      artifactPaths,
+      contestants: dispositions,
+      reason: options.reason,
+    });
+    if (context.controller.signal.aborted) {
+      return makeOutcome({
+        kind: "cancelled",
+        reasonCode: "external_cancellation",
+        affectedContestantIds: production,
+        reason:
+          "The run was cancelled during implementation or initial validation.",
+      });
+    }
+    const harnessAffected = contestants
+      .filter(
+        (contestant) =>
+          contestantReason(contestant) === "harness_infrastructure_failure" ||
+          contestant.checks.some(
+            (check) => check.status === "infrastructure_error",
+          ),
+      )
+      .map((contestant) => contestant.id);
+    if (
+      forcedReason === "harness_infrastructure_failure" ||
+      harnessAffected.length
+    ) {
+      return makeOutcome({
+        kind: "inconclusive",
+        reasonCode: "harness_infrastructure_failure",
+        affectedContestantIds: harnessAffected.length
+          ? harnessAffected
+          : production,
+        reason:
+          "Harness infrastructure failed before review eligibility could be sealed.",
+      });
+    }
+    const providerInfrastructure = contestants.some(
+      (contestant) =>
+        contestantReason(contestant) === "provider_transport_failure",
+    );
+    if (providerInfrastructure) {
+      return makeOutcome({
+        kind: "inconclusive",
+        reasonCode: "provider_transport_failure",
+        affectedContestantIds: contestants
+          .filter(
+            (contestant) =>
+              contestantReason(contestant) === "provider_transport_failure",
+          )
+          .map((contestant) => contestant.id),
+        reason: "Provider transport failed during implementation.",
+      });
+    }
     if (forcedReason) {
       const reason =
         forcedReason === "frozen_incumbent_invalid"
           ? "The frozen incumbent patch is not eligible, so the challenger is not run."
           : "Harness infrastructure failed before review eligibility could be sealed.";
-      return {
-        version: 1,
-        phase: "pre_review",
+      return makeOutcome({
         kind: "inconclusive",
         reasonCode: forcedReason,
-        affectedContestantIds: production,
-        eligibleContestantIds: eligible,
-        artifactPaths,
+        affectedContestantIds: contestants
+          .filter((contestant) => !eligible.includes(contestant.id))
+          .map((contestant) => contestant.id),
         reason,
-      };
+      });
     }
     if (eligible.length === production.length) return undefined;
     const failed = contestants.find(
       (contestant) => !eligible.includes(contestant.id),
     );
-    const reasonCode: TerminalOutcome["reasonCode"] =
-      failed?.implementation?.status === "timed_out"
-        ? "implementation_timeout"
-        : failed?.implementation?.status === "failed"
-          ? "implementation_failed"
-          : failed?.checks.some(
-                (check) => check.kind === "apply" && check.status === "failed",
-              )
-            ? "implementation_unapplicable_patch"
-            : !failed?.currentPatchPath || failed.patchSize === 0
-              ? "implementation_empty_patch"
-              : failed.checks.some(
-                    (check) =>
-                      check.kind === "required" && check.status === "failed",
-                  )
-                ? "initial_validation_failed"
-                : "implementation_failed";
+    const failedReason = failed ? contestantReason(failed) : undefined;
+    const reasonCode =
+      failedReason === "peer_cancelled_due_to_transport"
+        ? "provider_transport_failure"
+        : (failedReason ?? "implementation_failed");
     const isForfeit = eligible.length === 1 && context.config.mode === "duel";
-    return {
-      version: 1,
-      phase: "pre_review",
+    return makeOutcome({
       kind: isForfeit ? "forfeit" : "inconclusive",
       reasonCode,
       affectedContestantIds: contestants
         .filter((contestant) => !eligible.includes(contestant.id))
         .map((contestant) => contestant.id),
-      eligibleContestantIds: eligible,
-      artifactPaths,
       reason: isForfeit
         ? "Exactly one production patch passed initial validation; it wins by forfeit before review."
         : "No eligible production patch is available for a pre-review comparison.",
-    };
+    });
   }
 
   private async applyRoundTransaction(
@@ -2252,11 +2405,12 @@ export class RoundEngine {
       }
       if (!contestant.finalPatchPath)
         throw new Error("Forfeit winner has no final patch");
-      await this.collectAndPersistPatchQualityFacts(
-        context,
-        winner,
-        contestant.finalPatchPath,
-      );
+      const patchBytes = await readFile(contestant.finalPatchPath);
+      context.state.patchQualityFacts[winner] = collectPatchQualityFacts({
+        contestantId: winner,
+        patch: patchBytes.toString("utf8"),
+        patchBytes,
+      });
       context.state.ranking = rankContestants(
         context.config.agents.map((agent) =>
           getContestant(context.state, agent),
@@ -2264,9 +2418,22 @@ export class RoundEngine {
         { patchSizeTieBreaker: context.config.mode !== "siege" },
       );
       context.state.arenaOutcome = deriveArenaOutcome(context.state);
-      context.state.patchRecommendation = selectRecommendedPatch({
-        contestants: context.state.contestants,
-        championId: winner,
+      context.state.patchRecommendation = PatchRecommendationSchema.parse({
+        contestantId: winner,
+        reason: "forfeit",
+        rationale: [
+          "This was the only production patch that applied and passed required initial validation.",
+        ],
+        comparison: context.config.agents.map((id) => {
+          const candidate = getContestant(context.state, id);
+          return {
+            contestantId: id,
+            eligible: id === winner,
+            activeDefectDamage: 0,
+            requiredValidationPassed: latestRequiredPass(candidate),
+            finalApplicabilityPassed: Boolean(candidate.finalPatchPath),
+          };
+        }),
       });
       context.state.reviewPrompt = buildReviewPrompt(context.state);
       await context.store.writeImmutableJson(
@@ -2493,6 +2660,15 @@ export class RoundEngine {
   private async implement(context: ArenaContext): Promise<void> {
     await this.transition(context, "implement");
     const worktrees = new Map<ContestantId, string>();
+    const phaseController = new AbortController();
+    let transportFailure = false;
+    const cancelPhase = (): void =>
+      phaseController.abort(context.controller.signal.reason);
+    if (context.controller.signal.aborted) cancelPhase();
+    else
+      context.controller.signal.addEventListener("abort", cancelPhase, {
+        once: true,
+      });
     const implementationAgents = context.config.agents.filter(
       (agent) =>
         context.config.contestants.find((contestant) => contestant.id === agent)
@@ -2510,7 +2686,7 @@ export class RoundEngine {
       );
     }
     try {
-      await Promise.all(
+      const results = await Promise.allSettled(
         implementationAgents.map(async (agent) => {
           const worktree = worktrees.get(agent);
           if (!worktree)
@@ -2541,7 +2717,7 @@ export class RoundEngine {
               promptPath,
               transcriptPrefix,
               timeoutMs: context.config.limits.implementationMs,
-              signal: context.controller.signal,
+              signal: phaseController.signal,
             });
             const finishedAt = this.now().toISOString();
             invocation.contestantId = agent;
@@ -2566,13 +2742,20 @@ export class RoundEngine {
               break;
             }
             if (invocation.status === "cancelled") {
-              context.controller.abort(
-                new Error(`Implementation cancelled for ${agent}`),
-              );
-              throw new Error(`Implementation cancelled for ${agent}`);
+              if (context.controller.signal.aborted)
+                throw new Error(`Implementation cancelled for ${agent}`);
+              if (!transportFailure) {
+                context.controller.abort(
+                  new Error(`Implementation cancelled for ${agent}`),
+                );
+                throw new Error(`Implementation cancelled for ${agent}`);
+              }
+              contestant.status = "failed";
+              return;
             }
-            const category =
-              invocation.status === "timed_out"
+            const category = invocation.command?.transportFailures?.length
+              ? ("transport" as const)
+              : invocation.status === "timed_out"
                 ? ("timeout" as const)
                 : invocation.status === "infrastructure_error"
                   ? ("process_launch" as const)
@@ -2590,10 +2773,22 @@ export class RoundEngine {
               ...(implementationFailure
                 ? { existing: implementationFailure }
                 : {}),
-              ...(attempt === 2
+              ...(attempt === 2 ||
+              (invocation.status === "infrastructure_error" &&
+                invocation.command?.transportFailures?.length)
                 ? { terminalDisposition: "run_level_coverage_lost" as const }
                 : {}),
             });
+            if (
+              invocation.status === "infrastructure_error" &&
+              invocation.command?.transportFailures?.length
+            ) {
+              transportFailure = true;
+              phaseController.abort(
+                new Error(`Provider transport failed for ${agent}`),
+              );
+              throw new Error(`Implementation transport failed for ${agent}`);
+            }
             if (attempt === 1) continue;
             if (invocation.status === "infrastructure_error") {
               throw new Error(
@@ -2618,7 +2813,13 @@ export class RoundEngine {
           if (patchSize === 0) contestant.status = "failed";
         }),
       );
+      const rejected = results.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
+      );
+      if (rejected) throw rejected.reason;
     } finally {
+      context.controller.signal.removeEventListener("abort", cancelPhase);
       for (const worktree of worktrees.values()) {
         await context.worktrees.remove(worktree);
       }
@@ -2664,11 +2865,25 @@ export class RoundEngine {
       const worktree = await this.prepareWorktree(context, {
         name: `initial-validate-${agent}`,
         subject: `initial-validation-worktree:${agent}`,
-        patches: [contestant.currentPatchPath],
         contestantId: agent,
         runLevel: true,
       });
       try {
+        try {
+          await context.worktrees.applyPatch(
+            worktree,
+            contestant.currentPatchPath,
+          );
+        } catch (error) {
+          contestant.checks.push({
+            id: "initial-apply",
+            kind: "apply",
+            status: "failed",
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          contestant.status = "failed";
+          continue;
+        }
         let command!: Awaited<ReturnType<typeof runShellCommand>>;
         let validationFailure: FailureRecord | undefined;
         for (const attempt of [1, 2] as const) {
