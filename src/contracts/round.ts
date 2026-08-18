@@ -530,6 +530,29 @@ const RoundResultBaseSchema = z
     ]),
     failureRecords: z.array(FailureRecordSchema),
     replay: RoundReplaySchema,
+    terminalOutcome: z
+      .object({
+        version: z.literal(1),
+        phase: z.literal("pre_review"),
+        kind: z.enum(["forfeit", "inconclusive", "cancelled"]),
+        reasonCode: z.enum([
+          "implementation_timeout",
+          "implementation_failed",
+          "implementation_empty_patch",
+          "implementation_unapplicable_patch",
+          "initial_validation_failed",
+          "frozen_incumbent_invalid",
+          "provider_transport_failure",
+          "harness_infrastructure_failure",
+          "external_cancellation",
+        ]),
+        affectedContestantIds: z.array(ContestantIdSchema),
+        eligibleContestantIds: z.array(ContestantIdSchema),
+        artifactPaths: z.array(z.string().min(1)),
+        reason: z.string().min(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

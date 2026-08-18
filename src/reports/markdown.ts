@@ -299,6 +299,16 @@ export function renderBattleReport(state: RunState): string {
     ...pullRequestProvenance(state),
     "## Final result",
     "",
+    ...(state.terminalOutcome
+      ? [
+          `**Pre-review terminal status:** ${state.terminalOutcome.kind} (${state.terminalOutcome.reasonCode})`,
+          "",
+          state.terminalOutcome.reason,
+          "",
+          `Eligible production patches: ${state.terminalOutcome.eligibleContestantIds.join(", ") || "none"}. No review, attack, repair, quality, or coverage artifacts were created.`,
+          "",
+        ]
+      : []),
     state.ranking?.draw
       ? `Draw: ${state.ranking.reason}`
       : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Winner"}: **${state.coverageDecision?.decision === "inconclusive" ? (state.ranking?.order[0] ?? "none") : (state.ranking?.winner ?? "none")}** — ${state.ranking?.reason ?? "run incomplete"}`,

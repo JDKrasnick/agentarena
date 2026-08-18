@@ -311,6 +311,7 @@ export const RunSummaryV5Schema = z
     contestants: z.tuple([SummaryContestantSchema, SummaryContestantSchema]),
     ranking: JsonValueSchema.optional(),
     outcome: JsonValueSchema.optional(),
+    terminalOutcome: JsonValueSchema.optional(),
     recommendation: JsonValueSchema.optional(),
     coverageAssessment: JsonValueSchema.optional(),
     coverageDecision: JsonValueSchema.optional(),

@@ -28,6 +28,37 @@ const fixtureAgent = fileURLToPath(
   new URL("../fixtures/fake-agent.mjs", import.meta.url),
 );
 
+function duelConfig(repositoryRoot: string) {
+  return FightConfigSchema.parse({
+    task: "Normalize slug whitespace.",
+    acceptanceCriteria: ["Collapse whitespace."],
+    specPaths: [],
+    issueReferences: [],
+    agents: ["codex", "claude"],
+    attackVerifier: "claude",
+    harnessMaintainer: "claude",
+    rounds: 3,
+    maxAttacksPerRound: 3,
+    infrastructureRecoveryRound: true,
+    maxHeldOutCasesPerDefect: 0,
+    testCommand: "node --test",
+    repositoryRoot,
+    artifactRoot: path.join(repositoryRoot, ".agent-arena", "runs"),
+    permissionMode: "confirm",
+    permissionAllow: {},
+    permissionDeny: [],
+    reducedValidationAccepted: false,
+    nonInteractiveApproval: true,
+    keepWorktrees: false,
+    limits: {
+      implementationMs: 10_000,
+      attackMs: 10_000,
+      verifierMs: 10_000,
+      repairMs: 10_000,
+    },
+  });
+}
+
 describe("fake-adapter fight on a mocked real issue", () => {
   it("isolates two slots that use the same provider", async () => {
     const repositoryRoot = await createSlugRepository();
@@ -111,7 +142,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(attackB.targets).toEqual(["a"]);
   });
 
-  it("completes when one implementation times out without a patch", async () => {
+  it("promotes the sole eligible implementation by pre-review forfeit", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = FightConfigSchema.parse({
       task: "Normalize slug whitespace.",
@@ -141,7 +172,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         repairMs: 10_000,
       },
     });
-    const outcome = await new Arena({
+    const arena = new Arena({
       adapters: {
         codex: new CommandAgentAdapter({
           id: "codex",
@@ -156,9 +187,16 @@ describe("fake-adapter fight on a mocked real issue", () => {
         }),
       },
       verifier: new RuleBasedVerifier("claude"),
-    }).fight(config);
+    });
+    const outcome = await arena.fight(config);
 
     expect(outcome.state.status).toBe("complete");
+    expect(outcome.state.terminalOutcome).toMatchObject({
+      phase: "pre_review",
+      kind: "forfeit",
+      reasonCode: "implementation_empty_patch",
+      eligibleContestantIds: ["b"],
+    });
     expect(outcome.state.contestants.a).toMatchObject({
       status: "failed",
       finalHealth: 0,
@@ -169,6 +207,27 @@ describe("fake-adapter fight on a mocked real issue", () => {
       finalHealth: 100,
     });
     expect(outcome.state.attacks).toEqual([]);
+    expect(outcome.state.patchRecommendation).toMatchObject({
+      contestantId: "b",
+    });
+    expect(outcome.state.ranking?.winner).toBe("b");
+    expect(outcome.state.arenaOutcome?.championId).toBe("b");
+    expect(outcome.state.patchQualityFacts.b?.patchSha256).toHaveLength(64);
+    expect(outcome.state.reviewPrompt?.choices).toEqual([
+      expect.objectContaining({ contestantId: "b", eligible: true }),
+    ]);
+
+    const resumed = await arena.resume({
+      runId: outcome.state.runId,
+      repositoryRoot,
+    });
+    expect(resumed.state.terminalOutcome).toEqual(
+      outcome.state.terminalOutcome,
+    );
+    expect(resumed.state.ranking?.winner).toBe("b");
+    expect(resumed.state.contestants.a?.finalHealth).toBe(0);
+    expect(resumed.state.patchQualityFacts.b?.patchSha256).toHaveLength(64);
+    expect(resumed.state.reviewPrompt).toEqual(outcome.state.reviewPrompt);
   });
 
   it("keeps valid siblings when a same-round correction remains malformed", async () => {
@@ -342,6 +401,12 @@ describe("fake-adapter fight on a mocked real issue", () => {
     }).fight(config);
 
     expect(outcome.state.status).toBe("inconclusive");
+    expect(outcome.state.terminalOutcome).toMatchObject({
+      phase: "pre_review",
+      kind: "inconclusive",
+      reasonCode: "provider_transport_failure",
+      eligibleContestantIds: [],
+    });
     expect(run).toHaveBeenCalledOnce();
     expect(implement).toHaveBeenCalledTimes(2);
     expect(outcome.state.attacks).toEqual([]);
@@ -360,6 +425,91 @@ describe("fake-adapter fight on a mocked real issue", () => {
     );
     implement.mockRestore();
     run.mockRestore();
+  });
+
+  it("preserves implementation timeout as the pre-review reason", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const timedOut = new CommandAgentAdapter({
+      id: "codex",
+      executable: process.execPath,
+      args: [fixtureAgent],
+    });
+    vi.spyOn(timedOut, "implement").mockImplementation((input) =>
+      Promise.resolve({
+        agent: "codex",
+        contestantId: input.contestantId,
+        role: "solver",
+        stage: "implement",
+        startedAt: "2026-08-08T00:00:00.000Z",
+        finishedAt: "2026-08-08T00:00:01.000Z",
+        durationMs: 1_000,
+        status: "timed_out",
+        promptPath: input.promptPath,
+        transcriptPath: `${input.transcriptPrefix}.stderr.log`,
+      }),
+    );
+
+    const outcome = await new Arena({
+      adapters: {
+        codex: timedOut,
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(duelConfig(repositoryRoot));
+
+    expect(outcome.state.status).toBe("complete");
+    expect(outcome.state.terminalOutcome).toMatchObject({
+      kind: "forfeit",
+      reasonCode: "implementation_timeout",
+      affectedContestantIds: ["a"],
+      eligibleContestantIds: ["b"],
+    });
+  });
+
+  it("seals cancellation as a pre-review terminal outcome", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const cancelledAdapter = (id: "codex" | "claude") => {
+      const adapter = new CommandAgentAdapter({
+        id,
+        executable: process.execPath,
+        args: [fixtureAgent],
+      });
+      vi.spyOn(adapter, "implement").mockImplementation((input) =>
+        Promise.resolve({
+          agent: id,
+          contestantId: input.contestantId,
+          role: "solver",
+          stage: "implement",
+          startedAt: "2026-08-08T00:00:00.000Z",
+          finishedAt: "2026-08-08T00:00:01.000Z",
+          durationMs: 1_000,
+          status: "cancelled",
+          promptPath: input.promptPath,
+          transcriptPath: `${input.transcriptPrefix}.stderr.log`,
+        }),
+      );
+      return adapter;
+    };
+
+    const outcome = await new Arena({
+      adapters: {
+        codex: cancelledAdapter("codex"),
+        claude: cancelledAdapter("claude"),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(duelConfig(repositoryRoot));
+
+    expect(outcome.state.status).toBe("cancelled");
+    expect(outcome.state.terminalOutcome).toMatchObject({
+      phase: "pre_review",
+      kind: "cancelled",
+      reasonCode: "external_cancellation",
+      eligibleContestantIds: [],
+    });
   });
 
   it("runs three rounds, lands and heals evidence, recoils a miss, and writes replayable artifacts", async () => {
