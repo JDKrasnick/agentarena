@@ -258,9 +258,15 @@ The MVP runs three review–attack–repair rounds after the initial implementat
 In each round, the harness first freezes both current implementation patches.
 Each eligible reviewer then gets a dedicated read-only budget, configured by
 `review_minutes` separately from the focused test-generation budget. The review
-produces a compact target-specific packet whose findings name the invariant or
-requirement, relevant code location, trigger sequence, expected behavior,
-confidence, and suggested minimal regression test.
+produces a v2 trusted evidence-handoff packet under
+[`docs/TRUSTED_EVIDENCE_HANDOFF_RFC.md`](docs/TRUSTED_EVIDENCE_HANDOFF_RFC.md).
+The packet contains harness-attested target and permission fingerprints plus at
+most 12 ordered reviewer hypotheses naming the invariant, observations and
+provenance, code locations, trigger sequence, oracle rationale, expected
+behavior, confidence, required capabilities, and focused regression plan. Exact
+duplicates are rejected by stable finding ID while semantic defect identity
+remains the judge's responsibility. Deterministic tail compaction enforces a 16
+KiB canonical UTF-8 ceiling and records every omission.
 
 The review prompt also describes the arena execution architecture, the
 reviewer's place in the freeze–review–test–verify–repair sequence, the assigned
@@ -270,14 +276,25 @@ scope, execution role, and `enforced`, `brokered`, or `advisory` semantics.
 Agents may use only approved `agent` or `both` capabilities directly;
 `harness_only` checks remain mediated by the harness.
 
-The same contestant then receives that packet alongside the standardized public
-context and frozen target patch. It may submit zero to three sparse, uniquely
-ranked `AttackSubmissionV2` entries. Each entry declares oracle metadata, a
-focused command, required capabilities, and disjoint test/fixture paths. Shared
-support paths may be declared once and are copied into every independently
-replayable target-relative overlay. A malformed rank does not suppress valid
-siblings; invalid shared support rejects only dependent attacks. `attacks: []`
-is explicit successful lane completion.
+Immediately before attack invocation, the harness recomputes both fingerprints.
+A stale or malformed packet skips invocation and receives one targeted review
+refresh; persistent failure is coverage loss. Repair, target mutation,
+permission change, and round transition invalidate the packet immediately, so
+only adjudicated lane-safe feedback carries forward. The same contestant then
+receives the canonical packet immediately before attack instructions and
+inspects the frozen target through its assigned worktree; the raw patch is not
+embedded in the prompt.
+
+The attacker may submit zero to three sparse, uniquely ranked
+`AttackSubmissionV2` entries. Each entry declares oracle metadata, a focused
+command, required capabilities, and disjoint test/fixture paths. Shared support
+paths may be declared once and are copied into every independently replayable
+target-relative overlay. A malformed rank does not suppress valid siblings;
+invalid shared support rejects only dependent attacks. `attacks: []` is explicit
+successful lane completion. A mutually exclusive typed `handoff_blocker` may
+identify affected finding IDs and missing permission or context; it receives one
+targeted refresh, after which persistence is coverage loss without a score
+effect.
 
 Each round has its own symmetric, versioned prompt and investigation brief:
 
@@ -294,10 +311,15 @@ first time integrations are exercised and it never grants production access.
 
 The read-only findings packet is engineering evidence rather than hidden
 chain-of-thought. It excludes private implementation-generation transcripts and
-provider identity. Raw findings are available to the same contestant's focused
-failure-description phase, but implementation owners receive only
-verifier-confirmed regression tests during repair. Only the zero to three
-committed attacks can land or recoil.
+provider identity, credentials, and all private reasoning. Its observations are
+explicitly reviewer hypotheses, never harness facts or canonical defects. Raw
+findings are available only to the same contestant's focused
+failure-description phase, while implementation owners receive only
+verifier-confirmed regression tests during repair. Cited files, nearby tests,
+and direct dependencies remain inspectable. Broad rediscovery is allowed,
+warned about when visible, and recorded as `targeted`, `broad`, or `unknown`;
+telemetry never affects validity, retries, coverage, health, scoring, or
+selection. Only the zero to three committed attacks can land or recoil.
 
 The shared taxonomy covers contract and logic, inputs and errors, state and
 lifecycle, data integrity, concurrency and time, integration and configuration,

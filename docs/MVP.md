@@ -139,12 +139,17 @@ Agent Arena then:
    - The harness freezes both current patches.
    - Both agents get an extended read-only review phase and produce structured
      target-specific findings.
-   - Each agent receives its compact review packet and submits zero to three
-     sparse, uniquely ranked executable attacks. `AttackSubmissionV2` includes
-     oracle metadata, a focused command, required capabilities, disjoint
-     rank-specific paths, and optional shared support paths copied into every
-     independently replayable target-relative overlay. `attacks: []` explicitly
-     records that no reviewed hypothesis is credible.
+   - The harness creates a fresh v2 trusted evidence-handoff packet for each
+     target lane under
+     [`TRUSTED_EVIDENCE_HANDOFF_RFC.md`](TRUSTED_EVIDENCE_HANDOFF_RFC.md),
+     validates its target and permission fingerprints immediately before use,
+     and injects it immediately before attack instructions.
+   - Each agent inspects the frozen target in its assigned worktree and submits
+     zero to three sparse, uniquely ranked executable attacks.
+     `AttackSubmissionV2` includes oracle metadata, a focused command, required
+     capabilities, disjoint rank-specific paths, and optional shared support
+     paths copied into every independently replayable target-relative overlay.
+     `attacks: []` explicitly records that no reviewed hypothesis is credible.
    - The harness validates every attack and resolves damage or recoil
      simultaneously.
    - Both agents receive the new evidence and the remaining durable repair
@@ -227,12 +232,35 @@ cross-component failures. It does not grant production access.
 
 Before focused failure analysis, each agent receives a separate
 `review_minutes` budget for read-only inspection of the opponent's frozen patch.
-The resulting packet records the checked invariant, code location, trigger
-sequence, expected behavior, confidence, and a suggested minimal regression
-test. It is not hidden chain-of-thought and excludes private implementation
-transcripts. Only the reviewer that produced the packet receives it before
-adjudication; repair prompts contain verifier-confirmed tests rather than raw
-findings. Only committed attacks can land or recoil.
+The resulting v2 packet records harness-attested target and complete resolved
+permission fingerprints plus at most 12 ordered reviewer hypotheses. Each
+hypothesis includes its invariant, structured observations and provenance, code
+locations, trigger sequence, oracle and task-source rationale, expected
+behavior, confidence, required capabilities, and focused regression plan. Stable
+finding IDs reject exact duplicates while preserving the first priority; they
+never identify canonical defects. Deterministic tail compaction records omitted
+IDs and enforces a 16 KiB canonical UTF-8 ceiling.
+
+Immediately before attack invocation, the harness recomputes both fingerprints.
+A stale or malformed packet skips invocation and receives one targeted review
+refresh; a second failure loses coverage for that lane. Repair, target mutation,
+permission changes, and round transitions invalidate packets immediately. A
+typed `handoff_blocker` containing affected finding IDs and missing permission
+or context is mutually exclusive with attacks and receives one targeted
+refresh; persistence loses coverage without damage or recoil. A valid
+`attacks: []` is instead successful packet consumption and completes the lane.
+
+The packet is engineering evidence rather than hidden chain-of-thought. Every
+observation remains explicitly a reviewer hypothesis; the packet excludes
+private implementation transcripts, private reasoning, provider identity,
+credentials, and raw frozen patch bytes. Only the reviewer that produced it
+receives it immediately before the attack instructions and inspects the target
+through the assigned worktree. Repair prompts contain verifier-confirmed tests
+rather than raw findings, and only committed attacks can land or recoil. Cited
+files, nearby tests, and direct dependencies remain inspectable. Broader
+repository rediscovery is allowed and warned about when visible, then recorded
+as `targeted`, `broad`, or `unknown`; this telemetry never affects health,
+scoring, retries, coverage, or selection.
 
 Both review and focused failure analysis receive a standardized execution
 architecture: battle mode and contestant role, phase sequence, exact worktree
@@ -785,6 +813,11 @@ containing:
   interrupted legacy runs require a restart.
 - `rounds/<round>/repair-judgments/`: immutable, digest-bound judge decisions
   for defects whose repair cannot be confirmed mechanically.
+- `rounds/<round>/handoffs/`: canonical v2 reviewer-to-attacker packets,
+  fingerprint validation, omission metadata, refreshes, blockers,
+  invalidations, consumption outcomes, and inspection telemetry. Completed v1
+  artifacts remain reportable but are never consumed or upgraded; a resumed v1
+  handoff regenerates v2.
 - `feedback/`: schema-v3 deterministic, digest-linked role-safe agent
   projections targeting 8 KiB and capped at 24 KiB. Private transcripts,
   verbose judge rationale, and opponent-only evidence are never projected.
