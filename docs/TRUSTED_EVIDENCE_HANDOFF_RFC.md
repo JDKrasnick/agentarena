@@ -124,13 +124,27 @@ summary. The harness constructs this projection:
 
 Capabilities are sorted by `capability_id`; `scopes` and
 `omitted_check_ids` are de-duplicated and sorted by Unicode code point. Status
-is one of `approved`, `denied`, `failed`, or `expired`; requirement is
-`required` or `optional`; `roles` contains exactly one of `agent`,
-`harness_only`, or `both`; enforcement is `enforced`, `brokered`, or `advisory`.
-`expires_at` is the resolved lease expiry in RFC 3339 UTC form or `null`.
-Reduced-validation acceptance, its exact assessment digest, and all omitted
-check IDs are mandatory even when empty. Authentication material, tokens, and
-credential values MUST NOT enter the projection.
+is one of `approved`, `denied`, `unavailable`, `provisioning_failed`, or
+`expired`; requirement is `required` or `optional`; `roles` contains exactly
+one of `agent`, `harness_only`, or `both`; enforcement is `enforced`,
+`brokered`, or `advisory`. The harness derives status from the authoritative
+capability decision and current resolved lease:
+
+| Capability decision   | Resolved lease                        | Projected status      |
+| --------------------- | ------------------------------------- | --------------------- |
+| `approved`            | No lease or an unexpired active lease | `approved`            |
+| `approved`            | Expired                               | `expired`             |
+| `denied`              | None                                  | `denied`              |
+| `unavailable`         | None                                  | `unavailable`         |
+| `provisioning_failed` | None                                  | `provisioning_failed` |
+
+A non-approved decision with a lease is an invalid runtime invariant, not a new
+projection state. `expires_at` is the resolved lease expiry in RFC 3339 UTC form
+or `null`; the harness evaluates expiry with its current clock whenever it
+constructs or recomputes the projection. Reduced-validation acceptance, its
+exact assessment digest, and all omitted check IDs are mandatory even when
+empty. Authentication material, tokens, and credential values MUST NOT enter
+the projection.
 
 Any change to a status, requirement, role, scope, enforcement level, expiry,
 reduced-validation decision, assessment digest, or omitted check changes the
@@ -656,11 +670,11 @@ complete and health is unchanged.
 
 If the current frozen patch hash is `99…99` while the packet attests `22…22`,
 target recomputation fails with `packet_stale`; the attacker is skipped. If the
-target matches but `postgres_test` expired after packet creation, permission
-recomputation also fails with `packet_stale`, using diagnostic
-`permission_fingerprint_mismatch`. Either event consumes the
-single pre-invocation refresh. A matching replacement packet proceeds; another
-validation failure produces coverage loss.
+target matches but `postgres_test` expired after packet creation, its projected
+status changes from `approved` to `expired`; permission recomputation also fails
+with `packet_stale`, using diagnostic `permission_fingerprint_mismatch`. Both
+failures consume the single pre-invocation refresh. A matching replacement
+packet proceeds; another validation failure produces coverage loss.
 
 ### 11.4 Permission-related handoff blocker
 
@@ -722,6 +736,8 @@ apply.
   blocker, lifecycle sidecar, and telemetry linkage fields.
 - Implement JCS, target and permission projections, finding IDs, packet digests,
   UTF-8 byte measurement, exact duplicate rejection, and tail compaction.
+- Add permission-projection fixtures for every capability decision plus active
+  and expired approved leases; reject leases attached to non-approved decisions.
 - Add executable digest fixtures and invalid fixtures for every validation code.
 - Persist packets, validation outcomes, supersession/invalidation links, and v1
   read-only compatibility without an upgrade path.
