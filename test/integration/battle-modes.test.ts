@@ -215,6 +215,39 @@ describe("PR battle modes", () => {
     expect(resumed.state.contestants.a?.checks[0]?.id).toBe("initial-required");
   });
 
+  it("does not award a catch-up forfeit when the challenger is ineligible", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const pullRequestResolver = await fixturePullRequest(repositoryRoot);
+    const outcome = await new Arena({
+      adapters: {
+        codex: adapters().codex,
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_EMPTY_IMPLEMENTATION: "1" },
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+      pullRequestResolver,
+      freezePullRequest: (options) =>
+        freezePullRequest({
+          ...options,
+          fetchCommit: (_root, _repository, commit) => Promise.resolve(commit),
+        }),
+    }).fight(config(repositoryRoot, "catch_up"));
+
+    expect(outcome.state.status).toBe("inconclusive");
+    expect(outcome.state.terminalOutcome).toMatchObject({
+      phase: "pre_review",
+      kind: "inconclusive",
+      reasonCode: "implementation_empty_patch",
+      eligibleContestantIds: ["a"],
+    });
+    expect(outcome.state.patchRecommendation).toBeUndefined();
+    expect(outcome.state.reviewPrompt).toBeUndefined();
+  });
+
   it("runs a siege with test-only attacker evidence and makes only the defender reviewable", async () => {
     const repositoryRoot = await createSlugRepository();
     const pullRequestResolver = await fixturePullRequest(repositoryRoot);
