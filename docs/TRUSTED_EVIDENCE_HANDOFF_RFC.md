@@ -1,7 +1,9 @@
 # Trusted Evidence-Handoff v2
 
-Status: accepted MVP contract  
-Scope: reviewer-to-attacker handoff only  
+Status: accepted MVP contract
+
+Scope: reviewer-to-attacker handoff only
+
 Implementation tracking: GitHub issues #18, #19, #20, and #58
 
 ## 1. Purpose
