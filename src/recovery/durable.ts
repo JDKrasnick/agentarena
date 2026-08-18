@@ -6,8 +6,10 @@ import {
   calculateReplayHash,
   calculateSnapshotHash,
   canonicalJson,
+  RoundResultSchema,
   RoundSnapshotSchema,
   type RoundResult,
+  type RoundStateDelta,
   RoundStateDeltaSchema,
 } from "../contracts/round.js";
 import type { ArtifactStore } from "../artifacts/store.js";
@@ -23,7 +25,9 @@ import {
 import {
   CheckpointDescriptorSchema,
   FinalizationRecordSchema,
+  LegacyRoundSnapshotHeaderSchema,
   RoundEnvelopeSchema,
+  StoredRoundEnvelopeSchema,
   RunBaselineSchema,
   RunSummaryV6Schema,
   RunSummaryV7Schema,
@@ -63,6 +67,15 @@ export function calculateFinalizationHash(value: object): string {
 
 function sha256(bytes: Uint8Array | string): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function omitFields(
+  value: Record<string, unknown>,
+  fields: ReadonlySet<string>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !fields.has(key)),
+  );
 }
 
 async function readDurableArtifact(
@@ -220,7 +233,7 @@ async function readEnvelopeAt(
   roundId: 1 | 2 | 3 | "recovery" | "reconciliation",
 ): Promise<RoundEnvelope | undefined> {
   try {
-    const envelope = RoundEnvelopeSchema.parse(
+    const envelope = StoredRoundEnvelopeSchema.parse(
       JSON.parse(
         await readFile(
           store.resolve(`rounds/${String(roundId)}/envelope.json`),
@@ -235,14 +248,16 @@ async function readEnvelopeAt(
       calculateReplayHash(envelope.result.replay)
     )
       throw new Error(`Round ${String(roundId)} replay hash mismatch`);
-    const snapshot = RoundSnapshotSchema.parse(
-      JSON.parse(
-        await readFile(
-          store.resolve(`rounds/${String(roundId)}/snapshot.json`),
-          "utf8",
-        ),
+    const rawSnapshot = JSON.parse(
+      await readFile(
+        store.resolve(`rounds/${String(roundId)}/snapshot.json`),
+        "utf8",
       ),
-    );
+    ) as unknown;
+    const snapshot =
+      (rawSnapshot as { version?: unknown }).version === 4
+        ? RoundSnapshotSchema.parse(rawSnapshot)
+        : LegacyRoundSnapshotHeaderSchema.parse(rawSnapshot);
     if (
       snapshot.snapshotHash !== calculateSnapshotHash(snapshot) ||
       snapshot.snapshotHash !== envelope.snapshotHash ||
@@ -257,7 +272,7 @@ async function readEnvelopeAt(
           `Round ${String(roundId)} artifact hash mismatch: ${artifact.id}`,
         );
     }
-    return envelope;
+    return envelope as unknown as RoundEnvelope;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
@@ -294,6 +309,107 @@ export async function readEnvelopeChain(
     if (envelope.result.status !== "completed") break;
   }
   return envelopes;
+}
+
+function normalizeStoredRoundPayload(
+  envelope: RoundEnvelope,
+  rawDelta: unknown,
+): {
+  result: RoundResult;
+  delta: RoundStateDelta;
+  legacyDelta?: Record<string, unknown>;
+  legacyResult?: Record<string, unknown>;
+} {
+  const deltaVersion = (rawDelta as { version?: unknown }).version;
+  if (deltaVersion === 4) {
+    return {
+      result: RoundResultSchema.parse(envelope.result),
+      delta: RoundStateDeltaSchema.parse(rawDelta),
+    };
+  }
+  if (deltaVersion !== 1 && deltaVersion !== 2 && deltaVersion !== 3)
+    throw new Error("Unsupported round-state delta schema");
+  if (!rawDelta || typeof rawDelta !== "object")
+    throw new Error("Legacy round-state delta is not an object");
+  const legacyDelta = rawDelta as Record<string, unknown>;
+  for (const field of [
+    "attacks",
+    "invocations",
+    "cases",
+    "promptManifests",
+    "checks",
+    "roundSummaries",
+    "healthEvents",
+    "patchMetadata",
+  ]) {
+    if (!Array.isArray(legacyDelta[field]))
+      throw new Error(`Legacy round-state delta has invalid ${field}`);
+  }
+  const legacyResult = envelope.result as unknown as Record<string, unknown>;
+  const replay = legacyResult.replay as Record<string, unknown>;
+  const normalizedRoundId =
+    typeof legacyResult.roundId === "number" ? legacyResult.roundId : 3;
+  const resultFields = omitFields(
+    legacyResult,
+    new Set(["reconciliationQueue"]),
+  );
+  const replayFields = omitFields(replay, new Set(["reconciliationQueue"]));
+  const legacyContestants: unknown[] = Array.isArray(
+    legacyResult.resultingContestants,
+  )
+    ? (legacyResult.resultingContestants as unknown[])
+    : [];
+  const resultingContestants = legacyContestants.length
+    ? legacyContestants.map((entry): unknown => {
+        if (!entry || typeof entry !== "object") return entry;
+        return omitFields(
+          entry as Record<string, unknown>,
+          new Set(["replacementCredits"]),
+        );
+      })
+    : legacyResult.resultingContestants;
+  const normalizedResult = {
+    ...resultFields,
+    version: 4,
+    roundId: normalizedRoundId,
+    failureRecords: [],
+    resultingContestants,
+    replay: {
+      ...replayFields,
+      version: 4,
+      roundId: normalizedRoundId,
+      failureRecords: [],
+    },
+  } as unknown as RoundResult;
+  const deltaFields = omitFields(
+    legacyDelta,
+    new Set(["harnessOverlays", "reconciliationQueue"]),
+  );
+  const normalizedDelta = {
+    ...deltaFields,
+    version: 4,
+    roundId: normalizedRoundId,
+    failureRecords: [],
+    ...(legacyDelta.coordinator && typeof legacyDelta.coordinator === "object"
+      ? {
+          coordinator: {
+            ...(legacyDelta.coordinator as Record<string, unknown>),
+            ...((legacyDelta.coordinator as { currentRound?: unknown })
+              .currentRound === "recovery" ||
+            (legacyDelta.coordinator as { currentRound?: unknown })
+              .currentRound === "reconciliation"
+              ? { currentRound: normalizedRoundId }
+              : {}),
+          },
+        }
+      : {}),
+  } as unknown as RoundStateDelta;
+  return {
+    result: normalizedResult,
+    delta: normalizedDelta,
+    legacyDelta,
+    legacyResult,
+  };
 }
 
 function envelopeMatchesLedger(
@@ -338,10 +454,50 @@ export async function applyEnvelopeExactlyOnce(options: {
   );
   if (sha256(deltaBytes) !== options.envelope.stateDelta.sha256)
     throw new Error("Round-state delta artifact is corrupt");
-  const delta = RoundStateDeltaSchema.parse(
+  const payload = normalizeStoredRoundPayload(
+    options.envelope,
     JSON.parse(deltaBytes.toString("utf8")) as unknown,
   );
-  applyCompletedRound(options.state, options.envelope.result, delta);
+  applyCompletedRound(options.state, payload.result, payload.delta);
+  if (payload.legacyDelta && payload.legacyResult) {
+    if (
+      "reconciliationQueue" in options.state &&
+      Array.isArray(payload.legacyDelta.reconciliationQueue)
+    ) {
+      options.state.reconciliationQueue = structuredClone(
+        payload.legacyDelta.reconciliationQueue,
+      ) as typeof options.state.reconciliationQueue;
+    }
+    if (
+      "harnessOverlays" in options.state &&
+      Array.isArray(payload.legacyDelta.harnessOverlays)
+    ) {
+      options.state.harnessOverlays.push(
+        ...(structuredClone(
+          payload.legacyDelta.harnessOverlays,
+        ) as typeof options.state.harnessOverlays),
+      );
+    }
+    const resultingContestants = payload.legacyResult.resultingContestants;
+    if (Array.isArray(resultingContestants)) {
+      for (const resulting of resultingContestants) {
+        if (!resulting || typeof resulting !== "object") continue;
+        const candidate = resulting as Record<string, unknown>;
+        const contestantId = candidate.contestantId;
+        if (
+          (contestantId === "a" || contestantId === "b") &&
+          Array.isArray(candidate.replacementCredits)
+        ) {
+          const contestant = options.state.contestants[contestantId];
+          if (contestant && "replacementCredits" in contestant) {
+            contestant.replacementCredits = structuredClone(
+              candidate.replacementCredits,
+            ) as typeof contestant.replacementCredits;
+          }
+        }
+      }
+    }
+  }
   return {
     applied: true,
     ledger: [

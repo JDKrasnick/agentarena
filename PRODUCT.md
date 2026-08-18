@@ -276,7 +276,7 @@ Each round has its own symmetric, versioned prompt and investigation brief:
 | Round | Focus | Injected bug-finding methods |
 | --- | --- | --- |
 | 1 — Contract and local correctness | Acceptance criteria, wrong output, regressions, negative cases, boundaries, and error handling. | Requirement-to-code tracing, examples, table tests, boundary analysis, and focused API assertions. |
-| 2 — Systematic exploration | State transitions, persistence, serialization, ordering, concurrency, cleanup, cancellation, and test-suite blind spots. | Property and state-machine tests, generated inputs, fuzzing, mutation-guided probes, static leads, and controlled schedules. |
+| 2 — Systematic exploration | State transitions, persistence, serialization, ordering, concurrency, cleanup, cancellation, and test-suite blind spots. | Property and state-machine tests, generated inputs, fuzzing, mutation-guided probes, static leads, controlled schedules, and—when relevant—prior-version artifact compatibility or full retry/persistence lifecycle probes. |
 | 3 — Integration, resilience, and security | Real component boundaries, dependency contracts, configuration, authentication and authorization, timeouts, retries, idempotency, partial failure, recovery, and resource behavior. | Approved ephemeral services, protocol checks, fault injection, security checks, deterministic stress, and steady-state invariants. |
 
 Required repository integration checks still run at baseline and after every
@@ -363,6 +363,14 @@ health, permission manifest, budgets, recoil table, and output schema. Prompts,
 method versions, tool versions, seeds, and hashes are run artifacts. Repair and
 judge invocations use separate prompts because they have different allowed
 evidence and actions.
+
+Round 2 method packs expose versioned-contract compatibility and policy-wiring
+lifecycle probes as advisory options. Agents may pursue them when the frozen
+patch changes schema versions, durable readers or writers, retry behavior,
+recovery, or persistence. They are not required for unrelated patches. A
+compatibility probe should prefer a genuine prior-version fixture; a lifecycle
+probe should exercise a production path through failure, retry, recovery,
+persistence, and resume rather than testing only an isolated helper.
 
 ### 5. Attack validation
 

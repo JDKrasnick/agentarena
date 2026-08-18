@@ -242,6 +242,114 @@ describe("durable round recovery", () => {
     },
   );
 
+  it("reads and applies completed pre-V4 durable envelopes", async () => {
+    const { store, before, resultFor } = await fixture();
+    const current = await sealRoundEnvelope({
+      store,
+      result: resultFor("completed"),
+      priorEnvelopeHash: null,
+    });
+
+    const snapshot = JSON.parse(
+      await readFile(store.resolve("rounds/1/snapshot.json"), "utf8"),
+    ) as Record<string, unknown>;
+    snapshot.version = 3;
+    Reflect.deleteProperty(snapshot, "failureRecords");
+    snapshot.reconciliationQueue = [];
+    snapshot.contestants = (
+      snapshot.contestants as Record<string, unknown>[]
+    ).map((contestant) => ({ ...contestant, replacementCredits: [] }));
+    snapshot.snapshotHash = calculateSnapshotHash(snapshot);
+    await store.writeJson("rounds/1/snapshot.json", snapshot);
+
+    const delta = JSON.parse(
+      await readFile(store.resolve("rounds/1/state-delta.json"), "utf8"),
+    ) as Record<string, unknown>;
+    delta.version = 3;
+    Reflect.deleteProperty(delta, "failureRecords");
+    delta.harnessOverlays = [];
+    delta.reconciliationQueue = [];
+    const deltaText = `${JSON.stringify(delta, null, 2)}\n`;
+    await store.writeText("rounds/1/state-delta.json", deltaText);
+
+    const envelope = structuredClone(current) as unknown as Record<
+      string,
+      unknown
+    >;
+    envelope.version = 3;
+    envelope.snapshotHash = snapshot.snapshotHash;
+    const result = envelope.result as Record<string, unknown>;
+    result.version = 3;
+    result.reconciliationQueue = [];
+    Reflect.deleteProperty(result, "failureRecords");
+    result.resultingContestants = (
+      result.resultingContestants as Record<string, unknown>[]
+    ).map((contestant) => ({ ...contestant, replacementCredits: [] }));
+    const replay = result.replay as Record<string, unknown>;
+    replay.version = 3;
+    replay.snapshotHash = snapshot.snapshotHash;
+    replay.reconciliationQueue = [];
+    Reflect.deleteProperty(replay, "failureRecords");
+    const updateDeltaArtifact = (artifact: Record<string, unknown>) =>
+      artifact.id === "delta-1"
+        ? { ...artifact, sha256: sha256(deltaText) }
+        : artifact;
+    replay.artifacts = (replay.artifacts as Record<string, unknown>[]).map(
+      updateDeltaArtifact,
+    );
+    replay.replayHash = calculateReplayHash(replay);
+    envelope.replayHash = replay.replayHash;
+    envelope.stateDelta = updateDeltaArtifact(
+      envelope.stateDelta as Record<string, unknown>,
+    );
+    envelope.artifacts = (envelope.artifacts as Record<string, unknown>[]).map(
+      updateDeltaArtifact,
+    );
+    envelope.envelopeHash = calculateEnvelopeHash(envelope);
+    await store.writeJson("rounds/1/envelope.json", envelope);
+
+    const [legacy] = await readEnvelopeChain(store);
+    expect(legacy?.version).toBe(3);
+    const state = structuredClone(before);
+    const application = await applyEnvelopeExactlyOnce({
+      store,
+      state,
+      envelope: legacy!,
+      ledger: [],
+    });
+    expect(application.applied).toBe(true);
+    expect(state.warnings).toEqual(["sealed warning"]);
+
+    delta.roundId = "recovery";
+    delta.coordinator = {
+      ...(delta.coordinator as Record<string, unknown>),
+      currentRound: "recovery",
+    };
+    const recoveryDeltaText = `${JSON.stringify(delta, null, 2)}\n`;
+    await store.writeText("rounds/1/state-delta.json", recoveryDeltaText);
+    const recoveryEnvelope = structuredClone(legacy) as unknown as Record<
+      string,
+      unknown
+    >;
+    recoveryEnvelope.roundId = "recovery";
+    recoveryEnvelope.stateDelta = {
+      ...(recoveryEnvelope.stateDelta as Record<string, unknown>),
+      sha256: sha256(recoveryDeltaText),
+    };
+    const recoveryResult = recoveryEnvelope.result as Record<string, unknown>;
+    recoveryResult.roundId = "recovery";
+    (recoveryResult.replay as Record<string, unknown>).roundId = "recovery";
+    const recoveryState = structuredClone(before);
+    await expect(
+      applyEnvelopeExactlyOnce({
+        store,
+        state: recoveryState,
+        envelope: recoveryEnvelope as never,
+        ledger: [],
+      }),
+    ).resolves.toMatchObject({ applied: true });
+  });
+
   it("applies an envelope once, no-ops an identical replay, and rejects a conflict", async () => {
     const { store, before, resultFor } = await fixture();
     const envelope = await sealRoundEnvelope({

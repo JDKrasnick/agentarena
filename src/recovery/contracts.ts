@@ -69,6 +69,81 @@ export const RoundEnvelopeSchema = z
   .readonly();
 export type RoundEnvelope = z.infer<typeof RoundEnvelopeSchema>;
 
+/**
+ * Read-only header validation for completed envelopes written before V4.
+ * Their full payload remains hash-authoritative and is normalized only while
+ * reconstructing legacy state; new writes always use RoundEnvelopeSchema.
+ */
+const LegacyRoundReplayHeaderSchema = z
+  .object({
+    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    runId: IdentifierSchema,
+    roundId: RoundIdSchema,
+    snapshotHash: Sha256Schema,
+    priorReplayHash: Sha256Schema.nullable(),
+    replayHash: Sha256Schema,
+  })
+  .passthrough();
+
+const LegacyRoundResultHeaderSchema = z
+  .object({
+    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    status: z.enum(["completed", "inconclusive", "cancelled", "failed"]),
+    runId: IdentifierSchema,
+    roundId: RoundIdSchema,
+    resultingContestants: z.array(JsonValueSchema).length(2),
+    replay: LegacyRoundReplayHeaderSchema,
+  })
+  .passthrough();
+
+export const LegacyRoundEnvelopeSchema = z
+  .object({
+    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    runId: IdentifierSchema,
+    roundId: RoundIdSchema,
+    sealedAt: IsoDateSchema,
+    priorEnvelopeHash: Sha256Schema.nullable(),
+    snapshotHash: Sha256Schema,
+    replayHash: Sha256Schema,
+    stateDelta: ArtifactReferenceSchema.extend({
+      kind: z.literal("round_state_delta"),
+    }),
+    artifacts: z.array(ArtifactReferenceSchema),
+    result: LegacyRoundResultHeaderSchema,
+    envelopeHash: Sha256Schema,
+  })
+  .strict()
+  .superRefine((envelope, context) => {
+    if (
+      envelope.result.runId !== envelope.runId ||
+      envelope.result.roundId !== envelope.roundId ||
+      envelope.result.replay.snapshotHash !== envelope.snapshotHash ||
+      envelope.result.replay.replayHash !== envelope.replayHash
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["result"],
+        message: "Legacy envelope and round result identities must match",
+      });
+    }
+  })
+  .readonly();
+
+export const StoredRoundEnvelopeSchema = z.union([
+  RoundEnvelopeSchema,
+  LegacyRoundEnvelopeSchema,
+]);
+
+export const LegacyRoundSnapshotHeaderSchema = z
+  .object({
+    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    runId: IdentifierSchema,
+    roundId: RoundIdSchema,
+    snapshotHash: Sha256Schema,
+    priorReplayHash: Sha256Schema.nullable(),
+  })
+  .passthrough();
+
 export const RunBaselineSchema = z
   .object({
     version: z.literal(1),

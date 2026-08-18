@@ -150,6 +150,19 @@ describe("runtime guards and deterministic prompts", () => {
     });
     expect(first).toBe(repeated);
     expect(second).not.toBe(first);
+    expect(roundTwo.methodPackIds).toEqual(
+      expect.arrayContaining([
+        "versioned-contract-compatibility@1",
+        "policy-wiring-lifecycle@1",
+      ]),
+    );
+    expect(second).toContain(
+      "These are advisory options: pursue them only when the changed surfaces make them relevant",
+    );
+    expect(second).toContain("genuine prior-version fixture");
+    expect(second).toContain(
+      "failure, retry, recovery, persistence, and resume",
+    );
     expect(
       createPromptManifest(1, roundOne, "seed", "one.md", first).promptHash,
     ).not.toBe(

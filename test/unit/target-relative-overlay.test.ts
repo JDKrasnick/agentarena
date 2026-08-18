@@ -4,6 +4,7 @@ import path from "node:path";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import type { AttackVerifier } from "../../src/agents/adapter.js";
+import type { FailureRecord } from "../../src/contracts/failure.js";
 import { validateHouseAttack } from "../../src/attacks/validate.js";
 import { FightConfigSchema, type Attack } from "../../src/core/types.js";
 import { RunSpecSchema } from "../../src/contracts/round.js";
@@ -221,17 +222,23 @@ describe("target-relative test overlays", () => {
         proposedSeverity: "medium",
         checks: [],
       };
+      let assessmentAttempts = 0;
+      const assessmentFailures: FailureRecord[] = [];
       const verifier: AttackVerifier = {
         id: "codex",
-        assess: () =>
-          Promise.resolve({
+        assess: () => {
+          assessmentAttempts += 1;
+          if (assessmentAttempts === 1)
+            return Promise.reject(new Error("transient assessment outage"));
+          return Promise.resolve({
             relevant: true,
             oracleSupported: true,
             oracleRationale: "The acceptance criterion is explicit",
             rootDefectId: "whitespace-collapse",
             severity: "medium",
             rationale: "A realistic input violates the required normalization",
-          }),
+          });
+        },
       };
 
       const result = await validateHouseAttack({
@@ -249,13 +256,96 @@ describe("target-relative test overlays", () => {
         logRoot: path.join(temporaryRoot, "logs"),
         signal: new AbortController().signal,
         knownRootDefects: new Set(),
+        persistFailureRecord: (record) => {
+          assessmentFailures.push(structuredClone(record));
+          return Promise.resolve();
+        },
       });
 
+      expect(assessmentAttempts).toBe(2);
+      expect(assessmentFailures.at(-1)).toMatchObject({
+        terminalDisposition: "recovered",
+        attempts: [
+          { attempt: 1, status: "failed" },
+          { attempt: 2, status: "succeeded" },
+        ],
+      });
       expect(result.status).toBe("landed");
       expect(result.targets).toEqual(["a"]);
       expect(result.checks.some((check) => check.kind === "baseline")).toBe(
         false,
       );
+
+      let adjudicationAttempts = 0;
+      const persistedFailures: FailureRecord[] = [];
+      const fallback = await validateHouseAttack({
+        attack: { ...attack, id: "house-target-relative-fallback", checks: [] },
+        targetPatches: { a: implementationPatch },
+        runSpec,
+        permissionPolicy: {
+          defaultMode: "confirm",
+          capabilities: [],
+          reducedValidationAccepted: false,
+        },
+        config,
+        worktrees,
+        verifier: {
+          id: "codex",
+          assess: () => Promise.reject(new Error("mechanics unavailable")),
+          adjudicate: () => {
+            adjudicationAttempts += 1;
+            if (adjudicationAttempts === 1)
+              return Promise.reject(new Error("transient judge outage"));
+            return Promise.resolve({
+              decision: "confirmed",
+              relevant: true,
+              expectedBehaviorClearlySupported: true,
+              evidencePointsToDefect: true,
+              rootDefectId: "whitespace-collapse",
+              severity: "medium",
+              rationale: "The frozen task and overlay establish the defect",
+            });
+          },
+        },
+        logRoot: path.join(temporaryRoot, "fallback-logs"),
+        signal: new AbortController().signal,
+        knownRootDefects: new Set(),
+        persistFailureRecord: (record) => {
+          persistedFailures.push(structuredClone(record));
+          return Promise.resolve();
+        },
+      });
+
+      expect(adjudicationAttempts).toBe(2);
+      expect(fallback).toMatchObject({
+        status: "landed",
+        evidenceProvenance: "judge_confirmed",
+      });
+      const exhaustedAssessmentFailures = persistedFailures.filter((record) =>
+        record.subject.startsWith("verifier-assess:"),
+      );
+      expect(exhaustedAssessmentFailures).toHaveLength(2);
+      expect(exhaustedAssessmentFailures.at(-1)).toMatchObject({
+        terminalDisposition: "coverage_lost",
+        attempts: [
+          { attempt: 1, status: "failed" },
+          { attempt: 2, status: "failed" },
+        ],
+      });
+      const judgeFailures = persistedFailures.filter((record) =>
+        record.subject.startsWith("judge-fallback:"),
+      );
+      expect(judgeFailures).toHaveLength(2);
+      expect(judgeFailures[0]?.attempts).toEqual([
+        expect.objectContaining({ attempt: 1, status: "failed" }),
+      ]);
+      expect(judgeFailures[1]).toMatchObject({
+        terminalDisposition: "recovered",
+        attempts: [
+          { attempt: 1, status: "failed" },
+          { attempt: 2, status: "succeeded" },
+        ],
+      });
     } finally {
       await worktrees.cleanup();
     }

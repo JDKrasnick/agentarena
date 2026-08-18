@@ -207,7 +207,7 @@ symmetrically.
 | --- | --- | --- |
 | Implementation | Build the smallest complete patch from the immutable RunSpec. Reproduce the reported behavior before changing code when practical. | Required repository command and focused implementation tests. |
 | Round 1 — contract and local correctness | Trace every acceptance criterion through the changed code. Look for wrong results, missing behavior, regressions, error handling, and input or boundary mistakes. | Examples, table tests, boundary tests, negative cases, and API assertions. |
-| Round 2 — systematic exploration | Look beyond obvious examples: state transitions, ordering, persistence, serialization, mutation survivors, generated inputs, concurrency schedules, cancellation, resource cleanup, and patch interactions. | Property-based tests, fuzz or generated cases, mutation-guided tests, schedule tests, static-analysis findings with executable reproducers, and state-machine tests. |
+| Round 2 — systematic exploration | Look beyond obvious examples: state transitions, ordering, persistence, serialization, mutation survivors, generated inputs, concurrency schedules, cancellation, resource cleanup, and patch interactions. | Property-based tests, fuzz or generated cases, mutation-guided tests, schedule tests, static-analysis findings with executable reproducers, state-machine tests, and relevant prior-version or retry/persistence lifecycle probes. |
 | Round 3 — integration, resilience, and security | Exercise the patch across its real component boundaries with approved test dependencies. Vary configuration and dependency behavior; test authentication and authorization, retries, idempotency, timeouts, partial failure, recovery, and bounded load. | Ephemeral-service integration tests, protocol assertions, fault injection, security checks, recovery invariants, leak checks, and small deterministic stress tests. |
 | Final validation | Re-run the required suite and every already accepted arena check. It discovers no score-changing surprise after the last repair opportunity. | A deterministic patch-by-check matrix and health-ledger replay. |
 
@@ -737,7 +737,11 @@ Yes: every round has its own prompt. The harness composes it from:
 
 Round 1 asks the agent to map requirements to observable behavior. Round 2 asks
 for a diverse hypothesis portfolio and systematic probes rather than three
-variations of the same example. Round 3 supplies the approved integration
+variations of the same example. As advisory options, its method pack suggests
+loading a genuine prior-version artifact when versioned contracts or durable
+readers change, and tracing a production failure through retry, recovery,
+persistence, and resume when retry or recovery policy changes. Agents skip
+these probes when the changed surfaces make them irrelevant. Round 3 supplies the approved integration
 topology, test identities, dependency contracts, fault controls, and
 steady-state invariants. Repair and judge prompts remain separate because their
 allowed evidence and success conditions differ.

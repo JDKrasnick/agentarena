@@ -55,6 +55,7 @@ import {
   resolveRepositoryRoot,
   WorktreeManager,
 } from "../repo/git.js";
+import { prepareWorktreeWithRetry } from "../repo/retry.js";
 import {
   renderConsoleSummary,
   type ConsoleRenderOptions,
@@ -69,6 +70,7 @@ import {
   inconclusiveQualityVerdict,
   type PatchQualityVerifier,
 } from "../quality/verifier.js";
+import { compareQualityWithRetry } from "../quality/retry.js";
 import { selectRecommendedPatch } from "../recommendation/select-patch.js";
 import { buildReviewPrompt } from "../review/prompt.js";
 import { runShellCommand } from "../runner/process-runner.js";
@@ -80,6 +82,12 @@ import {
   type ResolvedPullRequest,
 } from "../task/task-contract.js";
 import type { RunSpec } from "../contracts/round.js";
+import {
+  FailureRecordSchema,
+  type FailureCategory,
+  type FailureRecord,
+  type FailureStage,
+} from "../contracts/failure.js";
 import {
   freezePullRequest,
   type PullRequestFixtureOptions,
@@ -1371,38 +1379,162 @@ export class RoundEngine {
     return `${label}: ${detail || parsed.outcome}. Raw: ${rawPath}. Parsed: ${parsedPath}`;
   }
 
-  private recordSubmissionFailure(
+  private async persistFailureRecord(
+    context: ArenaContext,
+    record: FailureRecord,
+  ): Promise<void> {
+    const existing = context.state.failureRecords.findIndex(
+      (candidate) => candidate.failureId === record.failureId,
+    );
+    if (existing >= 0) context.state.failureRecords[existing] = record;
+    else context.state.failureRecords.push(record);
+    await context.store.writeJson(`failures/${record.failureId}.json`, record);
+    await this.persist(context);
+  }
+
+  private prepareWorktree(
+    context: ArenaContext,
+    options: {
+      name: string;
+      subject: string;
+      patches?: readonly string[];
+      contestantId?: ContestantId;
+      attackId?: string;
+      laneId?: string;
+      runLevel?: boolean;
+    },
+  ): Promise<string> {
+    return prepareWorktreeWithRetry({
+      worktrees: context.worktrees,
+      name: options.name,
+      subject: options.subject,
+      patches: options.patches ?? [],
+      persistFailureRecord: (record) =>
+        this.persistFailureRecord(context, record),
+      terminalDisposition: options.runLevel
+        ? "run_level_coverage_lost"
+        : "coverage_lost",
+      now: this.now,
+      ...(options.contestantId ? { contestantId: options.contestantId } : {}),
+      ...(options.attackId ? { attackId: options.attackId } : {}),
+      ...(options.laneId ? { laneId: options.laneId } : {}),
+    });
+  }
+
+  private async recordFailureAttempt(
+    context: ArenaContext,
+    options: {
+      stage: FailureStage;
+      subject: string;
+      category: FailureCategory;
+      attempt: 1 | 2;
+      startedAt: string;
+      finishedAt: string;
+      status: "failed" | "succeeded";
+      diagnosticArtifactRefs: string[];
+      reusedArtifactRefs?: string[];
+      contestantId?: ContestantId;
+      laneId?: string;
+      attackId?: string;
+      existing?: FailureRecord;
+      terminalDisposition?:
+        | "recovered"
+        | "coverage_lost"
+        | "run_level_coverage_lost"
+        | "judge_unable";
+    },
+  ): Promise<FailureRecord> {
+    const causalDigest =
+      options.existing?.causalDigest ??
+      calculateCanonicalHash({
+        stage: options.stage,
+        subject: options.subject,
+        category: options.category,
+      });
+    const failureId = stableId(
+      "failure",
+      options.stage,
+      options.subject,
+      causalDigest,
+    );
+    const diagnosticArtifactRefs = [
+      ...new Set([
+        ...(options.existing?.diagnosticArtifactRefs ?? []),
+        ...options.diagnosticArtifactRefs,
+      ]),
+    ];
+    const record = FailureRecordSchema.parse({
+      version: 1,
+      failureId,
+      stage: options.stage,
+      subject: options.subject,
+      category: options.category,
+      causalDigest,
+      attempts: [
+        ...(options.existing?.attempts ?? []),
+        {
+          attempt: options.attempt,
+          startedAt: options.startedAt,
+          finishedAt: options.finishedAt,
+          status: options.status,
+          diagnosticArtifactRefs: options.diagnosticArtifactRefs,
+        },
+      ],
+      reusedArtifactRefs:
+        options.existing?.reusedArtifactRefs ??
+        options.reusedArtifactRefs ??
+        [],
+      diagnosticArtifactRefs,
+      ...(options.contestantId ? { contestantId: options.contestantId } : {}),
+      ...(options.laneId ? { laneId: options.laneId } : {}),
+      ...(options.attackId ? { attackId: options.attackId } : {}),
+      ...(options.terminalDisposition
+        ? { terminalDisposition: options.terminalDisposition }
+        : {}),
+    });
+    await this.persistFailureRecord(context, record);
+    return record;
+  }
+
+  private async recordSubmissionAttempt(
     context: ArenaContext,
     options: {
       round: RoundId;
       actor: ContestantId;
       target: ContestantId;
       phase: "review" | "attack";
-      parsed: ParsedSubmission<unknown>;
-      rawPath: string;
-      parsedPath: string;
+      attempt: 1 | 2;
+      startedAt: string;
+      finishedAt: string;
+      status: "failed" | "succeeded";
+      diagnosticArtifactRefs: string[];
+      cause: string;
+      existing?: FailureRecord;
+      terminalDisposition?: "recovered" | "coverage_lost";
     },
-  ): void {
-    if (
-      options.parsed.outcome !== "partial" &&
-      options.parsed.outcome !== "invalid"
-    )
-      return;
+  ): Promise<FailureRecord> {
     const subject = `${options.phase}-submission:${String(options.round)}:${options.actor}->${options.target}`;
-    const causalDigest = calculateCanonicalHash({
-      subject,
-      rejections: options.parsed.rejections,
-    });
+    const causalDigest =
+      options.existing?.causalDigest ??
+      calculateCanonicalHash({ subject, cause: options.cause });
     const failureId = stableId("failure", subject, causalDigest);
-    if (
-      context.state.failureRecords.some(
-        (record) => record.failureId === failureId,
-      )
-    )
-      return;
-    const recordedAt = this.now().toISOString();
-    const diagnosticArtifactRefs = [options.rawPath, options.parsedPath];
-    context.state.failureRecords.push({
+    const attempts = [
+      ...(options.existing?.attempts ?? []),
+      {
+        attempt: options.attempt,
+        startedAt: options.startedAt,
+        finishedAt: options.finishedAt,
+        status: options.status,
+        diagnosticArtifactRefs: options.diagnosticArtifactRefs,
+      },
+    ];
+    const diagnosticArtifactRefs = [
+      ...new Set([
+        ...(options.existing?.diagnosticArtifactRefs ?? []),
+        ...options.diagnosticArtifactRefs,
+      ]),
+    ];
+    const record = FailureRecordSchema.parse({
       version: 1,
       failureId,
       stage: "parsing",
@@ -1411,17 +1543,15 @@ export class RoundEngine {
       contestantId: options.actor,
       category: "invalid_output",
       causalDigest,
-      attempts: ([1, 2] as const).map((attempt) => ({
-        attempt,
-        startedAt: recordedAt,
-        finishedAt: recordedAt,
-        status: "failed" as const,
-        diagnosticArtifactRefs,
-      })),
+      attempts,
       reusedArtifactRefs: [],
       diagnosticArtifactRefs,
-      terminalDisposition: "coverage_lost",
+      ...(options.terminalDisposition
+        ? { terminalDisposition: options.terminalDisposition }
+        : {}),
     });
+    await this.persistFailureRecord(context, record);
+    return record;
   }
 
   private async persistReturnedSubmission(
@@ -1860,6 +1990,7 @@ export class RoundEngine {
     context.state.stage = result.status;
     context.state.completedAt = completedAt;
     context.state.updatedAt = completedAt;
+    context.state.failureRecords = structuredClone(result.failureRecords);
     context.state.warnings.push(
       ...result.diagnostics.map((entry) => entry.message),
     );
@@ -1944,23 +2075,107 @@ export class RoundEngine {
     await this.transition(context, "resolve_permissions");
     const unavailable: string[] = [];
     for (const agent of context.config.agents) {
-      const availability = await this.adapterFor(
-        context,
-        agent,
-      ).checkAvailability();
+      let availability!: Awaited<ReturnType<AgentAdapter["checkAvailability"]>>;
+      let availabilityFailure: FailureRecord | undefined;
+      for (const attempt of [1, 2] as const) {
+        const startedAt = this.now().toISOString();
+        availability = await this.adapterFor(
+          context,
+          agent,
+        ).checkAvailability();
+        const finishedAt = this.now().toISOString();
+        if (availability.available) {
+          if (availabilityFailure) {
+            await this.recordFailureAttempt(context, {
+              stage: "capability_provisioning",
+              subject: `availability:${agent}`,
+              category: availabilityFailure.category,
+              attempt: 2,
+              startedAt,
+              finishedAt,
+              status: "succeeded",
+              diagnosticArtifactRefs: [],
+              contestantId: agent,
+              existing: availabilityFailure,
+              terminalDisposition: "recovered",
+            });
+          }
+          break;
+        }
+        availabilityFailure = await this.recordFailureAttempt(context, {
+          stage: "capability_provisioning",
+          subject: `availability:${agent}`,
+          category: "capability_unavailable",
+          attempt,
+          startedAt,
+          finishedAt,
+          status: "failed",
+          diagnosticArtifactRefs: [],
+          contestantId: agent,
+          ...(availabilityFailure ? { existing: availabilityFailure } : {}),
+          ...(attempt === 2
+            ? { terminalDisposition: "run_level_coverage_lost" as const }
+            : {}),
+        });
+      }
       if (!availability.available)
         unavailable.push(`${agent}: ${availability.reason ?? "unavailable"}`);
     }
     if (unavailable.length > 0)
       throw new Error(`Agent availability failed:\n${unavailable.join("\n")}`);
-    const baseline = await context.worktrees.create("preflight-baseline");
+    const baseline = await this.prepareWorktree(context, {
+      name: "preflight-baseline",
+      subject: "preflight-baseline-worktree",
+      runLevel: true,
+    });
     try {
-      const command = await runShellCommand(context.config.testCommand, {
-        cwd: baseline,
-        timeoutMs: context.config.limits.attackMs,
-        logPrefix: context.store.resolve("logs/preflight-baseline"),
-        signal: context.controller.signal,
-      });
+      let command!: Awaited<ReturnType<typeof runShellCommand>>;
+      let baselineFailure: FailureRecord | undefined;
+      for (const attempt of [1, 2] as const) {
+        const startedAt = this.now().toISOString();
+        const logPrefix = context.store.resolve(
+          `logs/preflight-baseline-attempt-${String(attempt)}`,
+        );
+        command = await runShellCommand(context.config.testCommand, {
+          cwd: baseline,
+          timeoutMs: context.config.limits.attackMs,
+          logPrefix,
+          signal: context.controller.signal,
+        });
+        const finishedAt = this.now().toISOString();
+        const diagnosticArtifactRefs = [command.stdoutPath, command.stderrPath];
+        if (command.failureClass !== "arena_infrastructure") {
+          if (baselineFailure) {
+            await this.recordFailureAttempt(context, {
+              stage: "required_validation",
+              subject: "preflight-baseline",
+              category: baselineFailure.category,
+              attempt: 2,
+              startedAt,
+              finishedAt,
+              status: "succeeded",
+              diagnosticArtifactRefs,
+              existing: baselineFailure,
+              terminalDisposition: "recovered",
+            });
+          }
+          break;
+        }
+        baselineFailure = await this.recordFailureAttempt(context, {
+          stage: "required_validation",
+          subject: "preflight-baseline",
+          category: "command_execution",
+          attempt,
+          startedAt,
+          finishedAt,
+          status: "failed",
+          diagnosticArtifactRefs,
+          ...(baselineFailure ? { existing: baselineFailure } : {}),
+          ...(attempt === 2
+            ? { terminalDisposition: "run_level_coverage_lost" as const }
+            : {}),
+        });
+      }
       if (command.failureClass === "arena_infrastructure") {
         throw new Error("Baseline validation could not start");
       }
@@ -1984,7 +2199,12 @@ export class RoundEngine {
     for (const agent of implementationAgents) {
       worktrees.set(
         agent,
-        await context.worktrees.create(`implement-${agent}`),
+        await this.prepareWorktree(context, {
+          name: `implement-${agent}`,
+          subject: `implementation-worktree:${agent}`,
+          contestantId: agent,
+          runLevel: true,
+        }),
       );
     }
     try {
@@ -2004,35 +2224,84 @@ export class RoundEngine {
             `prompts/implementation-${agent}.md`,
             prompt,
           );
-          const invocation = await this.adapterFor(context, agent).implement({
-            worktree,
-            contestantId: agent,
-            prompt,
-            promptPath,
-            transcriptPrefix: context.store.resolve(
-              `logs/implementation-${agent}`,
-            ),
-            timeoutMs: context.config.limits.implementationMs,
-            signal: context.controller.signal,
-          });
           const contestant = getContestant(context.state, agent);
-          invocation.contestantId = agent;
-          invocation.role = contestant.role;
-          contestant.implementation = invocation;
-          if (invocation.status !== "succeeded") {
+          let invocation!: AgentInvocation;
+          let implementationFailure: FailureRecord | undefined;
+          for (const attempt of [1, 2] as const) {
+            const startedAt = this.now().toISOString();
+            const transcriptPrefix = context.store.resolve(
+              `logs/implementation-${agent}-attempt-${String(attempt)}`,
+            );
+            invocation = await this.adapterFor(context, agent).implement({
+              worktree,
+              contestantId: agent,
+              prompt,
+              promptPath,
+              transcriptPrefix,
+              timeoutMs: context.config.limits.implementationMs,
+              signal: context.controller.signal,
+            });
+            const finishedAt = this.now().toISOString();
+            invocation.contestantId = agent;
+            invocation.role = contestant.role;
+            contestant.implementation = invocation;
+            if (invocation.status === "succeeded") {
+              if (implementationFailure) {
+                await this.recordFailureAttempt(context, {
+                  stage: "implementation",
+                  subject: `implementation:${agent}`,
+                  category: implementationFailure.category,
+                  attempt: 2,
+                  startedAt,
+                  finishedAt,
+                  status: "succeeded",
+                  diagnosticArtifactRefs: [promptPath, transcriptPrefix],
+                  contestantId: agent,
+                  existing: implementationFailure,
+                  terminalDisposition: "recovered",
+                });
+              }
+              break;
+            }
             if (invocation.status === "cancelled") {
               context.controller.abort(
                 new Error(`Implementation cancelled for ${agent}`),
               );
               throw new Error(`Implementation cancelled for ${agent}`);
             }
-            if (invocation.status === "infrastructure_error")
+            const category =
+              invocation.status === "timed_out"
+                ? ("timeout" as const)
+                : invocation.status === "infrastructure_error"
+                  ? ("process_launch" as const)
+                  : ("invalid_output" as const);
+            implementationFailure = await this.recordFailureAttempt(context, {
+              stage: "implementation",
+              subject: `implementation:${agent}`,
+              category: implementationFailure?.category ?? category,
+              attempt,
+              startedAt,
+              finishedAt,
+              status: "failed",
+              diagnosticArtifactRefs: [promptPath, transcriptPrefix],
+              contestantId: agent,
+              ...(implementationFailure
+                ? { existing: implementationFailure }
+                : {}),
+              ...(attempt === 2
+                ? { terminalDisposition: "run_level_coverage_lost" as const }
+                : {}),
+            });
+            if (attempt === 1) continue;
+            if (invocation.status === "infrastructure_error") {
               throw new Error(
                 `Implementation infrastructure failed for ${agent}`,
               );
+            }
             contestant.status = "failed";
             return;
           }
+          if (invocation.status !== "succeeded") return;
           await removeSubmission(worktree);
           const patchPath = context.store.resolve(
             `patches/${agent}-initial.diff`,
@@ -2090,31 +2359,74 @@ export class RoundEngine {
         });
         continue;
       }
-      const worktree = await context.worktrees.create(
-        `initial-validate-${agent}`,
-      );
+      const worktree = await this.prepareWorktree(context, {
+        name: `initial-validate-${agent}`,
+        subject: `initial-validation-worktree:${agent}`,
+        patches: [contestant.currentPatchPath],
+        contestantId: agent,
+        runLevel: true,
+      });
       try {
-        try {
-          await context.worktrees.applyPatch(
-            worktree,
-            contestant.currentPatchPath,
+        let command!: Awaited<ReturnType<typeof runShellCommand>>;
+        let validationFailure: FailureRecord | undefined;
+        for (const attempt of [1, 2] as const) {
+          const startedAt = this.now().toISOString();
+          const logPrefix = context.store.resolve(
+            `logs/initial-validation-${agent}-attempt-${String(attempt)}`,
           );
-        } catch (error) {
-          contestant.checks.push({
-            id: "initial-apply",
-            kind: "apply",
-            status: "failed",
-            reason: error instanceof Error ? error.message : String(error),
+          command = await runShellCommand(context.config.testCommand, {
+            cwd: worktree,
+            timeoutMs: context.config.limits.attackMs,
+            logPrefix,
+            signal: context.controller.signal,
           });
-          continue;
+          const finishedAt = this.now().toISOString();
+          const diagnosticArtifactRefs = [
+            command.stdoutPath,
+            command.stderrPath,
+          ];
+          if (command.failureClass !== "arena_infrastructure") {
+            if (validationFailure) {
+              validationFailure = await this.recordFailureAttempt(context, {
+                stage: "required_validation",
+                subject: `initial-required:${agent}`,
+                category: validationFailure.category,
+                attempt: 2,
+                startedAt,
+                finishedAt,
+                status: "succeeded",
+                diagnosticArtifactRefs,
+                contestantId: agent,
+                existing: validationFailure,
+                reusedArtifactRefs: [contestant.currentPatchPath],
+                terminalDisposition: "recovered",
+              });
+            }
+            break;
+          }
+          validationFailure = await this.recordFailureAttempt(context, {
+            stage: "required_validation",
+            subject: `initial-required:${agent}`,
+            category: "command_execution",
+            attempt,
+            startedAt,
+            finishedAt,
+            status: "failed",
+            diagnosticArtifactRefs,
+            contestantId: agent,
+            ...(validationFailure ? { existing: validationFailure } : {}),
+            reusedArtifactRefs: [contestant.currentPatchPath],
+            ...(attempt === 2
+              ? { terminalDisposition: "run_level_coverage_lost" as const }
+              : {}),
+          });
+          if (attempt === 2) break;
         }
-        const command = await runShellCommand(context.config.testCommand, {
-          cwd: worktree,
-          timeoutMs: context.config.limits.attackMs,
-          logPrefix: context.store.resolve(`logs/initial-validation-${agent}`),
-          signal: context.controller.signal,
-        });
         contestant.checks.push(requiredCheck("initial-required", command));
+        if (command.failureClass === "arena_infrastructure")
+          throw new Error(
+            `Initial required validation infrastructure failed for ${agent}`,
+          );
       } finally {
         await context.worktrees.remove(worktree);
       }
@@ -2174,11 +2486,14 @@ export class RoundEngine {
         findings: [],
       };
       packets.set(reviewer, emptyPacket);
-      const worktree = await context.worktrees.create(
-        `round-${String(round)}-review-${reviewer}`,
-      );
+      const worktree = await this.prepareWorktree(context, {
+        name: `round-${String(round)}-review-${reviewer}`,
+        subject: `review-worktree:${String(round)}:${reviewer}`,
+        patches: [targetPatchPath],
+        contestantId: reviewer,
+        laneId: `review-${String(round)}-${reviewer}`,
+      });
       try {
-        await context.worktrees.applyPatch(worktree, targetPatchPath);
         const targetSnapshot = await context.worktrees.snapshot(worktree);
         const contestantFeedback = await this.laneFeedback(
           context,
@@ -2202,7 +2517,11 @@ export class RoundEngine {
           prompt,
         );
         let invocation!: AgentInvocation;
+        let submissionFailure: FailureRecord | undefined;
+        let finalAttemptStartedAt = this.now().toISOString();
+        let finalAttemptFinishedAt = finalAttemptStartedAt;
         for (const attemptNumber of [1, 2] as const) {
+          const attemptStartedAt = this.now().toISOString();
           const candidate = await this.adapterFor(context, reviewer).review({
             worktree,
             contestantId: reviewer,
@@ -2216,6 +2535,9 @@ export class RoundEngine {
             round,
             opponent: target,
           });
+          const attemptFinishedAt = this.now().toISOString();
+          finalAttemptStartedAt = attemptStartedAt;
+          finalAttemptFinishedAt = attemptFinishedAt;
           invocation = candidate;
           let usableSubmission = false;
           if (candidate.status === "succeeded") {
@@ -2272,12 +2594,44 @@ export class RoundEngine {
               : {}),
             detail: `Review generation ${candidate.status}; targeted retry followed`,
           });
+          submissionFailure = await this.recordSubmissionAttempt(context, {
+            round,
+            actor: reviewer,
+            target,
+            phase: "review",
+            attempt: 1,
+            startedAt: attemptStartedAt,
+            finishedAt: attemptFinishedAt,
+            status: "failed",
+            diagnosticArtifactRefs: failedCapture
+              ? [failedCapture.rawPath, failedCapture.parsedPath]
+              : [],
+            cause: failedCapture
+              ? JSON.stringify(failedCapture.parsed.rejections)
+              : candidate.status,
+          });
           await removeSubmission(worktree);
           assertTargetedRetryAllowed(attemptNumber);
         }
         invocation.contestantId = reviewer;
         invocation.role = contestant.role;
         if (invocation.status !== "succeeded") {
+          if (submissionFailure) {
+            await this.recordSubmissionAttempt(context, {
+              round,
+              actor: reviewer,
+              target,
+              phase: "review",
+              attempt: 2,
+              startedAt: finalAttemptStartedAt,
+              finishedAt: finalAttemptFinishedAt,
+              status: "failed",
+              diagnosticArtifactRefs: [],
+              cause: invocation.status,
+              existing: submissionFailure,
+              terminalDisposition: "coverage_lost",
+            });
+          }
           context.state.reviewInvocations.push({
             round,
             reviewer,
@@ -2302,15 +2656,25 @@ export class RoundEngine {
             kind: "review",
           });
           invocation.submissionPath = captured.parsedPath;
-          this.recordSubmissionFailure(context, {
-            round,
-            actor: reviewer,
-            target,
-            phase: "review",
-            parsed: captured.parsed,
-            rawPath: captured.rawPath,
-            parsedPath: captured.parsedPath,
-          });
+          if (submissionFailure) {
+            const recovered =
+              captured.parsed.outcome === "valid" ||
+              captured.parsed.outcome === "valid_empty";
+            submissionFailure = await this.recordSubmissionAttempt(context, {
+              round,
+              actor: reviewer,
+              target,
+              phase: "review",
+              attempt: 2,
+              startedAt: finalAttemptStartedAt,
+              finishedAt: finalAttemptFinishedAt,
+              status: recovered ? "succeeded" : "failed",
+              diagnosticArtifactRefs: [captured.rawPath, captured.parsedPath],
+              cause: JSON.stringify(captured.parsed.rejections),
+              existing: submissionFailure,
+              terminalDisposition: recovered ? "recovered" : "coverage_lost",
+            });
+          }
           const submission = captured.parsed.value as {
             version: 1;
             findings: AttackReviewArtifact["findings"];
@@ -2377,6 +2741,22 @@ export class RoundEngine {
           }
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
+          if (submissionFailure?.attempts.length === 1) {
+            await this.recordSubmissionAttempt(context, {
+              round,
+              actor: reviewer,
+              target,
+              phase: "review",
+              attempt: 2,
+              startedAt: finalAttemptStartedAt,
+              finishedAt: finalAttemptFinishedAt,
+              status: "failed",
+              diagnosticArtifactRefs: [],
+              cause: detail,
+              existing: submissionFailure,
+              terminalDisposition: "coverage_lost",
+            });
+          }
           context.state.reviewInvocations.push({
             round,
             reviewer,
@@ -2584,6 +2964,7 @@ export class RoundEngine {
     attacker: ContestantId,
     artifactKey?: string,
     attemptNumber: 1 | 2 = 1,
+    failureRecord?: FailureRecord,
   ): Promise<
     | {
         focusedCommand: string;
@@ -2598,11 +2979,15 @@ export class RoundEngine {
       );
       return undefined;
     }
-    const worktree = await context.worktrees.create(
-      `case-judge-${String(round)}-${attacker}-${String(entry.rank)}${artifactKey ? `-${artifactKey}` : ""}-attempt-${String(attemptNumber)}`,
-    );
+    const startedAt = this.now().toISOString();
+    let worktree: string | undefined;
     let shouldRetry: boolean;
     try {
+      worktree = await this.prepareWorktree(context, {
+        name: `case-judge-${String(round)}-${attacker}-${String(entry.rank)}${artifactKey ? `-${artifactKey}` : ""}-attempt-${String(attemptNumber)}`,
+        subject: `case-judge-worktree:${String(round)}:${attacker}:${String(entry.rank)}${artifactKey ? `:${artifactKey}` : ""}:attempt-${String(attemptNumber)}`,
+        contestantId: attacker,
+      });
       const snapshot = await context.worktrees.snapshot(worktree);
       const prompt = composeNeutralCasePrompt({
         runSpec: context.runSpec,
@@ -2620,7 +3005,7 @@ export class RoundEngine {
         caseArtifactPaths,
         () =>
           this.dependencies.caseBuilder!.build({
-            worktree,
+            worktree: worktree!,
             prompt,
             timeoutMs: context.config.limits.attackMs,
             transcriptPrefix,
@@ -2662,6 +3047,21 @@ export class RoundEngine {
         snapshot,
         proposal.paths,
       );
+      if (failureRecord) {
+        await this.recordFailureAttempt(context, {
+          stage: "model_invocation",
+          subject: `case-generation:${String(round)}:${attacker}:${String(entry.rank)}${artifactKey ? `:${artifactKey}` : ""}`,
+          category: failureRecord.category,
+          attempt: 2,
+          startedAt,
+          finishedAt: this.now().toISOString(),
+          status: "succeeded",
+          diagnosticArtifactRefs: caseArtifactPaths,
+          contestantId: attacker,
+          existing: failureRecord,
+          terminalDisposition: "recovered",
+        });
+      }
       return {
         focusedCommand: proposal.focusedCommand,
         patchPath,
@@ -2673,12 +3073,29 @@ export class RoundEngine {
         ],
       };
     } catch (error) {
+      failureRecord = await this.recordFailureAttempt(context, {
+        stage: "model_invocation",
+        subject: `case-generation:${String(round)}:${attacker}:${String(entry.rank)}${artifactKey ? `:${artifactKey}` : ""}`,
+        category:
+          failureRecord?.category ??
+          (this.isInfrastructureError(error) ? "transport" : "invalid_output"),
+        attempt: attemptNumber,
+        startedAt,
+        finishedAt: this.now().toISOString(),
+        status: "failed",
+        diagnosticArtifactRefs: [],
+        contestantId: attacker,
+        ...(failureRecord ? { existing: failureRecord } : {}),
+        ...(attemptNumber === 2
+          ? { terminalDisposition: "coverage_lost" as const }
+          : {}),
+      });
       context.state.warnings.push(
         `Neutral case judge could not verify ${attacker}'s rank ${String(entry.rank)} description: ${error instanceof Error ? error.message : String(error)}`,
       );
       shouldRetry = attemptNumber === 1;
     } finally {
-      await context.worktrees.remove(worktree);
+      if (worktree) await context.worktrees.remove(worktree);
     }
     if (shouldRetry) {
       assertTargetedRetryAllowed(attemptNumber);
@@ -2689,6 +3106,7 @@ export class RoundEngine {
         attacker,
         artifactKey,
         2,
+        failureRecord,
       );
     }
     return undefined;
@@ -2710,22 +3128,21 @@ export class RoundEngine {
       groups.set(key, [...(groups.get(key) ?? []), candidate]);
     }
     for (const [actor, candidates] of groups) {
-      const worktree = await context.worktrees.create(
-        `round-${String(round)}-correction-${actor}`,
-      );
       const contestantId =
         actor === "house" ? undefined : (actor as ContestantId);
       const target = candidates[0]!.target;
+      const targetPatch = contestantId
+        ? getContestant(context.state, target).currentPatchPath
+        : undefined;
+      const worktree = await this.prepareWorktree(context, {
+        name: `round-${String(round)}-correction-${actor}`,
+        subject: `correction-worktree:${String(round)}:${actor}`,
+        patches: targetPatch ? [targetPatch] : [],
+        ...(contestantId ? { contestantId } : {}),
+        laneId: `correction-${String(round)}-${actor}`,
+      });
       let invocation: AgentInvocation | undefined;
       try {
-        if (contestantId) {
-          const targetPatch = getContestant(
-            context.state,
-            target,
-          ).currentPatchPath;
-          if (targetPatch)
-            await context.worktrees.applyPatch(worktree, targetPatch);
-        }
         const outputName =
           actor === "house"
             ? ".agent-arena-house.json"
@@ -3088,6 +3505,32 @@ export class RoundEngine {
           worktrees: context.worktrees,
           logRoot: context.store.resolve("logs/integration"),
           signal: context.controller.signal,
+          now: this.now,
+          persistFailureRecord: (record) =>
+            this.persistFailureRecord(context, record),
+          persistFailureAttempt: async (failure) => {
+            const subject = `integration-${failure.agent}-${failure.subject}`;
+            const existing = context.state.failureRecords.find(
+              (record) =>
+                record.stage === "service" && record.subject === subject,
+            );
+            await this.recordFailureAttempt(context, {
+              stage: "service",
+              subject,
+              category: "service_unavailable",
+              attempt: failure.attempt,
+              startedAt: failure.startedAt,
+              finishedAt: failure.finishedAt,
+              status: failure.status,
+              diagnosticArtifactRefs: failure.diagnosticArtifactRefs,
+              contestantId: failure.agent,
+              laneId: `integration-${failure.agent}`,
+              ...(existing ? { existing } : {}),
+              ...(failure.terminalDisposition
+                ? { terminalDisposition: failure.terminalDisposition }
+                : {}),
+            });
+          },
         });
         for (const agent of context.config.agents) {
           getContestant(context.state, agent).checks.push(
@@ -3193,11 +3636,14 @@ export class RoundEngine {
         !targetPatchPath
       )
         continue;
-      const worktree = await context.worktrees.create(
-        `round-${String(round)}-attack-${agent}`,
-      );
+      const worktree = await this.prepareWorktree(context, {
+        name: `round-${String(round)}-attack-${agent}`,
+        subject: `attack-generation-worktree:${String(round)}:${agent}`,
+        patches: [targetPatchPath],
+        contestantId: agent,
+        laneId: `attack-${String(round)}-${agent}`,
+      });
       try {
-        await context.worktrees.applyPatch(worktree, targetPatchPath);
         const targetSnapshot = await context.worktrees.snapshot(worktree);
         const opponentPatch = await readFile(targetPatchPath, "utf8");
         const contestantFeedback = await this.laneFeedback(
@@ -3227,7 +3673,11 @@ export class RoundEngine {
           prompt,
         );
         let invocation!: AgentInvocation;
+        let submissionFailure: FailureRecord | undefined;
+        let finalAttemptStartedAt = this.now().toISOString();
+        let finalAttemptFinishedAt = finalAttemptStartedAt;
         for (const attemptNumber of [1, 2] as const) {
+          const attemptStartedAt = this.now().toISOString();
           const candidate = await this.adapterFor(context, agent).attack({
             worktree,
             contestantId: agent,
@@ -3241,6 +3691,9 @@ export class RoundEngine {
             round,
             opponent: target,
           });
+          const attemptFinishedAt = this.now().toISOString();
+          finalAttemptStartedAt = attemptStartedAt;
+          finalAttemptFinishedAt = attemptFinishedAt;
           invocation = candidate;
           let usableSubmission = false;
           if (
@@ -3300,6 +3753,22 @@ export class RoundEngine {
               : {}),
             detail: `Attack generation ${candidate.status}; targeted retry followed`,
           });
+          submissionFailure = await this.recordSubmissionAttempt(context, {
+            round,
+            actor: agent,
+            target,
+            phase: "attack",
+            attempt: 1,
+            startedAt: attemptStartedAt,
+            finishedAt: attemptFinishedAt,
+            status: "failed",
+            diagnosticArtifactRefs: failedCapture
+              ? [failedCapture.rawPath, failedCapture.parsedPath]
+              : [],
+            cause: failedCapture
+              ? JSON.stringify(failedCapture.parsed.rejections)
+              : candidate.status,
+          });
           await removeSubmission(worktree);
           assertTargetedRetryAllowed(attemptNumber);
         }
@@ -3308,6 +3777,22 @@ export class RoundEngine {
         // that work; failed/infrastructure invocations remain ineligible.
         const salvagingTimedOutSubmission = invocation.status === "timed_out";
         if (invocation.status !== "succeeded" && !salvagingTimedOutSubmission) {
+          if (submissionFailure) {
+            await this.recordSubmissionAttempt(context, {
+              round,
+              actor: agent,
+              target,
+              phase: "attack",
+              attempt: 2,
+              startedAt: finalAttemptStartedAt,
+              finishedAt: finalAttemptFinishedAt,
+              status: "failed",
+              diagnosticArtifactRefs: [],
+              cause: invocation.status,
+              existing: submissionFailure,
+              terminalDisposition: "coverage_lost",
+            });
+          }
           context.state.attackInvocations.push({
             round,
             attacker: agent,
@@ -3332,15 +3817,25 @@ export class RoundEngine {
             kind: "attack",
           });
           invocation.submissionPath = captured.parsedPath;
-          this.recordSubmissionFailure(context, {
-            round,
-            actor: agent,
-            target,
-            phase: "attack",
-            parsed: captured.parsed,
-            rawPath: captured.rawPath,
-            parsedPath: captured.parsedPath,
-          });
+          if (submissionFailure) {
+            const recovered =
+              captured.parsed.outcome === "valid" ||
+              captured.parsed.outcome === "valid_empty";
+            submissionFailure = await this.recordSubmissionAttempt(context, {
+              round,
+              actor: agent,
+              target,
+              phase: "attack",
+              attempt: 2,
+              startedAt: finalAttemptStartedAt,
+              finishedAt: finalAttemptFinishedAt,
+              status: recovered ? "succeeded" : "failed",
+              diagnosticArtifactRefs: [captured.rawPath, captured.parsedPath],
+              cause: JSON.stringify(captured.parsed.rejections),
+              existing: submissionFailure,
+              terminalDisposition: recovered ? "recovered" : "coverage_lost",
+            });
+          }
           const submission = captured.parsed.value as AttackSubmission;
           this.enqueueRejectedAttacks(context, {
             parsed: captured.parsed,
@@ -3488,6 +3983,22 @@ export class RoundEngine {
           }
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
+          if (submissionFailure?.attempts.length === 1) {
+            await this.recordSubmissionAttempt(context, {
+              round,
+              actor: agent,
+              target,
+              phase: "attack",
+              attempt: 2,
+              startedAt: finalAttemptStartedAt,
+              finishedAt: finalAttemptFinishedAt,
+              status: "failed",
+              diagnosticArtifactRefs: [],
+              cause: detail,
+              existing: submissionFailure,
+              terminalDisposition: "coverage_lost",
+            });
+          }
           context.state.attackInvocations.push({
             round,
             attacker: agent,
@@ -3527,18 +4038,21 @@ export class RoundEngine {
           !targetPatchPath
         )
           continue;
-        const worktree = await context.worktrees.create(
-          `round-${String(round)}-attack-house-${target}`,
-        );
+        let worktree = await this.prepareWorktree(context, {
+          name: `round-${String(round)}-attack-house-${target}`,
+          subject: `house-generation-worktree:${String(round)}:${target}`,
+          patches: [targetPatchPath],
+          contestantId: target,
+          laneId: `house-${String(round)}-${target}`,
+        });
         this.dependencies.onProgress?.(
           `Round ${String(round)}: house scout ${String(candidateIndex + 1)}/2 started for ${target}`,
         );
         await this.persist(context);
         try {
-          await context.worktrees.applyPatch(worktree, targetPatchPath);
-          const targetSnapshot = await context.worktrees.snapshot(worktree);
+          let targetSnapshot = await context.worktrees.snapshot(worktree);
           const patch = await readFile(targetPatchPath, "utf8");
-          const prompt = [
+          let prompt = [
             "# Neutral house scout",
             `Inspect Candidate ${String(candidateIndex + 1)}'s anonymized frozen patch for one task defect.`,
             "You may submit zero or one unranked executable test-only attack. You have no health, recoil, or replacement credits.",
@@ -3556,24 +4070,98 @@ export class RoundEngine {
             `Write {"version":1,"hypotheses":[],"attacks":[]} to ${path.join(worktree, ".agent-arena-house.json")}. Each attack uses the normal attack schema without rank.`,
           ].join("\n");
           const houseStartedAt = this.now().toISOString();
-          const houseTranscript = context.store.resolve(
-            `logs/round-${String(round)}-attack-house-${target}`,
-          );
-          const submission = await this.dependencies.houseScout.scout({
-            worktree,
-            prompt,
-            timeoutMs: context.config.limits.attackMs,
-            transcriptPrefix: houseTranscript,
-            signal: context.controller.signal,
-            round,
-          });
-          const captured = await this.persistReturnedSubmission(context, {
-            submission,
-            round,
-            phase: "house",
-            actor: `house-${target}`,
-            kind: "house",
-          });
+          let houseTranscript = "";
+          let captured!: Awaited<
+            ReturnType<typeof this.persistReturnedSubmission>
+          >;
+          let houseFailure: FailureRecord | undefined;
+          for (const attempt of [1, 2] as const) {
+            const startedAt = this.now().toISOString();
+            houseTranscript = context.store.resolve(
+              `logs/round-${String(round)}-attack-house-${target}-attempt-${String(attempt)}`,
+            );
+            try {
+              const submission = await this.dependencies.houseScout.scout({
+                worktree,
+                prompt,
+                timeoutMs: context.config.limits.attackMs,
+                transcriptPrefix: houseTranscript,
+                signal: context.controller.signal,
+                round,
+              });
+              captured = await this.persistReturnedSubmission(context, {
+                submission,
+                round,
+                phase: "house",
+                actor: `house-${target}-attempt-${String(attempt)}`,
+                kind: "house",
+              });
+              if (captured.parsed.outcome === "invalid")
+                throw new Error("House scout submission was invalid");
+              if (houseFailure) {
+                houseFailure = await this.recordFailureAttempt(context, {
+                  stage: houseFailure.stage,
+                  subject: `house-scout:${String(round)}:${target}`,
+                  category: houseFailure.category,
+                  attempt: 2,
+                  startedAt,
+                  finishedAt: this.now().toISOString(),
+                  status: "succeeded",
+                  diagnosticArtifactRefs: [
+                    houseTranscript,
+                    captured.rawPath,
+                    captured.parsedPath,
+                  ],
+                  contestantId: target,
+                  laneId: `house-${String(round)}-${target}`,
+                  existing: houseFailure,
+                  terminalDisposition: "recovered",
+                });
+              }
+              break;
+            } catch (error) {
+              const invalidOutput =
+                error instanceof Error &&
+                error.message === "House scout submission was invalid";
+              const diagnosticArtifactRefs = [
+                houseTranscript,
+                ...(captured ? [captured.rawPath, captured.parsedPath] : []),
+              ];
+              houseFailure = await this.recordFailureAttempt(context, {
+                stage:
+                  houseFailure?.stage ??
+                  (invalidOutput ? "parsing" : "model_invocation"),
+                subject: `house-scout:${String(round)}:${target}`,
+                category:
+                  houseFailure?.category ??
+                  (invalidOutput ? "invalid_output" : "transport"),
+                attempt,
+                startedAt,
+                finishedAt: this.now().toISOString(),
+                status: "failed",
+                diagnosticArtifactRefs,
+                contestantId: target,
+                laneId: `house-${String(round)}-${target}`,
+                ...(houseFailure ? { existing: houseFailure } : {}),
+                ...(attempt === 2
+                  ? { terminalDisposition: "coverage_lost" as const }
+                  : {}),
+              });
+              if (attempt === 2) throw error;
+              const previousWorktree = worktree;
+              await context.worktrees.remove(worktree);
+              worktree = await this.prepareWorktree(context, {
+                name: `round-${String(round)}-attack-house-${target}`,
+                subject: `house-retry-worktree:${String(round)}:${target}`,
+                patches: [targetPatchPath],
+                contestantId: target,
+                laneId: `house-${String(round)}-${target}`,
+              });
+              prompt = prompt.replaceAll(previousWorktree, worktree);
+              targetSnapshot = await context.worktrees.snapshot(worktree);
+              captured = undefined!;
+            }
+          }
           context.roundInvocations.push({
             id: stableId("invocation", String(round), "house", target),
             kind: "house",
@@ -3698,6 +4286,8 @@ export class RoundEngine {
             context.state,
             attack.targets,
           ),
+          persistFailureRecord: (record) =>
+            this.persistFailureRecord(context, record),
         });
         if (result.status === "landed" && result.rootDefectId)
           knownRoots.add(result.rootDefectId);
@@ -3737,6 +4327,8 @@ export class RoundEngine {
                 context.state,
                 attack.targets,
               ),
+              persistFailureRecord: (record) =>
+                this.persistFailureRecord(context, record),
             })
           : authorPatch
             ? await validateAttack({
@@ -3757,6 +4349,8 @@ export class RoundEngine {
                   context.state,
                   attack.targets,
                 ),
+                persistFailureRecord: (record) =>
+                  this.persistFailureRecord(context, record),
               })
             : undefined;
       if (!result) continue;
@@ -3783,46 +4377,17 @@ export class RoundEngine {
                   ? ("coverage_lost" as const)
                   : undefined;
       if (failureDisposition) {
-        const diagnosticArtifactRefs = result.checks.flatMap((check) =>
-          check.command
-            ? [check.command.stdoutPath, check.command.stderrPath]
-            : [],
+        const exhaustedRecords = context.state.failureRecords.filter(
+          (record) =>
+            record.attackId === result.id &&
+            record.terminalDisposition === "coverage_lost",
         );
-        const recordedAt = this.now().toISOString();
-        const causalDigest = calculateCanonicalHash({
-          attackId: result.id,
-          reason: result.outcomeReason ?? result.status,
-        });
-        context.state.failureRecords.push({
-          version: 1,
-          failureId: stableId("failure", result.id, causalDigest),
-          stage: "evidence_execution",
-          subject: result.id,
-          attackId: result.id,
-          laneId: `round-${String(round)}:${author}->${target}`,
-          contestantId: author,
-          category: "command_execution",
-          causalDigest,
-          attempts: [
-            {
-              attempt: 1,
-              startedAt: recordedAt,
-              finishedAt: recordedAt,
-              status: "failed",
-              diagnosticArtifactRefs,
-            },
-            {
-              attempt: 2,
-              startedAt: recordedAt,
-              finishedAt: recordedAt,
-              status: "failed",
-              diagnosticArtifactRefs,
-            },
-          ],
-          reusedArtifactRefs: [result.patchPath],
-          diagnosticArtifactRefs,
-          terminalDisposition: failureDisposition,
-        });
+        for (const record of exhaustedRecords) {
+          await this.persistFailureRecord(context, {
+            ...record,
+            terminalDisposition: failureDisposition,
+          });
+        }
       }
       await this.finalizeAttackAdjudication(context, result, round);
       validated.push(result);
@@ -3898,11 +4463,14 @@ export class RoundEngine {
       ) {
         continue;
       }
-      const worktree = await context.worktrees.create(
-        `round-${String(round)}-repair-${agent}`,
-      );
+      const worktree = await this.prepareWorktree(context, {
+        name: `round-${String(round)}-repair-${agent}`,
+        subject: `repair-worktree:${String(round)}:${agent}`,
+        patches: [currentPatch],
+        contestantId: agent,
+        runLevel: true,
+      });
       try {
-        await context.worktrees.applyPatch(worktree, currentPatch);
         const contestantFeedback = await this.laneFeedback(
           context,
           agent,
@@ -3924,7 +4492,7 @@ export class RoundEngine {
           prompt,
         );
         const attempts: AgentInvocation[] = [];
-        let invocation: AgentInvocation;
+        let invocation!: AgentInvocation;
         let mechanicalFallback:
           | {
               attemptId: string;
@@ -3975,42 +4543,79 @@ export class RoundEngine {
             agent,
             String(attemptNumber),
           );
-          invocation = await this.adapterFor(context, agent).repair({
-            worktree,
-            contestantId: agent,
-            prompt: attemptPrompt,
-            promptPath: attemptPromptPath,
-            transcriptPrefix: context.store.resolve(
-              `logs/round-${String(round)}-repair-${agent}-attempt-${String(attemptNumber)}`,
-            ),
-            timeoutMs: context.config.limits.repairMs,
-            signal: context.controller.signal,
-            round,
-            activeAttacks: remainingAttacks,
-          });
-          attempts.push(invocation);
-          if (invocation.status !== "infrastructure_error") {
-            for (const attack of remainingAttacks) {
-              const canonical = contestant.healthLedger.canonicalDefects?.find(
-                (entry) => entry.rootDefectId === attack.rootDefectId,
-              );
-              if (!canonical) continue;
-              canonical.repairAllowance ??=
-                canonical.baseSeverity === "critical" ||
-                canonical.baseSeverity === "high"
-                  ? 3
-                  : 2;
-              canonical.repairAttemptsUsed =
-                (canonical.repairAttemptsUsed ?? 0) + 1;
-              canonical.repairAttemptIds ??= [];
-              canonical.repairAttemptIds.push(attemptId);
+          let invocationFailure: FailureRecord | undefined;
+          for (const retry of [1, 2] as const) {
+            const startedAt = this.now().toISOString();
+            const transcriptPrefix = context.store.resolve(
+              `logs/round-${String(round)}-repair-${agent}-attempt-${String(attemptNumber)}-invocation-${String(retry)}`,
+            );
+            invocation = await this.adapterFor(context, agent).repair({
+              worktree,
+              contestantId: agent,
+              prompt: attemptPrompt,
+              promptPath: attemptPromptPath,
+              transcriptPrefix,
+              timeoutMs: context.config.limits.repairMs,
+              signal: context.controller.signal,
+              round,
+              activeAttacks: remainingAttacks,
+            });
+            attempts.push(invocation);
+            const finishedAt = this.now().toISOString();
+            if (invocation.status !== "infrastructure_error") {
+              if (invocationFailure) {
+                await this.recordFailureAttempt(context, {
+                  stage: "model_invocation",
+                  subject: `round-${String(round)}-repair:${agent}:${String(attemptNumber)}`,
+                  category: invocationFailure.category,
+                  attempt: 2,
+                  startedAt,
+                  finishedAt,
+                  status: "succeeded",
+                  diagnosticArtifactRefs: [attemptPromptPath, transcriptPrefix],
+                  contestantId: agent,
+                  existing: invocationFailure,
+                  terminalDisposition: "recovered",
+                });
+              }
+              break;
             }
+            invocationFailure = await this.recordFailureAttempt(context, {
+              stage: "model_invocation",
+              subject: `round-${String(round)}-repair:${agent}:${String(attemptNumber)}`,
+              category: "process_launch",
+              attempt: retry,
+              startedAt,
+              finishedAt,
+              status: "failed",
+              diagnosticArtifactRefs: [attemptPromptPath, transcriptPrefix],
+              contestantId: agent,
+              ...(invocationFailure ? { existing: invocationFailure } : {}),
+              ...(retry === 2
+                ? { terminalDisposition: "run_level_coverage_lost" as const }
+                : {}),
+            });
           }
           if (invocation.status === "infrastructure_error") {
-            if (attemptNumber === 1) assertTargetedRetryAllowed(attemptNumber);
-            continue;
+            throw new Error(
+              `Repair invocation infrastructure failed for ${agent}`,
+            );
           }
-
+          for (const attack of remainingAttacks) {
+            const canonical = contestant.healthLedger.canonicalDefects?.find(
+              (entry) => entry.rootDefectId === attack.rootDefectId,
+            );
+            if (!canonical) continue;
+            canonical.repairAllowance ??=
+              canonical.baseSeverity === "critical" ||
+              canonical.baseSeverity === "high"
+                ? 3
+                : 2;
+            canonical.repairAttemptsUsed =
+              (canonical.repairAttemptsUsed ?? 0) + 1;
+            canonical.repairAttemptIds ??= [];
+            canonical.repairAttemptIds.push(attemptId);
+          }
           await removeSubmission(worktree);
           const candidatePath = context.store.resolve(
             `patches/${agent}-round-${String(round)}-repair-attempt-${String(attemptNumber)}.diff`,
@@ -4044,14 +4649,20 @@ export class RoundEngine {
           ];
           let mechanicsPassed = true;
           let infrastructureFailure = false;
+          let mechanicalValidationFailure: FailureRecord | undefined;
           for (const validationAttempt of [1, 2] as const) {
+            const validationStartedAt = this.now().toISOString();
+            const diagnosticArtifactRefs: string[] = [];
             mechanicsPassed = true;
             infrastructureFailure = false;
-            const requiredTree = await context.worktrees.create(
-              `round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-required`,
-            );
+            const requiredTree = await this.prepareWorktree(context, {
+              name: `round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-required`,
+              subject: `repair-attempt-required-worktree:${String(round)}:${agent}:${String(attemptNumber)}:${String(validationAttempt)}`,
+              patches: [candidatePath],
+              contestantId: agent,
+              runLevel: true,
+            });
             try {
-              await context.worktrees.applyPatch(requiredTree, candidatePath);
               const required = await runShellCommand(
                 context.config.testCommand,
                 {
@@ -4066,17 +4677,24 @@ export class RoundEngine {
               infrastructureFailure =
                 required.failureClass === "arena_infrastructure";
               mechanicsPassed = required.exitCode === 0 && !required.timedOut;
+              diagnosticArtifactRefs.push(
+                required.stdoutPath,
+                required.stderrPath,
+              );
             } finally {
               await context.worktrees.remove(requiredTree);
             }
             for (const attack of checksToRun) {
               if (!mechanicsPassed || infrastructureFailure) break;
-              const checkTree = await context.worktrees.create(
-                `round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-${attack.id}`,
-              );
+              const checkTree = await this.prepareWorktree(context, {
+                name: `round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-${attack.id}`,
+                subject: `repair-attempt-case-worktree:${String(round)}:${agent}:${String(attemptNumber)}:${String(validationAttempt)}:${attack.id}`,
+                patches: [candidatePath, attack.patchPath],
+                contestantId: agent,
+                attackId: attack.id,
+                runLevel: true,
+              });
               try {
-                await context.worktrees.applyPatch(checkTree, candidatePath);
-                await context.worktrees.applyPatch(checkTree, attack.patchPath);
                 const check = await runShellCommand(attack.focusedCommand, {
                   cwd: checkTree,
                   timeoutMs: context.config.limits.attackMs,
@@ -4088,11 +4706,51 @@ export class RoundEngine {
                 infrastructureFailure =
                   check.failureClass === "arena_infrastructure";
                 mechanicsPassed = check.exitCode === 0 && !check.timedOut;
+                diagnosticArtifactRefs.push(check.stdoutPath, check.stderrPath);
               } finally {
                 await context.worktrees.remove(checkTree);
               }
             }
-            if (!infrastructureFailure) break;
+            if (!infrastructureFailure) {
+              if (mechanicalValidationFailure) {
+                await this.recordFailureAttempt(context, {
+                  stage: "repair_validation",
+                  subject: `round-${String(round)}-repair-mechanics:${agent}:${String(attemptNumber)}`,
+                  category: mechanicalValidationFailure.category,
+                  attempt: 2,
+                  startedAt: validationStartedAt,
+                  finishedAt: this.now().toISOString(),
+                  status: "succeeded",
+                  diagnosticArtifactRefs,
+                  contestantId: agent,
+                  existing: mechanicalValidationFailure,
+                  reusedArtifactRefs: [candidatePath],
+                  terminalDisposition: "recovered",
+                });
+              }
+              break;
+            }
+            mechanicalValidationFailure = await this.recordFailureAttempt(
+              context,
+              {
+                stage: "repair_validation",
+                subject: `round-${String(round)}-repair-mechanics:${agent}:${String(attemptNumber)}`,
+                category: "command_execution",
+                attempt: validationAttempt,
+                startedAt: validationStartedAt,
+                finishedAt: this.now().toISOString(),
+                status: "failed",
+                diagnosticArtifactRefs,
+                contestantId: agent,
+                ...(mechanicalValidationFailure
+                  ? { existing: mechanicalValidationFailure }
+                  : {}),
+                reusedArtifactRefs: [candidatePath],
+                ...(validationAttempt === 2
+                  ? { terminalDisposition: "coverage_lost" as const }
+                  : {}),
+              },
+            );
             if (validationAttempt === 1)
               assertTargetedRetryAllowed(validationAttempt);
           }
@@ -4124,9 +4782,14 @@ export class RoundEngine {
             let verdict:
               | Awaited<ReturnType<NonNullable<AttackVerifier["assessRepair"]>>>
               | undefined;
-            try {
-              verdict = verifier.assessRepair
-                ? await verifier.assessRepair({
+            let judgeFailure: FailureRecord | undefined;
+            if (verifier.assessRepair) {
+              for (const retry of [1, 2] as const) {
+                const startedAt = this.now().toISOString();
+                const attemptTranscriptPrefix = `${transcriptPrefix}-attempt-${String(retry)}`;
+                let failureReason: string | undefined;
+                try {
+                  verdict = await verifier.assessRepair({
                     attack: anonymizeAttackForVerifier(attack),
                     runSpec: context.runSpec,
                     canonicalDefectId: attack.rootDefectId,
@@ -4135,15 +4798,59 @@ export class RoundEngine {
                     mechanicalFailureReason: mechanicalFallback.reason,
                     worktree,
                     promptPath,
-                    transcriptPrefix,
+                    transcriptPrefix: attemptTranscriptPrefix,
                     timeoutMs: context.config.limits.verifierMs,
                     signal: context.controller.signal,
-                  })
-                : undefined;
-            } catch (error) {
-              context.state.warnings.push(
-                `Repair judge was unable to assess ${attack.rootDefectId}: ${error instanceof Error ? error.message : String(error)}`,
-              );
+                  });
+                  if (verdict.decision !== "unable") {
+                    if (judgeFailure) {
+                      await this.recordFailureAttempt(context, {
+                        stage: "model_invocation",
+                        subject: `repair-judge:${attack.rootDefectId}`,
+                        category: judgeFailure.category,
+                        attempt: 2,
+                        startedAt,
+                        finishedAt: this.now().toISOString(),
+                        status: "succeeded",
+                        diagnosticArtifactRefs: [
+                          promptPath,
+                          attemptTranscriptPrefix,
+                        ],
+                        contestantId: agent,
+                        attackId: attack.id,
+                        existing: judgeFailure,
+                        terminalDisposition: "recovered",
+                      });
+                    }
+                    break;
+                  }
+                  failureReason = verdict.rationale;
+                } catch (error) {
+                  failureReason =
+                    error instanceof Error ? error.message : String(error);
+                }
+                judgeFailure = await this.recordFailureAttempt(context, {
+                  stage: "model_invocation",
+                  subject: `repair-judge:${attack.rootDefectId}`,
+                  category: "transport",
+                  attempt: retry,
+                  startedAt,
+                  finishedAt: this.now().toISOString(),
+                  status: "failed",
+                  diagnosticArtifactRefs: [promptPath, attemptTranscriptPrefix],
+                  contestantId: agent,
+                  attackId: attack.id,
+                  ...(judgeFailure ? { existing: judgeFailure } : {}),
+                  ...(retry === 2
+                    ? { terminalDisposition: "judge_unable" as const }
+                    : {}),
+                });
+                if (retry === 2) {
+                  context.state.warnings.push(
+                    `Repair judge was unable to assess ${attack.rootDefectId}: ${failureReason ?? "unable"}`,
+                  );
+                }
+              }
             }
             const decision = verdict?.decision ?? "unable";
             const rationale =
@@ -4237,19 +4944,69 @@ export class RoundEngine {
         contestant.finalHealth = 0;
         continue;
       }
-      const validateTree = await context.worktrees.create(
-        `round-${String(round)}-validate-repair-${agent}`,
-      );
+      const validateTree = await this.prepareWorktree(context, {
+        name: `round-${String(round)}-validate-repair-${agent}`,
+        subject: `repair-validation-worktree:${String(round)}:${agent}`,
+        patches: [currentPatch],
+        contestantId: agent,
+        runLevel: true,
+      });
       try {
-        await context.worktrees.applyPatch(validateTree, currentPatch);
-        const command = await runShellCommand(context.config.testCommand, {
-          cwd: validateTree,
-          timeoutMs: context.config.limits.attackMs,
-          logPrefix: context.store.resolve(
-            `logs/round-${String(round)}-repair-required-${agent}`,
-          ),
-          signal: context.controller.signal,
-        });
+        let command!: Awaited<ReturnType<typeof runShellCommand>>;
+        let validationFailure: FailureRecord | undefined;
+        for (const attempt of [1, 2] as const) {
+          const startedAt = this.now().toISOString();
+          const logPrefix = context.store.resolve(
+            `logs/round-${String(round)}-repair-required-${agent}-attempt-${String(attempt)}`,
+          );
+          command = await runShellCommand(context.config.testCommand, {
+            cwd: validateTree,
+            timeoutMs: context.config.limits.attackMs,
+            logPrefix,
+            signal: context.controller.signal,
+          });
+          const finishedAt = this.now().toISOString();
+          const diagnosticArtifactRefs = [
+            command.stdoutPath,
+            command.stderrPath,
+          ];
+          if (command.failureClass !== "arena_infrastructure") {
+            if (validationFailure) {
+              validationFailure = await this.recordFailureAttempt(context, {
+                stage: "repair_validation",
+                subject: `round-${String(round)}-repair-required:${agent}`,
+                category: validationFailure.category,
+                attempt: 2,
+                startedAt,
+                finishedAt,
+                status: "succeeded",
+                diagnosticArtifactRefs,
+                contestantId: agent,
+                existing: validationFailure,
+                reusedArtifactRefs: [currentPatch],
+                terminalDisposition: "recovered",
+              });
+            }
+            break;
+          }
+          validationFailure = await this.recordFailureAttempt(context, {
+            stage: "repair_validation",
+            subject: `round-${String(round)}-repair-required:${agent}`,
+            category: "command_execution",
+            attempt,
+            startedAt,
+            finishedAt,
+            status: "failed",
+            diagnosticArtifactRefs,
+            contestantId: agent,
+            ...(validationFailure ? { existing: validationFailure } : {}),
+            reusedArtifactRefs: [currentPatch],
+            ...(attempt === 2
+              ? { terminalDisposition: "run_level_coverage_lost" as const }
+              : {}),
+          });
+          if (attempt === 2) break;
+        }
         const check = requiredCheck(`round-${String(round)}-required`, command);
         contestant.checks.push(check);
         if (check.status === "infrastructure_error") {
@@ -4306,24 +5063,96 @@ export class RoundEngine {
           ];
           let allCasesPass = true;
           for (const caseEntry of acceptedCases) {
-            const caseTree = await context.worktrees.create(
-              `round-${String(round)}-heal-${agent}-${caseEntry.id}`,
-            );
+            const caseTree = await this.prepareWorktree(context, {
+              name: `round-${String(round)}-heal-${agent}-${caseEntry.id}`,
+              subject: `heal-case-worktree:${String(round)}:${agent}:${caseEntry.id}`,
+              patches: [currentPatch, caseEntry.patchPath],
+              contestantId: agent,
+              attackId: attack.id,
+              runLevel: true,
+            });
             try {
-              await context.worktrees.applyPatch(caseTree, currentPatch);
-              await context.worktrees.applyPatch(caseTree, caseEntry.patchPath);
               const checks = [];
-              for (const attempt of [1, 2]) {
-                checks.push(
-                  await runShellCommand(caseEntry.focusedCommand, {
-                    cwd: caseTree,
-                    timeoutMs: context.config.limits.attackMs,
-                    logPrefix: context.store.resolve(
-                      `logs/round-${String(round)}-heal-${agent}-${caseEntry.id}-${String(attempt)}`,
-                    ),
-                    signal: context.controller.signal,
-                  }),
-                );
+              for (const sample of [1, 2] as const) {
+                let infrastructureFailure: FailureRecord | undefined;
+                for (const attempt of [1, 2] as const) {
+                  const startedAt = this.now().toISOString();
+                  const command = await runShellCommand(
+                    caseEntry.focusedCommand,
+                    {
+                      cwd: caseTree,
+                      timeoutMs: context.config.limits.attackMs,
+                      logPrefix: context.store.resolve(
+                        `logs/round-${String(round)}-heal-${agent}-${caseEntry.id}-sample-${String(sample)}-attempt-${String(attempt)}`,
+                      ),
+                      signal: context.controller.signal,
+                    },
+                  );
+                  const finishedAt = this.now().toISOString();
+                  const diagnosticArtifactRefs = [
+                    command.stdoutPath,
+                    command.stderrPath,
+                  ];
+                  if (command.failureClass !== "arena_infrastructure") {
+                    if (infrastructureFailure) {
+                      infrastructureFailure = await this.recordFailureAttempt(
+                        context,
+                        {
+                          stage: "repair_validation",
+                          subject: `heal-case:${agent}:${caseEntry.id}:sample-${String(sample)}`,
+                          category: infrastructureFailure.category,
+                          attempt: 2,
+                          startedAt,
+                          finishedAt,
+                          status: "succeeded",
+                          diagnosticArtifactRefs,
+                          contestantId: agent,
+                          attackId: attack.id,
+                          existing: infrastructureFailure,
+                          reusedArtifactRefs: [
+                            currentPatch,
+                            caseEntry.patchPath,
+                          ],
+                          terminalDisposition: "recovered",
+                        },
+                      );
+                    }
+                    checks.push(command);
+                    break;
+                  }
+                  infrastructureFailure = await this.recordFailureAttempt(
+                    context,
+                    {
+                      stage: "repair_validation",
+                      subject: `heal-case:${agent}:${caseEntry.id}:sample-${String(sample)}`,
+                      category:
+                        infrastructureFailure?.category ??
+                        (command.timedOut ? "timeout" : "command_execution"),
+                      attempt,
+                      startedAt,
+                      finishedAt,
+                      status: "failed",
+                      diagnosticArtifactRefs,
+                      contestantId: agent,
+                      attackId: attack.id,
+                      ...(infrastructureFailure
+                        ? { existing: infrastructureFailure }
+                        : {}),
+                      reusedArtifactRefs: [currentPatch, caseEntry.patchPath],
+                      ...(attempt === 2
+                        ? {
+                            terminalDisposition:
+                              "run_level_coverage_lost" as const,
+                          }
+                        : {}),
+                    },
+                  );
+                  if (attempt === 2) {
+                    throw new Error(
+                      `Repair evidence infrastructure failed for ${agent} on ${caseEntry.id}`,
+                    );
+                  }
+                }
               }
               if (!checks.every((check) => check.exitCode === 0)) {
                 allCasesPass = false;
@@ -4417,11 +5246,13 @@ export class RoundEngine {
         outcomeReason: `${provisional.outcomeReason ?? ""}; no reviewer configured, conservatively accepted as infrastructure`,
       };
     }
-    const worktree = await context.worktrees.create(
-      `infrastructure-review-${provisional.id}`,
-    );
+    const worktree = await this.prepareWorktree(context, {
+      name: `infrastructure-review-${provisional.id}`,
+      subject: `legacy-infrastructure-review-worktree:${provisional.id}`,
+      patches: [provisional.patchPath],
+      attackId: provisional.id,
+    });
     try {
-      await context.worktrees.applyPatch(worktree, provisional.patchPath);
       const prompt = [
         "# Review your provisionally infrastructural attack",
         "Choose accept to withdraw with no-fault confirmation, or challenge once.",
@@ -4553,9 +5384,11 @@ export class RoundEngine {
       LegacyArenaDependencies;
     if (!("harnessOverlays" in context.state)) return;
     if (!legacyDependencies.harnessMaintainer) return;
-    const worktree = await context.worktrees.create(
-      `harness-overlay-${provisional.id}`,
-    );
+    const worktree = await this.prepareWorktree(context, {
+      name: `harness-overlay-${provisional.id}`,
+      subject: `legacy-harness-overlay-worktree:${provisional.id}`,
+      attackId: provisional.id,
+    });
     try {
       const redactedEvidence = JSON.stringify(
         {
@@ -4754,20 +5587,21 @@ export class RoundEngine {
       this.dependencies.caseBuilder &&
       context.config.maxHeldOutCasesPerDefect > 0
     ) {
-      const worktree = await context.worktrees.create(
-        `case-builder-${attack.id}`,
-      );
+      let authorPatch: string | undefined;
+      if (attack.origin.kind === "contestant") {
+        authorPatch = getContestant(
+          context.state,
+          attack.origin.contestant,
+        ).currentPatchPath;
+      }
+      let worktree = await this.prepareWorktree(context, {
+        name: `case-builder-${attack.id}`,
+        subject: `case-builder-worktree:${attack.id}`,
+        patches: authorPatch ? [authorPatch] : [],
+        attackId: attack.id,
+      });
       try {
-        let authorPatch: string | undefined;
-        if (attack.origin.kind === "contestant") {
-          authorPatch = getContestant(
-            context.state,
-            attack.origin.contestant,
-          ).currentPatchPath;
-          if (authorPatch)
-            await context.worktrees.applyPatch(worktree, authorPatch);
-        }
-        const prompt = [
+        let prompt = [
           "# Held-out sibling case builder",
           "Generate zero to two deterministic test-only sibling cases for the exact same supported behavior and canonical root defect.",
           "Do not broaden the requirement, severity, claim, or expected behavior. Do not reveal generated paths or inputs to contestants.",
@@ -4786,31 +5620,93 @@ export class RoundEngine {
           "",
           `Write {"version":1,"cases":[{"category":"boundary","focusedCommand":"...","paths":["test/..."]}]} to ${path.join(worktree, ".agent-arena-cases.json")}.`,
         ].join("\n");
-        const transcriptPrefix = context.store.resolve(
-          `logs/case-builder-${attack.id}`,
-        );
-        const siblingArtifactPaths = [transcriptPrefix];
-        const submission = await this.recordCaseGeneration(
-          context,
-          round,
-          siblingArtifactPaths,
-          () =>
-            this.dependencies.caseBuilder!.build({
-              worktree,
-              prompt,
-              timeoutMs: context.config.limits.attackMs,
-              transcriptPrefix,
-              signal: context.controller.signal,
+        const siblingArtifactPaths: string[] = [];
+        let captured!: Awaited<
+          ReturnType<typeof this.persistReturnedSubmission>
+        >;
+        let generationFailure: FailureRecord | undefined;
+        for (const attempt of [1, 2] as const) {
+          const startedAt = this.now().toISOString();
+          const transcriptPrefix = context.store.resolve(
+            `logs/case-builder-${attack.id}-attempt-${String(attempt)}`,
+          );
+          siblingArtifactPaths.push(transcriptPrefix);
+          try {
+            const submission = await this.recordCaseGeneration(
+              context,
               round,
-            }),
-        );
-        const captured = await this.persistReturnedSubmission(context, {
-          submission,
-          round,
-          phase: "held-out-case-generation",
-          actor: attack.id,
-          kind: "case",
-        });
+              siblingArtifactPaths,
+              () =>
+                this.dependencies.caseBuilder!.build({
+                  worktree,
+                  prompt,
+                  timeoutMs: context.config.limits.attackMs,
+                  transcriptPrefix,
+                  signal: context.controller.signal,
+                  round,
+                }),
+            );
+            captured = await this.persistReturnedSubmission(context, {
+              submission,
+              round,
+              phase: "held-out-case-generation",
+              actor: `${attack.id}-attempt-${String(attempt)}`,
+              kind: "case",
+            });
+            if (captured.parsed.outcome === "invalid")
+              throw new Error("Held-out case submission was invalid");
+            if (generationFailure) {
+              generationFailure = await this.recordFailureAttempt(context, {
+                stage: "model_invocation",
+                subject: `held-out-case-generation:${attack.id}`,
+                category: generationFailure.category,
+                attempt: 2,
+                startedAt,
+                finishedAt: this.now().toISOString(),
+                status: "succeeded",
+                diagnosticArtifactRefs: [
+                  transcriptPrefix,
+                  captured.rawPath,
+                  captured.parsedPath,
+                ],
+                attackId: attack.id,
+                existing: generationFailure,
+                terminalDisposition: "recovered",
+              });
+            }
+            break;
+          } catch (error) {
+            generationFailure = await this.recordFailureAttempt(context, {
+              stage: "model_invocation",
+              subject: `held-out-case-generation:${attack.id}`,
+              category:
+                generationFailure?.category ??
+                (this.isInfrastructureError(error)
+                  ? "transport"
+                  : "invalid_output"),
+              attempt,
+              startedAt,
+              finishedAt: this.now().toISOString(),
+              status: "failed",
+              diagnosticArtifactRefs: [transcriptPrefix],
+              attackId: attack.id,
+              ...(generationFailure ? { existing: generationFailure } : {}),
+              ...(attempt === 2
+                ? { terminalDisposition: "coverage_lost" as const }
+                : {}),
+            });
+            if (attempt === 2) throw error;
+            const previousWorktree = worktree;
+            await context.worktrees.remove(worktree);
+            worktree = await this.prepareWorktree(context, {
+              name: `case-builder-${attack.id}`,
+              subject: `case-builder-retry-worktree:${attack.id}`,
+              patches: authorPatch ? [authorPatch] : [],
+              attackId: attack.id,
+            });
+            prompt = prompt.replaceAll(previousWorktree, worktree);
+          }
+        }
         siblingArtifactPaths.push(captured.rawPath, captured.parsedPath);
         await rm(path.join(worktree, ".agent-arena-cases.json"), {
           force: true,
@@ -4914,15 +5810,69 @@ export class RoundEngine {
         contestant.finalHealth = 0;
         continue;
       }
-      const worktree = await context.worktrees.create(`final-${agent}`);
+      const worktree = await this.prepareWorktree(context, {
+        name: `final-${agent}`,
+        subject: `final-validation-worktree:${agent}`,
+        patches: [currentPatch],
+        contestantId: agent,
+        runLevel: true,
+      });
       try {
-        await context.worktrees.applyPatch(worktree, currentPatch);
-        const command = await runShellCommand(context.config.testCommand, {
-          cwd: worktree,
-          timeoutMs: context.config.limits.attackMs,
-          logPrefix: context.store.resolve(`logs/final-${agent}`),
-          signal: context.controller.signal,
-        });
+        let command!: Awaited<ReturnType<typeof runShellCommand>>;
+        let validationFailure: FailureRecord | undefined;
+        for (const attempt of [1, 2] as const) {
+          const startedAt = this.now().toISOString();
+          const logPrefix = context.store.resolve(
+            `logs/final-${agent}-attempt-${String(attempt)}`,
+          );
+          command = await runShellCommand(context.config.testCommand, {
+            cwd: worktree,
+            timeoutMs: context.config.limits.attackMs,
+            logPrefix,
+            signal: context.controller.signal,
+          });
+          const finishedAt = this.now().toISOString();
+          const diagnosticArtifactRefs = [
+            command.stdoutPath,
+            command.stderrPath,
+          ];
+          if (command.failureClass !== "arena_infrastructure") {
+            if (validationFailure) {
+              validationFailure = await this.recordFailureAttempt(context, {
+                stage: "final_validation",
+                subject: `final-required:${agent}`,
+                category: validationFailure.category,
+                attempt: 2,
+                startedAt,
+                finishedAt,
+                status: "succeeded",
+                diagnosticArtifactRefs,
+                contestantId: agent,
+                existing: validationFailure,
+                reusedArtifactRefs: [currentPatch],
+                terminalDisposition: "recovered",
+              });
+            }
+            break;
+          }
+          validationFailure = await this.recordFailureAttempt(context, {
+            stage: "final_validation",
+            subject: `final-required:${agent}`,
+            category: "command_execution",
+            attempt,
+            startedAt,
+            finishedAt,
+            status: "failed",
+            diagnosticArtifactRefs,
+            contestantId: agent,
+            ...(validationFailure ? { existing: validationFailure } : {}),
+            reusedArtifactRefs: [currentPatch],
+            ...(attempt === 2
+              ? { terminalDisposition: "run_level_coverage_lost" as const }
+              : {}),
+          });
+          if (attempt === 2) break;
+        }
         const check = requiredCheck("final-required", command);
         contestant.checks.push(check);
         if (check.status === "infrastructure_error") {
@@ -4950,26 +5900,78 @@ export class RoundEngine {
               ) ?? [];
             let defectPasses = true;
             for (const caseEntry of finalCases) {
-              const caseTree = await context.worktrees.create(
-                `final-${agent}-${caseEntry.id}`,
-              );
+              const caseTree = await this.prepareWorktree(context, {
+                name: `final-${agent}-${caseEntry.id}`,
+                subject: `final-case-worktree:${agent}:${caseEntry.id}`,
+                patches: [currentPatch, caseEntry.patchPath],
+                contestantId: agent,
+                attackId: attack.id,
+                runLevel: true,
+              });
               try {
-                await context.worktrees.applyPatch(caseTree, currentPatch);
-                await context.worktrees.applyPatch(
-                  caseTree,
-                  caseEntry.patchPath,
-                );
-                const caseCommand = await runShellCommand(
-                  caseEntry.focusedCommand,
-                  {
-                    cwd: caseTree,
-                    timeoutMs: context.config.limits.attackMs,
-                    logPrefix: context.store.resolve(
-                      `logs/final-${agent}-${caseEntry.id}`,
-                    ),
-                    signal: context.controller.signal,
-                  },
-                );
+                let caseCommand!: Awaited<ReturnType<typeof runShellCommand>>;
+                let caseFailure: FailureRecord | undefined;
+                for (const attempt of [1, 2] as const) {
+                  const startedAt = this.now().toISOString();
+                  const logPrefix = context.store.resolve(
+                    `logs/final-${agent}-${caseEntry.id}-attempt-${String(attempt)}`,
+                  );
+                  caseCommand = await runShellCommand(
+                    caseEntry.focusedCommand,
+                    {
+                      cwd: caseTree,
+                      timeoutMs: context.config.limits.attackMs,
+                      logPrefix,
+                      signal: context.controller.signal,
+                    },
+                  );
+                  const finishedAt = this.now().toISOString();
+                  const diagnosticArtifactRefs = [
+                    caseCommand.stdoutPath,
+                    caseCommand.stderrPath,
+                  ];
+                  if (caseCommand.failureClass !== "arena_infrastructure") {
+                    if (caseFailure) {
+                      caseFailure = await this.recordFailureAttempt(context, {
+                        stage: "final_validation",
+                        subject: `final-case:${agent}:${caseEntry.id}`,
+                        category: caseFailure.category,
+                        attempt: 2,
+                        startedAt,
+                        finishedAt,
+                        status: "succeeded",
+                        diagnosticArtifactRefs,
+                        contestantId: agent,
+                        attackId: attack.id,
+                        existing: caseFailure,
+                        reusedArtifactRefs: [currentPatch, caseEntry.patchPath],
+                        terminalDisposition: "recovered",
+                      });
+                    }
+                    break;
+                  }
+                  caseFailure = await this.recordFailureAttempt(context, {
+                    stage: "final_validation",
+                    subject: `final-case:${agent}:${caseEntry.id}`,
+                    category: "command_execution",
+                    attempt,
+                    startedAt,
+                    finishedAt,
+                    status: "failed",
+                    diagnosticArtifactRefs,
+                    contestantId: agent,
+                    attackId: attack.id,
+                    ...(caseFailure ? { existing: caseFailure } : {}),
+                    reusedArtifactRefs: [currentPatch, caseEntry.patchPath],
+                    ...(attempt === 2
+                      ? {
+                          terminalDisposition:
+                            "run_level_coverage_lost" as const,
+                        }
+                      : {}),
+                  });
+                  if (attempt === 2) break;
+                }
                 contestant.checks.push({
                   id: `final-${caseEntry.id}`,
                   kind:
@@ -5072,11 +6074,13 @@ export class RoundEngine {
       });
       const manifestPaths = facts.changedPaths.filter(isManifestPath);
       if (manifestPaths.length > 0 && context.config.baseCommit) {
-        const worktree = await context.worktrees.create(
-          `quality-facts-${agent}`,
-        );
+        const worktree = await this.prepareWorktree(context, {
+          name: `quality-facts-${agent}`,
+          subject: `quality-facts-worktree:${agent}`,
+          patches: [patchPath],
+          contestantId: agent,
+        });
         try {
-          await context.worktrees.applyPatch(worktree, patchPath);
           const baseContent: Record<string, string> = {};
           const patchedContent: Record<string, string> = {};
           for (const manifestPath of manifestPaths) {
@@ -5185,7 +6189,10 @@ export class RoundEngine {
         const { contestantId: patchBId, ...anonymousPatchBFacts } = patchBFacts;
         void patchAId;
         void patchBId;
-        const worktree = await context.worktrees.create("quality-verifier");
+        let worktree = await this.prepareWorktree(context, {
+          name: "quality-verifier",
+          subject: "quality-verifier-worktree",
+        });
         const promptPath = context.store.resolve("quality/prompt.txt");
         await context.store.writeText(
           "quality/prompt.txt",
@@ -5234,11 +6241,26 @@ export class RoundEngine {
           transcriptPrefix: undefined,
         });
         try {
-          verdict = await this.dependencies.qualityVerifier.compare(input);
-        } catch (error) {
-          verdict = inconclusiveQualityVerdict(
-            `Quality verifier failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
+          verdict = await compareQualityWithRetry({
+            verifier: this.dependencies.qualityVerifier,
+            input,
+            patchArtifactRefs: [patchAPath, patchBPath],
+            transcriptPrefix: (attempt) =>
+              context.store.resolve(
+                `logs/quality-verifier-attempt-${String(attempt)}`,
+              ),
+            recreateWorktree: async () => {
+              await context.worktrees.remove(worktree);
+              worktree = await this.prepareWorktree(context, {
+                name: "quality-verifier",
+                subject: "quality-verifier-retry-worktree",
+              });
+              return worktree;
+            },
+            persistFailureRecord: (record) =>
+              this.persistFailureRecord(context, record),
+            now: this.now,
+          });
         } finally {
           await context.worktrees.remove(worktree);
         }

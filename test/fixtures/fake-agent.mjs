@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 if (process.argv.includes("--version")) {
@@ -227,7 +227,24 @@ if (stage === "implement") {
     JSON.stringify({ version: 1, findings: repeatedWhitespaceFinding }),
   );
 } else if (stage === "collect_attacks") {
-  if (prompt.includes("# Correction-only reconciliation")) {
+  const retryMarker = path.join(process.cwd(), ".agent-arena-retry-once");
+  let emitRetryFailure = false;
+  if (
+    process.env.AGENT_ARENA_FAKE_RETRY_ONCE === "1" &&
+    round === "1" &&
+    agent === "codex"
+  ) {
+    try {
+      await readFile(retryMarker);
+      await rm(retryMarker);
+    } catch {
+      emitRetryFailure = true;
+      await writeFile(retryMarker, "retry\n");
+    }
+  }
+  if (emitRetryFailure) {
+    await writeFile(submission, JSON.stringify({ version: 2, attacks: [{}] }));
+  } else if (prompt.includes("# Correction-only reconciliation")) {
     const candidateIds = [...prompt.matchAll(/"candidateId":\s*"([^"]+)"/g)]
       .map((match) => match[1])
       .filter((candidateId) => candidateId !== "...");
