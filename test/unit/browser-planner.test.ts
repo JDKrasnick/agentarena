@@ -183,6 +183,56 @@ describe("browser validation planner", () => {
     ).toThrow("Required capabilities were not approved");
   });
 
+  it("does not approve browser execution when a required origin was denied", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-browser-origin-"));
+    const fightConfig = config({
+      task: "Fix browser navigation",
+      repositoryRoot: root,
+      artifactRoot: path.join(root, "runs"),
+      browserProfile: {
+        runner: "custom",
+        startupCommand: "npm start",
+        healthUrl: "https://example.com/health",
+        baseUrl: "https://example.com",
+        testCommand: "npm run browser",
+        projects: [],
+        allowedOrigins: ["https://example.com"],
+      },
+    });
+    const recon = await collectFightReconnaissance(fightConfig, {
+      now: new Date("2026-08-18T12:00:00Z"),
+    });
+    const requests = discoverCapabilities(fightConfig, recon);
+    const browser = requests.find(
+      (capability) => capability.id === "browser_dom_validation",
+    );
+    const origin = requests.find((capability) =>
+      capability.id.startsWith("browser_origin_"),
+    );
+    if (!browser || !origin) throw new Error("Browser capabilities missing");
+    const runSpec = await buildRunSpec({
+      runId: "denied-browser-origin",
+      baseCommit: "a".repeat(40),
+      config: fightConfig,
+      permissions: {
+        defaultMode: "confirm",
+        reducedValidationAccepted: true,
+        capabilities: [
+          { ...browser, mode: "confirm", status: "approved" },
+          { ...origin, mode: "deny", status: "denied" },
+        ],
+      },
+      repositoryRoot: root,
+      sourceDirectory: path.join(root, "sources"),
+      reconnaissance: recon,
+    });
+
+    expect(runSpec.browserValidation).toMatchObject({
+      decision: "denied",
+      approvedScopes: [],
+    });
+  });
+
   it("scopes an explicit dynamic port to the approved loopback host", () => {
     const fightConfig = config({
       task: "Fix responsive navigation",

@@ -142,7 +142,18 @@ describe("browser-only attacks", () => {
           return Promise.resolve({
             status: subject === "author" ? "verified" : "failed",
             provisionAttempts: 1,
-            probes: [],
+            probes: [
+              {
+                probeId: "settings-dialog",
+                family: "interaction",
+                profile: "desktop",
+                status: subject === "author" ? "verified" : "failed",
+                contextId: `${subject}-settings-dialog`,
+                requiredCapabilityIds: ["browser_dom_validation"],
+                blockedOrigins: [],
+                artifacts: [],
+              },
+            ],
             artifacts: [],
             ...(subject === "target"
               ? {
@@ -188,6 +199,89 @@ describe("browser-only attacks", () => {
       expect(result.status).toBe("landed");
       expect(result.evidenceKind).toBe("browser_probe");
       expect(validateBrowser).toHaveBeenCalledTimes(2);
+
+      const selectedProbePasses = vi.fn(
+        (
+          _worktree: string,
+          _probe: BrowserProbeRequest,
+          subject: "author" | "target",
+          _nativeSuiteIdentityPaths: string[],
+        ): Promise<BrowserValidationResult> => {
+          void _nativeSuiteIdentityPaths;
+          return Promise.resolve({
+            status: subject === "target" ? "failed" : "verified",
+            provisionAttempts: 1,
+            probes: [
+              {
+                probeId: "settings-dialog",
+                family: "interaction",
+                profile: "desktop",
+                status: "verified",
+                contextId: `${subject}-settings-dialog-pass`,
+                requiredCapabilityIds: ["browser_dom_validation"],
+                blockedOrigins: [],
+                artifacts: [],
+              },
+              ...(subject === "target"
+                ? [
+                    {
+                      probeId: "arena-reflow-smoke",
+                      family: "responsive" as const,
+                      profile: "reflow_320" as const,
+                      status: "failed" as const,
+                      contextId: "target-unrelated-smoke",
+                      requiredCapabilityIds: [
+                        "browser_dom_validation" as const,
+                      ],
+                      reason: "application_failure" as const,
+                      blockedOrigins: [],
+                      artifacts: [],
+                    },
+                  ]
+                : []),
+            ],
+            artifacts: [],
+            ...(subject === "target"
+              ? {
+                  reason: "application_failure" as const,
+                  failureAttribution: "contestant_application" as const,
+                }
+              : {}),
+          });
+        },
+      );
+      const unrelatedFailure = await validateAttack({
+        attack: { ...attack, id: "browser-only-unrelated", checks: [] },
+        authorPatch,
+        targetPatch,
+        runSpec: {} as never,
+        permissionPolicy: {
+          defaultMode: "confirm",
+          reducedValidationAccepted: false,
+          capabilities: [
+            {
+              id: "browser_dom_validation",
+              reason: "Browser comparison",
+              risk: "medium",
+              requirement: "required",
+              role: "harness_only",
+              enforcement: "brokered",
+              mode: "confirm",
+              scopes: [],
+              status: "approved",
+            },
+          ],
+        },
+        config,
+        worktrees,
+        verifier,
+        validateBrowser: selectedProbePasses,
+        logRoot: path.join(temporaryRoot, "unrelated-logs"),
+        signal: new AbortController().signal,
+        knownRootDefects: new Set(),
+      });
+
+      expect(unrelatedFailure.status).toBe("blocked");
     } finally {
       await worktrees.cleanup();
     }

@@ -37,6 +37,7 @@ export interface BrowserAdapter {
     worktree: string;
     artifactDirectory: string;
     signal: AbortSignal;
+    deadlineAt: number;
   }): Promise<BrowserSession>;
 }
 
@@ -91,6 +92,73 @@ function unverified(
   });
 }
 
+function runtimeOriginsApproved(options: {
+  plan: BrowserPlan & { profile: NonNullable<BrowserPlan["profile"]> };
+  approvedOrigins: string[];
+  dynamicLoopbackApproved: boolean;
+}): boolean {
+  const baseOrigin = new URL(options.plan.profile.baseUrl).origin;
+  return [options.plan.profile.baseUrl, options.plan.profile.healthUrl].every(
+    (value) => {
+      const origin = new URL(value).origin;
+      return (
+        options.approvedOrigins.includes(origin) ||
+        (options.dynamicLoopbackApproved &&
+          options.plan.profile.portMode === "dynamic" &&
+          origin === baseOrigin)
+      );
+    },
+  );
+}
+
+async function beforeDeadline<T>(
+  operation: () => Promise<T>,
+  deadlineAt: number,
+  signal: AbortSignal,
+): Promise<T> {
+  const remainingMs = deadlineAt - Date.now();
+  if (remainingMs <= 0)
+    throw new BrowserInfrastructureError(
+      "Browser validation exceeded its stage budget",
+      "timed_out",
+      "harness_configuration",
+    );
+  let timer: NodeJS.Timeout | undefined;
+  let abort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new BrowserInfrastructureError(
+                "Browser validation exceeded its stage budget",
+                "timed_out",
+                "harness_configuration",
+              ),
+            ),
+          remainingMs,
+        );
+      }),
+      new Promise<never>((_resolve, reject) => {
+        abort = () =>
+          reject(
+            new BrowserInfrastructureError(
+              "Browser validation was interrupted",
+              "interrupted",
+            ),
+          );
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (abort) signal.removeEventListener("abort", abort);
+  }
+}
+
 export async function executeBrowserValidation(options: {
   plan: BrowserPlan;
   decision: "approved" | "denied" | "unavailable" | "provisioning_failed";
@@ -99,6 +167,8 @@ export async function executeBrowserValidation(options: {
   artifactDirectory: string;
   selectedProbes: BrowserProbeRequest[];
   approvedOrigins: string[];
+  dynamicLoopbackApproved?: boolean;
+  timeoutMs: number;
   nativeSuiteCache?: Map<string, BrowserNativeSuiteResult>;
   nativeSuiteCacheKey?: string;
   signal: AbortSignal;
@@ -111,7 +181,18 @@ export async function executeBrowserValidation(options: {
     options.adapter.runner !== options.plan.profile.runner
   )
     return unverified("tool_missing", 0);
+  const adapter = options.adapter;
+  const profile = options.plan.profile;
+  if (
+    !runtimeOriginsApproved({
+      plan: { ...options.plan, profile: options.plan.profile },
+      approvedOrigins: options.approvedOrigins,
+      dynamicLoopbackApproved: options.dynamicLoopbackApproved ?? false,
+    })
+  )
+    return unverified("unapproved_origin", 0);
 
+  const deadlineAt = Date.now() + options.timeoutMs;
   let lastReason: BrowserUnavailableReason = "launch_failure";
   let lastAttribution: "harness_transport" | "harness_configuration" =
     "harness_transport";
@@ -120,15 +201,26 @@ export async function executeBrowserValidation(options: {
     if (options.signal.aborted) return unverified("interrupted", attempt - 1);
     let session: BrowserSession | undefined;
     try {
-      session = await options.adapter.launch({
-        plan: { ...options.plan, profile: options.plan.profile },
-        worktree: options.worktree,
-        artifactDirectory: options.artifactDirectory,
-        signal: options.signal,
-      });
+      session = await beforeDeadline(
+        () =>
+          adapter.launch({
+            plan: { ...options.plan, profile },
+            worktree: options.worktree,
+            artifactDirectory: options.artifactDirectory,
+            signal: options.signal,
+            deadlineAt,
+          }),
+        deadlineAt,
+        options.signal,
+      );
+      const activeSession = session;
       artifacts.push(...session.artifacts);
       try {
-        await session.waitUntilReady();
+        await beforeDeadline(
+          () => activeSession.waitUntilReady(),
+          deadlineAt,
+          options.signal,
+        );
       } catch (error) {
         lastReason =
           error instanceof BrowserInfrastructureError
@@ -147,7 +239,12 @@ export async function executeBrowserValidation(options: {
         ? options.nativeSuiteCache?.get(options.nativeSuiteCacheKey)
         : undefined;
       const nativeResult =
-        cachedNativeResult ?? (await session.runNativeSuite());
+        cachedNativeResult ??
+        (await beforeDeadline(
+          () => activeSession.runNativeSuite(),
+          deadlineAt,
+          options.signal,
+        ));
       if (
         !cachedNativeResult &&
         options.nativeSuiteCacheKey &&
@@ -159,6 +256,7 @@ export async function executeBrowserValidation(options: {
         );
       probes.push({
         ...nativeResult,
+        probeId: "arena-repository-native",
         family: "visual_regression",
         profile: "repository_native",
         contextId: nativeContextId,
@@ -175,14 +273,20 @@ export async function executeBrowserValidation(options: {
       });
       for (const request of requests) {
         const contextId = randomUUID();
-        const result = await session.runProbe({
-          request,
-          contextId,
-          freshStorage: true,
-          allowedOrigins: options.approvedOrigins,
-        });
+        const result = await beforeDeadline(
+          () =>
+            activeSession.runProbe({
+              request,
+              contextId,
+              freshStorage: true,
+              allowedOrigins: options.approvedOrigins,
+            }),
+          deadlineAt,
+          options.signal,
+        );
         probes.push({
           ...result,
+          probeId: request.id,
           family: request.family,
           profile: request.profile,
           contextId,

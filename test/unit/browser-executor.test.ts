@@ -87,6 +87,7 @@ describe("browser validation executor", () => {
         },
       ],
       approvedOrigins: ["http://127.0.0.1:4173"],
+      timeoutMs: 10_000,
       signal: new AbortController().signal,
     });
 
@@ -140,6 +141,7 @@ describe("browser validation executor", () => {
       artifactDirectory: "/artifacts/a",
       selectedProbes: [],
       approvedOrigins: ["http://127.0.0.1:4173"],
+      timeoutMs: 10_000,
       signal: new AbortController().signal,
     });
 
@@ -163,10 +165,63 @@ describe("browser validation executor", () => {
       artifactDirectory: "/artifacts/a",
       selectedProbes: [],
       approvedOrigins: ["http://127.0.0.1:4173"],
+      timeoutMs: 10_000,
       signal: new AbortController().signal,
     });
     expect(result).toMatchObject({ status: "unverified", reason: "denied" });
     expect(browser.launch).not.toHaveBeenCalled();
+  });
+
+  it("does not launch when the runtime origin was not approved", async () => {
+    const browser = adapter({} as BrowserSession);
+    const result = await executeBrowserValidation({
+      plan,
+      decision: "approved",
+      adapter: browser.value,
+      worktree: "/worktree/a",
+      artifactDirectory: "/artifacts/a",
+      selectedProbes: [],
+      approvedOrigins: [],
+      timeoutMs: 10_000,
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({
+      status: "unverified",
+      reason: "unapproved_origin",
+      provisionAttempts: 0,
+    });
+    expect(browser.launch).not.toHaveBeenCalled();
+  });
+
+  it("bounds the complete browser lifecycle by the stage timeout", async () => {
+    const stop = vi.fn().mockResolvedValue(undefined);
+    const browser = adapter({
+      toolVersion: "1",
+      browserVersion: "1",
+      artifacts: [],
+      waitUntilReady: vi.fn(() => new Promise<void>(() => undefined)),
+      runProbe: vi.fn(),
+      runNativeSuite: vi.fn(),
+      stop,
+    });
+    const startedAt = Date.now();
+    const result = await executeBrowserValidation({
+      plan,
+      decision: "approved",
+      adapter: browser.value,
+      worktree: "/worktree/a",
+      artifactDirectory: "/artifacts/a",
+      selectedProbes: [],
+      approvedOrigins: ["http://127.0.0.1:4173"],
+      timeoutMs: 25,
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({ status: "unverified", reason: "timed_out" });
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(browser.launch).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledOnce();
   });
 
   it("reuses a frozen native-suite result by content key", async () => {
@@ -206,6 +261,7 @@ describe("browser validation executor", () => {
       artifactDirectory: "/artifacts/a",
       selectedProbes: [],
       approvedOrigins: ["http://127.0.0.1:4173"],
+      timeoutMs: 10_000,
       nativeSuiteCache,
       nativeSuiteCacheKey: "frozen-tree-and-command",
       signal: new AbortController().signal,
@@ -218,5 +274,11 @@ describe("browser validation executor", () => {
     expect(nativeSuiteCache.size).toBe(1);
     expect(first.nativeSuiteCacheHit).toBe(false);
     expect(second.nativeSuiteCacheHit).toBe(true);
+    expect(first.probes.map((probe) => probe.probeId)).toEqual([
+      "arena-repository-native",
+      "arena-runtime-smoke",
+      "arena-semantics-smoke",
+      "arena-reflow-smoke",
+    ]);
   });
 });

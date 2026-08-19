@@ -61,6 +61,8 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
         worktree: process.cwd(),
         artifactDirectory: path.join(artifacts, "verified"),
         approvedOrigins: [origin],
+        dynamicLoopbackApproved: true,
+        timeoutMs: 30_000,
         selectedProbes: [
           {
             id: "desktop",
@@ -103,6 +105,8 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
         worktree: process.cwd(),
         artifactDirectory: path.join(artifacts, "blocked"),
         approvedOrigins: [origin],
+        dynamicLoopbackApproved: true,
+        timeoutMs: 30_000,
         selectedProbes: [
           {
             id: "blocked-origin",

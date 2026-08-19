@@ -833,33 +833,50 @@ export async function validateAttack(
             : [attack.patchPath]),
         ],
       );
+      if (
+        authorBrowser.reason === "timed_out" ||
+        targetBrowser.reason === "timed_out"
+      )
+        return withOutcome(
+          attack,
+          "invalid",
+          "Browser attack exceeded its configured stage budget",
+        );
+      const authorProbe = authorBrowser.probes.find(
+        (probe) => probe.probeId === attack.browserProbe?.id,
+      );
+      const targetProbe = targetBrowser.probes.find(
+        (probe) => probe.probeId === attack.browserProbe?.id,
+      );
       attack.checks.push(
         {
           id: "author-browser-probe",
           kind: "browser",
           status:
-            authorBrowser.status === "verified"
+            authorProbe?.status === "verified"
               ? "passed"
-              : authorBrowser.status === "failed"
+              : authorProbe?.status === "failed"
                 ? "failed"
                 : "infrastructure_error",
-          ...(authorBrowser.reason ? { reason: authorBrowser.reason } : {}),
+          ...(authorProbe?.reason ? { reason: authorProbe.reason } : {}),
         },
         {
           id: "target-browser-probe",
           kind: "browser",
           status:
-            targetBrowser.status === "verified"
+            targetProbe?.status === "verified"
               ? "passed"
-              : targetBrowser.status === "failed"
+              : targetProbe?.status === "failed"
                 ? "failed"
                 : "infrastructure_error",
-          ...(targetBrowser.reason ? { reason: targetBrowser.reason } : {}),
+          ...(targetProbe?.reason ? { reason: targetProbe.reason } : {}),
         },
       );
       if (
-        authorBrowser.status === "unverified" ||
-        targetBrowser.status === "unverified"
+        !authorProbe ||
+        !targetProbe ||
+        authorProbe.status === "unverified" ||
+        targetProbe.status === "unverified"
       )
         return judgeFallback(
           options,
@@ -868,13 +885,13 @@ export async function validateAttack(
           options.targetPatch,
           target,
         );
-      if (authorBrowser.status === "failed")
+      if (authorProbe.status === "failed")
         return withOutcome(
           attack,
           "self_defeating",
           "Agent-chosen browser probe fails on its author's patch",
         );
-      if (targetBrowser.status === "verified")
+      if (targetProbe.status === "verified")
         return withOutcome(
           attack,
           "blocked",

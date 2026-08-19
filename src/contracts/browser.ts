@@ -159,6 +159,7 @@ export const BrowserUnavailableReasonSchema = z.enum([
   "health_failure",
   "unapproved_origin",
   "interrupted",
+  "timed_out",
   "profile_unavailable",
   "probe_not_selected",
   "server_command_failure",
@@ -188,6 +189,7 @@ export type BrowserArtifact = z.infer<typeof BrowserArtifactSchema>;
 
 export const BrowserProbeResultSchema = z
   .object({
+    probeId: z.string().min(1).optional(),
     family: z.enum([
       "interaction",
       "responsive",

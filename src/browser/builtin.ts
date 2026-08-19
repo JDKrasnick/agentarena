@@ -236,7 +236,7 @@ class BuiltInBrowserSession implements BrowserSession {
   }
 
   async waitUntilReady(): Promise<void> {
-    const deadline = Date.now() + 15_000;
+    const deadline = Math.min(Date.now() + 15_000, this.input.deadlineAt);
     while (Date.now() < deadline) {
       if (this.input.signal.aborted)
         throw new BrowserInfrastructureError(
@@ -275,7 +275,7 @@ class BuiltInBrowserSession implements BrowserSession {
   > {
     const result = await runShellCommand(this.input.plan.profile.testCommand, {
       cwd: this.input.worktree,
-      timeoutMs: 120_000,
+      timeoutMs: Math.max(1, this.input.deadlineAt - Date.now()),
       logPrefix: path.join(this.input.artifactDirectory, "native-suite"),
       signal: this.input.signal,
     });
@@ -324,6 +324,12 @@ class BuiltInBrowserSession implements BrowserSession {
         ...viewport(request.profile),
         serviceWorkers: "block",
       });
+      context.setDefaultTimeout(
+        Math.max(1, this.input.deadlineAt - Date.now()),
+      );
+      context.setDefaultNavigationTimeout(
+        Math.max(1, this.input.deadlineAt - Date.now()),
+      );
       await context.route("**/*", async (route) => {
         const url = new URL(route.request().url());
         const runtimeBaseOrigin = new URL(this.input.plan.profile.baseUrl)
@@ -428,7 +434,10 @@ class BuiltInBrowserSession implements BrowserSession {
     if (this.input.plan.profile.teardownCommand)
       await runShellCommand(this.input.plan.profile.teardownCommand, {
         cwd: this.input.worktree,
-        timeoutMs: 30_000,
+        timeoutMs: Math.max(
+          1,
+          Math.min(1_500, this.input.deadlineAt + 1_500 - Date.now()),
+        ),
         logPrefix: path.join(this.input.artifactDirectory, "teardown"),
         signal: new AbortController().signal,
       });

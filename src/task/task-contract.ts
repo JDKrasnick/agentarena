@@ -815,6 +815,16 @@ export async function buildRunSpec(
   const browserCapability = options.permissions.capabilities.find(
     (capability) => capability.id === "browser_dom_validation",
   );
+  const blockedRequiredBrowserOrigin = options.permissions.capabilities.find(
+    (capability) =>
+      capability.id.startsWith("browser_origin_") &&
+      capability.requirement === "required" &&
+      capability.status !== "approved",
+  );
+  const browserDecision =
+    browserCapability?.status === "approved" && blockedRequiredBrowserOrigin
+      ? blockedRequiredBrowserOrigin.status
+      : browserCapability?.status;
   const base = {
     version: 1 as const,
     runId: options.runId,
@@ -857,9 +867,9 @@ export async function buildRunSpec(
       ? {
           browserValidation: {
             ...browserValidation,
-            decision: browserCapability.status,
+            decision: browserDecision ?? browserCapability.status,
             approvedScopes:
-              browserCapability.status === "approved"
+              browserDecision === "approved"
                 ? [
                     ...browserCapability.scopes,
                     ...options.permissions.capabilities

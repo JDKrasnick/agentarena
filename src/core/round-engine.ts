@@ -2547,6 +2547,11 @@ export class RoundEngine {
           approvedOrigins: browser.approvedScopes
             .filter((scope) => scope.startsWith("origin:"))
             .map((scope) => scope.slice("origin:".length)),
+          dynamicLoopbackApproved: browser.approvedScopes.some(
+            (scope) =>
+              scope.startsWith("loopback:") && scope.endsWith(":dynamic"),
+          ),
+          timeoutMs: context.config.limits.attackMs,
           signal: context.controller.signal,
         });
         context.browserBaseline = browserBaseline;
@@ -2853,6 +2858,11 @@ export class RoundEngine {
         approvedOrigins: validation.approvedScopes
           .filter((scope) => scope.startsWith("origin:"))
           .map((scope) => scope.slice("origin:".length)),
+        dynamicLoopbackApproved: validation.approvedScopes.some(
+          (scope) =>
+            scope.startsWith("loopback:") && scope.endsWith(":dynamic"),
+        ),
+        timeoutMs: context.config.limits.attackMs,
         signal: context.controller.signal,
       }),
     );
@@ -2873,6 +2883,31 @@ export class RoundEngine {
             : "skipped",
       ...(result.reason ? { reason: result.reason } : {}),
     });
+    if (
+      validation.requirement === "required" &&
+      validation.decision === "approved"
+    ) {
+      const gateStatus =
+        result.status === "verified"
+          ? "passed"
+          : result.status === "failed"
+            ? "failed"
+            : "infrastructure_error";
+      contestant.checks.push({
+        id: `${phase}-browser-required`,
+        kind: "required",
+        status: gateStatus,
+        ...(result.reason ? { reason: result.reason } : {}),
+      });
+      if (phase === "final" && gateStatus === "failed") {
+        contestant.status = "eliminated";
+        contestant.healthLedger.eliminatedByRequiredCheck = true;
+      }
+      if (phase === "final" && gateStatus === "infrastructure_error")
+        throw new Error(
+          `Final required browser validation infrastructure failed for ${contestant.id}`,
+        );
+    }
     if (validation.decision === "approved" && result.status === "unverified") {
       const capability = context.permissions.capabilities.find(
         (entry) => entry.id === "browser_dom_validation",
@@ -2961,6 +2996,11 @@ export class RoundEngine {
           approvedOrigins: validation.approvedScopes
             .filter((scope) => scope.startsWith("origin:"))
             .map((scope) => scope.slice("origin:".length)),
+          dynamicLoopbackApproved: validation.approvedScopes.some(
+            (scope) =>
+              scope.startsWith("loopback:") && scope.endsWith(":dynamic"),
+          ),
+          timeoutMs: context.config.limits.attackMs,
           signal: context.controller.signal,
         }),
       );
