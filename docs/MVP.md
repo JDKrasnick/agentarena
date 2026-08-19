@@ -378,6 +378,12 @@ Pre-permission reconnaissance is a narrow read boundary. It may inspect only
 the exact task sources, known manifests and lockfiles, browser-test
 configuration, literal package scripts, framework route metadata, and known
 instruction files. It keeps all content in memory and hashes the full input.
+Text evidence is capped at 256 KiB per file and 2 MiB total. Lockfiles are
+stream-hashed and represented by digest and size rather than retained text.
+Local specs must remain inside the repository after canonical path resolution,
+including symbolic links. The only pre-approval GitHub CLI operations are the
+fixed read forms `gh issue view`, `gh pr view`, and `gh repo view`; constructive
+or destructive Git and GitHub operations remain forbidden.
 It must not create artifacts or worktrees, inspect repository cleanliness,
 resolve or fetch commits, execute repository commands or project code, start
 agents, launch browsers or servers, or install packages. After consolidated

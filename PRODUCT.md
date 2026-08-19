@@ -153,7 +153,11 @@ reconnaissance and creates the proposed shared execution contract in memory.
 It may read only the exact user-supplied task and references, known manifests
 and lockfiles, browser-test configuration, literal package scripts, framework
 route metadata, and repository instruction files. The harness hashes these
-inputs and stops when an explicit task source cannot be retrieved.
+inputs and stops when an explicit task source cannot be retrieved. Text evidence
+is capped at 256 KiB per file and 2 MiB in aggregate; lockfiles are stream-hashed
+without retaining their contents. Local specification paths are canonicalized
+so symbolic links cannot escape the repository. GitHub retrieval is limited to
+fixed `gh issue view`, `gh pr view`, and `gh repo view` reads.
 
 This phase does not create run artifacts or worktrees, inspect Git state,
 resolve or fetch commits, execute repository commands or project code, start
