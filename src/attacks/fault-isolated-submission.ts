@@ -4,6 +4,7 @@ import {
   BugCategorySchema,
   CaseSubmissionSchema,
   HouseSubmissionSchema,
+  LegacyAttackSubmissionEntrySchema,
   ReviewFindingSchema,
   type AttackSubmission,
   type CaseSubmission,
@@ -13,10 +14,9 @@ import {
 
 export const SUBMISSION_PARSER_VERSION = 1 as const;
 
-const LegacyAttackEntrySchema = AttackSubmissionEntrySchema.omit({
-  focusedCommand: true,
-  paths: true,
-}).extend({ reproduction: z.string().min(1) });
+const LegacyAttackEntrySchema = LegacyAttackSubmissionEntrySchema.extend({
+  reproduction: z.string().min(1),
+});
 
 export type SubmissionKind = "review" | "attack" | "house" | "case";
 export type ParseOutcome = "valid" | "valid_empty" | "partial" | "invalid";
@@ -747,12 +747,11 @@ export function parseFaultIsolatedSubmission(
               sections.attacks!.accepted as Array<Record<string, unknown>>
             ).map((entry) => ({
               ...entry,
-              focusedCommand:
-                typeof entry.focusedCommand === "string"
-                  ? entry.focusedCommand
-                  : typeof entry.reproduction === "string"
-                    ? entry.reproduction
-                    : "",
+              ...(typeof entry.focusedCommand === "string"
+                ? { focusedCommand: entry.focusedCommand }
+                : typeof entry.reproduction === "string"
+                  ? { focusedCommand: entry.reproduction }
+                  : {}),
               paths: Array.isArray(entry.paths)
                 ? entry.paths
                 : ["legacy/attack-evidence"],

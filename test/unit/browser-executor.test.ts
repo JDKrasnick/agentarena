@@ -95,8 +95,15 @@ describe("browser validation executor", () => {
     expect(browser.launch).toHaveBeenCalledOnce();
     expect(stop).toHaveBeenCalledOnce();
     expect(runNativeSuite).toHaveBeenCalledOnce();
-    expect(runProbe).toHaveBeenCalledTimes(2);
-    expect(new Set(result.probes.map((probe) => probe.contextId)).size).toBe(3);
+    expect(runProbe).toHaveBeenCalledTimes(5);
+    expect(new Set(result.probes.map((probe) => probe.contextId)).size).toBe(6);
+    expect(
+      runProbe.mock.calls.slice(0, 3).map(([input]) => input.request.id),
+    ).toEqual([
+      "arena-runtime-smoke",
+      "arena-semantics-smoke",
+      "arena-reflow-smoke",
+    ]);
     expect(
       result.probes.every((probe) => probe.requiredCapabilityIds.length),
     ).toBe(true);
@@ -160,5 +167,56 @@ describe("browser validation executor", () => {
     });
     expect(result).toMatchObject({ status: "unverified", reason: "denied" });
     expect(browser.launch).not.toHaveBeenCalled();
+  });
+
+  it("reuses a frozen native-suite result by content key", async () => {
+    const runNativeSuite = vi.fn().mockResolvedValue({
+      family: "visual_regression" as const,
+      profile: "repository_native" as const,
+      status: "verified" as const,
+      blockedOrigins: [],
+      artifacts: [],
+    });
+    const session: BrowserSession = {
+      toolVersion: "1",
+      browserVersion: "1",
+      artifacts: [],
+      waitUntilReady: vi.fn().mockResolvedValue(undefined),
+      runProbe: vi
+        .fn<BrowserSession["runProbe"]>()
+        .mockImplementation(({ request }) =>
+          Promise.resolve({
+            family: request.family,
+            profile: request.profile,
+            status: "verified",
+            blockedOrigins: [],
+            artifacts: [],
+          }),
+        ),
+      runNativeSuite,
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const browser = adapter(session);
+    const nativeSuiteCache = new Map();
+    const options = {
+      plan,
+      decision: "approved" as const,
+      adapter: browser.value,
+      worktree: "/worktree/a",
+      artifactDirectory: "/artifacts/a",
+      selectedProbes: [],
+      approvedOrigins: ["http://127.0.0.1:4173"],
+      nativeSuiteCache,
+      nativeSuiteCacheKey: "frozen-tree-and-command",
+      signal: new AbortController().signal,
+    };
+
+    const first = await executeBrowserValidation(options);
+    const second = await executeBrowserValidation(options);
+
+    expect(runNativeSuite).toHaveBeenCalledOnce();
+    expect(nativeSuiteCache.size).toBe(1);
+    expect(first.nativeSuiteCacheHit).toBe(false);
+    expect(second.nativeSuiteCacheHit).toBe(true);
   });
 });

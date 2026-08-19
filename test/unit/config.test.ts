@@ -17,6 +17,7 @@ describe("configuration", () => {
         "  health_url: http://127.0.0.1:4173/health",
         "  base_url: http://127.0.0.1:4173",
         "  test: npm run test:e2e",
+        "  port_mode: dynamic",
         "  projects: [chromium]",
         "  allowed_origins: [http://127.0.0.1:4173]",
       ].join("\n"),
@@ -28,6 +29,7 @@ describe("configuration", () => {
         runner: "playwright",
         startupCommand: "npm run dev",
         testCommand: "npm run test:e2e",
+        portMode: "dynamic",
         projects: ["chromium"],
       },
     });

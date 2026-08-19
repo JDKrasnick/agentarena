@@ -448,11 +448,32 @@ translated into Arena profiles: the repository's configured browser command
 and complete project matrix run unchanged as the native suite. Requests outside
 approved origins are blocked and recorded.
 
+Runtime-error/DOM-integrity, accessible-name, and 320 CSS-pixel overflow smoke
+probes are mandatory on every browser run; the attacker-selected probe is
+additive. A browser-only attack may omit repository paths and a focused command.
+The harness records it as reproducible evidence only after it passes on the
+author worktree, fails on the target worktree, and survives normal oracle
+adjudication. More complex flows use repository-authored tests or fixtures and
+their focused command rather than adding general-purpose script to the probe
+DSL.
+
 Built-in Playwright, Cypress, and custom adapters use `playwright-core` with an
 already installed Chrome/Chromium binary for Arena-managed navigation,
 isolation, and artifacts. The adapter does not replace the repository runner;
 Playwright, Cypress, WebDriver, or other repository tests still execute through
 the exact approved native command.
+
+An explicit profile may set `port_mode: dynamic` when its startup command
+honors the harness-provided `PORT`. The permission scope then covers a dynamic
+port on the exact loopback protocol and host. Fixed-port profiles continue to
+run comparative lanes sequentially. Native-suite results are reused within the
+run only when the exact command and immutable patch bytes match; service and
+probe lifecycles are never skipped.
+
+The reviewer decides whether an already approved external origin is appropriate
+evidence, but cannot add an origin after consolidated approval. Authenticated
+routes, credential sources, and ephemeral storage-state handoff remain
+deliberately unsupported pending #66; secret-dependent checks are unverified.
 
 Probe families cover role/name/label-based interaction, responsive overflow and
 clipping, keyboard/focus behavior, accessible semantics, declared persistence,

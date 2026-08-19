@@ -116,6 +116,7 @@ const FileConfigSchema = z
         base_url: z.string().url(),
         test: z.string().trim().min(1),
         teardown: z.string().trim().min(1).optional(),
+        port_mode: z.enum(["fixed", "dynamic"]).default("fixed"),
         projects: z.array(z.string().trim().min(1)).default([]),
         allowed_origins: z.array(z.string().url()).min(1),
       })
@@ -483,6 +484,7 @@ export async function loadFightConfig(
             ...(file.browser.teardown
               ? { teardownCommand: file.browser.teardown }
               : {}),
+            portMode: file.browser.port_mode,
             projects: file.browser.projects,
             allowedOrigins: file.browser.allowed_origins,
           },

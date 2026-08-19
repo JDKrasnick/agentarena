@@ -25,6 +25,7 @@ import {
 } from "../agents/prompts.js";
 import { ArtifactStore } from "../artifacts/store.js";
 import {
+  browserProbeEvidencePatch,
   materializeAttack,
   materializeHouseAttack,
 } from "../attacks/submission.js";
@@ -183,6 +184,7 @@ import {
 import {
   executeBrowserValidation,
   type BrowserAdapter,
+  type BrowserNativeSuiteResult,
 } from "../browser/executor.js";
 
 export type { ReconnaissanceSnapshot } from "../task/task-contract.js";
@@ -403,6 +405,11 @@ export class RoundEngine {
   private readonly generatedContestantAdapters: Partial<
     Record<ContestantId, AgentAdapter>
   > = {};
+  private readonly browserNativeSuiteCache = new Map<
+    string,
+    BrowserNativeSuiteResult
+  >();
+  private readonly browserProbeInvocationCounts = new Map<string, number>();
 
   constructor(
     private readonly dependencies: ArenaDependencies,
@@ -432,6 +439,8 @@ export class RoundEngine {
     externalSignal?: AbortSignal,
     suppliedReconnaissance?: ReconnaissanceSnapshot,
   ): Promise<FightOutcome> {
+    this.browserNativeSuiteCache.clear();
+    this.browserProbeInvocationCounts.clear();
     for (const contestantId of Object.keys(
       this.generatedContestantAdapters,
     ) as ContestantId[])
@@ -754,6 +763,8 @@ export class RoundEngine {
     options: ResumeOptions,
     externalSignal?: AbortSignal,
   ): Promise<FightOutcome> {
+    this.browserNativeSuiteCache.clear();
+    this.browserProbeInvocationCounts.clear();
     const repositoryRoot = await resolveRepositoryRoot(
       options.repositoryRoot ?? process.cwd(),
     );
@@ -2529,6 +2540,10 @@ export class RoundEngine {
           worktree: baseline,
           artifactDirectory: context.store.resolve("browser/baseline"),
           selectedProbes: [],
+          nativeSuiteCache: this.browserNativeSuiteCache,
+          nativeSuiteCacheKey: sha256(
+            `${browser.profile?.testCommand ?? "unavailable"}\0base:${context.runSpec.baseCommit}`,
+          ),
           approvedOrigins: browser.approvedScopes
             .filter((scope) => scope.startsWith("origin:"))
             .map((scope) => scope.slice("origin:".length)),
@@ -2817,6 +2832,9 @@ export class RoundEngine {
     const adapter = validation.profile
       ? this.dependencies.browserAdapters?.[validation.profile.runner]
       : undefined;
+    const patchDigest = contestant.currentPatchPath
+      ? sha256(await readFile(contestant.currentPatchPath))
+      : `contestant:${contestant.id}:${phase}`;
     const result = this.attributeBrowserResult(
       context,
       await executeBrowserValidation({
@@ -2828,6 +2846,10 @@ export class RoundEngine {
           `browser/${contestant.id}/${phase}`,
         ),
         selectedProbes: [],
+        nativeSuiteCache: this.browserNativeSuiteCache,
+        nativeSuiteCacheKey: sha256(
+          `${validation.profile?.testCommand ?? "unavailable"}\0${patchDigest}`,
+        ),
         approvedOrigins: validation.approvedScopes
           .filter((scope) => scope.startsWith("origin:"))
           .map((scope) => scope.slice("origin:".length)),
@@ -2899,6 +2921,7 @@ export class RoundEngine {
         worktree: string,
         probe: NonNullable<Attack["browserProbe"]>,
         subject: "author" | "target",
+        nativeSuiteIdentityPaths: string[],
       ) => Promise<BrowserValidationResult>)
     | undefined {
     const validation = context.runSpec.browserValidation;
@@ -2906,7 +2929,20 @@ export class RoundEngine {
     const adapter = validation.profile
       ? this.dependencies.browserAdapters?.[validation.profile.runner]
       : undefined;
-    return async (worktree, probe, subject) => {
+    return async (worktree, probe, subject, nativeSuiteIdentityPaths) => {
+      const invocationKey = `${attackId}:${subject}`;
+      const invocation =
+        (this.browserProbeInvocationCounts.get(invocationKey) ?? 0) + 1;
+      this.browserProbeInvocationCounts.set(invocationKey, invocation);
+      const patchDigest = sha256(
+        (
+          await Promise.all(
+            nativeSuiteIdentityPaths.map(async (patchPath) =>
+              sha256(await readFile(patchPath)),
+            ),
+          )
+        ).join("\0"),
+      );
       const result = this.attributeBrowserResult(
         context,
         await executeBrowserValidation({
@@ -2915,9 +2951,13 @@ export class RoundEngine {
           ...(adapter ? { adapter } : {}),
           worktree,
           artifactDirectory: context.store.resolve(
-            `browser/attacks/${attackId}/${subject}`,
+            `browser/attacks/${attackId}/${subject}-${String(invocation)}`,
           ),
           selectedProbes: [probe],
+          nativeSuiteCache: this.browserNativeSuiteCache,
+          nativeSuiteCacheKey: sha256(
+            `${validation.profile?.testCommand ?? "unavailable"}\0${patchDigest}`,
+          ),
           approvedOrigins: validation.approvedScopes
             .filter((scope) => scope.startsWith("origin:"))
             .map((scope) => scope.slice("origin:".length)),
@@ -2925,7 +2965,7 @@ export class RoundEngine {
         }),
       );
       await context.store.writeJson(
-        `browser/attacks/${attackId}/${subject}-result.json`,
+        `browser/attacks/${attackId}/${subject}-${String(invocation)}-result.json`,
         result,
       );
       return result;
@@ -4409,6 +4449,22 @@ export class RoundEngine {
               const overlayPath = context.store.resolve(
                 `attacks/round-${String(round)}/${agent}/${String(entry.rank)}.diff`,
               );
+              if (entry.browserProbe && entry.paths.length === 0) {
+                await context.store.writeText(
+                  `attacks/round-${String(round)}/${agent}/${String(entry.rank)}.diff`,
+                  browserProbeEvidencePatch(entry, round, agent),
+                );
+                collected.push(
+                  await materializeAttack(entry, {
+                    author: agent,
+                    authorProvider: contestant.provider,
+                    target,
+                    round,
+                    patchPath: overlayPath,
+                  }),
+                );
+                continue;
+              }
               const overlayPaths = [
                 ...new Set([...submission.sharedSupportPaths, ...entry.paths]),
               ];
@@ -4789,7 +4845,11 @@ export class RoundEngine {
         });
         if (result.status === "landed" && result.rootDefectId)
           knownRoots.add(result.rootDefectId);
-        if (result.status === "landed" && typeof round === "number") {
+        if (
+          result.status === "landed" &&
+          result.evidenceKind !== "browser_probe" &&
+          typeof round === "number"
+        ) {
           if (
             context.state.schemaVersion < 6 ||
             result.patchPath.includes(`${path.sep}cases${path.sep}round-`)
@@ -4862,7 +4922,11 @@ export class RoundEngine {
       if (!result) continue;
       if (result.status === "landed" && result.rootDefectId)
         knownRoots.add(result.rootDefectId);
-      if (result.status === "landed" && typeof round === "number") {
+      if (
+        result.status === "landed" &&
+        result.evidenceKind !== "browser_probe" &&
+        typeof round === "number"
+      ) {
         if (
           context.state.schemaVersion < 6 ||
           result.patchPath.includes(`${path.sep}cases${path.sep}round-`)
@@ -5031,6 +5095,10 @@ export class RoundEngine {
                 canonicalDefectId: attack.rootDefectId,
                 claim: attack.claim,
                 focusedCommand: attack.focusedCommand,
+                evidenceKind: attack.evidenceKind ?? "patch",
+                ...(attack.browserProbe
+                  ? { browserProbe: attack.browserProbe }
+                  : {}),
                 outcomeReason: attack.outcomeReason,
               })),
               null,
@@ -5201,18 +5269,73 @@ export class RoundEngine {
                 runLevel: true,
               });
               try {
-                const check = await runShellCommand(attack.focusedCommand, {
-                  cwd: checkTree,
-                  timeoutMs: context.config.limits.attackMs,
-                  logPrefix: context.store.resolve(
-                    `logs/round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-${attack.id}`,
-                  ),
-                  signal: context.controller.signal,
-                });
-                infrastructureFailure =
-                  check.failureClass === "arena_infrastructure";
-                mechanicsPassed = check.exitCode === 0 && !check.timedOut;
-                diagnosticArtifactRefs.push(check.stdoutPath, check.stderrPath);
+                if (attack.browserProbe) {
+                  const validateBrowser = this.browserProbeValidator(
+                    context,
+                    attack.id,
+                  );
+                  if (!validateBrowser) {
+                    infrastructureFailure = true;
+                    mechanicsPassed = false;
+                  } else {
+                    const check = await validateBrowser(
+                      checkTree,
+                      attack.browserProbe,
+                      "target",
+                      [
+                        candidatePath,
+                        ...(attack.evidenceKind === "browser_probe"
+                          ? []
+                          : [attack.patchPath]),
+                      ],
+                    );
+                    infrastructureFailure = check.status === "unverified";
+                    mechanicsPassed = check.status === "verified";
+                    diagnosticArtifactRefs.push(
+                      ...check.artifacts.map((artifact) => artifact.path),
+                    );
+                    if (
+                      mechanicsPassed &&
+                      attack.evidenceKind !== "browser_probe"
+                    ) {
+                      const focused = await runShellCommand(
+                        attack.focusedCommand,
+                        {
+                          cwd: checkTree,
+                          timeoutMs: context.config.limits.attackMs,
+                          logPrefix: context.store.resolve(
+                            `logs/round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-${attack.id}-focused`,
+                          ),
+                          signal: context.controller.signal,
+                        },
+                      );
+                      infrastructureFailure =
+                        focused.failureClass === "arena_infrastructure";
+                      mechanicsPassed =
+                        focused.exitCode === 0 && !focused.timedOut;
+                      diagnosticArtifactRefs.push(
+                        focused.stdoutPath,
+                        focused.stderrPath,
+                      );
+                    }
+                  }
+                } else {
+                  const check = await runShellCommand(attack.focusedCommand, {
+                    cwd: checkTree,
+                    timeoutMs: context.config.limits.attackMs,
+                    logPrefix: context.store.resolve(
+                      `logs/round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-${attack.id}`,
+                    ),
+                    signal: context.controller.signal,
+                  });
+                  infrastructureFailure =
+                    check.failureClass === "arena_infrastructure";
+                  mechanicsPassed = check.exitCode === 0 && !check.timedOut;
+                  diagnosticArtifactRefs.push(
+                    check.stdoutPath,
+                    check.stderrPath,
+                  );
+                }
               } finally {
                 await context.worktrees.remove(checkTree);
               }
@@ -6425,6 +6548,38 @@ export class RoundEngine {
                 (caseEntry) => caseEntry.status !== "rejected",
               ) ?? [];
             let defectPasses = true;
+            if (attack.browserProbe) {
+              const validateBrowser = this.browserProbeValidator(
+                context,
+                attack.id,
+              );
+              const browserResult = validateBrowser
+                ? await validateBrowser(
+                    worktree,
+                    attack.browserProbe,
+                    "target",
+                    [currentPatch],
+                  )
+                : undefined;
+              contestant.checks.push({
+                id: `final-browser-${attack.id}`,
+                kind: "browser",
+                status:
+                  browserResult?.status === "verified"
+                    ? "passed"
+                    : browserResult?.status === "failed"
+                      ? "failed"
+                      : "infrastructure_error",
+                ...(browserResult?.reason
+                  ? { reason: browserResult.reason }
+                  : {}),
+              });
+              if (!browserResult || browserResult.status === "unverified")
+                throw new Error(
+                  `Final browser reproducer was unverified for ${agent}`,
+                );
+              defectPasses = browserResult.status === "verified";
+            }
             for (const caseEntry of finalCases) {
               const caseTree = await this.prepareWorktree(context, {
                 name: `final-${agent}-${caseEntry.id}`,

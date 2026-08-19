@@ -107,7 +107,13 @@ function decisiveDefects(state: RunState): string[] {
         const cases = attack.caseBundle?.cases ?? [];
         const observed = attack.outcomeReason ?? attack.impact;
         const evidence = [
-          artifactLink(state, "attack patch", attack.patchPath),
+          artifactLink(
+            state,
+            attack.evidenceKind === "browser_probe"
+              ? "browser probe evidence"
+              : "attack patch",
+            attack.patchPath,
+          ),
           ...cases.map((entry) =>
             artifactLink(
               state,
@@ -196,7 +202,7 @@ function roundReplay(state: RunState): string[] {
         ? round.attacks.map((attack) => {
             const observed =
               attack.outcomeReason ?? "No adjudication detail was recorded.";
-            return `- **${tableCell(attack.claim)}** — ${attack.status.toUpperCase()}. Observed result: ${tableCell(observed)} Expected: ${tableCell(attack.oracle.expectedBehavior)} Why it matters: ${tableCell(attack.impact)} Evidence: ${artifactLink(state, "attack patch", attack.patchPath)}.`;
+            return `- **${tableCell(attack.claim)}** — ${attack.status.toUpperCase()}. Observed result: ${tableCell(observed)} Expected: ${tableCell(attack.oracle.expectedBehavior)} Why it matters: ${tableCell(attack.impact)} Evidence: ${artifactLink(state, attack.evidenceKind === "browser_probe" ? "browser probe evidence" : "attack patch", attack.patchPath)}.`;
           })
         : ["- No attacks were submitted."]),
       "",

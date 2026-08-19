@@ -43,6 +43,7 @@ interface ValidateAttackOptions {
     worktree: string,
     probe: NonNullable<Attack["browserProbe"]>,
     subject: "author" | "target",
+    nativeSuiteIdentityPaths: string[],
   ) => Promise<BrowserValidationResult>;
 }
 
@@ -814,11 +815,23 @@ export async function validateAttack(
         author,
         attack.browserProbe,
         "author",
+        [
+          options.authorPatch,
+          ...(attack.evidenceKind === "browser_probe"
+            ? []
+            : [attack.patchPath]),
+        ],
       );
       const targetBrowser = await options.validateBrowser(
         target,
         attack.browserProbe,
         "target",
+        [
+          options.targetPatch,
+          ...(attack.evidenceKind === "browser_probe"
+            ? []
+            : [attack.patchPath]),
+        ],
       );
       attack.checks.push(
         {
@@ -868,7 +881,7 @@ export async function validateAttack(
           "Target patch passes the agent-chosen browser probe",
         );
     }
-    if (targetFocused.passed) {
+    if (targetFocused.passed && attack.evidenceKind !== "browser_probe") {
       return withOutcome(
         attack,
         "blocked",

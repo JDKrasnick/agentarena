@@ -131,6 +131,28 @@ export function planBrowserValidation(
   };
 
   if (config.browserProfile) {
+    if (
+      config.browserProfile.portMode === "dynamic" &&
+      ![config.browserProfile.baseUrl, config.browserProfile.healthUrl].every(
+        isLoopback,
+      )
+    )
+      return BrowserPlanSchema.parse({
+        ...base,
+        unavailableReason: "non_local_origin",
+      });
+    if (config.browserProfile.portMode === "dynamic") {
+      const baseUrl = new URL(config.browserProfile.baseUrl);
+      const healthUrl = new URL(config.browserProfile.healthUrl);
+      if (
+        baseUrl.protocol !== healthUrl.protocol ||
+        baseUrl.hostname !== healthUrl.hostname
+      )
+        return BrowserPlanSchema.parse({
+          ...base,
+          unavailableReason: "dynamic_port_mismatch",
+        });
+    }
     return BrowserPlanSchema.parse({
       ...base,
       profile: {
@@ -199,6 +221,7 @@ export function planBrowserValidation(
       healthUrl: baseUrl,
       baseUrl,
       testCommand: scriptCommand(testName, reconnaissance),
+      portMode: "fixed",
       projects: browserConfig ? literalProjects(browserConfig.content) : [],
       allowedOrigins: [new URL(baseUrl).origin],
     },
@@ -213,9 +236,13 @@ export function browserCapabilityScopes(plan: BrowserPlan): string[] {
     ...(plan.profile.teardownCommand
       ? [`command:${plan.profile.teardownCommand}`]
       : []),
-    ...plan.profile.allowedOrigins
-      .filter(isLoopback)
-      .map((origin) => `origin:${origin}`),
+    ...plan.profile.allowedOrigins.filter(isLoopback).map((origin) => {
+      const url = new URL(origin);
+      return plan.profile?.portMode === "dynamic" &&
+        url.origin === new URL(plan.profile.baseUrl).origin
+        ? `loopback:${url.protocol}//${url.hostname}:dynamic`
+        : `origin:${origin}`;
+    }),
   ];
 }
 

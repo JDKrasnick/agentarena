@@ -8,6 +8,12 @@ import {
   type BrowserUnavailableReason,
   type BrowserValidationResult,
 } from "./results.js";
+import { mandatoryBrowserProbes } from "../contracts/browser.js";
+
+export type BrowserNativeSuiteResult = Omit<
+  BrowserProbeResult,
+  "contextId" | "requiredCapabilityIds"
+>;
 
 export interface BrowserSession {
   toolVersion: string;
@@ -20,9 +26,7 @@ export interface BrowserSession {
     freshStorage: true;
     allowedOrigins: string[];
   }): Promise<Omit<BrowserProbeResult, "contextId" | "requiredCapabilityIds">>;
-  runNativeSuite(): Promise<
-    Omit<BrowserProbeResult, "contextId" | "requiredCapabilityIds">
-  >;
+  runNativeSuite(): Promise<BrowserNativeSuiteResult>;
   stop(): Promise<void>;
 }
 
@@ -95,6 +99,8 @@ export async function executeBrowserValidation(options: {
   artifactDirectory: string;
   selectedProbes: BrowserProbeRequest[];
   approvedOrigins: string[];
+  nativeSuiteCache?: Map<string, BrowserNativeSuiteResult>;
+  nativeSuiteCacheKey?: string;
   signal: AbortSignal;
 }): Promise<BrowserValidationResult> {
   if (options.decision === "denied") return unverified("denied", 0);
@@ -137,7 +143,20 @@ export async function executeBrowserValidation(options: {
 
       const probes: BrowserProbeResult[] = [];
       const nativeContextId = randomUUID();
-      const nativeResult = await session.runNativeSuite();
+      const cachedNativeResult = options.nativeSuiteCacheKey
+        ? options.nativeSuiteCache?.get(options.nativeSuiteCacheKey)
+        : undefined;
+      const nativeResult =
+        cachedNativeResult ?? (await session.runNativeSuite());
+      if (
+        !cachedNativeResult &&
+        options.nativeSuiteCacheKey &&
+        nativeResult.status !== "unverified"
+      )
+        options.nativeSuiteCache?.set(
+          options.nativeSuiteCacheKey,
+          nativeResult,
+        );
       probes.push({
         ...nativeResult,
         family: "visual_regression",
@@ -145,7 +164,16 @@ export async function executeBrowserValidation(options: {
         contextId: nativeContextId,
         requiredCapabilityIds: ["browser_dom_validation"],
       });
-      for (const request of options.selectedProbes) {
+      const seenProbeIds = new Set<string>();
+      const requests = [
+        ...mandatoryBrowserProbes(),
+        ...options.selectedProbes,
+      ].filter((request) => {
+        if (seenProbeIds.has(request.id)) return false;
+        seenProbeIds.add(request.id);
+        return true;
+      });
+      for (const request of requests) {
         const contextId = randomUUID();
         const result = await session.runProbe({
           request,
@@ -171,6 +199,7 @@ export async function executeBrowserValidation(options: {
         provisionAttempts: attempt,
         toolVersion: session.toolVersion,
         browserVersion: session.browserVersion,
+        nativeSuiteCacheHit: Boolean(cachedNativeResult),
         probes,
         artifacts: [
           ...artifacts,

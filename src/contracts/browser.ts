@@ -27,6 +27,7 @@ export const BrowserPlanSchema = z
         baseUrl: z.string().url(),
         testCommand: z.string().min(1),
         teardownCommand: z.string().min(1).optional(),
+        portMode: z.enum(["fixed", "dynamic"]).optional(),
         projects: z.array(z.string().min(1)),
         allowedOrigins: z.array(z.string().url()).min(1),
       })
@@ -39,6 +40,7 @@ export const BrowserPlanSchema = z
         "test_command_missing",
         "base_url_missing",
         "non_local_origin",
+        "dynamic_port_mismatch",
       ])
       .optional(),
     capabilityId: z.literal("browser_dom_validation"),
@@ -99,7 +101,12 @@ export type BrowserProbeAction = z.infer<typeof BrowserProbeActionSchema>;
 
 export const BrowserProbeRequestSchema = z
   .object({
-    id: z.string().min(1),
+    id: z
+      .string()
+      .min(1)
+      .refine((value) => !value.startsWith("arena-"), {
+        message: "Probe IDs beginning with arena- are reserved by the harness",
+      }),
     family: z.enum([
       "interaction",
       "responsive",
@@ -116,6 +123,33 @@ export const BrowserProbeRequestSchema = z
   })
   .strict();
 export type BrowserProbeRequest = z.infer<typeof BrowserProbeRequestSchema>;
+
+export function mandatoryBrowserProbes(): BrowserProbeRequest[] {
+  return [
+    {
+      id: "arena-runtime-smoke",
+      family: "runtime_dom_integrity",
+      profile: "desktop",
+      expectedBehavior: "The root route renders without runtime or DOM errors",
+      actions: [{ kind: "goto", path: "/" }],
+    },
+    {
+      id: "arena-semantics-smoke",
+      family: "semantics",
+      profile: "desktop",
+      expectedBehavior: "Root-route controls have accessible names",
+      actions: [{ kind: "goto", path: "/" }],
+    },
+    {
+      id: "arena-reflow-smoke",
+      family: "responsive",
+      profile: "reflow_320",
+      expectedBehavior:
+        "The root route has no horizontal overflow at 320 CSS pixels",
+      actions: [{ kind: "goto", path: "/" }],
+    },
+  ];
+}
 
 export const BrowserUnavailableReasonSchema = z.enum([
   "denied",
@@ -183,6 +217,7 @@ export const BrowserValidationResultSchema = z
     reason: BrowserUnavailableReasonSchema.optional(),
     toolVersion: z.string().optional(),
     browserVersion: z.string().optional(),
+    nativeSuiteCacheHit: z.boolean().optional(),
     probes: z.array(BrowserProbeResultSchema),
     artifacts: z.array(BrowserArtifactSchema),
     failureAttribution: z

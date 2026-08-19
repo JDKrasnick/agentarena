@@ -7,6 +7,7 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import path from "node:path";
+import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   chromium,
@@ -34,6 +35,31 @@ const CHROMIUM_PATHS = [
   "/usr/bin/chromium",
   "/usr/bin/chromium-browser",
 ] as const;
+
+async function unusedLoopbackPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new BrowserInfrastructureError(
+      "Unable to allocate a dynamic loopback port",
+      "launch_failure",
+      "harness_configuration",
+    );
+  }
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return address.port;
+}
+
+function replacePort(value: string, port: number): string {
+  const url = new URL(value);
+  url.port = String(port);
+  return url.href.replace(/\/$/u, "");
+}
 
 async function chromiumExecutable(): Promise<string> {
   const candidates = [
@@ -300,9 +326,13 @@ class BuiltInBrowserSession implements BrowserSession {
       });
       await context.route("**/*", async (route) => {
         const url = new URL(route.request().url());
+        const runtimeBaseOrigin = new URL(this.input.plan.profile.baseUrl)
+          .origin;
         if (
           ["about:", "data:", "blob:"].includes(url.protocol) ||
-          allowedOrigins.includes(url.origin)
+          allowedOrigins.includes(url.origin) ||
+          (this.input.plan.profile.portMode === "dynamic" &&
+            url.origin === runtimeBaseOrigin)
         )
           await route.continue();
         else {
@@ -411,23 +441,55 @@ class BuiltInBrowserAdapter implements BrowserAdapter {
   async launch(
     input: Parameters<BrowserAdapter["launch"]>[0],
   ): Promise<BrowserSession> {
-    await mkdir(input.artifactDirectory, { recursive: true });
-    const stdoutPath = path.join(input.artifactDirectory, "startup.stdout.log");
-    const stderrPath = path.join(input.artifactDirectory, "startup.stderr.log");
+    const runtimeInput =
+      input.plan.profile.portMode === "dynamic"
+        ? await (async () => {
+            const port = await unusedLoopbackPort();
+            const originalBaseOrigin = new URL(input.plan.profile.baseUrl)
+              .origin;
+            const baseUrl = replacePort(input.plan.profile.baseUrl, port);
+            return {
+              ...input,
+              plan: {
+                ...input.plan,
+                profile: {
+                  ...input.plan.profile,
+                  baseUrl,
+                  healthUrl: replacePort(input.plan.profile.healthUrl, port),
+                  allowedOrigins: input.plan.profile.allowedOrigins.map(
+                    (origin) =>
+                      new URL(origin).origin === originalBaseOrigin
+                        ? new URL(baseUrl).origin
+                        : origin,
+                  ),
+                },
+              },
+            };
+          })()
+        : input;
+    await mkdir(runtimeInput.artifactDirectory, { recursive: true });
+    const stdoutPath = path.join(
+      runtimeInput.artifactDirectory,
+      "startup.stdout.log",
+    );
+    const stderrPath = path.join(
+      runtimeInput.artifactDirectory,
+      "startup.stderr.log",
+    );
     const [stdout, stderr] = await Promise.all([
       open(stdoutPath, "w"),
       open(stderrPath, "w"),
     ]);
-    const port = new URL(input.plan.profile.baseUrl).port;
-    const child = spawn(input.plan.profile.startupCommand, {
-      cwd: input.worktree,
+    const port = new URL(runtimeInput.plan.profile.baseUrl).port;
+    const child = spawn(runtimeInput.plan.profile.startupCommand, {
+      cwd: runtimeInput.worktree,
       shell: true,
       detached: process.platform !== "win32",
       stdio: ["ignore", stdout.fd, stderr.fd],
       env: { ...process.env, ...(port ? { PORT: port } : {}) },
     });
     child.once("error", () => undefined);
-    return new BuiltInBrowserSession(input, child, stdout, stderr, [
+    return new BuiltInBrowserSession(runtimeInput, child, stdout, stderr, [
       { kind: "startup_log", path: stdoutPath, failureOnly: false },
       { kind: "startup_log", path: stderrPath, failureOnly: false },
     ]);

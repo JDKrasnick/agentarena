@@ -41,6 +41,7 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
           healthUrl: `${origin}/health`,
           baseUrl: origin,
           testCommand: "node test/fixtures/browser-app/native-test.mjs",
+          portMode: "dynamic",
           projects: ["repository-native"],
           allowedOrigins: [origin],
         },
@@ -49,6 +50,10 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
       controllers.push(controller);
       const adapter = createBuiltInBrowserAdapters().playwright;
       expect(adapter).toBeDefined();
+      const reservedStaticPort = createServer();
+      await new Promise<void>((resolve) =>
+        reservedStaticPort.listen(port, "127.0.0.1", resolve),
+      );
       const verified = await executeBrowserValidation({
         plan,
         decision: "approved",
@@ -84,8 +89,11 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
         ],
         signal: controller.signal,
       });
+      await new Promise<void>((resolve) =>
+        reservedStaticPort.close(() => resolve()),
+      );
       expect(verified.status).toBe("verified");
-      expect(verified.probes).toHaveLength(4);
+      expect(verified.probes).toHaveLength(7);
       await expect(fetch(`${origin}/health`)).rejects.toThrow();
 
       const blocked = await executeBrowserValidation({

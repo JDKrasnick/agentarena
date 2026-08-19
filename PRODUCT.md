@@ -247,11 +247,30 @@ The harness advertises the safe probe menu; the attacking agent chooses a
 task-specific family, desktop/mobile/reflow profile, accessible actions, and
 expected behavior in its attack submission. Generated checks can use Chromium
 desktop at 1440×900, mobile at 390×844 with touch, or 320 CSS-pixel reflow.
-Probe families cover
+Every browser run also includes harness-owned runtime-error, accessible-name,
+and 320 CSS-pixel overflow smoke probes. Probe families cover
 interaction, responsive layout, keyboard/focus, semantics, task-declared
 persistence, runtime DOM integrity, risk-triggered inert DOM-XSS canaries, and
 unchanged repository-owned visual baselines. New screenshots are diagnostics,
 not pass/fail baselines.
+
+A review finding may become a browser-only attack without a repository test
+patch. It lands only when the bounded probe reproduces symmetrically—passing on
+the author's patch and failing on the target—and the identity-blind judge
+accepts the frozen-task oracle. Complex flows stay in repository-authored test
+or fixture patches with a focused command; the JSON probe DSL does not become a
+general-purpose script runner.
+
+The reviewing contestant decides whether an already approved exact external
+origin provides suitable evidence. It cannot expand network authority after
+approval. Authenticated sessions and secret brokering are deferred to #66;
+until that contract exists, coverage requiring login remains unavailable.
+
+Explicit profiles may choose `dynamic` loopback ports when their startup
+command honors the harness-provided `PORT`; otherwise they retain the exact
+fixed port and comparative lanes run sequentially. Repository-native suite
+results are cached within a run by immutable patch bytes and the exact command,
+while service startup and browser probes still execute for each lane.
 
 Functional assertions run once. Browser/server infrastructure may receive one
 bounded retry with guaranteed teardown; a first-fail/second-pass assertion is

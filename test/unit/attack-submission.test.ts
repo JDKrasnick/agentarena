@@ -54,6 +54,30 @@ describe("ordered attack sets", () => {
     ).toThrow("browser_dom_validation");
   });
 
+  it("accepts browser-only evidence without a repository test patch", () => {
+    const browserOnly = {
+      ...entry(1),
+      requiredCapabilities: ["browser_dom_validation"],
+      browserProbe: {
+        id: "reproduced-dialog-bug",
+        family: "interaction",
+        profile: "desktop",
+        expectedBehavior: "The dialog opens",
+        actions: [
+          { kind: "goto", path: "/" },
+          { kind: "click", role: "button", name: "Open dialog" },
+          { kind: "assert_visible", role: "dialog", name: "Settings" },
+        ],
+      },
+    };
+    const parsed = AttackSubmissionSchema.parse({
+      version: 2,
+      attacks: [browserOnly],
+    });
+    expect(parsed.attacks[0]).toMatchObject({ paths: [] });
+    expect("focusedCommand" in parsed.attacks[0]!).toBe(false);
+  });
+
   it("accepts zero to three unique failure descriptions", () => {
     const submission = AttackSubmissionSchema.parse({
       version: 1,

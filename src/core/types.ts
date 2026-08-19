@@ -647,6 +647,7 @@ export const AttackSchema = z.object({
   requiredCapabilities: z.array(z.string()),
   patchPath: z.string(),
   focusedCommand: z.string(),
+  evidenceKind: z.enum(["patch", "browser_probe"]).optional(),
   browserProbe: BrowserProbeRequestSchema.optional(),
   status: AttackStatusSchema,
   recoil: z.union([z.literal(5), z.literal(10), z.literal(15)]).optional(),
@@ -825,6 +826,7 @@ export const BrowserProfileSchema = z
     baseUrl: z.string().url(),
     testCommand: z.string().trim().min(1),
     teardownCommand: z.string().trim().min(1).optional(),
+    portMode: z.enum(["fixed", "dynamic"]).default("fixed"),
     projects: z.array(z.string().trim().min(1)).default([]),
     allowedOrigins: z.array(z.string().url()).min(1),
   })
@@ -1560,7 +1562,7 @@ export const AnyRunStateSchema = z.discriminatedUnion("schemaVersion", [
 ]);
 export type AnyRunState = z.infer<typeof AnyRunStateSchema>;
 
-export const AttackSubmissionEntrySchema = z.object({
+const AttackSubmissionEntryBaseSchema = z.object({
   rank: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   claim: z.string().min(1),
   impact: z.string().min(1),
@@ -1569,11 +1571,46 @@ export const AttackSubmissionEntrySchema = z.object({
   confidence: z.number().int().min(0).max(100),
   /** @deprecated V1 description retained only for source compatibility. */
   reproduction: z.string().min(1).optional(),
-  focusedCommand: z.string().min(1),
-  paths: z.array(z.string().min(1)).min(1),
+  focusedCommand: z.string().min(1).optional(),
+  paths: z.array(z.string().min(1)).default([]),
   requiredCapabilities: z.array(z.string()).default([]),
   browserProbe: BrowserProbeRequestSchema.optional(),
 });
+
+export const AttackSubmissionEntrySchema =
+  AttackSubmissionEntryBaseSchema.superRefine((attack, context) => {
+    if (
+      attack.browserProbe &&
+      !attack.requiredCapabilities.includes("browser_dom_validation")
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["requiredCapabilities"],
+        message:
+          "A browserProbe must declare browser_dom_validation as a required capability",
+      });
+    if (
+      !attack.browserProbe &&
+      (!attack.focusedCommand || !attack.paths.length)
+    )
+      context.addIssue({
+        code: "custom",
+        message:
+          "An attack needs a focused command and paths, or a browserProbe",
+      });
+    if (attack.paths.length > 0 && !attack.focusedCommand)
+      context.addIssue({
+        code: "custom",
+        path: ["focusedCommand"],
+        message: "Attacks with repository paths need a focused command",
+      });
+  });
+
+export const LegacyAttackSubmissionEntrySchema =
+  AttackSubmissionEntryBaseSchema.omit({
+    focusedCommand: true,
+    paths: true,
+  });
 
 export const AttackSubmissionV2Schema = z
   .object({
@@ -1584,16 +1621,6 @@ export const AttackSubmissionV2Schema = z
   .superRefine((submission, context) => {
     const owners = new Map<string, number>();
     submission.attacks.forEach((attack, index) => {
-      if (
-        attack.browserProbe &&
-        !attack.requiredCapabilities.includes("browser_dom_validation")
-      )
-        context.addIssue({
-          code: "custom",
-          path: ["attacks", index, "requiredCapabilities"],
-          message:
-            "A browserProbe must declare browser_dom_validation as a required capability",
-        });
       for (const attackPath of attack.paths) {
         if (submission.sharedSupportPaths.includes(attackPath)) {
           context.addIssue({
@@ -1617,10 +1644,9 @@ const LegacyAttackSubmissionSchema = z.object({
   version: z.literal(1),
   attacks: z
     .array(
-      AttackSubmissionEntrySchema.omit({
-        focusedCommand: true,
-        paths: true,
-      }).extend({ reproduction: z.string().min(1) }),
+      LegacyAttackSubmissionEntrySchema.extend({
+        reproduction: z.string().min(1),
+      }),
     )
     .max(3),
 });
@@ -1650,7 +1676,7 @@ export const HouseSubmissionSchema = z.object({
   ),
   attacks: z
     .array(
-      AttackSubmissionEntrySchema.omit({ rank: true }).extend({
+      AttackSubmissionEntryBaseSchema.omit({ rank: true }).extend({
         focusedCommand: z.string().min(1),
         paths: z.array(z.string().min(1)).min(1),
       }),

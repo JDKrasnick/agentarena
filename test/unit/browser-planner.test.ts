@@ -183,6 +183,27 @@ describe("browser validation planner", () => {
     ).toThrow("Required capabilities were not approved");
   });
 
+  it("scopes an explicit dynamic port to the approved loopback host", () => {
+    const fightConfig = config({
+      task: "Fix responsive navigation",
+      browserProfile: {
+        runner: "playwright",
+        startupCommand: "npm start",
+        healthUrl: "http://127.0.0.1:4173/health",
+        baseUrl: "http://127.0.0.1:4173",
+        testCommand: "npm run browser",
+        portMode: "dynamic",
+        projects: [],
+        allowedOrigins: ["http://127.0.0.1:4173"],
+      },
+    });
+    const capability = discoverCapabilities(fightConfig, reconnaissance()).find(
+      (entry) => entry.id === "browser_dom_validation",
+    );
+    expect(capability?.scopes).toContain("loopback:http://127.0.0.1:dynamic");
+    expect(capability?.scopes).not.toContain("origin:http://127.0.0.1:4173");
+  });
+
   it("freezes the resolved plan, commands, scopes, and decision in RunSpec", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-browser-spec-"));
     const fightConfig = config({
