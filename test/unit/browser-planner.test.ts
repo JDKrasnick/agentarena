@@ -50,6 +50,7 @@ function reconnaissance(
       path,
       content,
       contentHash: "a".repeat(64),
+      byteLength: Buffer.byteLength(content),
     })),
     resolvedPullRequests: {},
     inputHash: "b".repeat(64),
