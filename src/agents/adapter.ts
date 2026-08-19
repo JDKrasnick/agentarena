@@ -453,11 +453,19 @@ export class CommandAgentAdapter implements AgentAdapter {
     });
     const finished = new Date();
     const transportFailures = command.transportFailures ?? [];
+    let response = "";
+    try {
+      response = await readFile(command.stdoutPath, "utf8");
+    } catch {
+      // A missing transcript cannot authenticate provider connectivity.
+    }
+    const sentinelMatched = response.trim() === sentinel;
     const healthy =
       command.exitCode === 0 &&
       !command.timedOut &&
       command.failureClass !== "arena_infrastructure" &&
-      transportFailures.length === 0;
+      transportFailures.length === 0 &&
+      sentinelMatched;
     return ConnectivityProbeResultSchema.parse({
       version: 1,
       provider: this.id,
@@ -471,7 +479,9 @@ export class CommandAgentAdapter implements AgentAdapter {
           ? "Provider backend reported transport or authentication failure."
           : command.timedOut
             ? "Provider backend health probe timed out."
-            : "Provider backend health probe failed.",
+            : command.exitCode === 0 && !sentinelMatched
+              ? `Provider backend did not return the exact ${sentinel} response.`
+              : "Provider backend health probe failed.",
       transportFailures,
       artifactPaths: [command.stdoutPath, command.stderrPath],
       command,

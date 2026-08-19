@@ -430,7 +430,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(outcome.state.terminalOutcome).toMatchObject({
       phase: "pre_review",
       kind: "inconclusive",
-      reasonCode: "provider_transport_failure",
+      reasonCode: "harness_infrastructure_failure",
       eligibleContestantIds: [],
     });
     expect(run).toHaveBeenCalledOnce();

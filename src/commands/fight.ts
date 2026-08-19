@@ -95,6 +95,7 @@ export async function runFight(
   try {
     let outcome = await arena.fight(config, controller.signal);
     const runIds = [outcome.state.runId];
+    let recoveryCancelled = false;
     while (
       outcome.state.terminalOutcome?.reasonCode === "provider_transport_failure"
     ) {
@@ -145,6 +146,10 @@ export async function runFight(
       );
       parent.state.artifacts.transportRecovery = recoveryPath;
       await parentStore.writeState(parent.state);
+      if (recovery.disposition === "cancelled") {
+        recoveryCancelled = true;
+        break;
+      }
       if (recovery.disposition !== "provider_recovered") break;
       const frozenRunSpec = await parentStore.readOptionalJson(
         "run-spec.json",
@@ -179,8 +184,8 @@ export async function runFight(
     }
     return {
       runId: outcome.state.runId,
-      status: outcome.state.status,
-      summary: `${outcome.summary}\nRun chain: ${runIds.join(" -> ")}`,
+      status: recoveryCancelled ? "cancelled" : outcome.state.status,
+      summary: `${outcome.summary}${recoveryCancelled ? "\nTransport recovery was cancelled by an external signal." : ""}\nRun chain: ${runIds.join(" -> ")}`,
       runIds,
     };
   } finally {

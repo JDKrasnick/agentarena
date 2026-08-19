@@ -71,6 +71,35 @@ describe("implementation transport classification", () => {
   });
 });
 
+describe("provider connectivity probing", () => {
+  async function probe(script: string) {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "arena-probe-"));
+    return new CommandAgentAdapter({
+      id: "codex",
+      executable: process.execPath,
+      args: ["-e", script],
+    }).probeConnectivity({
+      cwd,
+      transcriptPrefix: path.join(cwd, "probe"),
+      timeoutMs: 2_000,
+      signal: new AbortController().signal,
+    });
+  }
+
+  it("requires the exact backend-authenticating sentinel", async () => {
+    const [exact, empty, unrelated] = await Promise.all([
+      probe('console.log("AGENT_ARENA_PROVIDER_HEALTH_OK")'),
+      probe(""),
+      probe('console.log("provider is probably healthy")'),
+    ]);
+
+    expect(exact.healthy).toBe(true);
+    expect(empty.healthy).toBe(false);
+    expect(unrelated.healthy).toBe(false);
+    expect(unrelated.reason).toContain("did not return the exact");
+  });
+});
+
 describe("structured model-output recovery", () => {
   it("accepts an unambiguously formatted verdict", () => {
     const verdict = parseModelSubmission(

@@ -23,6 +23,7 @@ export const TransportRecoverySchema = z.object({
     "provider_recovered",
     "probe_exhausted",
     "restart_limit_reached",
+    "cancelled",
   ]),
   restartOrdinal: z.number().int().min(1).max(3),
   replacementRunId: z.string().min(1).optional(),
@@ -61,6 +62,17 @@ export async function probeProviderConnectivity(options: {
       restartOrdinal: 3,
     });
   }
+  if (options.signal.aborted) {
+    return sealRecovery({
+      version: 1,
+      parentRunId: options.parentRunId,
+      providers,
+      createdAt: now().toISOString(),
+      probeAttempts: [],
+      disposition: "cancelled",
+      restartOrdinal: options.restartOrdinal,
+    });
+  }
   const deadline = Date.now() + 30_000;
   const probeAttempts: z.infer<typeof ProbeAttemptSchema>[] = [];
   for (const attempt of [1, 2, 3] as const) {
@@ -89,6 +101,7 @@ export async function probeProviderConnectivity(options: {
       );
       const healthy = results.every((result) => result.healthy);
       probeAttempts.push({ attempt, results, healthy });
+      if (options.signal.aborted) break;
       if (healthy)
         return sealRecovery({
           version: 1,
@@ -110,7 +123,7 @@ export async function probeProviderConnectivity(options: {
     providers,
     createdAt: now().toISOString(),
     probeAttempts,
-    disposition: "probe_exhausted",
+    disposition: options.signal.aborted ? "cancelled" : "probe_exhausted",
     restartOrdinal: options.restartOrdinal,
   });
 }

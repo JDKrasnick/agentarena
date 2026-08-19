@@ -127,6 +127,58 @@ describe("implementation transport recovery", () => {
     expect(recovery.probeAttempts).toEqual([]);
     expect(probeConnectivity).not.toHaveBeenCalled();
   });
+
+  it("preserves an external cancellation instead of reporting exhaustion", async () => {
+    const { root, store } = await fixture();
+    const external = new AbortController();
+    external.abort(new Error("interrupted"));
+    const { adapter, probeConnectivity } = adapterWith([true]);
+
+    const recovery = await probeProviderConnectivity({
+      parentRunId: "parent",
+      store,
+      adapters: new Map([["codex", adapter]]),
+      restartOrdinal: 1,
+      cwd: root,
+      signal: external.signal,
+    });
+
+    expect(recovery.disposition).toBe("cancelled");
+    expect(recovery.probeAttempts).toEqual([]);
+    expect(probeConnectivity).not.toHaveBeenCalled();
+    expect(exitCodeForStatus("cancelled")).toBe(130);
+  });
+
+  it("preserves cancellation of an in-flight probe", async () => {
+    const { root, store } = await fixture();
+    const external = new AbortController();
+    const probeConnectivity = vi.fn(
+      ({ transcriptPrefix }: ConnectivityProbeInput) =>
+        new Promise<ConnectivityProbeResult>((resolve) => {
+          setTimeout(() => {
+            external.abort(new Error("interrupted"));
+            resolve(probeResult(false, transcriptPrefix));
+          }, 1);
+        }),
+    );
+    const adapter = {
+      id: "codex",
+      probeConnectivity,
+    } as unknown as AgentAdapter;
+
+    const recovery = await probeProviderConnectivity({
+      parentRunId: "parent",
+      store,
+      adapters: new Map([["codex", adapter]]),
+      restartOrdinal: 1,
+      cwd: root,
+      signal: external.signal,
+    });
+
+    expect(recovery.disposition).toBe("cancelled");
+    expect(recovery.probeAttempts).toHaveLength(1);
+    expect(probeConnectivity).toHaveBeenCalledOnce();
+  });
 });
 
 describe("CLI terminal exit status", () => {

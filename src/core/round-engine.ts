@@ -1366,11 +1366,10 @@ export class RoundEngine {
           "arena_infrastructure"
       )
         return "harness_infrastructure_failure";
-      if (
-        contestant.implementation?.command?.transportFailures?.length ||
-        contestant.implementation?.status === "infrastructure_error"
-      )
+      if (contestant.implementation?.command?.transportFailures?.length)
         return "provider_transport_failure";
+      if (contestant.implementation?.status === "infrastructure_error")
+        return "harness_infrastructure_failure";
       if (contestant.implementation?.status === "timed_out")
         return "implementation_timeout";
       if (contestant.implementation?.status === "failed")
