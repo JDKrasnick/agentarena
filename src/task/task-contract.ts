@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, realpathSync } from "node:fs";
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
@@ -86,14 +86,19 @@ export class FileLocalSpecResolver implements LocalSpecResolver {
     const root = await realpath(repositoryRoot);
     const resolved = path.resolve(root, reference);
     const relative = path.relative(root, resolved);
-    if (relative.startsWith("..") || path.isAbsolute(relative))
+    if (
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    )
       throw new Error(
         `Specification path escapes the repository: ${reference}`,
       );
     const canonical = await realpath(resolved);
     const canonicalRelative = path.relative(root, canonical);
     if (
-      canonicalRelative.startsWith("..") ||
+      canonicalRelative === ".." ||
+      canonicalRelative.startsWith(`..${path.sep}`) ||
       path.isAbsolute(canonicalRelative)
     )
       throw new Error(
@@ -283,10 +288,19 @@ export interface RepositoryEvidence {
   contentOmitted?: "lockfile_hash_only";
 }
 
+export interface ReconnaissanceRequest {
+  repositoryRoot: string;
+  specPaths: string[];
+  issueReferences: string[];
+  pullRequestReferences: string[];
+  taskReferences: TaskReference[];
+}
+
 export interface ReconnaissanceSnapshot {
   version: 1;
   task: string;
   acceptanceCriteria: string[];
+  request: ReconnaissanceRequest;
   capturedAt: string;
   sources: ReconnaissanceSource[];
   repositoryEvidence: RepositoryEvidence[];
@@ -296,21 +310,37 @@ export interface ReconnaissanceSnapshot {
 
 export function validateReconnaissance(
   snapshot: ReconnaissanceSnapshot,
-  config?: Pick<FightConfig, "task" | "acceptanceCriteria">,
+  config?: Pick<
+    FightConfig,
+    | "task"
+    | "acceptanceCriteria"
+    | "repositoryRoot"
+    | "specPaths"
+    | "issueReferences"
+    | "pullRequestReferences"
+    | "taskReferences"
+  >,
 ): ReconnaissanceSnapshot {
   const { inputHash, ...input } = snapshot;
   if (sha256(canonicalJson(input)) !== inputHash)
     throw new Error("Reconnaissance input hash does not match its contents");
-  if (
-    config &&
-    (snapshot.task !== config.task ||
+  if (config) {
+    const expectedRequest = reconnaissanceRequest(config);
+    if (
+      snapshot.task !== config.task ||
       canonicalJson(snapshot.acceptanceCriteria) !==
-        canonicalJson(config.acceptanceCriteria))
-  )
-    throw new Error("Reconnaissance does not match the approved fight task");
+        canonicalJson(config.acceptanceCriteria) ||
+      canonicalJson(snapshot.request) !== canonicalJson(expectedRequest)
+    )
+      throw new Error("Reconnaissance does not match the approved fight task");
+  }
+  const budget = new ReconnaissanceTextBudget();
+  for (const [index, criterion] of snapshot.acceptanceCriteria.entries())
+    budget.include(`acceptance criterion ${String(index + 1)}`, criterion);
   for (const source of snapshot.sources) {
     if (sha256(source.content) !== source.contentHash)
       throw new Error(`Reconnaissance source hash drifted: ${source.origin}`);
+    budget.include(source.origin, source.content);
   }
   for (const evidence of snapshot.repositoryEvidence) {
     if (
@@ -325,6 +355,13 @@ export function validateReconnaissance(
       sha256(evidence.content) !== evidence.contentHash
     )
       throw new Error(`Reconnaissance evidence hash drifted: ${evidence.path}`);
+    if (evidence.contentOmitted !== "lockfile_hash_only") {
+      const byteLength = budget.include(evidence.path, evidence.content);
+      if (byteLength !== evidence.byteLength)
+        throw new Error(
+          `Reconnaissance evidence byte length drifted: ${evidence.path}`,
+        );
+    }
   }
   return snapshot;
 }
@@ -393,6 +430,59 @@ const LOCKFILE_PATHS = new Set([
 const MAX_RECONNAISSANCE_FILE_BYTES = 256 * 1024;
 const MAX_RECONNAISSANCE_TEXT_BYTES = 2 * 1024 * 1024;
 
+function reconnaissanceRequest(
+  value: Pick<
+    CollectReconnaissanceOptions,
+    | "repositoryRoot"
+    | "specPaths"
+    | "issueReferences"
+    | "pullRequestReferences"
+    | "taskReferences"
+  >,
+): ReconnaissanceRequest {
+  return {
+    repositoryRoot: realpathSync(value.repositoryRoot),
+    specPaths: [...value.specPaths],
+    issueReferences: [...value.issueReferences],
+    pullRequestReferences: [...(value.pullRequestReferences ?? [])],
+    taskReferences: [...(value.taskReferences ?? [])],
+  };
+}
+
+class ReconnaissanceTextBudget {
+  private totalBytes = 0;
+
+  include(label: string, content: string): number {
+    const byteLength = Buffer.byteLength(content);
+    if (byteLength > MAX_RECONNAISSANCE_FILE_BYTES)
+      throw new Error(
+        `Repository reconnaissance source ${label} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
+      );
+    this.totalBytes += byteLength;
+    if (this.totalBytes > MAX_RECONNAISSANCE_TEXT_BYTES)
+      throw new Error(
+        `Repository reconnaissance exceeds ${String(MAX_RECONNAISSANCE_TEXT_BYTES)} bytes`,
+      );
+    return byteLength;
+  }
+}
+
+function assertContainedPath(
+  canonicalRoot: string,
+  canonicalPath: string,
+  displayPath: string,
+): void {
+  const relative = path.relative(canonicalRoot, canonicalPath);
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  )
+    throw new Error(
+      `Repository reconnaissance path escapes the repository through a symbolic link: ${displayPath}`,
+    );
+}
+
 async function hashFile(filePath: string): Promise<string> {
   const digest = createHash("sha256");
   for await (const chunk of createReadStream(filePath))
@@ -402,19 +492,25 @@ async function hashFile(filePath: string): Promise<string> {
 
 async function collectRepositoryEvidence(
   repositoryRoot: string,
-  maxBytes = MAX_RECONNAISSANCE_TEXT_BYTES,
+  budget: ReconnaissanceTextBudget,
 ): Promise<RepositoryEvidence[]> {
   const evidence: RepositoryEvidence[] = [];
-  let total = 0;
+  const canonicalRoot = await realpath(repositoryRoot);
   for (const relativePath of RECONNAISSANCE_PATHS) {
     try {
       const evidencePath = path.join(repositoryRoot, relativePath);
-      const file = await stat(evidencePath);
+      const canonicalPath = await realpath(evidencePath);
+      assertContainedPath(canonicalRoot, canonicalPath, relativePath);
+      const file = await stat(canonicalPath);
+      if (!file.isFile())
+        throw new Error(
+          `Repository reconnaissance path is not a regular file: ${relativePath}`,
+        );
       if (LOCKFILE_PATHS.has(relativePath)) {
         evidence.push({
           path: relativePath,
           content: "",
-          contentHash: await hashFile(evidencePath),
+          contentHash: await hashFile(canonicalPath),
           byteLength: file.size,
           contentOmitted: "lockfile_hash_only",
         });
@@ -424,11 +520,8 @@ async function collectRepositoryEvidence(
         throw new Error(
           `Repository reconnaissance file ${relativePath} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
         );
-      const content = await readFile(evidencePath, "utf8");
-      const byteLength = Buffer.byteLength(content);
-      total += byteLength;
-      if (total > maxBytes)
-        throw new Error(`Repository reconnaissance exceeds ${maxBytes} bytes`);
+      const content = await readFile(canonicalPath, "utf8");
+      const byteLength = budget.include(relativePath, content);
       evidence.push({
         path: relativePath,
         content,
@@ -446,11 +539,16 @@ export async function collectReconnaissance(
   options: CollectReconnaissanceOptions,
 ): Promise<ReconnaissanceSnapshot> {
   const capturedAt = (options.now ?? new Date()).toISOString();
+  const budget = new ReconnaissanceTextBudget();
   const issueResolver = options.issueResolver ?? new GitHubIssueResolver();
   const pullRequestResolver =
     options.pullRequestResolver ?? new GitHubPullRequestResolver();
   const localSpecResolver =
     options.localSpecResolver ?? new FileLocalSpecResolver();
+  const taskContent = `${options.task}\n`;
+  budget.include("command-line task", taskContent);
+  for (const [index, criterion] of options.acceptanceCriteria.entries())
+    budget.include(`acceptance criterion ${String(index + 1)}`, criterion);
   const sources: ReconnaissanceSource[] = [
     {
       id: "task-user",
@@ -458,8 +556,8 @@ export async function collectReconnaissance(
       origin: "command-line task",
       retrievedAt: capturedAt,
       visibility: "shared",
-      content: `${options.task}\n`,
-      contentHash: sha256(`${options.task}\n`),
+      content: taskContent,
+      contentHash: sha256(taskContent),
     },
   ];
   const resolvedPullRequests: Record<string, ResolvedPullRequest> = {};
@@ -486,6 +584,7 @@ export async function collectReconnaissance(
       ]),
       "",
     ].join("\n");
+    budget.include(`issue ${reference}`, content);
     sources.push({
       id: stableId("issue", issue.origin),
       kind: "issue",
@@ -548,6 +647,7 @@ export async function collectReconnaissance(
       ]),
       "",
     ].join("\n");
+    budget.include(`pull request ${reference}`, content);
     sources.push({
       id: stableId("pull-request", pullRequest.origin),
       kind: "pull_request",
@@ -588,6 +688,7 @@ export async function collectReconnaissance(
         { cause: error },
       );
     }
+    budget.include(`specification ${configuredPath}`, resolvedSpec.content);
     sources.push({
       id: stableId("spec", configuredPath),
       kind: "repo_spec",
@@ -608,6 +709,7 @@ export async function collectReconnaissance(
   for (const instruction of await discoverInstructions(
     options.repositoryRoot,
   )) {
+    budget.include(`instruction ${instruction.path}`, instruction.content);
     sources.push({
       id: stableId("instructions", instruction.path),
       kind: "repo_spec",
@@ -621,11 +723,13 @@ export async function collectReconnaissance(
 
   const repositoryEvidence = await collectRepositoryEvidence(
     options.repositoryRoot,
+    budget,
   );
   const input = {
     version: 1 as const,
     task: options.task,
     acceptanceCriteria: [...options.acceptanceCriteria],
+    request: reconnaissanceRequest(options),
     capturedAt,
     sources,
     repositoryEvidence,
@@ -656,6 +760,11 @@ export async function buildTaskContract(
     {
       task: options.task,
       acceptanceCriteria: options.acceptanceCriteria,
+      repositoryRoot: options.repositoryRoot,
+      specPaths: options.specPaths,
+      issueReferences: options.issueReferences,
+      pullRequestReferences: options.pullRequestReferences ?? [],
+      taskReferences: options.taskReferences ?? [],
     },
   );
   await mkdir(options.sourceDirectory, { recursive: true });
