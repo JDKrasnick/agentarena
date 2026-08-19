@@ -130,12 +130,44 @@ The same evidence and health system supports three topologies:
   Only the defender's final patch is reviewable or deliverable.
 
 Before any review or attack work, implementation eligibility is sealed as
-schema-v7 terminal metadata. In a duel, exactly one production patch that
+versioned terminal metadata with one eligibility disposition and diagnostic
+trail per contestant. Legacy v1 records remain readable; new runs write v2.
+In a duel, exactly one production patch that
 applies and passes required validation wins by forfeit and is the only
 reviewable recommendation; no eligible patch is inconclusive. Provider,
 transport, authentication, reconnect, and harness failures are inconclusive,
 not forfeits. A failed frozen incumbent in catch-up ends inconclusively before
 the challenger is invoked, and siege never recommends its test-only attacker.
+
+Pre-review classification is deterministic: external cancellation outranks
+harness infrastructure, which outranks provider transport/authentication/MCP
+evidence, which outranks contestant timeout or invocation failure, which
+outranks patch applicability and required validation. Transport evidence
+overrides a timeout or nonzero exit only when the invocation produced no usable
+result. A transport failure cancels the peer implementation through a
+phase-local controller; the peer's diagnostics are retained and the peer is
+labeled as cancelled by the transport event rather than blamed for a failure.
+
+Implementation transport failures have one bounded automatic recovery path.
+The failed run remains independently reportable while Agent Arena starts up to
+three fresh provider processes, each with a deterministic backend-authenticating
+sentinel prompt, within a shared 30-second window. If connectivity returns, a
+new run copies the exact frozen sources, base commit, topology, permissions,
+budgets, and configuration from its parent rather than resolving live issue or
+pull-request text again. At most two replacement runs may be created. Each
+parent stores a typed `transport-recovery.json`, and result provenance links
+the replacement to its parent. A transport failure in the third total run is
+final and does not trigger more probes.
+
+Pre-review terminal reports use outcome-specific JSON, Markdown, HTML, SVG,
+and console language. A duel forfeit creates only the eligible patch digest,
+deterministic recommendation, and human-review handoff; review, attack, repair,
+quality-comparison, and coverage stages and artifacts are absent. Resume shows
+the stored terminal result and never runs a skipped stage. CLI exit status is
+`0` for a completed battle, draw, or valid duel forfeit; `2` for a persisted
+inconclusive run; `130` for user cancellation; and `1` for persisted internal
+failure, configuration failure, or an uncaught command error. Automatic
+recovery returns the replacement run's status and prints the full run-ID chain.
 
 Pull-request authorship is provenance metadata, not proof of who wrote the
 code. Explicit bot, co-author, generator, title, or branch signals may select a

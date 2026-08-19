@@ -82,6 +82,34 @@ to review without producing review, attack, repair, quality, or coverage
 artifacts. The persisted pre-review terminal outcome controls resume and CLI
 status reporting.
 
+New runs write the v2 pre-review contract with an overall terminal status and a
+separate eligibility, cause code, and diagnostic-artifact list for each
+contestant; completed v1 records remain readable. Classification precedence is
+external cancellation, harness infrastructure, provider transport/MCP/auth or
+reconnect evidence, contestant timeout or failed invocation, then patch
+applicability and required validation. Transport evidence supersedes timeout or
+nonzero exit only when no usable implementation result was produced. A
+transport failure stops the peer implementation with a phase-local controller
+and records that peer as transport-cancelled rather than failed.
+
+For implementation transport failures only, the harness launches at most three
+fresh backend-authenticating sentinel probes in a shared 30-second window. A
+successful probe creates a replacement run by copying the parent's frozen task
+sources and preserving its base commit, topology, permissions, budgets, and
+configuration; live issues and pull requests are not fetched again. Each failed
+parent persists a typed `transport-recovery.json` with probe results,
+disposition, restart ordinal, and replacement run ID, while child result
+provenance identifies its parent. Two replacements are the hard cap, so a
+transport failure in the third total run ends inconclusively without probes.
+
+The command layer returns the final run ID, status, and rendered summary. The
+built CLI exits `0` for a completed battle, draw, or valid duel forfeit; `2` for
+a persisted inconclusive run; `130` for cancellation; and `1` for persisted
+internal failure, invalid configuration, or an uncaught command error. Recovery
+prints the complete run-ID chain and returns the last replacement's exit code.
+Resume renders a stored terminal result and never invokes stages skipped by the
+terminal outcome.
+
 Runtime services, callbacks, worktree objects, abort controllers, and mutable
 `RunState` never enter these serialized contracts. Expected execution failures
 are terminal result values; throws indicate invalid configuration, schema

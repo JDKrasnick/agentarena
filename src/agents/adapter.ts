@@ -12,6 +12,8 @@ import {
   type AgentInvocation,
   type Attack,
   type ContestantId,
+  ConnectivityProbeResultSchema,
+  type ConnectivityProbeResult,
   type AttackSubmission,
   type CaseSubmission,
   type HouseSubmission,
@@ -45,6 +47,13 @@ interface InvocationInput {
 
 export type ImplementInput = InvocationInput;
 
+export interface ConnectivityProbeInput {
+  cwd: string;
+  transcriptPrefix: string;
+  timeoutMs: number;
+  signal: AbortSignal;
+}
+
 export interface ReviewInput extends InvocationInput {
   opponent: ContestantId;
 }
@@ -60,6 +69,9 @@ export interface RepairInput extends InvocationInput {
 export interface AgentAdapter {
   readonly id: AgentId;
   checkAvailability(): Promise<Availability>;
+  probeConnectivity(
+    input: ConnectivityProbeInput,
+  ): Promise<ConnectivityProbeResult>;
   implement(input: ImplementInput): Promise<AgentInvocation>;
   review(input: ReviewInput): Promise<AgentInvocation>;
   attack(input: AttackInput): Promise<AgentInvocation>;
@@ -416,6 +428,66 @@ export class CommandAgentAdapter implements AgentAdapter {
     return { available: true };
   }
 
+  async probeConnectivity(
+    input: ConnectivityProbeInput,
+  ): Promise<ConnectivityProbeResult> {
+    const started = new Date();
+    const sentinel = "AGENT_ARENA_PROVIDER_HEALTH_OK";
+    const command = await runProcess({
+      executable: this.options.executable,
+      args: this.options.args,
+      input: `Provider connectivity health check. Respond with exactly ${sentinel}.`,
+      cwd: input.cwd,
+      timeoutMs: input.timeoutMs,
+      logPrefix: input.transcriptPrefix,
+      env: {
+        ...this.options.environment,
+        AGENT_ARENA_AGENT: this.id,
+        AGENT_ARENA_STAGE: "provider_health_probe",
+        AGENT_ARENA_SUBMISSION: path.join(
+          input.cwd,
+          ".agent-arena-provider-health.json",
+        ),
+      },
+      signal: input.signal,
+    });
+    const finished = new Date();
+    const transportFailures = command.transportFailures ?? [];
+    let response = "";
+    try {
+      response = await readFile(command.stdoutPath, "utf8");
+    } catch {
+      // A missing transcript cannot authenticate provider connectivity.
+    }
+    const sentinelMatched = response.trim() === sentinel;
+    const healthy =
+      command.exitCode === 0 &&
+      !command.timedOut &&
+      command.failureClass !== "arena_infrastructure" &&
+      transportFailures.length === 0 &&
+      sentinelMatched;
+    return ConnectivityProbeResultSchema.parse({
+      version: 1,
+      provider: this.id,
+      healthy,
+      startedAt: started.toISOString(),
+      finishedAt: finished.toISOString(),
+      durationMs: finished.getTime() - started.getTime(),
+      reason: healthy
+        ? `Provider backend completed the deterministic ${sentinel} probe.`
+        : transportFailures.length
+          ? "Provider backend reported transport or authentication failure."
+          : command.timedOut
+            ? "Provider backend health probe timed out."
+            : command.exitCode === 0 && !sentinelMatched
+              ? `Provider backend did not return the exact ${sentinel} response.`
+              : "Provider backend health probe failed.",
+      transportFailures,
+      artifactPaths: [command.stdoutPath, command.stderrPath],
+      command,
+    });
+  }
+
   implement(input: ImplementInput): Promise<AgentInvocation> {
     return this.invoke("implement", input);
   }
@@ -477,13 +549,18 @@ export class CommandAgentAdapter implements AgentAdapter {
       finishedAt: finished.toISOString(),
       durationMs: finished.getTime() - started.getTime(),
       status:
-        command.failureClass === "arena_infrastructure"
-          ? "infrastructure_error"
-          : command.timedOut
-            ? "timed_out"
-            : command.exitCode === 0
-              ? "succeeded"
-              : "failed",
+        input.signal.aborted && !command.transportFailures?.length
+          ? "cancelled"
+          : command.transportFailures?.length &&
+              (command.timedOut || command.exitCode !== 0)
+            ? "infrastructure_error"
+            : command.failureClass === "arena_infrastructure"
+              ? "infrastructure_error"
+              : command.timedOut
+                ? "timed_out"
+                : command.exitCode === 0
+                  ? "succeeded"
+                  : "failed",
       command,
       promptPath: input.promptPath,
       transcriptPath: command.stdoutPath,
