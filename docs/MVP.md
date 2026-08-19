@@ -446,7 +446,8 @@ chooses the task-specific probe family, profile, accessible actions, and
 expected behavior from this safe envelope. Repository browser projects are not
 translated into Arena profiles: the repository's configured browser command
 and complete project matrix run unchanged as the native suite. Requests outside
-approved origins are blocked and recorded.
+approved origins are blocked and recorded for both HTTP(S) and WebSocket
+traffic. `ws` and `wss` use the corresponding approved HTTP transport origin.
 
 Runtime-error/DOM-integrity, accessible-name, and 320 CSS-pixel overflow smoke
 probes are mandatory on every browser run; the attacker-selected probe is
@@ -480,6 +481,9 @@ clipping, keyboard/focus behavior, accessible semantics, declared persistence,
 console/runtime/hydration/DOM integrity, risk-triggered inert DOM-XSS canaries,
 and existing visual snapshots without creating or updating baselines. Core
 accessibility checks do not constitute automated WCAG conformance.
+The bounded `fill_dom_xss_canary` action selects an accessible field by label;
+the harness supplies an inert markup sentinel and fails the probe only when the
+application interprets that sentinel as DOM markup.
 
 Functional assertions are not retried. Browser/server infrastructure gets one
 bounded retry; teardown runs after every attempt. Results are `verified`,

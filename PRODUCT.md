@@ -247,6 +247,9 @@ The harness advertises the safe probe menu; the attacking agent chooses a
 task-specific family, desktop/mobile/reflow profile, accessible actions, and
 expected behavior in its attack submission. Generated checks can use Chromium
 desktop at 1440×900, mobile at 390×844 with touch, or 320 CSS-pixel reflow.
+DOM-security probes use a dedicated accessible-label fill action whose inert
+markup sentinel is supplied and observed by the harness rather than by the
+contestant.
 Every browser run also includes harness-owned runtime-error, accessible-name,
 and 320 CSS-pixel overflow smoke probes. Probe families cover
 interaction, responsive layout, keyboard/focus, semantics, task-declared
@@ -265,6 +268,9 @@ The reviewing contestant decides whether an already approved exact external
 origin provides suitable evidence. It cannot expand network authority after
 approval. Authenticated sessions and secret brokering are deferred to #66;
 until that contract exists, coverage requiring login remains unavailable.
+The browser broker applies the exact-origin decision to HTTP(S) and WebSocket
+traffic, mapping `ws` and `wss` to the corresponding approved transport origin,
+and records blocked socket origins with other network violations.
 
 Explicit profiles may choose `dynamic` loopback ports when their startup
 command honors the harness-provided `PORT`; otherwise they retain the exact

@@ -1,4 +1,5 @@
 import { createServer } from "node:net";
+import { createServer as createHttpServer } from "node:http";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -33,7 +34,12 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
         capabilityId: "browser_dom_validation",
         role: "harness_only",
         enforcement: "brokered",
-        probeFamilies: ["interaction", "responsive", "semantics"],
+        probeFamilies: [
+          "interaction",
+          "responsive",
+          "semantics",
+          "dom_security",
+        ],
         profile: {
           source: "arena_configuration",
           runner: "playwright",
@@ -88,6 +94,16 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
             expectedBehavior: "Page reflows at 320 CSS pixels",
             actions: [{ kind: "goto", path: "/" }],
           },
+          {
+            id: "same-origin-websocket",
+            family: "interaction",
+            profile: "desktop",
+            expectedBehavior: "Approved same-origin WebSockets remain usable",
+            actions: [
+              { kind: "goto", path: "/same-origin-websocket" },
+              { kind: "assert_text", text: "socket-ready" },
+            ],
+          },
         ],
         signal: controller.signal,
       });
@@ -95,7 +111,7 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
         reservedStaticPort.close(() => resolve()),
       );
       expect(verified.status).toBe("verified");
-      expect(verified.probes).toHaveLength(7);
+      expect(verified.probes).toHaveLength(8);
       await expect(fetch(`${origin}/health`)).rejects.toThrow();
 
       const blocked = await executeBrowserValidation({
@@ -127,6 +143,104 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
         blocked.artifacts.some((artifact) => artifact.kind === "screenshot"),
       ).toBe(true);
       await expect(fetch(`${origin}/health`)).rejects.toThrow();
+
+      let unauthorizedWebSocketReachedServer = false;
+      const websocketServer = createHttpServer();
+      websocketServer.on("upgrade", (_request, socket) => {
+        unauthorizedWebSocketReachedServer = true;
+        socket.destroy();
+      });
+      const websocketPort = await new Promise<number>((resolve, reject) => {
+        websocketServer.once("error", reject);
+        websocketServer.listen(0, "127.0.0.1", () => {
+          const address = websocketServer.address();
+          if (!address || typeof address === "string")
+            reject(new Error("No WebSocket test port"));
+          else resolve(address.port);
+        });
+      });
+      try {
+        const blockedWebSocket = await executeBrowserValidation({
+          plan,
+          decision: "approved",
+          adapter: adapter!,
+          worktree: process.cwd(),
+          artifactDirectory: path.join(artifacts, "blocked-websocket"),
+          approvedOrigins: [origin],
+          dynamicLoopbackApproved: true,
+          timeoutMs: 30_000,
+          selectedProbes: [
+            {
+              id: "blocked-websocket",
+              family: "runtime_dom_integrity",
+              profile: "desktop",
+              expectedBehavior: "No undeclared WebSocket dependency",
+              actions: [
+                {
+                  kind: "goto",
+                  path: `/external-websocket?port=${String(websocketPort)}`,
+                },
+              ],
+            },
+          ],
+          signal: controller.signal,
+        });
+        expect(blockedWebSocket.status).toBe("failed");
+        expect(blockedWebSocket.probes.at(-1)?.blockedOrigins).toContain(
+          `ws://127.0.0.1:${String(websocketPort)}`,
+        );
+        expect(unauthorizedWebSocketReachedServer).toBe(false);
+      } finally {
+        await new Promise<void>((resolve) =>
+          websocketServer.close(() => resolve()),
+        );
+      }
+
+      const domProbe = (pathName: string) => ({
+        id: `dom-security-${pathName}`,
+        family: "dom_security" as const,
+        profile: "desktop" as const,
+        expectedBehavior: "User-authored HTML remains inert",
+        actions: [
+          { kind: "goto" as const, path: `/${pathName}` },
+          { kind: "fill_dom_xss_canary" as const, label: "Message" },
+          {
+            kind: "click" as const,
+            role: "button",
+            name: "Render",
+          },
+        ],
+      });
+      const vulnerableDom = await executeBrowserValidation({
+        plan,
+        decision: "approved",
+        adapter: adapter!,
+        worktree: process.cwd(),
+        artifactDirectory: path.join(artifacts, "dom-xss-vulnerable"),
+        approvedOrigins: [origin],
+        dynamicLoopbackApproved: true,
+        timeoutMs: 30_000,
+        selectedProbes: [domProbe("dom-xss-vulnerable")],
+        signal: controller.signal,
+      });
+      expect(vulnerableDom.probes.at(-1)).toMatchObject({
+        status: "failed",
+        detail: "The inert DOM-XSS canary was interpreted as markup",
+      });
+
+      const safeDom = await executeBrowserValidation({
+        plan,
+        decision: "approved",
+        adapter: adapter!,
+        worktree: process.cwd(),
+        artifactDirectory: path.join(artifacts, "dom-xss-safe"),
+        approvedOrigins: [origin],
+        dynamicLoopbackApproved: true,
+        timeoutMs: 30_000,
+        selectedProbes: [domProbe("dom-xss-safe")],
+        signal: controller.signal,
+      });
+      expect(safeDom.probes.at(-1)).toMatchObject({ status: "verified" });
     });
   },
 );

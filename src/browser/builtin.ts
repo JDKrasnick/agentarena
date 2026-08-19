@@ -36,6 +36,9 @@ const CHROMIUM_PATHS = [
   "/usr/bin/chromium-browser",
 ] as const;
 
+const DOM_XSS_CANARY_ATTRIBUTE = "data-agent-arena-dom-xss-canary";
+const DOM_XSS_CANARY_PAYLOAD = `<span ${DOM_XSS_CANARY_ATTRIBUTE}="present"></span>`;
+
 async function unusedLoopbackPort(): Promise<number> {
   const server = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -111,6 +114,30 @@ function safePath(baseUrl: string, value: string): string {
   return resolved.href;
 }
 
+function transportOrigin(value: string): string {
+  const url = new URL(value);
+  if (url.protocol === "ws:") url.protocol = "http:";
+  if (url.protocol === "wss:") url.protocol = "https:";
+  return url.origin;
+}
+
+function approvedNetworkOrigin(input: {
+  value: string;
+  allowedOrigins: string[];
+  runtimeBaseUrl: string;
+  dynamicPort: boolean;
+}): boolean {
+  const url = new URL(input.value);
+  const exactOrigin = url.origin;
+  const approvedTransportOrigin = transportOrigin(input.value);
+  return (
+    input.allowedOrigins.includes(exactOrigin) ||
+    input.allowedOrigins.includes(approvedTransportOrigin) ||
+    (input.dynamicPort &&
+      transportOrigin(input.runtimeBaseUrl) === approvedTransportOrigin)
+  );
+}
+
 async function stopProcess(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.pid === undefined) return;
   try {
@@ -150,6 +177,10 @@ async function executeActions(
         .click();
     } else if (action.kind === "fill") {
       await page.getByLabel(action.label, { exact: true }).fill(action.value);
+    } else if (action.kind === "fill_dom_xss_canary") {
+      await page
+        .getByLabel(action.label, { exact: true })
+        .fill(DOM_XSS_CANARY_PAYLOAD);
     } else if (action.kind === "press") {
       await page.keyboard.press(action.key);
     } else if (action.kind === "reload") {
@@ -214,6 +245,14 @@ async function familyInvariant(
     })()`);
     return Array.isArray(duplicates) && duplicates.length
       ? `Duplicate critical IDs: ${duplicates.join(", ")}`
+      : undefined;
+  }
+  if (family === "dom_security") {
+    const interpretedAsMarkup = await page.evaluate(
+      `Boolean(document.querySelector('[${DOM_XSS_CANARY_ATTRIBUTE}="present"]'))`,
+    );
+    return interpretedAsMarkup
+      ? "The inert DOM-XSS canary was interpreted as markup"
       : undefined;
   }
   return undefined;
@@ -332,19 +371,39 @@ class BuiltInBrowserSession implements BrowserSession {
       );
       await context.route("**/*", async (route) => {
         const url = new URL(route.request().url());
-        const runtimeBaseOrigin = new URL(this.input.plan.profile.baseUrl)
-          .origin;
         if (
           ["about:", "data:", "blob:"].includes(url.protocol) ||
-          allowedOrigins.includes(url.origin) ||
-          (this.input.plan.profile.portMode === "dynamic" &&
-            url.origin === runtimeBaseOrigin)
+          approvedNetworkOrigin({
+            value: url.href,
+            allowedOrigins,
+            runtimeBaseUrl: this.input.plan.profile.baseUrl,
+            dynamicPort: this.input.plan.profile.portMode === "dynamic",
+          })
         )
           await route.continue();
         else {
           blockedOrigins.push(url.origin);
           await route.abort("blockedbyclient");
         }
+      });
+      await context.routeWebSocket("**/*", async (webSocket) => {
+        const url = new URL(webSocket.url());
+        if (
+          approvedNetworkOrigin({
+            value: url.href,
+            allowedOrigins,
+            runtimeBaseUrl: this.input.plan.profile.baseUrl,
+            dynamicPort: this.input.plan.profile.portMode === "dynamic",
+          })
+        ) {
+          webSocket.connectToServer();
+          return;
+        }
+        blockedOrigins.push(url.origin);
+        await webSocket.close({
+          code: 1008,
+          reason: "WebSocket origin was not approved",
+        });
       });
       page = await context.newPage();
       page.on("console", (message) => {

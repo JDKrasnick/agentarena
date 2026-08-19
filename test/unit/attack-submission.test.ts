@@ -78,6 +78,55 @@ describe("ordered attack sets", () => {
     expect("focusedCommand" in parsed.attacks[0]!).toBe(false);
   });
 
+  it("requires the harness-owned canary action only for DOM-security probes", () => {
+    const domSecurity = {
+      ...entry(1),
+      requiredCapabilities: ["browser_dom_validation"],
+      browserProbe: {
+        id: "message-html",
+        family: "dom_security",
+        profile: "desktop",
+        expectedBehavior: "Message content remains inert",
+        actions: [
+          { kind: "goto", path: "/messages" },
+          { kind: "fill_dom_xss_canary", label: "Message" },
+          { kind: "click", role: "button", name: "Render" },
+        ],
+      },
+    };
+    expect(() =>
+      AttackSubmissionSchema.parse({ version: 2, attacks: [domSecurity] }),
+    ).not.toThrow();
+    expect(() =>
+      AttackSubmissionSchema.parse({
+        version: 2,
+        attacks: [
+          {
+            ...domSecurity,
+            browserProbe: {
+              ...domSecurity.browserProbe,
+              actions: [{ kind: "goto", path: "/messages" }],
+            },
+          },
+        ],
+      }),
+    ).toThrow("fill_dom_xss_canary");
+    expect(() =>
+      AttackSubmissionSchema.parse({
+        version: 2,
+        attacks: [
+          {
+            ...domSecurity,
+            browserProbe: {
+              ...domSecurity.browserProbe,
+              family: "interaction",
+            },
+          },
+        ],
+      }),
+    ).toThrow("available only for dom_security");
+  });
+
   it("accepts zero to three unique failure descriptions", () => {
     const submission = AttackSubmissionSchema.parse({
       version: 1,

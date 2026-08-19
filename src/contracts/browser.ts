@@ -81,6 +81,12 @@ export const BrowserProbeActionSchema = z.discriminatedUnion("kind", [
       value: z.string(),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal("fill_dom_xss_canary"),
+      label: z.string().min(1),
+    })
+    .strict(),
   z.object({ kind: z.literal("press"), key: z.string().min(1) }).strict(),
   z.object({ kind: z.literal("reload") }).strict(),
   z
@@ -121,7 +127,26 @@ export const BrowserProbeRequestSchema = z
     expectedBehavior: z.string().min(1),
     actions: z.array(BrowserProbeActionSchema).min(1).max(20),
   })
-  .strict();
+  .strict()
+  .superRefine((probe, context) => {
+    const canaryActions = probe.actions.filter(
+      (action) => action.kind === "fill_dom_xss_canary",
+    );
+    if (probe.family === "dom_security" && canaryActions.length === 0)
+      context.addIssue({
+        code: "custom",
+        path: ["actions"],
+        message:
+          "A dom_security probe must include a fill_dom_xss_canary action",
+      });
+    if (probe.family !== "dom_security" && canaryActions.length > 0)
+      context.addIssue({
+        code: "custom",
+        path: ["actions"],
+        message:
+          "fill_dom_xss_canary is available only for dom_security probes",
+      });
+  });
 export type BrowserProbeRequest = z.infer<typeof BrowserProbeRequestSchema>;
 
 export function mandatoryBrowserProbes(): BrowserProbeRequest[] {
