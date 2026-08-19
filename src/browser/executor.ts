@@ -3,6 +3,7 @@ import type { BrowserPlan } from "./planner.js";
 import {
   BrowserValidationResultSchema,
   type BrowserArtifact,
+  type BrowserProbeRequest,
   type BrowserProbeResult,
   type BrowserUnavailableReason,
   type BrowserValidationResult,
@@ -14,12 +15,14 @@ export interface BrowserSession {
   artifacts: BrowserArtifact[];
   waitUntilReady(): Promise<void>;
   runProbe(input: {
-    family: BrowserPlan["probeFamilies"][number];
-    profile: "desktop" | "mobile" | "reflow_320" | "repository";
+    request: BrowserProbeRequest;
     contextId: string;
     freshStorage: true;
     allowedOrigins: string[];
   }): Promise<Omit<BrowserProbeResult, "contextId" | "requiredCapabilityIds">>;
+  runNativeSuite(): Promise<
+    Omit<BrowserProbeResult, "contextId" | "requiredCapabilityIds">
+  >;
   stop(): Promise<void>;
 }
 
@@ -28,8 +31,20 @@ export interface BrowserAdapter {
   launch(input: {
     plan: BrowserPlan & { profile: NonNullable<BrowserPlan["profile"]> };
     worktree: string;
+    artifactDirectory: string;
     signal: AbortSignal;
   }): Promise<BrowserSession>;
+}
+
+export class BrowserInfrastructureError extends Error {
+  constructor(
+    message: string,
+    readonly reason: BrowserUnavailableReason,
+    readonly attribution:
+      "harness_transport" | "harness_configuration" = "harness_transport",
+  ) {
+    super(message);
+  }
 }
 
 type BrowserLauncher = BrowserAdapter["launch"];
@@ -77,6 +92,9 @@ export async function executeBrowserValidation(options: {
   decision: "approved" | "denied" | "unavailable" | "provisioning_failed";
   adapter?: BrowserAdapter;
   worktree: string;
+  artifactDirectory: string;
+  selectedProbes: BrowserProbeRequest[];
+  approvedOrigins: string[];
   signal: AbortSignal;
 }): Promise<BrowserValidationResult> {
   if (options.decision === "denied") return unverified("denied", 0);
@@ -89,6 +107,8 @@ export async function executeBrowserValidation(options: {
     return unverified("tool_missing", 0);
 
   let lastReason: BrowserUnavailableReason = "launch_failure";
+  let lastAttribution: "harness_transport" | "harness_configuration" =
+    "harness_transport";
   const artifacts: BrowserArtifact[] = [];
   for (const attempt of [1, 2] as const) {
     if (options.signal.aborted) return unverified("interrupted", attempt - 1);
@@ -97,43 +117,49 @@ export async function executeBrowserValidation(options: {
       session = await options.adapter.launch({
         plan: { ...options.plan, profile: options.plan.profile },
         worktree: options.worktree,
+        artifactDirectory: options.artifactDirectory,
         signal: options.signal,
       });
       artifacts.push(...session.artifacts);
       try {
         await session.waitUntilReady();
-      } catch {
-        lastReason = "health_failure";
+      } catch (error) {
+        lastReason =
+          error instanceof BrowserInfrastructureError
+            ? error.reason
+            : "health_failure";
+        lastAttribution =
+          error instanceof BrowserInfrastructureError
+            ? error.attribution
+            : "harness_transport";
         continue;
       }
 
       const probes: BrowserProbeResult[] = [];
-      const profiles = [
-        "desktop",
-        "mobile",
-        "reflow_320",
-        ...(options.plan.profile.projects.length
-          ? (["repository"] as const)
-          : []),
-      ] as const;
-      for (const family of options.plan.probeFamilies) {
-        for (const profile of profiles) {
-          const contextId = randomUUID();
-          const result = await session.runProbe({
-            family,
-            profile,
-            contextId,
-            freshStorage: true,
-            allowedOrigins: options.plan.profile.allowedOrigins,
-          });
-          probes.push({
-            ...result,
-            family,
-            profile,
-            contextId,
-            requiredCapabilityIds: ["browser_dom_validation"],
-          });
-        }
+      const nativeContextId = randomUUID();
+      const nativeResult = await session.runNativeSuite();
+      probes.push({
+        ...nativeResult,
+        family: "visual_regression",
+        profile: "repository_native",
+        contextId: nativeContextId,
+        requiredCapabilityIds: ["browser_dom_validation"],
+      });
+      for (const request of options.selectedProbes) {
+        const contextId = randomUUID();
+        const result = await session.runProbe({
+          request,
+          contextId,
+          freshStorage: true,
+          allowedOrigins: options.approvedOrigins,
+        });
+        probes.push({
+          ...result,
+          family: request.family,
+          profile: request.profile,
+          contextId,
+          requiredCapabilityIds: ["browser_dom_validation"],
+        });
       }
       const status = probes.some((probe) => probe.status === "failed")
         ? "failed"
@@ -150,14 +176,31 @@ export async function executeBrowserValidation(options: {
           ...artifacts,
           ...probes.flatMap((probe) => probe.artifacts),
         ],
+        failureAttribution:
+          status === "failed"
+            ? "contestant_application"
+            : status === "unverified"
+              ? "unattributed"
+              : undefined,
       });
-    } catch {
-      lastReason = options.signal.aborted ? "interrupted" : "launch_failure";
+    } catch (error) {
+      lastReason = options.signal.aborted
+        ? "interrupted"
+        : error instanceof BrowserInfrastructureError
+          ? error.reason
+          : "launch_failure";
+      lastAttribution =
+        error instanceof BrowserInfrastructureError
+          ? error.attribution
+          : "harness_transport";
       if (options.signal.aborted)
         return unverified(lastReason, attempt, artifacts);
     } finally {
       if (session) await Promise.resolve(session.stop()).catch(() => undefined);
     }
   }
-  return unverified(lastReason, 2, artifacts);
+  return BrowserValidationResultSchema.parse({
+    ...unverified(lastReason, 2, artifacts),
+    failureAttribution: lastAttribution,
+  });
 }

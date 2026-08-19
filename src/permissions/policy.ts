@@ -6,6 +6,7 @@ import {
 } from "../core/types.js";
 import type { ReconnaissanceSnapshot } from "../task/task-contract.js";
 import {
+  browserExternalOrigins,
   browserCapabilityScopes,
   planBrowserValidation,
 } from "../browser/planner.js";
@@ -96,6 +97,23 @@ export function discoverCapabilities(
         scopes: browserCapabilityScopes(browser),
         available: Boolean(profile),
       });
+      for (const origin of browserExternalOrigins(browser)) {
+        const required = Boolean(
+          profile &&
+          [profile.baseUrl, profile.healthUrl]
+            .map((value) => new URL(value).origin)
+            .includes(origin),
+        );
+        requests.push({
+          id: `browser_origin_${Buffer.from(origin).toString("hex").slice(0, 24)}`,
+          reason: `Allow the browser harness to reach the exact external origin ${origin}`,
+          risk: "high",
+          requirement: required ? "required" : "optional",
+          role: "harness_only",
+          enforcement: "brokered",
+          scopes: [`origin:${origin}`],
+        });
+      }
     }
   }
   return requests;

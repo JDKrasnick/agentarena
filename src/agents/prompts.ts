@@ -139,11 +139,12 @@ export function composePrompt(context: PromptContext): string {
     common.push(
       "",
       "# Submission schema",
-      '{"version":2,"sharedSupportPaths":["test/support/arena.ts"],"attacks":[{"rank":1,"claim":"...","impact":"...","oracle":{"expectedBehavior":"...","rationale":"Explain how the frozen task text supports this behavior"},"proposedSeverity":"high","confidence":90,"focusedCommand":"npm test -- test/arena-rank-1.test.ts","paths":["test/arena-rank-1.test.ts"],"requiredCapabilities":[]}]}',
+      '{"version":2,"sharedSupportPaths":["test/support/arena.ts"],"attacks":[{"rank":1,"claim":"...","impact":"...","oracle":{"expectedBehavior":"...","rationale":"Explain how the frozen task text supports this behavior"},"proposedSeverity":"high","confidence":90,"focusedCommand":"npm test -- test/arena-rank-1.test.ts","paths":["test/arena-rank-1.test.ts"],"requiredCapabilities":[],"browserProbe":{"id":"optional-agent-chosen-probe","family":"interaction","profile":"desktop","expectedBehavior":"...","actions":[{"kind":"goto","path":"/"},{"kind":"assert_text","text":"..."}]}}]}',
       "Attack ranks must be unique values from 1 through 3 and may be sparse. Create executable test or fixture evidence, but never edit production code. Rank-specific paths must be disjoint; shared support paths are copied into every independently replayable overlay.",
       'Immediately write {"version":2,"sharedSupportPaths":[],"attacks":[]} to .agent-arena-submission.json before doing any other work, so a bounded phase always has an explicit result.',
       "The assigned worktree contains the frozen target patch. Start from the review packet, inspect the cited code and nearby tests as needed, and build deterministic executable evidence. Do not restart broad repository review.",
       "Update the structured submission as each attack becomes executable. Leaving attacks: [] is the correct result when no reviewed finding reproduces.",
+      "When browser_dom_validation is approved, you may choose one task-specific browserProbe from the advertised families, profiles, and action DSL. Include browser_dom_validation in requiredCapabilities. The harness owns origins, lifecycle, timeouts, and isolation; do not put browser commands in the probe.",
     );
   }
   if (context.round !== undefined) {

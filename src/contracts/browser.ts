@@ -63,6 +63,60 @@ export const BrowserPlanSchema = z
   });
 export type BrowserPlan = z.infer<typeof BrowserPlanSchema>;
 
+export const BrowserProbeActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("goto"), path: z.string().min(1) }).strict(),
+  z
+    .object({
+      kind: z.literal("click"),
+      role: z.string().min(1),
+      name: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("fill"),
+      label: z.string().min(1),
+      value: z.string(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("press"), key: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("reload") }).strict(),
+  z
+    .object({ kind: z.literal("assert_text"), text: z.string().min(1) })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("assert_visible"),
+      role: z.string().min(1),
+      name: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({ kind: z.literal("assert_url"), value: z.string().min(1) })
+    .strict(),
+]);
+export type BrowserProbeAction = z.infer<typeof BrowserProbeActionSchema>;
+
+export const BrowserProbeRequestSchema = z
+  .object({
+    id: z.string().min(1),
+    family: z.enum([
+      "interaction",
+      "responsive",
+      "keyboard_focus",
+      "semantics",
+      "persistence",
+      "runtime_dom_integrity",
+      "dom_security",
+      "visual_regression",
+    ]),
+    profile: z.enum(["desktop", "mobile", "reflow_320"]),
+    expectedBehavior: z.string().min(1),
+    actions: z.array(BrowserProbeActionSchema).min(1).max(20),
+  })
+  .strict();
+export type BrowserProbeRequest = z.infer<typeof BrowserProbeRequestSchema>;
+
 export const BrowserUnavailableReasonSchema = z.enum([
   "denied",
   "tool_missing",
@@ -72,6 +126,9 @@ export const BrowserUnavailableReasonSchema = z.enum([
   "unapproved_origin",
   "interrupted",
   "profile_unavailable",
+  "probe_not_selected",
+  "server_command_failure",
+  "application_failure",
 ]);
 export type BrowserUnavailableReason = z.infer<
   typeof BrowserUnavailableReasonSchema
@@ -107,7 +164,7 @@ export const BrowserProbeResultSchema = z
       "dom_security",
       "visual_regression",
     ]),
-    profile: z.enum(["desktop", "mobile", "reflow_320", "repository"]),
+    profile: z.enum(["desktop", "mobile", "reflow_320", "repository_native"]),
     status: z.enum(["verified", "failed", "unverified"]),
     contextId: z.string().min(1),
     requiredCapabilityIds: z.array(z.literal("browser_dom_validation")),
@@ -128,6 +185,14 @@ export const BrowserValidationResultSchema = z
     browserVersion: z.string().optional(),
     probes: z.array(BrowserProbeResultSchema),
     artifacts: z.array(BrowserArtifactSchema),
+    failureAttribution: z
+      .enum([
+        "harness_transport",
+        "harness_configuration",
+        "contestant_application",
+        "unattributed",
+      ])
+      .optional(),
   })
   .strict();
 export type BrowserValidationResult = z.infer<

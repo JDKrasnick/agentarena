@@ -58,6 +58,9 @@ export async function materializeAttack(
     requiredCapabilities: submission.requiredCapabilities,
     patchPath: options.patchPath,
     focusedCommand: submission.focusedCommand,
+    ...(submission.browserProbe
+      ? { browserProbe: submission.browserProbe }
+      : {}),
     status: "submitted",
     proposedSeverity: submission.proposedSeverity,
     proposedConfidence: submission.confidence,

@@ -24,6 +24,36 @@ function entry(rank: 1 | 2 | 3) {
 }
 
 describe("ordered attack sets", () => {
+  it("lets the attacker choose one bounded browser probe", () => {
+    const base = {
+      ...entry(1),
+      focusedCommand: "npm test -- test/browser.test.ts",
+      paths: ["test/browser.test.ts"],
+      browserProbe: {
+        id: "dialog-focus",
+        family: "keyboard_focus",
+        profile: "mobile",
+        expectedBehavior: "Focus enters the dialog",
+        actions: [
+          { kind: "goto", path: "/settings" },
+          { kind: "click", role: "button", name: "Settings" },
+          { kind: "press", key: "Tab" },
+        ],
+      },
+    };
+    expect(() =>
+      AttackSubmissionSchema.parse({
+        version: 2,
+        attacks: [
+          { ...base, requiredCapabilities: ["browser_dom_validation"] },
+        ],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      AttackSubmissionSchema.parse({ version: 2, attacks: [base] }),
+    ).toThrow("browser_dom_validation");
+  });
+
   it("accepts zero to three unique failure descriptions", () => {
     const submission = AttackSubmissionSchema.parse({
       version: 1,

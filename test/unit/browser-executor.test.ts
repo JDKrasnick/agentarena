@@ -38,21 +38,29 @@ describe("browser validation executor", () => {
     const stop = vi.fn().mockResolvedValue(undefined);
     const runProbe = vi
       .fn<BrowserSession["runProbe"]>()
-      .mockImplementation(({ family, profile }) =>
+      .mockImplementation(({ request }) =>
         Promise.resolve({
-          family,
-          profile,
-          status: family === "interaction" ? "failed" : "verified",
+          family: request.family,
+          profile: request.profile,
+          status: request.family === "interaction" ? "failed" : "verified",
           blockedOrigins: [],
           artifacts: [],
         }),
       );
+    const runNativeSuite = vi.fn().mockResolvedValue({
+      family: "visual_regression",
+      profile: "repository_native",
+      status: "verified",
+      blockedOrigins: [],
+      artifacts: [],
+    });
     const browser = adapter({
       toolVersion: "1.55.0",
       browserVersion: "140",
       artifacts: [],
       waitUntilReady: vi.fn().mockResolvedValue(undefined),
       runProbe,
+      runNativeSuite,
       stop,
     });
 
@@ -61,6 +69,24 @@ describe("browser validation executor", () => {
       decision: "approved",
       adapter: browser.value,
       worktree: "/worktree/a",
+      artifactDirectory: "/artifacts/a",
+      selectedProbes: [
+        {
+          id: "interaction",
+          family: "interaction",
+          profile: "desktop",
+          expectedBehavior: "The control responds",
+          actions: [{ kind: "goto", path: "/" }],
+        },
+        {
+          id: "responsive",
+          family: "responsive",
+          profile: "reflow_320",
+          expectedBehavior: "The page reflows",
+          actions: [{ kind: "goto", path: "/" }],
+        },
+      ],
+      approvedOrigins: ["http://127.0.0.1:4173"],
       signal: new AbortController().signal,
     });
 
@@ -68,8 +94,9 @@ describe("browser validation executor", () => {
     expect(result.provisionAttempts).toBe(1);
     expect(browser.launch).toHaveBeenCalledOnce();
     expect(stop).toHaveBeenCalledOnce();
-    expect(runProbe).toHaveBeenCalledTimes(8);
-    expect(new Set(result.probes.map((probe) => probe.contextId)).size).toBe(8);
+    expect(runNativeSuite).toHaveBeenCalledOnce();
+    expect(runProbe).toHaveBeenCalledTimes(2);
+    expect(new Set(result.probes.map((probe) => probe.contextId)).size).toBe(3);
     expect(
       result.probes.every((probe) => probe.requiredCapabilityIds.length),
     ).toBe(true);
@@ -89,6 +116,7 @@ describe("browser validation executor", () => {
         artifacts: [],
         waitUntilReady: vi.fn().mockRejectedValue(new Error("timeout")),
         runProbe: vi.fn(),
+        runNativeSuite: vi.fn(),
         stop: stops[current]!,
       });
     });
@@ -102,6 +130,9 @@ describe("browser validation executor", () => {
       decision: "approved",
       adapter: browser,
       worktree: "/worktree/a",
+      artifactDirectory: "/artifacts/a",
+      selectedProbes: [],
+      approvedOrigins: ["http://127.0.0.1:4173"],
       signal: new AbortController().signal,
     });
 
@@ -122,6 +153,9 @@ describe("browser validation executor", () => {
       decision: "denied",
       adapter: browser.value,
       worktree: "/worktree/a",
+      artifactDirectory: "/artifacts/a",
+      selectedProbes: [],
+      approvedOrigins: ["http://127.0.0.1:4173"],
       signal: new AbortController().signal,
     });
     expect(result).toMatchObject({ status: "unverified", reason: "denied" });

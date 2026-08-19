@@ -11,6 +11,7 @@ export default tseslint.config(
       ".serena/**",
       "eslint.config.js",
       "test/fixtures/*.mjs",
+      "test/fixtures/**/*.mjs",
     ],
   },
   eslint.configs.recommended,

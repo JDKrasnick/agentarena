@@ -796,7 +796,16 @@ export async function buildRunSpec(
             decision: browserCapability.status,
             approvedScopes:
               browserCapability.status === "approved"
-                ? browserCapability.scopes
+                ? [
+                    ...browserCapability.scopes,
+                    ...options.permissions.capabilities
+                      .filter(
+                        (capability) =>
+                          capability.id.startsWith("browser_origin_") &&
+                          capability.status === "approved",
+                      )
+                      .flatMap((capability) => capability.scopes),
+                  ]
                 : [],
           },
         }

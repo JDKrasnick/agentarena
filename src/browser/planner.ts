@@ -131,16 +131,6 @@ export function planBrowserValidation(
   };
 
   if (config.browserProfile) {
-    if (
-      ![config.browserProfile.baseUrl, config.browserProfile.healthUrl].every(
-        isLoopback,
-      ) ||
-      !config.browserProfile.allowedOrigins.every(isLoopback)
-    )
-      return BrowserPlanSchema.parse({
-        ...base,
-        unavailableReason: "non_local_origin",
-      });
     return BrowserPlanSchema.parse({
       ...base,
       profile: {
@@ -195,11 +185,6 @@ export function planBrowserValidation(
       ...base,
       unavailableReason: "base_url_missing",
     });
-  if (!isLoopback(baseUrl))
-    return BrowserPlanSchema.parse({
-      ...base,
-      unavailableReason: "non_local_origin",
-    });
   return BrowserPlanSchema.parse({
     ...base,
     profile: {
@@ -228,6 +213,23 @@ export function browserCapabilityScopes(plan: BrowserPlan): string[] {
     ...(plan.profile.teardownCommand
       ? [`command:${plan.profile.teardownCommand}`]
       : []),
-    ...plan.profile.allowedOrigins.map((origin) => `origin:${origin}`),
+    ...plan.profile.allowedOrigins
+      .filter(isLoopback)
+      .map((origin) => `origin:${origin}`),
+  ];
+}
+
+export function browserExternalOrigins(plan: BrowserPlan): string[] {
+  if (!plan.profile) return [];
+  return [
+    ...new Set(
+      [
+        plan.profile.baseUrl,
+        plan.profile.healthUrl,
+        ...plan.profile.allowedOrigins,
+      ]
+        .map((value) => new URL(value).origin)
+        .filter((origin) => !isLoopback(origin)),
+    ),
   ];
 }

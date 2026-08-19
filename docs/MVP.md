@@ -427,16 +427,26 @@ Profile resolution uses this order: explicit `browser` configuration, literal
 Playwright/Cypress configuration, recognized package scripts, then unavailable.
 Arena does not guess between monorepo applications. An explicit profile names
 `runner`, `startup`, `health_url`, `base_url`, `test`, optional `teardown`,
-projects, and allowed loopback origins. The permission request is
-`harness_only`, brokered, and scoped to those exact commands and origins;
-package installation, browser downloads, wildcard origins, and external sites
-are never implied.
+projects, and allowed origins. The main permission request is `harness_only`,
+brokered, and scoped to exact commands and loopback origins. Every non-loopback
+origin is a separate exact, explicit capability; package installation, browser
+downloads, and wildcard origins are never implied.
 
 Each contestant runs in its own patched worktree and service process. Readiness
 polling, timeouts, process-group teardown, fresh contexts, and clean storage are
 harness responsibilities. Generated probes use Chromium desktop 1440×900,
-mobile 390×844 with touch, and a 320 CSS-pixel reflow check, then add repository
-projects. Requests outside approved origins are blocked and recorded.
+mobile 390×844 with touch, or a 320 CSS-pixel reflow check. The attacking agent
+chooses the task-specific probe family, profile, accessible actions, and
+expected behavior from this safe envelope. Repository browser projects are not
+translated into Arena profiles: the repository's configured browser command
+and complete project matrix run unchanged as the native suite. Requests outside
+approved origins are blocked and recorded.
+
+Built-in Playwright, Cypress, and custom adapters use `playwright-core` with an
+already installed Chrome/Chromium binary for Arena-managed navigation,
+isolation, and artifacts. The adapter does not replace the repository runner;
+Playwright, Cypress, WebDriver, or other repository tests still execute through
+the exact approved native command.
 
 Probe families cover role/name/label-based interaction, responsive overflow and
 clipping, keyboard/focus behavior, accessible semantics, declared persistence,
@@ -451,6 +461,13 @@ browsers, launch/health failure, blocked origins, and interruption. Real
 application failures remain valid evidence. Harness failures cause no damage;
 required unverified coverage flows into the provisional/inconclusive process,
 while optional gaps remain diagnostic.
+
+Failure attribution uses a baseline control. The resolved service lifecycle and
+native suite first run on the unpatched base. If that control cannot launch,
+become healthy, or pass, the result is a harness/configuration failure. If the
+control passes and the same bounded validation fails deterministically only on
+a contestant worktree, it is a contestant application failure. Ambiguous cases
+remain unverified and cannot affect health.
 
 `auto` is never permission to use production credentials, deploy infrastructure,
 access unrelated home-directory files, expose an SSH agent, or perform

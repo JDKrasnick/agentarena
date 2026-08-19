@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BrowserProbeRequestSchema } from "../contracts/browser.js";
 import { FailureRecordSchema } from "../contracts/failure.js";
 import { BrowserValidationResultSchema } from "../contracts/browser.js";
 
@@ -646,6 +647,7 @@ export const AttackSchema = z.object({
   requiredCapabilities: z.array(z.string()),
   patchPath: z.string(),
   focusedCommand: z.string(),
+  browserProbe: BrowserProbeRequestSchema.optional(),
   status: AttackStatusSchema,
   recoil: z.union([z.literal(5), z.literal(10), z.literal(15)]).optional(),
   proposedSeverity: SeveritySchema.optional(),
@@ -1570,6 +1572,7 @@ export const AttackSubmissionEntrySchema = z.object({
   focusedCommand: z.string().min(1),
   paths: z.array(z.string().min(1)).min(1),
   requiredCapabilities: z.array(z.string()).default([]),
+  browserProbe: BrowserProbeRequestSchema.optional(),
 });
 
 export const AttackSubmissionV2Schema = z
@@ -1581,6 +1584,16 @@ export const AttackSubmissionV2Schema = z
   .superRefine((submission, context) => {
     const owners = new Map<string, number>();
     submission.attacks.forEach((attack, index) => {
+      if (
+        attack.browserProbe &&
+        !attack.requiredCapabilities.includes("browser_dom_validation")
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["attacks", index, "requiredCapabilities"],
+          message:
+            "A browserProbe must declare browser_dom_validation as a required capability",
+        });
       for (const attackPath of attack.paths) {
         if (submission.sharedSupportPaths.includes(attackPath)) {
           context.addIssue({

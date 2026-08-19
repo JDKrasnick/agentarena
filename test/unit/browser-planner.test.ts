@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { planBrowserValidation } from "../../src/browser/planner.js";
 import { FightConfigSchema } from "../../src/core/types.js";
-import { resolvePermissionPolicy } from "../../src/permissions/policy.js";
+import {
+  discoverCapabilities,
+  resolvePermissionPolicy,
+} from "../../src/permissions/policy.js";
 import type { ReconnaissanceSnapshot } from "../../src/task/task-contract.js";
 import {
   buildRunSpec,
@@ -141,7 +144,7 @@ describe("browser validation planner", () => {
     });
   });
 
-  it("rejects external origins and blocks unavailable required coverage", () => {
+  it("requires a separate exact capability for an external origin", () => {
     const fightConfig = config({
       task: "Fix browser navigation",
       browserProfile: {
@@ -155,9 +158,14 @@ describe("browser validation planner", () => {
       },
     });
     const recon = reconnaissance();
-    expect(planBrowserValidation(fightConfig, recon)?.unavailableReason).toBe(
-      "non_local_origin",
+    expect(planBrowserValidation(fightConfig, recon)?.profile?.baseUrl).toBe(
+      "https://example.com",
     );
+    const originCapability = discoverCapabilities(fightConfig, recon).find(
+      (capability) => capability.id.startsWith("browser_origin_"),
+    );
+    expect(originCapability?.requirement).toBe("required");
+    expect(originCapability?.scopes).toEqual(["origin:https://example.com"]);
     expect(() =>
       resolvePermissionPolicy(fightConfig, [
         {

@@ -139,10 +139,10 @@ jobs:
       - name: Install dependencies without browser downloads
         run: npm ci
 
-      - name: Exercise the preinstalled browser
+      - name: Exercise the complete built-in browser lifecycle
         env:
           ARENA_REAL_BROWSER: "1"
-          CHROME_BIN: google-chrome
+          CHROME_BIN: /usr/bin/google-chrome
         run: npm run test:integration -- test/integration/browser-runtime.test.ts
 
   process-timeout-reproduction:

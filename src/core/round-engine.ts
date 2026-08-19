@@ -85,6 +85,7 @@ import {
   validateReconnaissance,
 } from "../task/task-contract.js";
 import type { RunSpec } from "../contracts/round.js";
+import type { BrowserValidationResult } from "../contracts/browser.js";
 import {
   FailureRecordSchema,
   type FailureCategory,
@@ -242,6 +243,7 @@ interface ArenaContext {
   roundInvocations: RecordedRoundInvocation[];
   priorEnvelopeHash: string | null;
   appliedEnvelopes: AppliedEnvelope[];
+  browserBaseline?: BrowserValidationResult;
 }
 
 interface RecordedRoundInvocation {
@@ -2515,6 +2517,38 @@ export class RoundEngine {
         throw new Error(
           "Baseline validation failed; pre-existing failures are unsupported",
         );
+      const browser = context.runSpec.browserValidation;
+      if (browser) {
+        const adapter = browser.profile
+          ? this.dependencies.browserAdapters?.[browser.profile.runner]
+          : undefined;
+        const browserBaseline = await executeBrowserValidation({
+          plan: { ...browser, requirement: "optional" },
+          decision: browser.decision,
+          ...(adapter ? { adapter } : {}),
+          worktree: baseline,
+          artifactDirectory: context.store.resolve("browser/baseline"),
+          selectedProbes: [],
+          approvedOrigins: browser.approvedScopes
+            .filter((scope) => scope.startsWith("origin:"))
+            .map((scope) => scope.slice("origin:".length)),
+          signal: context.controller.signal,
+        });
+        context.browserBaseline = browserBaseline;
+        const artifactPath = await context.store.writeJson(
+          "browser/baseline-result.json",
+          browserBaseline,
+        );
+        context.state.artifacts["browser-baseline"] = artifactPath;
+        if (
+          browser.requirement === "required" &&
+          browser.decision === "approved" &&
+          browserBaseline.status !== "verified"
+        )
+          throw new Error(
+            `Baseline browser validation ${browserBaseline.status}; configuration or harness failure prevents fair attribution`,
+          );
+      }
     } finally {
       await context.worktrees.remove(baseline);
     }
@@ -2783,13 +2817,23 @@ export class RoundEngine {
     const adapter = validation.profile
       ? this.dependencies.browserAdapters?.[validation.profile.runner]
       : undefined;
-    const result = await executeBrowserValidation({
-      plan: validation,
-      decision: validation.decision,
-      ...(adapter ? { adapter } : {}),
-      worktree,
-      signal: context.controller.signal,
-    });
+    const result = this.attributeBrowserResult(
+      context,
+      await executeBrowserValidation({
+        plan: validation,
+        decision: validation.decision,
+        ...(adapter ? { adapter } : {}),
+        worktree,
+        artifactDirectory: context.store.resolve(
+          `browser/${contestant.id}/${phase}`,
+        ),
+        selectedProbes: [],
+        approvedOrigins: validation.approvedScopes
+          .filter((scope) => scope.startsWith("origin:"))
+          .map((scope) => scope.slice("origin:".length)),
+        signal: context.controller.signal,
+      }),
+    );
     contestant.browserValidation = result;
     const artifactPath = await context.store.writeJson(
       `browser/${contestant.id}/${phase}-result.json`,
@@ -2814,6 +2858,78 @@ export class RoundEngine {
       if (capability) capability.status = "provisioning_failed";
       await context.store.writeJson("permissions.json", context.permissions);
     }
+  }
+
+  private attributeBrowserResult(
+    context: ArenaContext,
+    result: BrowserValidationResult,
+  ): BrowserValidationResult {
+    const baselinePassed = context.browserBaseline?.status === "verified";
+    const candidateLifecycleFailure =
+      result.status === "unverified" &&
+      (result.reason === "server_command_failure" ||
+        result.reason === "health_failure");
+    if (baselinePassed && candidateLifecycleFailure)
+      return {
+        ...result,
+        status: "failed",
+        failureAttribution: "contestant_application",
+      };
+    if (result.status === "failed")
+      return {
+        ...result,
+        failureAttribution: baselinePassed
+          ? "contestant_application"
+          : "unattributed",
+      };
+    if (result.status === "unverified" && !baselinePassed)
+      return {
+        ...result,
+        failureAttribution:
+          context.browserBaseline?.failureAttribution ?? "unattributed",
+      };
+    return result;
+  }
+
+  private browserProbeValidator(
+    context: ArenaContext,
+    attackId: string,
+  ):
+    | ((
+        worktree: string,
+        probe: NonNullable<Attack["browserProbe"]>,
+        subject: "author" | "target",
+      ) => Promise<BrowserValidationResult>)
+    | undefined {
+    const validation = context.runSpec.browserValidation;
+    if (!validation) return undefined;
+    const adapter = validation.profile
+      ? this.dependencies.browserAdapters?.[validation.profile.runner]
+      : undefined;
+    return async (worktree, probe, subject) => {
+      const result = this.attributeBrowserResult(
+        context,
+        await executeBrowserValidation({
+          plan: validation,
+          decision: validation.decision,
+          ...(adapter ? { adapter } : {}),
+          worktree,
+          artifactDirectory: context.store.resolve(
+            `browser/attacks/${attackId}/${subject}`,
+          ),
+          selectedProbes: [probe],
+          approvedOrigins: validation.approvedScopes
+            .filter((scope) => scope.startsWith("origin:"))
+            .map((scope) => scope.slice("origin:".length)),
+          signal: context.controller.signal,
+        }),
+      );
+      await context.store.writeJson(
+        `browser/attacks/${attackId}/${subject}-result.json`,
+        result,
+      );
+      return result;
+    };
   }
 
   private shouldStop(context: ArenaContext): boolean {
@@ -4731,6 +4847,14 @@ export class RoundEngine {
                   context.state,
                   attack.targets,
                 ),
+                ...(this.browserProbeValidator(context, attack.id)
+                  ? {
+                      validateBrowser: this.browserProbeValidator(
+                        context,
+                        attack.id,
+                      )!,
+                    }
+                  : {}),
                 persistFailureRecord: (record) =>
                   this.persistFailureRecord(context, record),
               })
@@ -5737,6 +5861,14 @@ export class RoundEngine {
           context.state,
           provisional.targets,
         ),
+        ...(this.browserProbeValidator(context, provisional.id)
+          ? {
+              validateBrowser: this.browserProbeValidator(
+                context,
+                provisional.id,
+              )!,
+            }
+          : {}),
       });
       if (replay.status === "provisional_infrastructure") {
         replay.status = "execution_inconclusive";

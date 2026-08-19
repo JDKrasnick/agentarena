@@ -19,6 +19,7 @@ import type {
   PermissionPolicy,
 } from "../core/types.js";
 import type { RunSpec } from "../contracts/round.js";
+import type { BrowserValidationResult } from "../contracts/browser.js";
 import { changedPathsFromPatch, isAllowedAttackPath } from "../repo/git.js";
 import type { WorktreeManager } from "../repo/git.js";
 import { runShellCommand } from "../runner/process-runner.js";
@@ -38,6 +39,11 @@ interface ValidateAttackOptions {
   knownRootDefects: ReadonlySet<string>;
   priorCanonicalDefects?: JudgeAdjudicationInput["priorCanonicalDefects"];
   persistFailureRecord?: (record: FailureRecord) => Promise<void>;
+  validateBrowser?: (
+    worktree: string,
+    probe: NonNullable<Attack["browserProbe"]>,
+    subject: "author" | "target",
+  ) => Promise<BrowserValidationResult>;
 }
 
 interface RepeatedCheck {
@@ -793,6 +799,74 @@ export async function validateAttack(
         "self_defeating",
         "Attack fails on its author's patch",
       );
+    }
+    if (attack.browserProbe) {
+      if (!options.validateBrowser)
+        return withOutcome(
+          attack,
+          "capability_denied",
+          "Browser validation was requested but no harness adapter is available",
+        );
+      // Profiles commonly bind one exact approved loopback port. Run the
+      // symmetric lanes sequentially so their isolated server processes never
+      // contend for that port.
+      const authorBrowser = await options.validateBrowser(
+        author,
+        attack.browserProbe,
+        "author",
+      );
+      const targetBrowser = await options.validateBrowser(
+        target,
+        attack.browserProbe,
+        "target",
+      );
+      attack.checks.push(
+        {
+          id: "author-browser-probe",
+          kind: "browser",
+          status:
+            authorBrowser.status === "verified"
+              ? "passed"
+              : authorBrowser.status === "failed"
+                ? "failed"
+                : "infrastructure_error",
+          ...(authorBrowser.reason ? { reason: authorBrowser.reason } : {}),
+        },
+        {
+          id: "target-browser-probe",
+          kind: "browser",
+          status:
+            targetBrowser.status === "verified"
+              ? "passed"
+              : targetBrowser.status === "failed"
+                ? "failed"
+                : "infrastructure_error",
+          ...(targetBrowser.reason ? { reason: targetBrowser.reason } : {}),
+        },
+      );
+      if (
+        authorBrowser.status === "unverified" ||
+        targetBrowser.status === "unverified"
+      )
+        return judgeFallback(
+          options,
+          attack,
+          "Comparative browser execution was unverified",
+          options.targetPatch,
+          target,
+        );
+      if (authorBrowser.status === "failed")
+        return withOutcome(
+          attack,
+          "self_defeating",
+          "Agent-chosen browser probe fails on its author's patch",
+        );
+      if (targetBrowser.status === "verified")
+        return withOutcome(
+          attack,
+          "blocked",
+          "Target patch passes the agent-chosen browser probe",
+        );
     }
     if (targetFocused.passed) {
       return withOutcome(

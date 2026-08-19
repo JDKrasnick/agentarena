@@ -232,11 +232,18 @@ literal Playwright or Cypress configuration, then recognized package scripts.
 Ambiguous monorepos remain unresolved rather than selecting an application.
 
 Approved browser execution is `harness_only` and brokered to exact commands and
-loopback origins. Arena never installs packages or browser binaries and treats
-every non-local origin as a separate capability. Each contestant gets an
-isolated server and fresh browser storage for independent probes. Generated
-checks cover Chromium desktop at 1440×900, mobile at 390×844 with touch, and
-320 CSS-pixel reflow, plus declared repository projects. Probe families cover
+approved origins. Arena never installs packages or browser binaries and treats
+every exact non-local origin as a separate capability. Built-in adapters use
+`playwright-core` with an already installed Chrome/Chromium binary to manage
+the service and Arena probes, while the repository's declared browser command
+and project matrix run unchanged as the native suite. Each contestant gets an
+isolated server and fresh browser storage for independent probes.
+
+The harness advertises the safe probe menu; the attacking agent chooses a
+task-specific family, desktop/mobile/reflow profile, accessible actions, and
+expected behavior in its attack submission. Generated checks can use Chromium
+desktop at 1440×900, mobile at 390×844 with touch, or 320 CSS-pixel reflow.
+Probe families cover
 interaction, responsive layout, keyboard/focus, semantics, task-declared
 persistence, runtime DOM integrity, risk-triggered inert DOM-XSS canaries, and
 unchanged repository-owned visual baselines. New screenshots are diagnostics,
@@ -244,10 +251,12 @@ not pass/fail baselines.
 
 Functional assertions run once. Browser/server infrastructure may receive one
 bounded retry with guaranteed teardown; a first-fail/second-pass assertion is
-flaky, not clean. Application failures are valid findings, while denied,
-missing, or failed harness capability leaves browser coverage unverified and
-cannot damage a contestant. Required gaps enter provisional coverage unless
-the exact reduced-validation contract was accepted.
+flaky, not clean. Before contestant attribution, the same resolved profile and
+native suite run on the unpatched baseline. A baseline failure is a
+configuration or harness failure; a baseline pass followed by a stable
+contestant-only failure is an application failure; evidence that cannot make
+that distinction is unverified and causes no damage. Required gaps enter
+provisional coverage unless the exact reduced-validation contract was accepted.
 
 ### 2. Independent implementation
 
