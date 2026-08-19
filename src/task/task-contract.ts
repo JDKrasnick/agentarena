@@ -1,4 +1,6 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
 import { sha256, stableId } from "../core/ids.js";
@@ -81,17 +83,37 @@ export class FileLocalSpecResolver implements LocalSpecResolver {
     reference: string,
     repositoryRoot: string,
   ): Promise<ResolvedLocalSpec> {
-    const resolved = path.resolve(repositoryRoot, reference);
-    const relative = path.relative(repositoryRoot, resolved);
+    const root = await realpath(repositoryRoot);
+    const resolved = path.resolve(root, reference);
+    const relative = path.relative(root, resolved);
     if (relative.startsWith("..") || path.isAbsolute(relative))
       throw new Error(
         `Specification path escapes the repository: ${reference}`,
       );
+    const canonical = await realpath(resolved);
+    const canonicalRelative = path.relative(root, canonical);
+    if (
+      canonicalRelative.startsWith("..") ||
+      path.isAbsolute(canonicalRelative)
+    )
+      throw new Error(
+        `Specification path escapes the repository through a symbolic link: ${reference}`,
+      );
     return {
       origin: reference,
-      content: await readFile(resolved, "utf8"),
+      content: await readFile(canonical, "utf8"),
     };
   }
+}
+
+const GH_READ_OPERATIONS = new Set(["issue view", "pr view", "repo view"]);
+
+async function runGhRead(args: string[], repositoryRoot: string) {
+  if (!GH_READ_OPERATIONS.has(args.slice(0, 2).join(" ")))
+    throw new Error(
+      `Pre-permission gh operation is not read-only: ${args.join(" ")}`,
+    );
+  return execa("gh", args, { cwd: repositoryRoot, reject: false });
 }
 
 export class GitHubIssueResolver implements IssueResolver {
@@ -99,10 +121,9 @@ export class GitHubIssueResolver implements IssueResolver {
     reference: string,
     repositoryRoot: string,
   ): Promise<ResolvedIssue> {
-    const result = await execa(
-      "gh",
+    const result = await runGhRead(
       ["issue", "view", reference, "--json", "title,body,comments,url"],
-      { cwd: repositoryRoot, reject: false },
+      repositoryRoot,
     );
     if (result.exitCode !== 0) {
       throw new Error(
@@ -118,10 +139,9 @@ export class GitHubIssueResolver implements IssueResolver {
     const identity = githubIdentity(value.url);
     let baseBranch: string | undefined;
     if (identity.repository) {
-      const repository = await execa(
-        "gh",
+      const repository = await runGhRead(
         ["repo", "view", identity.repository, "--json", "defaultBranchRef"],
-        { cwd: repositoryRoot, reject: false },
+        repositoryRoot,
       );
       if (repository.exitCode === 0) {
         const metadata = JSON.parse(repository.stdout) as {
@@ -150,8 +170,7 @@ export class GitHubPullRequestResolver implements PullRequestResolver {
     reference: string,
     repositoryRoot: string,
   ): Promise<ResolvedPullRequest> {
-    const result = await execa(
-      "gh",
+    const result = await runGhRead(
       [
         "pr",
         "view",
@@ -159,7 +178,7 @@ export class GitHubPullRequestResolver implements PullRequestResolver {
         "--json",
         "title,body,comments,url,number,author,baseRefName,baseRefOid,headRefName,headRepository,headRefOid,commits,closingIssuesReferences",
       ],
-      { cwd: repositoryRoot, reject: false },
+      repositoryRoot,
     );
     if (result.exitCode !== 0) {
       throw new Error(
@@ -260,6 +279,8 @@ export interface RepositoryEvidence {
   path: string;
   content: string;
   contentHash: string;
+  byteLength: number;
+  contentOmitted?: "lockfile_hash_only";
 }
 
 export interface ReconnaissanceSnapshot {
@@ -292,7 +313,17 @@ export function validateReconnaissance(
       throw new Error(`Reconnaissance source hash drifted: ${source.origin}`);
   }
   for (const evidence of snapshot.repositoryEvidence) {
-    if (sha256(evidence.content) !== evidence.contentHash)
+    if (
+      evidence.contentOmitted === "lockfile_hash_only" &&
+      evidence.content !== ""
+    )
+      throw new Error(
+        `Reconnaissance lockfile unexpectedly retained content: ${evidence.path}`,
+      );
+    if (
+      evidence.contentOmitted !== "lockfile_hash_only" &&
+      sha256(evidence.content) !== evidence.contentHash
+    )
       throw new Error(`Reconnaissance evidence hash drifted: ${evidence.path}`);
   }
   return snapshot;
@@ -351,25 +382,58 @@ const RECONNAISSANCE_PATHS = [
   "app/routes.ts",
 ] as const;
 
+const LOCKFILE_PATHS = new Set([
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "bun.lock",
+  "bun.lockb",
+]);
+const MAX_RECONNAISSANCE_FILE_BYTES = 256 * 1024;
+const MAX_RECONNAISSANCE_TEXT_BYTES = 2 * 1024 * 1024;
+
+async function hashFile(filePath: string): Promise<string> {
+  const digest = createHash("sha256");
+  for await (const chunk of createReadStream(filePath))
+    digest.update(chunk as Buffer);
+  return digest.digest("hex");
+}
+
 async function collectRepositoryEvidence(
   repositoryRoot: string,
-  maxBytes = 512 * 1024,
+  maxBytes = MAX_RECONNAISSANCE_TEXT_BYTES,
 ): Promise<RepositoryEvidence[]> {
   const evidence: RepositoryEvidence[] = [];
   let total = 0;
   for (const relativePath of RECONNAISSANCE_PATHS) {
     try {
-      const content = await readFile(
-        path.join(repositoryRoot, relativePath),
-        "utf8",
-      );
-      total += Buffer.byteLength(content);
+      const evidencePath = path.join(repositoryRoot, relativePath);
+      const file = await stat(evidencePath);
+      if (LOCKFILE_PATHS.has(relativePath)) {
+        evidence.push({
+          path: relativePath,
+          content: "",
+          contentHash: await hashFile(evidencePath),
+          byteLength: file.size,
+          contentOmitted: "lockfile_hash_only",
+        });
+        continue;
+      }
+      if (file.size > MAX_RECONNAISSANCE_FILE_BYTES)
+        throw new Error(
+          `Repository reconnaissance file ${relativePath} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
+        );
+      const content = await readFile(evidencePath, "utf8");
+      const byteLength = Buffer.byteLength(content);
+      total += byteLength;
       if (total > maxBytes)
         throw new Error(`Repository reconnaissance exceeds ${maxBytes} bytes`);
       evidence.push({
         path: relativePath,
         content,
         contentHash: sha256(content),
+        byteLength,
       });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;

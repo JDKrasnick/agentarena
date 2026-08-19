@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -92,6 +92,45 @@ describe("bounded pre-permission reconnaissance", () => {
       ),
     ).rejects.toThrow("Specification path escapes the repository");
     expect(await readdir(root)).toEqual([]);
+  });
+
+  it("rejects a specification symlink that resolves outside the repository", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-link-"));
+    const outside = path.join(
+      os.tmpdir(),
+      `arena-outside-${String(Date.now())}.md`,
+    );
+    await writeFile(outside, "outside\n");
+    await symlink(outside, path.join(root, "spec.md"));
+    await expect(
+      collectFightReconnaissance(config(root, { specPaths: ["spec.md"] })),
+    ).rejects.toThrow("symbolic link");
+  });
+
+  it("caps text evidence per file and hashes lockfiles without retaining them", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-bounds-"));
+    const lockContent = `${"lock-entry\n".repeat(40_000)}`;
+    await writeFile(path.join(root, "package-lock.json"), lockContent);
+    const snapshot = await collectFightReconnaissance(config(root));
+    expect(snapshot.repositoryEvidence).toMatchObject([
+      {
+        path: "package-lock.json",
+        content: "",
+        byteLength: Buffer.byteLength(lockContent),
+        contentOmitted: "lockfile_hash_only",
+      },
+    ]);
+    expect(snapshot.repositoryEvidence[0]?.contentHash).toMatch(
+      /^[a-f0-9]{64}$/u,
+    );
+
+    await writeFile(
+      path.join(root, "package.json"),
+      "x".repeat(256 * 1024 + 1),
+    );
+    await expect(collectFightReconnaissance(config(root))).rejects.toThrow(
+      "package.json exceeds 262144 bytes",
+    );
   });
 
   it("resolves permission policy before Git, artifacts, worktrees, or agents", async () => {
