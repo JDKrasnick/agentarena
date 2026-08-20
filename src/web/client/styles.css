@@ -90,6 +90,8 @@
   --pocket-card: #fffdf0;
   --pocket-muted: #587078;
   --pocket-text-secondary: #314951;
+  --pocket-operational-accent: #0f7078;
+  --pocket-danger: #9f262b;
   --pocket-result-stock: #fff6c9;
   --pocket-rule: #c7d3c2;
   --pocket-winner-line: #315c3a;
@@ -189,6 +191,21 @@ input:focus-visible {
 
 .app-shell {
   min-height: 100vh;
+  --detail-page-fg: #c9cac4;
+  --detail-page-surface: #191a17;
+  --detail-page-muted: #9fa198;
+  --detail-page-faint: #878980;
+  --detail-output-surface: #11120f;
+  --detail-output-fg: #c9cac4;
+  --detail-output-muted: #878980;
+  --detail-danger: #ff9b9b;
+  --detail-success: #8ce6aa;
+  --detail-accent: #7ce0da;
+  --detail-input-surface: #161714;
+  --detail-input-fg: #f4f3ef;
+  --detail-input-placeholder: #9fa198;
+  --detail-button-surface: #eeeeea;
+  --detail-button-fg: #171815;
   --result-surface: #191a17;
   --result-fg: #f2f1ec;
   --result-muted: #b7cbb9;
@@ -328,7 +345,7 @@ main {
   background: var(--app-hover);
 }
 .round-nav button:disabled {
-  color: var(--app-text-dim);
+  color: var(--detail-page-faint);
   cursor: not-allowed;
 }
 .round-nav button > i {
@@ -354,12 +371,12 @@ main {
 }
 .round-nav small {
   margin-top: 3px;
-  color: var(--app-text-faint);
+  color: var(--detail-page-faint);
   font-size: 10px;
 }
 .replay-explainer {
   margin: 22px 4px 0;
-  color: var(--app-text-faint);
+  color: var(--detail-page-faint);
   font-size: 10px;
   line-height: 1.5;
 }
@@ -387,7 +404,7 @@ main {
   gap: 10px;
   min-height: 42px;
   margin-left: 5px;
-  color: var(--app-text-dim);
+  color: var(--detail-page-faint);
   font-size: 13px;
 }
 .round-step::before {
@@ -1156,7 +1173,7 @@ main {
   border: 0;
   border-radius: 8px;
   padding: 8px 10px 8px 7px;
-  color: var(--app-text-secondary);
+  color: var(--detail-page-fg);
   background: transparent;
   font-size: 12px;
   font-weight: 700;
@@ -1189,7 +1206,7 @@ main {
   margin: 0;
 }
 .detail-identity p {
-  color: var(--muted);
+  color: var(--detail-page-muted);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -1203,7 +1220,7 @@ main {
 .detail-identity > div > span {
   display: block;
   margin-top: 4px;
-  color: var(--muted);
+  color: var(--detail-page-muted);
   font:
     12px ui-monospace,
     SFMono-Regular,
@@ -1216,7 +1233,7 @@ main {
   gap: 5px;
 }
 .detail-health > span {
-  color: var(--muted);
+  color: var(--detail-page-muted);
   font-size: 11px;
 }
 .detail-health > strong {
@@ -1259,8 +1276,8 @@ main {
   font-size: 14px;
 }
 .workstream > header span {
-  color: var(--cyan);
-  font-size: 11px;
+  color: var(--detail-accent);
+  font-size: 12px;
   text-transform: capitalize;
 }
 .detail-output {
@@ -1271,9 +1288,10 @@ main {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 16px;
-  background: var(--app-deep);
+  color: var(--detail-output-fg);
+  background: var(--detail-output-surface);
   font:
-    11px/1.55 ui-monospace,
+    13px/1.6 ui-monospace,
     SFMono-Regular,
     Menlo,
     monospace;
@@ -1284,27 +1302,27 @@ main {
   word-break: break-word;
 }
 .detail-output .output-chunk {
-  color: var(--app-text-secondary);
+  color: var(--detail-output-fg);
 }
 .detail-output .output-stderr {
-  color: var(--app-danger-title);
+  color: var(--detail-danger);
 }
 .detail-output .detail-empty {
-  color: var(--app-text-faint);
+  color: var(--detail-output-muted);
 }
 .detail-steer {
   margin-top: 16px;
 }
 .detail-steer-unavailable {
   margin: 16px 0 0;
-  color: var(--app-text-tertiary);
-  font-size: 12px;
+  color: var(--detail-page-muted);
+  font-size: 13px;
 }
 .detail-steer label {
   display: block;
   margin-bottom: 7px;
-  color: var(--app-text-secondary);
-  font-size: 11px;
+  color: var(--detail-page-fg);
+  font-size: 12px;
   font-weight: 700;
 }
 .detail-steer > div {
@@ -1317,20 +1335,20 @@ main {
   border: 1px solid var(--app-line-strong);
   border-radius: 8px;
   padding: 10px 12px;
-  color: var(--app-fg);
-  background: var(--app-chrome);
-  font-size: 12px;
+  color: var(--detail-input-fg);
+  background: var(--detail-input-surface);
+  font-size: 13px;
 }
 .detail-steer input::placeholder {
-  color: var(--app-input-placeholder);
+  color: var(--detail-input-placeholder);
 }
 .detail-steer button {
   border: 0;
   border-radius: 8px;
   padding: 10px 13px;
-  color: var(--app-soft);
-  background: var(--app-control);
-  font-size: 11px;
+  color: var(--detail-button-fg);
+  background: var(--detail-button-surface);
+  font-size: 12px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -1347,8 +1365,8 @@ main {
 }
 .fighter-ledger p {
   margin: 9px 0 0;
-  color: var(--app-text-faint);
-  font-size: 11px;
+  color: var(--detail-page-muted);
+  font-size: 12px;
 }
 .fighter-ledger ol,
 .fighter-ledger ul {
@@ -1363,8 +1381,8 @@ main {
   align-items: baseline;
   justify-content: space-between;
   gap: 14px;
-  color: var(--app-text-secondary);
-  font-size: 11px;
+  color: var(--detail-page-fg);
+  font-size: 12px;
 }
 .fighter-ledger li div {
   min-width: 0;
@@ -1383,19 +1401,19 @@ main {
 .fighter-ledger li time {
   flex: 0 0 auto;
   min-width: 54px;
-  color: var(--app-text-faint);
-  font-size: 10px;
+  color: var(--detail-page-faint);
+  font-size: 11px;
   font-style: normal;
   text-align: right;
   text-transform: capitalize;
 }
 .fighter-ledger .check-passed,
 .fighter-ledger .gain {
-  color: var(--green);
+  color: var(--detail-success);
 }
 .fighter-ledger .check-failed,
 .fighter-ledger .loss {
-  color: var(--app-danger);
+  color: var(--detail-danger);
 }
 .ledger-summary {
   font-variant-numeric: tabular-nums;
@@ -1713,6 +1731,21 @@ main {
     inset 0 0 0 8px var(--pocket-shell-deep),
     inset 0 0 0 14px var(--pocket-shell-highlight);
   padding: 18px;
+  --detail-page-fg: #173039;
+  --detail-page-surface: #ecf6d7;
+  --detail-page-muted: #40585f;
+  --detail-page-faint: #40585f;
+  --detail-output-surface: #ffffff;
+  --detail-output-fg: #314951;
+  --detail-output-muted: #40585f;
+  --detail-danger: #9f262b;
+  --detail-success: #315c3a;
+  --detail-accent: #0f7078;
+  --detail-input-surface: #fffdf0;
+  --detail-input-fg: #173039;
+  --detail-input-placeholder: #40585f;
+  --detail-button-surface: #ffe86a;
+  --detail-button-fg: #173039;
 }
 .theme-classic-shell > .topbar,
 .theme-classic-shell > main {
@@ -1804,6 +1837,34 @@ main {
 .theme-sticker-league .result-summary dd {
   color: var(--pocket-ink);
 }
+.theme-classic-shell
+  :is(.fighter-label, .model, .health-copy, .fighter-facts dt, .open-fighter),
+.theme-sticker-league
+  :is(.fighter-label, .model, .health-copy, .fighter-facts dt, .open-fighter),
+.theme-night-edition
+  :is(.fighter-label, .model, .health-copy, .fighter-facts dt, .open-fighter) {
+  color: var(--pocket-text-secondary);
+}
+.theme-classic-shell .provider-mark span,
+.theme-sticker-league .provider-mark span,
+.theme-night-edition .provider-mark span {
+  color: var(--pocket-ink);
+}
+.theme-classic-shell .agent-output p span,
+.theme-sticker-league .agent-output p span,
+.theme-night-edition .agent-output p span {
+  color: var(--pocket-operational-accent);
+}
+.theme-classic-shell :is(.agent-output .quiet, .replay-card-note),
+.theme-sticker-league :is(.agent-output .quiet, .replay-card-note),
+.theme-night-edition :is(.agent-output .quiet, .replay-card-note) {
+  color: var(--pocket-text-secondary);
+}
+.theme-classic-shell :is(.agent-output .stderr, .damage),
+.theme-sticker-league :is(.agent-output .stderr, .damage),
+.theme-night-edition :is(.agent-output .stderr, .damage) {
+  color: var(--pocket-danger);
+}
 .theme-classic-shell .agent-output,
 .theme-sticker-league .agent-output,
 .theme-classic-shell .replay-card-note,
@@ -1883,6 +1944,21 @@ main {
   padding: 28px;
   color: var(--pocket-ink);
   background: var(--sticker-shell);
+  --detail-page-fg: #173039;
+  --detail-page-surface: #fffaf0;
+  --detail-page-muted: #40585f;
+  --detail-page-faint: #40585f;
+  --detail-output-surface: #ffffff;
+  --detail-output-fg: #314951;
+  --detail-output-muted: #40585f;
+  --detail-danger: #9f262b;
+  --detail-success: #315c3a;
+  --detail-accent: #0f7078;
+  --detail-input-surface: #fffdf0;
+  --detail-input-fg: #173039;
+  --detail-input-placeholder: #40585f;
+  --detail-button-surface: #f7d96f;
+  --detail-button-fg: #173039;
 }
 .theme-sticker-league main {
   background: var(--sticker-paper);
@@ -1923,6 +1999,21 @@ main {
   --line: #635a88;
   --muted: #bbb5d4;
   --cyan: #75efd0;
+  --detail-page-fg: #f6f1ff;
+  --detail-page-surface: #191838;
+  --detail-page-muted: #bbb5d4;
+  --detail-page-faint: #bbb5d4;
+  --detail-output-surface: #11120f;
+  --detail-output-fg: #c9cac4;
+  --detail-output-muted: #878980;
+  --detail-danger: #ff9b9b;
+  --detail-success: #75efd0;
+  --detail-accent: #75efd0;
+  --detail-input-surface: #161714;
+  --detail-input-fg: #f4f3ef;
+  --detail-input-placeholder: #9fa198;
+  --detail-button-surface: #75efd0;
+  --detail-button-fg: #173039;
   --result-surface: #f1eddd;
   --result-fg: #173039;
   --result-muted: #314951;
@@ -2004,6 +2095,21 @@ main {
   font-family: "Arena Space", sans-serif;
   color: var(--broadcast-ink);
   background: var(--broadcast-paper);
+  --detail-page-fg: #161a1c;
+  --detail-page-surface: #f3f0e7;
+  --detail-page-muted: #465256;
+  --detail-page-faint: #465256;
+  --detail-output-surface: #ffffff;
+  --detail-output-fg: #161a1c;
+  --detail-output-muted: #465256;
+  --detail-danger: #a52722;
+  --detail-success: #216331;
+  --detail-accent: #17616a;
+  --detail-input-surface: #ffffff;
+  --detail-input-fg: #161a1c;
+  --detail-input-placeholder: #465256;
+  --detail-button-surface: #ffdd52;
+  --detail-button-fg: #161a1c;
   --result-surface: #f3f0e7;
   --result-fg: #161a1c;
   --result-muted: #465256;
@@ -2301,6 +2407,21 @@ main {
     inset 0 0 0 4px var(--deck-wood-light),
     0 22px 50px var(--shadow-deep);
   font-family: "Arena Space", sans-serif;
+  --detail-page-fg: #eef7e9;
+  --detail-page-surface: #245c49;
+  --detail-page-muted: #c8dcd3;
+  --detail-page-faint: #c8dcd3;
+  --detail-output-surface: #153f35;
+  --detail-output-fg: #eef7e9;
+  --detail-output-muted: #c8dcd3;
+  --detail-danger: #ffb5af;
+  --detail-success: #b6f2c3;
+  --detail-accent: #b9eee4;
+  --detail-input-surface: #f4ead1;
+  --detail-input-fg: #1c2926;
+  --detail-input-placeholder: #52645e;
+  --detail-button-surface: #e8bd4d;
+  --detail-button-fg: #1c2926;
   --result-surface: #f4ead1;
   --result-fg: #1c2926;
   --result-muted: #4b5a55;

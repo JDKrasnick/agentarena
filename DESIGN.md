@@ -87,6 +87,8 @@ remain legible within that world rather than being forced into a universal skin.
 
 - **Classic Coral, Yellow, and Mint:** hardware shell, tactile controls, and
   contestant emphasis.
+- **Pocket Operational Teal and Danger Red:** high-contrast stream annotations,
+  errors, and damage labels on light card stock.
 - **Sticker Yellow and Mint:** the sticker rail, selected controls, and playful
   layered accents.
 - **Night Violet and Mint:** translucent hardware and luminous selection/focus
@@ -245,6 +247,11 @@ invocation summaries, and a textual damage cue. Detail uses a separate data path
 that preserves and renders the full redacted stream in terminal order without
 trimming whitespace or adding presentation timestamps. Returning to the arena
 preserves the selected recorded round.
+
+Operational text in the detail view uses theme-local semantic colors. Transcript,
+empty, error, steering, and ledger text must retain at least WCAG AA 4.5:1
+contrast against their actual surface in every renderer family; the full stream
+uses a minimum 13px monospace treatment so terminal output remains legible.
 
 ### Round navigation and replay
 

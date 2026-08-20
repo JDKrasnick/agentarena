@@ -12,6 +12,29 @@ const themes = [
   "evidence-deck",
 ] as const;
 
+const operationalThemes = [
+  "classic-shell",
+  "sticker-league",
+  "night-edition",
+  "live-arena-broadcast",
+  "evidence-deck",
+] as const;
+
+const operationalTextPairs = [
+  ["--detail-page-fg", "--detail-page-surface"],
+  ["--detail-page-muted", "--detail-page-surface"],
+  ["--detail-page-faint", "--detail-page-surface"],
+  ["--detail-accent", "--detail-page-surface"],
+  ["--detail-success", "--detail-page-surface"],
+  ["--detail-danger", "--detail-page-surface"],
+  ["--detail-output-fg", "--detail-output-surface"],
+  ["--detail-output-muted", "--detail-output-surface"],
+  ["--detail-danger", "--detail-output-surface"],
+  ["--detail-input-fg", "--detail-input-surface"],
+  ["--detail-input-placeholder", "--detail-input-surface"],
+  ["--detail-button-fg", "--detail-button-surface"],
+] as const;
+
 const textPairs = [
   ["--result-fg", "--result-surface"],
   ["--result-muted", "--result-surface"],
@@ -34,6 +57,30 @@ function themeTokens(theme: (typeof themes)[number]): Map<string, string> {
     match[1]?.includes("--result-surface"),
   )?.[1];
   expect(block, `missing CSS block for ${theme}`).toBeDefined();
+
+  const tokens = new Map<string, string>();
+  for (const match of (block ?? "").matchAll(
+    /(--[\w-]+):\s*(#[\da-f]{3,8})\s*;/gi,
+  )) {
+    const name = match[1];
+    const value = match[2];
+    if (name && value) tokens.set(name, value);
+  }
+  return tokens;
+}
+
+function operationalThemeTokens(
+  theme: (typeof operationalThemes)[number],
+): Map<string, string> {
+  const blocks = [
+    ...stylesheet.matchAll(
+      new RegExp(`\\.theme-${theme}\\s*\\{([\\s\\S]*?)\\n\\}`, "g"),
+    ),
+  ];
+  const block = blocks.find((match) =>
+    match[1]?.includes("--detail-output-surface"),
+  )?.[1];
+  expect(block, `missing operational CSS block for ${theme}`).toBeDefined();
 
   const tokens = new Map<string, string>();
   for (const match of (block ?? "").matchAll(
@@ -81,6 +128,31 @@ describe("result theme contrast", () => {
       const tokens = themeTokens(theme);
 
       for (const [foregroundToken, backgroundToken] of textPairs) {
+        const foreground = tokens.get(foregroundToken);
+        const background = tokens.get(backgroundToken);
+        expect(
+          foreground,
+          `${theme} is missing ${foregroundToken}`,
+        ).toBeDefined();
+        expect(
+          background,
+          `${theme} is missing ${backgroundToken}`,
+        ).toBeDefined();
+        expect(
+          contrastRatio(foreground ?? "#000", background ?? "#fff"),
+          `${theme} ${foregroundToken} on ${backgroundToken}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+  }
+});
+
+describe("fighter detail theme contrast", () => {
+  for (const theme of operationalThemes) {
+    it(`${theme} keeps operational text at WCAG AA contrast`, () => {
+      const tokens = operationalThemeTokens(theme);
+
+      for (const [foregroundToken, backgroundToken] of operationalTextPairs) {
         const foreground = tokens.get(foregroundToken);
         const background = tokens.get(backgroundToken);
         expect(
