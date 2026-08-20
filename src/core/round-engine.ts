@@ -87,6 +87,7 @@ import {
 } from "../task/task-contract.js";
 import type { RunSpec } from "../contracts/round.js";
 import type { BrowserValidationResult } from "../contracts/browser.js";
+import { findBrowserProbeResult } from "../browser/results.js";
 import {
   FailureRecordSchema,
   type FailureCategory,
@@ -466,14 +467,16 @@ export class RoundEngine {
       config,
       discoverCapabilities(config, reconnaissance),
     );
-    const repositoryRoot = await resolveRepositoryRoot(config.repositoryRoot);
-    await assertCleanRepository(repositoryRoot);
-    config = FightConfigSchema.parse({ ...config, repositoryRoot });
     const runId = createRunId(this.now());
     const store = new ArtifactStore(config.artifactRoot, runId, {
       durableV5: true,
     });
     await store.initialize();
+    await store.writeImmutableJson("reconnaissance.json", reconnaissance);
+    await store.writeJson("permissions.json", permissions);
+    const repositoryRoot = await resolveRepositoryRoot(config.repositoryRoot);
+    await assertCleanRepository(repositoryRoot);
+    config = FightConfigSchema.parse({ ...config, repositoryRoot });
     let pullRequestFixture: PullRequestFixture | undefined;
     let frozenBasePullRequest: ResolvedPullRequest | undefined;
     let frozenModePullRequest: ResolvedPullRequest | undefined;
@@ -591,7 +594,6 @@ export class RoundEngine {
         warnings: contractWarnings,
         reconnaissance,
       });
-      await store.writeImmutableJson("reconnaissance.json", reconnaissance);
       await store.writeImmutableJson("run-spec.json", runSpec);
       const repositoryIdentity =
         await resolveGitHubRepositoryIdentity(repositoryRoot);
@@ -601,7 +603,6 @@ export class RoundEngine {
       );
       if (targetResolution.ambiguous && targetResolution.reason)
         contractWarnings.push(targetResolution.reason);
-      await store.writeJson("permissions.json", permissions);
       const startedAt = this.now().toISOString();
       const state: RunState = {
         schemaVersion: 7,
@@ -5329,8 +5330,13 @@ export class RoundEngine {
                           : [attack.patchPath]),
                       ],
                     );
-                    infrastructureFailure = check.status === "unverified";
-                    mechanicsPassed = check.status === "verified";
+                    const probeResult = findBrowserProbeResult(
+                      check,
+                      attack.browserProbe.id,
+                    );
+                    infrastructureFailure =
+                      !probeResult || probeResult.status === "unverified";
+                    mechanicsPassed = probeResult?.status === "verified";
                     diagnosticArtifactRefs.push(
                       ...check.artifacts.map((artifact) => artifact.path),
                     );
@@ -6601,24 +6607,25 @@ export class RoundEngine {
                     [currentPatch],
                   )
                 : undefined;
+              const probeResult = browserResult
+                ? findBrowserProbeResult(browserResult, attack.browserProbe.id)
+                : undefined;
               contestant.checks.push({
                 id: `final-browser-${attack.id}`,
                 kind: "browser",
                 status:
-                  browserResult?.status === "verified"
+                  probeResult?.status === "verified"
                     ? "passed"
-                    : browserResult?.status === "failed"
+                    : probeResult?.status === "failed"
                       ? "failed"
                       : "infrastructure_error",
-                ...(browserResult?.reason
-                  ? { reason: browserResult.reason }
-                  : {}),
+                ...(probeResult?.reason ? { reason: probeResult.reason } : {}),
               });
-              if (!browserResult || browserResult.status === "unverified")
+              if (!probeResult || probeResult.status === "unverified")
                 throw new Error(
                   `Final browser reproducer was unverified for ${agent}`,
                 );
-              defectPasses = browserResult.status === "verified";
+              defectPasses = probeResult.status === "verified";
             }
             for (const caseEntry of finalCases) {
               const caseTree = await this.prepareWorktree(context, {

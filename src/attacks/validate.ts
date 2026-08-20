@@ -20,6 +20,7 @@ import type {
 } from "../core/types.js";
 import type { RunSpec } from "../contracts/round.js";
 import type { BrowserValidationResult } from "../contracts/browser.js";
+import { findBrowserProbeResult } from "../browser/results.js";
 import { changedPathsFromPatch, isAllowedAttackPath } from "../repo/git.js";
 import type { WorktreeManager } from "../repo/git.js";
 import { runShellCommand } from "../runner/process-runner.js";
@@ -842,11 +843,13 @@ export async function validateAttack(
           "invalid",
           "Browser attack exceeded its configured stage budget",
         );
-      const authorProbe = authorBrowser.probes.find(
-        (probe) => probe.probeId === attack.browserProbe?.id,
+      const authorProbe = findBrowserProbeResult(
+        authorBrowser,
+        attack.browserProbe.id,
       );
-      const targetProbe = targetBrowser.probes.find(
-        (probe) => probe.probeId === attack.browserProbe?.id,
+      const targetProbe = findBrowserProbeResult(
+        targetBrowser,
+        attack.browserProbe.id,
       );
       attack.checks.push(
         {

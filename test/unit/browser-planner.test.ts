@@ -40,10 +40,17 @@ function config(overrides: Record<string, unknown> = {}) {
 function reconnaissance(
   files: Record<string, string> = {},
 ): ReconnaissanceSnapshot {
-  return {
-    version: 1,
+  const snapshot = {
+    version: 1 as const,
     task: "task",
     acceptanceCriteria: [],
+    request: {
+      repositoryRoot: "/repo",
+      specPaths: [],
+      issueReferences: [],
+      pullRequestReferences: [],
+      taskReferences: [],
+    },
     capturedAt: "2026-08-18T12:00:00.000Z",
     sources: [],
     repositoryEvidence: Object.entries(files).map(([path, content]) => ({
@@ -55,6 +62,7 @@ function reconnaissance(
     resolvedPullRequests: {},
     inputHash: "b".repeat(64),
   };
+  return snapshot;
 }
 
 describe("browser validation planner", () => {

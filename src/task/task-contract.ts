@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
 import { sha256, stableId } from "../core/ids.js";
@@ -102,7 +109,10 @@ export class FileLocalSpecResolver implements LocalSpecResolver {
       );
     return {
       origin: reference,
-      content: await readFile(canonical, "utf8"),
+      content: await readBoundedTextFile(
+        canonical,
+        `specification ${reference}`,
+      ),
     };
   }
 }
@@ -327,6 +337,7 @@ export function validateReconnaissance(
     )
       throw new Error(`Reconnaissance evidence hash drifted: ${evidence.path}`);
   }
+  validateRetainedTextBudget(snapshot);
   return snapshot;
 }
 
@@ -366,6 +377,18 @@ const RECONNAISSANCE_PATHS = [
   "bun.lockb",
   "deno.json",
   "deno.jsonc",
+  "pyproject.toml",
+  "requirements.txt",
+  "requirements-dev.txt",
+  "setup.py",
+  "setup.cfg",
+  "Pipfile",
+  "Pipfile.lock",
+  "poetry.lock",
+  "uv.lock",
+  "pdm.lock",
+  "tox.ini",
+  "pytest.ini",
   "playwright.config.ts",
   "playwright.config.js",
   "playwright.config.mjs",
@@ -390,9 +413,79 @@ const LOCKFILE_PATHS = new Set([
   "yarn.lock",
   "bun.lock",
   "bun.lockb",
+  "Pipfile.lock",
+  "poetry.lock",
+  "uv.lock",
+  "pdm.lock",
 ]);
 const MAX_RECONNAISSANCE_FILE_BYTES = 256 * 1024;
 const MAX_RECONNAISSANCE_TEXT_BYTES = 2 * 1024 * 1024;
+
+async function readBoundedTextFile(
+  filePath: string,
+  label: string,
+): Promise<string> {
+  const handle = await open(filePath, "r");
+  try {
+    const file = await handle.stat();
+    if (!file.isFile())
+      throw new Error(`Reconnaissance path is not a regular file: ${label}`);
+    if (file.size > MAX_RECONNAISSANCE_FILE_BYTES)
+      throw new Error(
+        `Reconnaissance text ${label} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
+      );
+
+    const chunks: Buffer[] = [];
+    let byteLength = 0;
+    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+      const bytes = Buffer.from(chunk as Uint8Array);
+      byteLength += bytes.length;
+      if (byteLength > MAX_RECONNAISSANCE_FILE_BYTES)
+        throw new Error(
+          `Reconnaissance text ${label} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
+        );
+      chunks.push(bytes);
+    }
+    return Buffer.concat(chunks, byteLength).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+class ReconnaissanceTextBudget {
+  private retainedBytes = 0;
+
+  retain(label: string, content: string): number {
+    const byteLength = Buffer.byteLength(content);
+    if (byteLength > MAX_RECONNAISSANCE_FILE_BYTES)
+      throw new Error(
+        `Reconnaissance text ${label} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
+      );
+    this.retainedBytes += byteLength;
+    if (this.retainedBytes > MAX_RECONNAISSANCE_TEXT_BYTES)
+      throw new Error(
+        `Reconnaissance text exceeds ${String(MAX_RECONNAISSANCE_TEXT_BYTES)} bytes`,
+      );
+    return byteLength;
+  }
+}
+
+function validateRetainedTextBudget(snapshot: ReconnaissanceSnapshot): void {
+  const budget = new ReconnaissanceTextBudget();
+  snapshot.acceptanceCriteria.forEach((criterion, index) =>
+    budget.retain(`acceptance criterion ${String(index + 1)}`, criterion),
+  );
+  for (const source of snapshot.sources)
+    budget.retain(source.origin, source.content);
+  for (const evidence of snapshot.repositoryEvidence) {
+    if (evidence.contentOmitted === "lockfile_hash_only") continue;
+    const byteLength = budget.retain(evidence.path, evidence.content);
+    if (byteLength !== evidence.byteLength)
+      throw new Error(
+        `Reconnaissance evidence byte length drifted: ${evidence.path}`,
+      );
+  }
+}
 
 async function hashFile(filePath: string): Promise<string> {
   const digest = createHash("sha256");
@@ -403,14 +496,28 @@ async function hashFile(filePath: string): Promise<string> {
 
 async function collectRepositoryEvidence(
   repositoryRoot: string,
-  maxBytes = MAX_RECONNAISSANCE_TEXT_BYTES,
+  budget: ReconnaissanceTextBudget,
 ): Promise<RepositoryEvidence[]> {
   const evidence: RepositoryEvidence[] = [];
-  let total = 0;
+  const canonicalRoot = await realpath(repositoryRoot);
   for (const relativePath of RECONNAISSANCE_PATHS) {
     try {
-      const evidencePath = path.join(repositoryRoot, relativePath);
+      const evidencePath = await realpath(
+        path.join(canonicalRoot, relativePath),
+      );
+      const canonicalRelative = path.relative(canonicalRoot, evidencePath);
+      if (
+        canonicalRelative.startsWith("..") ||
+        path.isAbsolute(canonicalRelative)
+      )
+        throw new Error(
+          `Repository reconnaissance path escapes the repository through a symbolic link: ${relativePath}`,
+        );
       const file = await stat(evidencePath);
+      if (!file.isFile())
+        throw new Error(
+          `Repository reconnaissance path is not a regular file: ${relativePath}`,
+        );
       if (LOCKFILE_PATHS.has(relativePath)) {
         evidence.push({
           path: relativePath,
@@ -426,10 +533,7 @@ async function collectRepositoryEvidence(
           `Repository reconnaissance file ${relativePath} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
         );
       const content = await readFile(evidencePath, "utf8");
-      const byteLength = Buffer.byteLength(content);
-      total += byteLength;
-      if (total > maxBytes)
-        throw new Error(`Repository reconnaissance exceeds ${maxBytes} bytes`);
+      const byteLength = budget.retain(relativePath, content);
       evidence.push({
         path: relativePath,
         content,
@@ -447,11 +551,17 @@ export async function collectReconnaissance(
   options: CollectReconnaissanceOptions,
 ): Promise<ReconnaissanceSnapshot> {
   const capturedAt = (options.now ?? new Date()).toISOString();
+  const budget = new ReconnaissanceTextBudget();
   const issueResolver = options.issueResolver ?? new GitHubIssueResolver();
   const pullRequestResolver =
     options.pullRequestResolver ?? new GitHubPullRequestResolver();
   const localSpecResolver =
     options.localSpecResolver ?? new FileLocalSpecResolver();
+  const taskContent = `${options.task}\n`;
+  budget.retain("command-line task", taskContent);
+  options.acceptanceCriteria.forEach((criterion, index) =>
+    budget.retain(`acceptance criterion ${String(index + 1)}`, criterion),
+  );
   const sources: ReconnaissanceSource[] = [
     {
       id: "task-user",
@@ -459,8 +569,8 @@ export async function collectReconnaissance(
       origin: "command-line task",
       retrievedAt: capturedAt,
       visibility: "shared",
-      content: `${options.task}\n`,
-      contentHash: sha256(`${options.task}\n`),
+      content: taskContent,
+      contentHash: sha256(taskContent),
     },
   ];
   const resolvedPullRequests: Record<string, ResolvedPullRequest> = {};
@@ -487,6 +597,7 @@ export async function collectReconnaissance(
       ]),
       "",
     ].join("\n");
+    budget.retain(`issue ${reference}`, content);
     sources.push({
       id: stableId("issue", issue.origin),
       kind: "issue",
@@ -549,6 +660,7 @@ export async function collectReconnaissance(
       ]),
       "",
     ].join("\n");
+    budget.retain(`pull request ${reference}`, content);
     sources.push({
       id: stableId("pull-request", pullRequest.origin),
       kind: "pull_request",
@@ -589,6 +701,7 @@ export async function collectReconnaissance(
         { cause: error },
       );
     }
+    budget.retain(`specification ${configuredPath}`, resolvedSpec.content);
     sources.push({
       id: stableId("spec", configuredPath),
       kind: "repo_spec",
@@ -609,6 +722,7 @@ export async function collectReconnaissance(
   for (const instruction of await discoverInstructions(
     options.repositoryRoot,
   )) {
+    budget.retain(`instruction ${instruction.path}`, instruction.content);
     sources.push({
       id: stableId("instructions", instruction.path),
       kind: "repo_spec",
@@ -622,6 +736,7 @@ export async function collectReconnaissance(
 
   const repositoryEvidence = await collectRepositoryEvidence(
     options.repositoryRoot,
+    budget,
   );
   const input = {
     version: 1 as const,

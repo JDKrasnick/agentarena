@@ -151,6 +151,9 @@ describe("browser validation executor", () => {
       provisionAttempts: 2,
     });
     expect(launch).toHaveBeenCalledTimes(2);
+    expect(launch.mock.calls.map(([input]) => input.artifactDirectory)).toEqual(
+      ["/artifacts/a/attempt-1", "/artifacts/a/attempt-2"],
+    );
     expect(stops[0]).toHaveBeenCalledOnce();
     expect(stops[1]).toHaveBeenCalledOnce();
   });
@@ -222,6 +225,125 @@ describe("browser validation executor", () => {
     expect(Date.now() - startedAt).toBeLessThan(500);
     expect(browser.launch).toHaveBeenCalledOnce();
     expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("aborts a timed-out launch and tears down a session that resolves late", async () => {
+    const stop = vi.fn().mockResolvedValue(undefined);
+    let resolveLaunch!: (session: BrowserSession) => void;
+    const launch = vi.fn<BrowserAdapter["launch"]>().mockImplementation(
+      () =>
+        new Promise<BrowserSession>((resolve) => {
+          resolveLaunch = resolve;
+        }),
+    );
+    const browser: BrowserAdapter = { runner: "playwright", launch };
+
+    const result = await executeBrowserValidation({
+      plan,
+      decision: "approved",
+      adapter: browser,
+      worktree: "/worktree/a",
+      artifactDirectory: "/artifacts/a",
+      selectedProbes: [],
+      approvedOrigins: ["http://127.0.0.1:4173"],
+      timeoutMs: 25,
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({
+      status: "unverified",
+      reason: "timed_out",
+      provisionAttempts: 1,
+    });
+    expect(launch).toHaveBeenCalledOnce();
+    expect(launch.mock.calls[0]?.[0].signal.aborted).toBe(true);
+
+    resolveLaunch({
+      toolVersion: "1",
+      browserVersion: "1",
+      artifacts: [],
+      waitUntilReady: vi.fn(),
+      runProbe: vi.fn(),
+      runNativeSuite: vi.fn(),
+      stop,
+    });
+    await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
+  });
+
+  it("retries an unverified native suite with distinct artifacts", async () => {
+    const stops = [
+      vi.fn().mockResolvedValue(undefined),
+      vi.fn().mockResolvedValue(undefined),
+    ];
+    let attempt = 0;
+    const launch = vi.fn<BrowserAdapter["launch"]>().mockImplementation(() => {
+      const current = attempt++;
+      return Promise.resolve({
+        toolVersion: "1",
+        browserVersion: "1",
+        artifacts: [],
+        waitUntilReady: vi.fn().mockResolvedValue(undefined),
+        runNativeSuite: vi.fn().mockResolvedValue(
+          current === 0
+            ? {
+                family: "visual_regression",
+                profile: "repository_native",
+                status: "unverified",
+                reason: "launch_failure",
+                blockedOrigins: [],
+                artifacts: [
+                  {
+                    kind: "runner_result",
+                    path: "/artifacts/a/attempt-1/native-suite.stderr.log",
+                    failureOnly: false,
+                  },
+                ],
+              }
+            : {
+                family: "visual_regression",
+                profile: "repository_native",
+                status: "verified",
+                blockedOrigins: [],
+                artifacts: [],
+              },
+        ),
+        runProbe: vi
+          .fn<BrowserSession["runProbe"]>()
+          .mockImplementation(({ request }) =>
+            Promise.resolve({
+              family: request.family,
+              profile: request.profile,
+              status: "verified",
+              blockedOrigins: [],
+              artifacts: [],
+            }),
+          ),
+        stop: stops[current]!,
+      });
+    });
+
+    const result = await executeBrowserValidation({
+      plan,
+      decision: "approved",
+      adapter: { runner: "playwright", launch },
+      worktree: "/worktree/a",
+      artifactDirectory: "/artifacts/a",
+      selectedProbes: [],
+      approvedOrigins: ["http://127.0.0.1:4173"],
+      timeoutMs: 10_000,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.status).toBe("verified");
+    expect(result.provisionAttempts).toBe(2);
+    expect(result.artifacts.map((artifact) => artifact.path)).toContain(
+      "/artifacts/a/attempt-1/native-suite.stderr.log",
+    );
+    expect(launch.mock.calls.map(([input]) => input.artifactDirectory)).toEqual(
+      ["/artifacts/a/attempt-1", "/artifacts/a/attempt-2"],
+    );
+    expect(stops[0]).toHaveBeenCalledOnce();
+    expect(stops[1]).toHaveBeenCalledOnce();
   });
 
   it("reuses a frozen native-suite result by content key", async () => {

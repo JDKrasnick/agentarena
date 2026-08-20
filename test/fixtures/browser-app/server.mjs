@@ -48,7 +48,13 @@ const server = createServer((request, response) => {
   response.writeHead(200, { "content-type": "text/html" });
   response.end(`<!doctype html>
     <html><head><title>Arena fixture</title></head>
-    <body><main><h1>browser-ready</h1><button>Continue</button></main>
+    <body><main>
+      <h1>browser-ready</h1>
+      <label>Wrapped label <input></label>
+      <span id="labelled-name">Labelled name</span>
+      <input aria-labelledby="labelled-name">
+      <button><img alt="Continue"></button>
+    </main>
     ${url.pathname === "/external" ? '<script>fetch("https://blocked.example/pixel")</script>' : ""}
     ${websocketScript}
     ${sameOriginWebSocketScript}

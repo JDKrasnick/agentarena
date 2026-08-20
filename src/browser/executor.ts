@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type { BrowserPlan } from "./planner.js";
 import {
   BrowserValidationResultSchema,
@@ -115,31 +116,33 @@ async function beforeDeadline<T>(
   operation: () => Promise<T>,
   deadlineAt: number,
   signal: AbortSignal,
+  onTimeout?: () => void,
 ): Promise<T> {
   const remainingMs = deadlineAt - Date.now();
-  if (remainingMs <= 0)
+  if (remainingMs <= 0) {
+    onTimeout?.();
     throw new BrowserInfrastructureError(
       "Browser validation exceeded its stage budget",
       "timed_out",
       "harness_configuration",
     );
+  }
   let timer: NodeJS.Timeout | undefined;
   let abort: (() => void) | undefined;
   try {
     return await Promise.race([
       operation(),
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(
-              new BrowserInfrastructureError(
-                "Browser validation exceeded its stage budget",
-                "timed_out",
-                "harness_configuration",
-              ),
+        timer = setTimeout(() => {
+          reject(
+            new BrowserInfrastructureError(
+              "Browser validation exceeded its stage budget",
+              "timed_out",
+              "harness_configuration",
             ),
-          remainingMs,
-        );
+          );
+          onTimeout?.();
+        }, remainingMs);
       }),
       new Promise<never>((_resolve, reject) => {
         abort = () =>
@@ -199,19 +202,30 @@ export async function executeBrowserValidation(options: {
   const artifacts: BrowserArtifact[] = [];
   for (const attempt of [1, 2] as const) {
     if (options.signal.aborted) return unverified("interrupted", attempt - 1);
+    const attemptController = new AbortController();
+    const attemptSignal = AbortSignal.any([
+      options.signal,
+      attemptController.signal,
+    ]);
+    const attemptArtifactDirectory = path.join(
+      options.artifactDirectory,
+      `attempt-${String(attempt)}`,
+    );
     let session: BrowserSession | undefined;
+    let launchPromise: Promise<BrowserSession> | undefined;
     try {
-      session = await beforeDeadline(
-        () =>
-          adapter.launch({
-            plan: { ...options.plan, profile },
-            worktree: options.worktree,
-            artifactDirectory: options.artifactDirectory,
-            signal: options.signal,
-            deadlineAt,
-          }),
+      launchPromise = adapter.launch({
+        plan: { ...options.plan, profile },
+        worktree: options.worktree,
+        artifactDirectory: attemptArtifactDirectory,
+        signal: attemptSignal,
         deadlineAt,
-        options.signal,
+      });
+      session = await beforeDeadline(
+        () => launchPromise!,
+        deadlineAt,
+        attemptSignal,
+        () => attemptController.abort(),
       );
       const activeSession = session;
       artifacts.push(...session.artifacts);
@@ -219,18 +233,16 @@ export async function executeBrowserValidation(options: {
         await beforeDeadline(
           () => activeSession.waitUntilReady(),
           deadlineAt,
-          options.signal,
+          attemptSignal,
+          () => attemptController.abort(),
         );
       } catch (error) {
-        lastReason =
-          error instanceof BrowserInfrastructureError
-            ? error.reason
-            : "health_failure";
-        lastAttribution =
-          error instanceof BrowserInfrastructureError
-            ? error.attribution
-            : "harness_transport";
-        continue;
+        throw error instanceof BrowserInfrastructureError
+          ? error
+          : new BrowserInfrastructureError(
+              error instanceof Error ? error.message : String(error),
+              "health_failure",
+            );
       }
 
       const probes: BrowserProbeResult[] = [];
@@ -243,13 +255,18 @@ export async function executeBrowserValidation(options: {
         (await beforeDeadline(
           () => activeSession.runNativeSuite(),
           deadlineAt,
-          options.signal,
+          attemptSignal,
+          () => attemptController.abort(),
         ));
-      if (
-        !cachedNativeResult &&
-        options.nativeSuiteCacheKey &&
-        nativeResult.status !== "unverified"
-      )
+      artifacts.push(...nativeResult.artifacts);
+      if (nativeResult.status === "unverified") {
+        throw new BrowserInfrastructureError(
+          nativeResult.detail ??
+            "Repository-native browser suite was unverified",
+          nativeResult.reason ?? "launch_failure",
+        );
+      }
+      if (!cachedNativeResult && options.nativeSuiteCacheKey)
         options.nativeSuiteCache?.set(
           options.nativeSuiteCacheKey,
           nativeResult,
@@ -282,8 +299,16 @@ export async function executeBrowserValidation(options: {
               allowedOrigins: options.approvedOrigins,
             }),
           deadlineAt,
-          options.signal,
+          attemptSignal,
+          () => attemptController.abort(),
         );
+        artifacts.push(...result.artifacts);
+        if (result.status === "unverified") {
+          throw new BrowserInfrastructureError(
+            result.detail ?? `Browser probe ${request.id} was unverified`,
+            result.reason ?? "launch_failure",
+          );
+        }
         probes.push({
           ...result,
           probeId: request.id,
@@ -305,10 +330,7 @@ export async function executeBrowserValidation(options: {
         browserVersion: session.browserVersion,
         nativeSuiteCacheHit: Boolean(cachedNativeResult),
         probes,
-        artifacts: [
-          ...artifacts,
-          ...probes.flatMap((probe) => probe.artifacts),
-        ],
+        artifacts,
         failureAttribution:
           status === "failed"
             ? "contestant_application"
@@ -326,9 +348,23 @@ export async function executeBrowserValidation(options: {
         error instanceof BrowserInfrastructureError
           ? error.attribution
           : "harness_transport";
-      if (options.signal.aborted)
-        return unverified(lastReason, attempt, artifacts);
+      if (!session && launchPromise) {
+        void launchPromise
+          .then((lateSession) => lateSession.stop())
+          .catch(() => undefined);
+      }
+      if (
+        options.signal.aborted ||
+        lastReason === "interrupted" ||
+        lastReason === "timed_out" ||
+        lastReason === "unapproved_origin"
+      )
+        return BrowserValidationResultSchema.parse({
+          ...unverified(lastReason, attempt, artifacts),
+          failureAttribution: lastAttribution,
+        });
     } finally {
+      attemptController.abort();
       if (session) await Promise.resolve(session.stop()).catch(() => undefined);
     }
   }

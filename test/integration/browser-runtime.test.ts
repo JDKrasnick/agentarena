@@ -107,11 +107,60 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
         ],
         signal: controller.signal,
       });
+      expect(verified.status).toBe("verified");
+      expect(verified.probes).toHaveLength(8);
+
+      const fixedPortCollision = await executeBrowserValidation({
+        plan: {
+          ...plan,
+          profile: { ...plan.profile!, portMode: "fixed" },
+        },
+        decision: "approved",
+        adapter: adapter!,
+        worktree: process.cwd(),
+        artifactDirectory: path.join(artifacts, "fixed-port-collision"),
+        approvedOrigins: [origin],
+        timeoutMs: 30_000,
+        selectedProbes: [],
+        signal: controller.signal,
+      });
+      expect(fixedPortCollision).toMatchObject({
+        status: "unverified",
+        reason: "launch_failure",
+        provisionAttempts: 2,
+        failureAttribution: "harness_configuration",
+      });
       await new Promise<void>((resolve) =>
         reservedStaticPort.close(() => resolve()),
       );
-      expect(verified.status).toBe("verified");
-      expect(verified.probes).toHaveLength(8);
+      await expect(fetch(`${origin}/health`)).rejects.toThrow();
+
+      const invalidNavigation = await executeBrowserValidation({
+        plan,
+        decision: "approved",
+        adapter: adapter!,
+        worktree: process.cwd(),
+        artifactDirectory: path.join(artifacts, "invalid-navigation"),
+        approvedOrigins: [origin],
+        dynamicLoopbackApproved: true,
+        timeoutMs: 30_000,
+        selectedProbes: [
+          {
+            id: "invalid-navigation",
+            family: "interaction",
+            profile: "desktop",
+            expectedBehavior: "Probe navigation remains within the app",
+            actions: [{ kind: "goto", path: "https://blocked.example/" }],
+          },
+        ],
+        signal: controller.signal,
+      });
+      expect(invalidNavigation).toMatchObject({
+        status: "unverified",
+        reason: "unapproved_origin",
+        provisionAttempts: 1,
+        failureAttribution: "harness_configuration",
+      });
       await expect(fetch(`${origin}/health`)).rejects.toThrow();
 
       const blocked = await executeBrowserValidation({

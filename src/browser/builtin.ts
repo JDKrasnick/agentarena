@@ -58,6 +58,33 @@ async function unusedLoopbackPort(): Promise<number> {
   return address.port;
 }
 
+async function assertLoopbackPortAvailable(value: string): Promise<void> {
+  const url = new URL(value);
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    !["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname)
+  )
+    return;
+  const port = Number(url.port || (url.protocol === "https:" ? "443" : "80"));
+  const host = url.hostname.replace(/^\[|\]$/gu, "");
+  const server = createServer();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, host, resolve);
+    });
+  } catch {
+    throw new BrowserInfrastructureError(
+      `Fixed browser origin is already in use: ${url.origin}`,
+      "launch_failure",
+      "harness_configuration",
+    );
+  } finally {
+    if (server.listening)
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
 function replacePort(value: string, port: number): string {
   const url = new URL(value);
   url.port = String(port);
@@ -225,17 +252,19 @@ async function familyInvariant(
       : undefined;
   }
   if (family === "semantics") {
-    const missing = await page.evaluate(`(() => {
-      const controls = [...document.querySelectorAll('button,input,select,textarea,a[href],[role="button"],[role="link"]')];
-      return controls.filter((element) => {
-        const text = (element.getAttribute('aria-label') || element.getAttribute('title') || element.textContent || '').trim();
-        const id = element.getAttribute('id');
-        const label = id ? document.querySelector('label[for="' + CSS.escape(id) + '"]') : null;
-        return !text && !label;
-      }).length;
-    })()`);
-    return Number(missing) > 0
-      ? `${String(missing)} actionable element(s) lack an accessible name`
+    const controls = page.locator(
+      'button,input,select,textarea,a[href],[role="button"],[role="link"]',
+    );
+    const controlCount = await controls.count();
+    let missingCount = 0;
+    for (let index = 0; index < controlCount; index += 1) {
+      const snapshot = await controls.nth(index).ariaSnapshot();
+      if (!snapshot) continue;
+      const root = snapshot.split("\n", 1)[0]?.trim() ?? "";
+      if (!/^-\s+\S+\s+"/u.test(root)) missingCount += 1;
+    }
+    return missingCount > 0
+      ? `${String(missingCount)} actionable element(s) lack an accessible name`
       : undefined;
   }
   if (family === "runtime_dom_integrity") {
@@ -358,6 +387,7 @@ class BuiltInBrowserSession implements BrowserSession {
     const errors: string[] = [];
     let context: BrowserContext | undefined;
     let page: Page | undefined;
+    let phase: "provision" | "application" = "provision";
     try {
       context = await this.browser.newContext({
         ...viewport(request.profile),
@@ -410,6 +440,7 @@ class BuiltInBrowserSession implements BrowserSession {
         if (message.type() === "error") errors.push(message.text());
       });
       page.on("pageerror", (error) => errors.push(error.message));
+      phase = "application";
       await executeActions(
         page,
         this.input.plan.profile.baseUrl,
@@ -459,6 +490,18 @@ class BuiltInBrowserSession implements BrowserSession {
         artifacts,
       };
     } catch (error) {
+      if (error instanceof BrowserInfrastructureError) throw error;
+      if (
+        phase === "provision" ||
+        (error instanceof Error &&
+          /(?:browser|context|page|target).*(?:closed|crashed)|connection closed|target crashed/iu.test(
+            error.message,
+          ))
+      )
+        throw new BrowserInfrastructureError(
+          error instanceof Error ? error.message : String(error),
+          "launch_failure",
+        );
       const screenshotPath = path.join(
         this.input.artifactDirectory,
         `${contextId}.png`,
@@ -509,6 +552,16 @@ class BuiltInBrowserAdapter implements BrowserAdapter {
   async launch(
     input: Parameters<BrowserAdapter["launch"]>[0],
   ): Promise<BrowserSession> {
+    if (input.plan.profile.portMode !== "dynamic") {
+      const origins = [
+        ...new Set(
+          [input.plan.profile.baseUrl, input.plan.profile.healthUrl].map(
+            (value) => new URL(value).origin,
+          ),
+        ),
+      ];
+      for (const origin of origins) await assertLoopbackPortAvailable(origin);
+    }
     const runtimeInput =
       input.plan.profile.portMode === "dynamic"
         ? await (async () => {

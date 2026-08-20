@@ -1,3 +1,8 @@
+import type {
+  BrowserProbeResult,
+  BrowserValidationResult,
+} from "../contracts/browser.js";
+
 export {
   BrowserArtifactSchema,
   BrowserProbeResultSchema,
@@ -12,3 +17,10 @@ export type {
   BrowserUnavailableReason,
   BrowserValidationResult,
 } from "../contracts/browser.js";
+
+export function findBrowserProbeResult(
+  result: BrowserValidationResult,
+  probeId: string,
+): BrowserProbeResult | undefined {
+  return result.probes.find((probe) => probe.probeId === probeId);
+}
