@@ -758,8 +758,10 @@ export async function buildRunSummary(options: {
     ...(baseline ? { baseline } : {}),
     ...(finalization ? { finalization } : {}),
     contestants,
-    ranking: options.state.ranking,
-    ...(options.state.arenaOutcome
+    ...(!options.state.terminalOutcome && options.state.ranking
+      ? { ranking: options.state.ranking }
+      : {}),
+    ...(!options.state.terminalOutcome && options.state.arenaOutcome
       ? { outcome: options.state.arenaOutcome }
       : {}),
     ...(options.state.terminalOutcome

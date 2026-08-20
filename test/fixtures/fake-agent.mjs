@@ -25,7 +25,9 @@ if (!agent || !stage || !submission)
 
 const sourcePath = path.join(process.cwd(), "src", "slug.mjs");
 
-if (stage === "implement") {
+if (stage === "provider_health_probe") {
+  process.stdout.write("AGENT_ARENA_PROVIDER_HEALTH_OK\n");
+} else if (stage === "implement") {
   if (process.env.AGENT_ARENA_EMPTY_IMPLEMENTATION === "1") {
     await writeFile(
       submission,

@@ -325,6 +325,7 @@ export const RunSummaryV5Schema = z
         driftApprovalHashes: z.array(Sha256Schema),
         parentRunId: IdentifierSchema.optional(),
         parentCheckpointHash: Sha256Schema.optional(),
+        transportRestartOrdinal: z.number().int().min(1).max(2).optional(),
       })
       .strict(),
   })
