@@ -442,7 +442,9 @@ function SuccessScreen({ state }: { state: DashboardState }) {
         paddingX={1}
       >
         <Text bold color="green">
-          ★ BATTLE COMPLETE · PATCH HARDENED
+          {state.status === "complete"
+            ? "★ BATTLE COMPLETE · PATCH HARDENED"
+            : `BATTLE ${state.status.toUpperCase()}`}
         </Text>
         <Text>
           <Text bold>{String(landed.length)}</Text> verified defect
@@ -468,6 +470,11 @@ function SuccessScreen({ state }: { state: DashboardState }) {
             <Text dimColor>Why: </Text>
             Coverage was unresolved, so no champion or recommendation is
             published.
+          </Text>
+        ) : state.result?.terminalOutcome ? (
+          <Text wrap="wrap">
+            <Text dimColor>Why: </Text>
+            {state.result.terminalOutcome.reason}
           </Text>
         ) : null}
       </Box>
@@ -582,7 +589,12 @@ export function Dashboard({
     [observer],
   );
   useEffect(() => {
-    if (state.status === "complete") setView("result");
+    if (
+      state.status !== "running" &&
+      state.status !== "cancelling" &&
+      state.result
+    )
+      setView("result");
   }, [state.status]);
   useInput((input, key) => {
     if (note !== undefined) {
@@ -595,7 +607,7 @@ export function Dashboard({
       return;
     }
     if (input === "o") setView("overview");
-    else if (input === "v" && state.status === "complete") setView("result");
+    else if (input === "v" && state.result) setView("result");
     else if (input === "1") {
       setSelected("a");
       setView("a");
@@ -796,6 +808,18 @@ export function Dashboard({
           Warning: {warning}
         </Text>
       ))}
+      {state.failures.slice(-2).map((failure) => (
+        <Text
+          key={failure.id}
+          color={failure.state === "recovered" ? "green" : "yellow"}
+        >
+          {failure.state === "retrying" ? "Retrying" : failure.state}:{" "}
+          {failure.subject} · attempt {String(failure.attempt)}
+          {failure.terminalDisposition
+            ? ` · ${failure.terminalDisposition}`
+            : ""}
+        </Text>
+      ))}
       {note !== undefined ? (
         <Text color="cyan">
           Steer {selected.toUpperCase()}: {note}█
@@ -805,7 +829,7 @@ export function Dashboard({
           <Text>
             <Text dimColor>
               o arena · 1/2 fighters · r battle log · s system · n steer
-              {state.status === "complete" ? " · v result" : ""} · ctrl+c cancel
+              {state.result ? " · v result" : ""} · ctrl+c cancel
             </Text>
           </Text>
         </Box>

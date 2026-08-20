@@ -27,6 +27,7 @@ export * from "./delivery/target.js";
 export * from "./delivery/types.js";
 export * from "./chat/contracts.js";
 export * from "./commands/apply.js";
+export type { DisplayMode } from "./commands/fight.js";
 export * from "./commands/resolve-coverage.js";
 export * from "./confidence/assessment.js";
 export * from "./contracts/failure.js";

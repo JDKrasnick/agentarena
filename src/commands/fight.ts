@@ -14,8 +14,22 @@ import { discoverCapabilities } from "../permissions/policy.js";
 import { ArenaBattleControl } from "../observability/control.js";
 import type { ArenaObserver } from "../observability/events.js";
 import type { WebDashboard } from "../dashboard/web-server.js";
+import type { DesktopDashboardWindow } from "../dashboard/desktop-window.js";
 
-export type DisplayMode = "auto" | "dashboard" | "terminal" | "plain";
+export type DisplayMode =
+  "auto" | "window" | "dashboard" | "terminal" | "plain";
+
+export type ActiveDisplayMode = "window" | "terminal" | "plain";
+
+export function resolveDisplayMode(
+  display: DisplayMode,
+  launchWindow: boolean,
+  interactive: boolean,
+): ActiveDisplayMode {
+  if (display === "terminal" || display === "plain") return display;
+  if (launchWindow) return "window";
+  return interactive ? "terminal" : "plain";
+}
 
 async function approvePermissionPlan(
   config: Awaited<ReturnType<typeof loadFightConfig>>,
@@ -76,12 +90,13 @@ function createArena(
 export async function runFight(
   overrides: CliConfigOverrides,
   display: DisplayMode = "auto",
+  launchWindow = true,
 ): Promise<string> {
   const config = await approvePermissionPlan(await loadFightConfig(overrides));
   const interactive = Boolean(stdout.isTTY && stdin.isTTY);
-  const useWebDashboard = display === "dashboard";
-  const useTerminalDashboard =
-    display === "terminal" || (display === "auto" && interactive);
+  const activeDisplay = resolveDisplayMode(display, launchWindow, interactive);
+  const useDesktopDashboard = activeDisplay === "window";
+  const useTerminalDashboard = activeDisplay === "terminal";
   if (useTerminalDashboard && !interactive) {
     throw new Error(
       "--display terminal requires an interactive TTY; use --display plain for redirected output or CI",
@@ -91,12 +106,28 @@ export async function runFight(
   const control = new ArenaBattleControl(controller);
   let dashboard: { unmount(): void } | undefined;
   let webDashboard: WebDashboard | undefined;
+  let desktopWindow: DesktopDashboardWindow | undefined;
   let observer: ArenaObserver | undefined;
-  if (useWebDashboard) {
-    const { startWebDashboard } = await import("../dashboard/web-server.js");
+  if (useDesktopDashboard) {
+    const [{ startWebDashboard }, { startDesktopDashboardWindow }] =
+      await Promise.all([
+        import("../dashboard/web-server.js"),
+        import("../dashboard/desktop-window.js"),
+      ]);
     webDashboard = await startWebDashboard(control);
+    try {
+      desktopWindow = startDesktopDashboardWindow(webDashboard.url, {
+        onUserClose: () => {
+          control.cancel(new Error("Agent Arena window closed"));
+          void webDashboard?.close();
+        },
+      });
+    } catch (error) {
+      await webDashboard.close();
+      throw error;
+    }
     observer = webDashboard.observer;
-    stdout.write(`Agent Arena dashboard: ${webDashboard.url}\n`);
+    stdout.write("Agent Arena window opened.\n");
   } else if (useTerminalDashboard) {
     const [{ DashboardObserver }, { startDashboard }] = await Promise.all([
       import("../dashboard/state.js"),
@@ -111,10 +142,6 @@ export async function runFight(
     battleControl: control,
   });
   const cancel = (): void => {
-    void observer?.publish({
-      type: "cancellation_requested",
-      reason: "Interrupted",
-    });
     control.cancel(new Error("Interrupted"));
     void webDashboard?.close();
   };
@@ -134,6 +161,7 @@ export async function runFight(
     process.removeListener("SIGTERM", cancel);
     dashboard?.unmount();
     await webDashboard?.close();
+    await desktopWindow?.close();
   }
 }
 

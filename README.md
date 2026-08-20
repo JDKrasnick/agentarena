@@ -104,17 +104,37 @@ Explicit CLI flags override YAML.
 
 ## Live battle observatory
 
-Interactive `fight` and `defend` runs open a compact terminal-native
-observatory. It follows the same restrained approach as coding-agent CLIs:
-crisp text, small provider sigils, selective color, live tool output, and no
-bitmap logo wells. Use `--display auto|dashboard|terminal|plain` explicitly:
-`dashboard` launches the optional loopback-only React view, `terminal` forces
-the Ink observatory, and `plain` keeps stable line-oriented output for CI.
+`fight` and `defend` launch the React observatory in a dedicated Electron window
+by default. Pass `--no-window` to use the Ink observatory in an interactive TTY
+or stable line-oriented output when redirected or running in CI. The explicit
+`--display window|terminal|plain` modes remain available, and the legacy
+`dashboard` value aliases `window` without opening a browser.
 
 Both rich displays show contestant output, rounds, evidence, checks, warnings,
 and PR/spec/artifact links. They support cancellation and one-time steering for
-the next eligible agent invocation. Applied steering marks the result
+the next eligible contestant-owned implementation, attack, or repair call.
+Retries reuse the prompt that already consumed the note. Applied steering marks the result
 **Assisted — not competitively comparable** without discarding its evidence.
+
+In the desktop window, click either fighter to open its complete workstream,
+then use **Back to main arena** to return. The round timeline can replay the
+recorded state of completed rounds without changing the active fight. Agent
+Arena does not currently rewind or rerun live rounds; `resume` continues from a
+sealed durable boundary.
+
+The desktop window opens in a spacious, work-area-clamped live layout and keeps
+up to ten recent output lines visible for each fighter. A terminal result
+automatically contracts the window into a results-first view with the independent
+arena champion and recommended patch, coverage, run integrity, completed rounds,
+final fighter scores, defects, verified repairs, outcome, and evidence links.
+
+Use the top-bar swatches to switch among **Classic Shell** (the first-run
+default), **Sticker League**, **Night Edition**, **Live Arena Broadcast**, and
+**Evidence Deck**. The selected theme persists locally across battles. Switching
+themes does not reset the current fighter, recorded round, result review, or
+live connection. If the preference cannot be saved, the current window keeps
+the selection and reports a non-blocking warning. Theme selection affects only
+the desktop window; terminal and plain output are unchanged.
 
 Provider and command output is redacted before it reaches either display,
 `events.ndjson`, or final transcript logs. The overview keeps live counts for
@@ -122,8 +142,8 @@ mounted and landed attacks and evidence revisions. Terminal damage uses a brief
 red glyph/HP cue; reduced-motion mode keeps the numeric cue without animation.
 
 The terminal uses a yellow-orange `✦` Spark sigil for Claude and compact textual
-marks for other providers. The optional React view uses crisp browser-native
-artwork, including the official orange Claude mark. The registry also covers
+marks for other providers. The desktop React view uses crisp native artwork,
+including the official orange Claude mark. The registry also covers
 Gemini, Grok, Mistral, DeepSeek, Cohere, Perplexity, Meta AI, GitHub Copilot,
 Amazon Bedrock, Qwen, NVIDIA, Azure AI, Groq, Hugging Face, Together AI,
 Fireworks AI, OpenRouter, and Cursor. No third-party game art is used.
@@ -138,13 +158,14 @@ shows final HP, status, and checks for both fighters; the champion and
 recommended patch when coverage resolves them; verified defects caught before
 ship; health-restoring improvements that survived replay; and the exact review
 command. Choose
-**Finish session** after review to close the local server.
+**Finish session** after review to close the window and its loopback-only local
+server. Closing the window during a battle cancels the active run.
 
 Run either mock without provider credentials:
 
 ```bash
 npm run demo:dashboard
-npm run demo:web
+npm run demo:window
 ```
 
 ## Battle modes

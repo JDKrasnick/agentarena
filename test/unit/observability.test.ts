@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import {
 } from "../../src/observability/control.js";
 import {
   ArenaEventSchema,
+  ArenaEventBus,
   EventJournal,
 } from "../../src/observability/events.js";
 import {
@@ -35,6 +36,37 @@ describe("arena observability", () => {
     expect(events.map((event) => event.sequence)).toEqual(
       Array.from({ length: 30 }, (_, index) => index + 1),
     );
+  });
+
+  it("finalizes once for journal and dashboard and resumes after a torn tail", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "arena-bus-"));
+    const filePath = path.join(directory, "events.ndjson");
+    const firstSink: unknown[] = [];
+    const first = new ArenaEventBus(new EventJournal(filePath), [
+      { publish: (event) => void firstSink.push(event) },
+    ]);
+    await Promise.all([
+      first.publish({ type: "warning", message: "one" }),
+      first.publish({ type: "warning", message: "two" }),
+    ]);
+    const persisted = (await readFile(filePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => ArenaEventSchema.parse(JSON.parse(line)));
+    expect(firstSink).toEqual(persisted);
+
+    await appendFile(filePath, '{"torn":', "utf8");
+    const replayed: unknown[] = [];
+    const resumed = new ArenaEventBus(new EventJournal(filePath), [
+      { publish: (event) => void replayed.push(event) },
+    ]);
+    await resumed.publish({ type: "warning", message: "three" });
+    const finalEvents = (await readFile(filePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => ArenaEventSchema.parse(JSON.parse(line)));
+    expect(finalEvents.map((event) => event.sequence)).toEqual([1, 2, 3]);
+    expect(replayed).toEqual(finalEvents);
   });
 
   it("redacts credentials split across chunks", () => {
@@ -100,10 +132,64 @@ describe("arena observability", () => {
       stage: "implement",
       promptHash: "hash",
     });
-    expect(state.contestants.a.output).toEqual([
+    expect(state.contestants.a.output).toMatchObject([
       { stream: "stderr", text: "working\n" },
     ]);
     expect(state.assisted).toBe(true);
+  });
+
+  it("keeps invocation, output, and checks scoped to their round", () => {
+    const state = initialDashboardState();
+    const timestamp = new Date().toISOString();
+    projectEvent(state, {
+      version: 1,
+      sequence: 1,
+      timestamp,
+      type: "stage_changed",
+      stage: "repair",
+      round: 2,
+    });
+    projectEvent(state, {
+      version: 1,
+      sequence: 2,
+      timestamp,
+      type: "invocation_started",
+      invocationId: "b-repair",
+      source: "agent",
+      contestantId: "b",
+      stage: "repair",
+      round: 2,
+    });
+    projectEvent(state, {
+      version: 1,
+      sequence: 3,
+      timestamp,
+      type: "output",
+      invocationId: "b-repair",
+      source: "agent",
+      stream: "stdout",
+      text: "repairing\n",
+      contestantId: "b",
+    });
+    projectEvent(state, {
+      version: 1,
+      sequence: 4,
+      timestamp,
+      type: "check_completed",
+      checkId: "repair-check",
+      status: "passed",
+      contestantId: "b",
+    });
+
+    expect(state.contestants.b.invocations[0]).toMatchObject({
+      id: "b-repair",
+      round: 2,
+    });
+    expect(state.contestants.b.output[0]).toMatchObject({
+      invocationId: "b-repair",
+      round: 2,
+    });
+    expect(state.contestants.b.checks[0]).toMatchObject({ round: 2 });
   });
 
   it("projects mounted, revised, and landed attack activity with health hits", () => {
@@ -163,6 +249,61 @@ describe("arena observability", () => {
       sequence: 4,
       amount: -30,
       reason: "Race landed",
+    });
+  });
+
+  it("projects quarter-point damage, bounded recovery, and terminal outcomes", () => {
+    const state = initialDashboardState();
+    const timestamp = new Date().toISOString();
+    projectEvent(state, {
+      version: 1,
+      sequence: 1,
+      timestamp,
+      type: "health_changed",
+      contestantId: "b",
+      round: 1,
+      health: 82.5,
+      amount: -17.5,
+      reason: "Partial judge confirmation",
+    });
+    projectEvent(state, {
+      version: 1,
+      sequence: 2,
+      timestamp,
+      type: "failure_updated",
+      failureId: "failure-1",
+      stage: "implementation",
+      subject: "implementation:b",
+      attempt: 2,
+      attemptStatus: "succeeded",
+      state: "recovered",
+      terminalDisposition: "recovered",
+      contestantId: "b",
+      diagnosticArtifactRefs: ["attempt-2.log"],
+    });
+    projectEvent(state, {
+      version: 1,
+      sequence: 3,
+      timestamp,
+      type: "battle_completed",
+      status: "cancelled",
+      terminalOutcome: {
+        kind: "cancelled",
+        reasonCode: "external_cancellation",
+        affectedContestantIds: ["a", "b"],
+        eligibleContestantIds: [],
+        reason: "Cancelled by operator",
+        artifactPaths: [],
+      },
+    });
+    expect(state.contestants.b.health).toBe(82.5);
+    expect(state.failures).toEqual([
+      expect.objectContaining({ state: "recovered", attempt: 2 }),
+    ]);
+    expect(state.result?.terminalOutcome).toEqual({
+      kind: "cancelled",
+      reasonCode: "external_cancellation",
+      reason: "Cancelled by operator",
     });
   });
 });

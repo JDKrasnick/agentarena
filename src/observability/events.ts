@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import {
@@ -102,15 +102,28 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
     attackerId: ContestantIdSchema.optional(),
     targetId: ContestantIdSchema.optional(),
     severity: z.string().optional(),
-    damage: z.number().int().optional(),
+    damage: z.number().multipleOf(0.25).optional(),
   }),
   event("health_changed", {
     contestantId: ContestantIdSchema,
     round: RoundIdSchema.optional(),
     attackId: z.string().optional(),
-    health: z.number().int().min(0).max(100),
-    amount: z.number().int(),
+    health: z.number().min(0).max(100).multipleOf(0.25),
+    amount: z.number().multipleOf(0.25),
     reason: z.string(),
+  }),
+  event("failure_updated", {
+    failureId: z.string().min(1),
+    stage: z.string().min(1),
+    subject: z.string().min(1),
+    attempt: z.number().int().min(1).max(2),
+    attemptStatus: z.enum(["failed", "succeeded"]),
+    state: z.enum(["retrying", "recovered", "resolved"]),
+    terminalDisposition: z.string().optional(),
+    contestantId: ContestantIdSchema.optional(),
+    laneId: z.string().min(1).optional(),
+    attackId: z.string().min(1).optional(),
+    diagnosticArtifactRefs: z.array(z.string()),
   }),
   event("warning", { message: z.string() }),
   event("cancellation_requested", { reason: z.string().optional() }),
@@ -140,11 +153,21 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
     coverageConfidence: z
       .enum(["full_confidence", "reduced_confidence", "provisional"])
       .optional(),
+    terminalOutcome: z
+      .object({
+        kind: z.enum(["forfeit", "inconclusive", "cancelled"]),
+        reasonCode: z.string().min(1),
+        affectedContestantIds: z.array(ContestantIdSchema),
+        eligibleContestantIds: z.array(ContestantIdSchema),
+        reason: z.string().min(1),
+        artifactPaths: z.array(z.string()),
+      })
+      .optional(),
     contestants: z
       .array(
         z.object({
           id: ContestantIdSchema,
-          health: z.number().int().min(0).max(100),
+          health: z.number().min(0).max(100).multipleOf(0.25),
           status: z.string(),
           checksPassed: z.number().int().nonnegative(),
           checksTotal: z.number().int().nonnegative(),
@@ -160,14 +183,20 @@ export type ArenaEventInput = ArenaEvent extends infer E
     : never
   : never;
 
+/** Accepts unsequenced run events. The run-level bus is the sole finalizer. */
 export interface ArenaObserver {
   publish(event: ArenaEventInput): void | Promise<void>;
 }
 
-export class CompositeArenaObserver implements ArenaObserver {
-  constructor(private readonly observers: readonly ArenaObserver[]) {}
+/** Receives an already timestamped and sequenced event. */
+export interface ArenaEventSink {
+  publish(event: ArenaEvent): void | Promise<void>;
+}
 
-  async publish(event: ArenaEventInput): Promise<void> {
+export class CompositeArenaObserver implements ArenaEventSink {
+  constructor(private readonly observers: readonly ArenaEventSink[]) {}
+
+  async publish(event: ArenaEvent): Promise<void> {
     await Promise.all(
       this.observers.map(async (observer) => {
         await observer.publish(event);
@@ -176,25 +205,132 @@ export class CompositeArenaObserver implements ArenaObserver {
   }
 }
 
-export class EventJournal implements ArenaObserver {
+export class EventJournal implements ArenaEventSink {
   private sequence = 0;
-  private queue: Promise<void> = Promise.resolve();
+  private readonly ready: Promise<void>;
+  private queue: Promise<void>;
 
   constructor(
     readonly filePath: string,
     private readonly now: () => Date = () => new Date(),
-  ) {}
+  ) {
+    this.ready = this.resumeSequence();
+    this.queue = this.ready;
+  }
 
-  publish(input: ArenaEventInput): Promise<void> {
-    const event = ArenaEventSchema.parse({
-      ...input,
-      version: 1,
-      sequence: ++this.sequence,
-      timestamp: this.now().toISOString(),
-    });
+  publish(value: ArenaEvent | ArenaEventInput): Promise<void> {
     this.queue = this.queue.then(async () => {
+      const event = ArenaEventSchema.safeParse(value).success
+        ? ArenaEventSchema.parse(value)
+        : ArenaEventSchema.parse({
+            ...value,
+            version: 1,
+            sequence: ++this.sequence,
+            timestamp: this.now().toISOString(),
+          });
+      this.sequence = Math.max(this.sequence, event.sequence);
       await mkdir(path.dirname(this.filePath), { recursive: true });
       await appendFile(this.filePath, `${JSON.stringify(event)}\n`, "utf8");
+    });
+    return this.queue;
+  }
+
+  flush(): Promise<void> {
+    return this.queue;
+  }
+
+  private async resumeSequence(): Promise<void> {
+    try {
+      const contents = await readFile(this.filePath, "utf8");
+      let last = 0;
+      const validLines: string[] = [];
+      let invalidTail = false;
+      for (const line of contents.split("\n")) {
+        if (!line.trim()) continue;
+        let value: unknown;
+        try {
+          value = JSON.parse(line);
+        } catch {
+          invalidTail = true;
+          break;
+        }
+        const parsed = ArenaEventSchema.safeParse(value);
+        if (!parsed.success || parsed.data.sequence !== last + 1) {
+          invalidTail = true;
+          break;
+        }
+        last = parsed.data.sequence;
+        validLines.push(line);
+      }
+      this.sequence = last;
+      if (invalidTail)
+        await writeFile(
+          this.filePath,
+          validLines.length ? `${validLines.join("\n")}\n` : "",
+          "utf8",
+        );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
+/**
+ * Serializes publication, assigns event identity once, persists first, then
+ * fans the identical immutable event to best-effort live sinks.
+ */
+export class ArenaEventBus implements ArenaObserver {
+  private sequence = 0;
+  private readonly ready: Promise<void>;
+  private queue: Promise<void>;
+
+  constructor(
+    private readonly journal: EventJournal,
+    private readonly sinks: readonly ArenaEventSink[] = [],
+    private readonly now: () => Date = () => new Date(),
+  ) {
+    this.ready = journal.flush().then(async () => {
+      try {
+        const contents = await readFile(journal.filePath, "utf8");
+        for (const line of contents.trim().split("\n")) {
+          if (!line) continue;
+          let value: unknown;
+          try {
+            value = JSON.parse(line);
+          } catch {
+            break;
+          }
+          const event = ArenaEventSchema.safeParse(value);
+          if (!event.success || event.data.sequence !== this.sequence + 1)
+            break;
+          this.sequence = event.data.sequence;
+          await Promise.allSettled(
+            this.sinks.map(async (sink) => {
+              await sink.publish(event.data);
+            }),
+          );
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    });
+    this.queue = this.ready;
+  }
+
+  publish(input: ArenaEventInput): Promise<void> {
+    this.queue = this.queue.then(async () => {
+      const event = ArenaEventSchema.parse({
+        ...input,
+        version: 1,
+        sequence: ++this.sequence,
+        timestamp: this.now().toISOString(),
+      });
+      await this.journal.publish(event);
+      await Promise.allSettled(
+        this.sinks.map(async (sink) => {
+          await sink.publish(event);
+        }),
+      );
     });
     return this.queue;
   }

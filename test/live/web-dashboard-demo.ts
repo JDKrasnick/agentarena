@@ -1,5 +1,6 @@
 import { stdout } from "node:process";
 import { startWebDashboard } from "../../src/dashboard/web-server.js";
+import { startDesktopDashboardWindow } from "../../src/dashboard/desktop-window.js";
 import { ArenaBattleControl } from "../../src/observability/control.js";
 import type { ArenaEventInput } from "../../src/observability/events.js";
 
@@ -9,12 +10,21 @@ const pause = (milliseconds: number) =>
 const controller = new AbortController();
 const control = new ArenaBattleControl(controller);
 const dashboard = await startWebDashboard(control);
+const desktopWindow = process.argv.includes("--window")
+  ? startDesktopDashboardWindow(dashboard.url, {
+      onUserClose: () => void dashboard.close(),
+    })
+  : undefined;
 const emit = async (event: ArenaEventInput, delay = 650) => {
   await dashboard.observer.publish(event);
   await pause(delay);
 };
 
-stdout.write(`Mock battle dashboard: ${dashboard.url}\n`);
+stdout.write(
+  desktopWindow
+    ? "Mock battle opened in an Agent Arena window.\n"
+    : `Mock battle dashboard server: ${dashboard.url}\n`,
+);
 stdout.write("The mock will keep running until you choose Finish session.\n");
 
 const close = () => void dashboard.close();
@@ -38,13 +48,14 @@ try {
       },
     ],
   });
-  await emit({ type: "stage_changed", stage: "implement" });
+  await emit({ type: "stage_changed", stage: "implement", round: 1 });
   await emit({
     type: "invocation_started",
     invocationId: "a-build",
     source: "agent",
     contestantId: "a",
     stage: "implement",
+    round: 1,
   });
   await emit({
     type: "output",
@@ -60,6 +71,7 @@ try {
     source: "agent",
     contestantId: "b",
     stage: "implement",
+    round: 1,
   });
   await emit({
     type: "output",
@@ -145,12 +157,27 @@ try {
   );
   await emit({ type: "stage_changed", stage: "repair", round: 2 });
   await emit({
+    type: "invocation_started",
+    invocationId: "b-repair",
+    source: "agent",
+    contestantId: "b",
+    stage: "repair",
+    round: 2,
+  });
+  await emit({
     type: "output",
     invocationId: "b-repair",
     source: "agent",
     stream: "stdout",
     contestantId: "b",
     text: "Repairing stale-session invalidation and replaying holdouts…\n",
+  });
+  await emit({
+    type: "invocation_finished",
+    invocationId: "b-repair",
+    contestantId: "b",
+    status: "succeeded",
+    durationMs: 3_100,
   });
   await emit({
     type: "health_changed",
@@ -160,6 +187,37 @@ try {
     health: 100,
     amount: 30,
     reason: "Visible and held-out cases passed",
+  });
+  await emit({ type: "stage_changed", stage: "review_attacks", round: 3 });
+  await emit({
+    type: "invocation_started",
+    invocationId: "a-round-3-review",
+    source: "agent",
+    contestantId: "a",
+    stage: "review_attacks",
+    round: 3,
+  });
+  await emit({
+    type: "invocation_finished",
+    invocationId: "a-round-3-review",
+    contestantId: "a",
+    status: "succeeded",
+    durationMs: 2_400,
+  });
+  await emit({
+    type: "invocation_started",
+    invocationId: "b-round-3-review",
+    source: "agent",
+    contestantId: "b",
+    stage: "review_attacks",
+    round: 3,
+  });
+  await emit({
+    type: "invocation_finished",
+    invocationId: "b-round-3-review",
+    contestantId: "b",
+    status: "succeeded",
+    durationMs: 2_100,
   });
   await emit({ type: "stage_changed", stage: "complete" });
   await emit(
@@ -195,4 +253,5 @@ try {
   process.removeListener("SIGINT", close);
   process.removeListener("SIGTERM", close);
   await dashboard.close();
+  await desktopWindow?.close();
 }

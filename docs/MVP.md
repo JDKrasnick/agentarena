@@ -379,6 +379,43 @@ Both agents start from the exact same commit and receive the same RunSpec,
 test command, repository instructions, time limit, and available context. They
 cannot read the opponent worktree during implementation.
 
+### Live observability surface
+
+Fights default to the dedicated React desktop window. The window loads only
+Agent Arena assets and a randomly assigned `127.0.0.1` event stream, keeps Node
+integration disabled, and does not launch a browser tab. `--no-window` opts out,
+using Ink in an interactive TTY and plain output otherwise. Explicit
+`--display window|terminal|plain` modes remain available, while `--display
+dashboard` remains a compatibility alias for the desktop window. Closing the
+window cancels an active battle; after completion, **Finish session** closes the
+window and its local server.
+
+Fighter cards open a full-page drill-down within the desktop window. The detail
+view exposes recorded invocations, output, checks, health changes, attack
+involvement, and live steering, with a persistent route back to the arena. The
+round rail can select completed rounds and reconstruct their recorded fighter
+and evidence state. This replay is read-only: the MVP has no pause, arbitrary
+retry, or execution rewind control. Durable resume continues from a sealed
+boundary rather than rolling a completed round backward.
+
+The desktop window uses a larger live-battle size so each fighter card retains
+and exposes more output. Once a terminal result is projected, the window
+contracts to a results-first layout showing the recommendation, final fighter
+health and checks, coverage, run integrity, completed rounds, landed defects,
+verified repairs, terminal outcome, evidence links, and controls to review the
+recorded battle or finish the session.
+
+The window includes Classic Shell, Sticker League, Night Edition, Live Arena
+Broadcast, and Evidence Deck themes. Classic Shell is used until a valid local
+selection exists. The always-available swatch picker changes renderer families
+without reconnecting the event stream or resetting fighter, replay, or result
+navigation. Electron loads the preference before React mounts and stores it
+atomically below the user's application-data directory. Corrupt or unknown
+preferences fall back to Classic; a failed write keeps the session choice and
+shows a non-blocking warning. This preference is excluded from runtime schemas,
+battle records, artifacts, scoring, project configuration, and recovery hashes.
+Ink and plain CLI behavior is unchanged.
+
 ### Permission and authentication plan
 
 Before agents run, repository reconnaissance produces a capability plan covering

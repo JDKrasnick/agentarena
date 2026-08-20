@@ -56,7 +56,7 @@ program
 program
   .command("resume")
   .description(
-    "Validate and continue a durable schema v6 run from its latest sealed boundary",
+    "Validate and continue a durable schema-v8 run from its latest sealed boundary",
   )
   .argument("<run-id>", "Run ID under .agent-arena/runs")
   .addOption(
@@ -133,8 +133,12 @@ program
   .option("--keep-worktrees", "Preserve temporary worktrees for debugging")
   .addOption(
     new Option("--display <mode>", "Display mode")
-      .choices(["auto", "dashboard", "terminal", "plain"])
+      .choices(["auto", "window", "dashboard", "terminal", "plain"])
       .default("auto"),
+  )
+  .option(
+    "--no-window",
+    "Do not launch Electron; use terminal output in a TTY and plain output otherwise",
   )
   .action(
     async (
@@ -161,7 +165,8 @@ program
         yes?: boolean;
         acceptReducedValidation?: boolean;
         keepWorktrees?: boolean;
-        display: "auto" | "dashboard" | "terminal" | "plain";
+        display: "auto" | "window" | "dashboard" | "terminal" | "plain";
+        window: boolean;
       },
     ) => {
       if (options.rounds !== "3") {
@@ -198,6 +203,7 @@ program
           keepWorktrees: options.keepWorktrees ?? false,
         },
         options.display,
+        options.window,
       );
       process.stdout.write(`${summary}\n`);
     },
@@ -240,8 +246,12 @@ program
   .option("--keep-worktrees", "Preserve temporary worktrees for debugging")
   .addOption(
     new Option("--display <mode>", "Display mode")
-      .choices(["auto", "dashboard", "terminal", "plain"])
+      .choices(["auto", "window", "dashboard", "terminal", "plain"])
       .default("auto"),
+  )
+  .option(
+    "--no-window",
+    "Do not launch Electron; use terminal output in a TTY and plain output otherwise",
   )
   .action(
     async (options: {
@@ -262,7 +272,8 @@ program
       yes?: boolean;
       acceptReducedValidation?: boolean;
       keepWorktrees?: boolean;
-      display: "auto" | "dashboard" | "terminal" | "plain";
+      display: "auto" | "window" | "dashboard" | "terminal" | "plain";
+      window: boolean;
     }) => {
       const summary = await runFight(
         {
@@ -291,6 +302,7 @@ program
           keepWorktrees: options.keepWorktrees ?? false,
         },
         options.display,
+        options.window,
       );
       process.stdout.write(`${summary}\n`);
     },

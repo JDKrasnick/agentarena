@@ -52,6 +52,7 @@ describe("built CLI smoke flow", () => {
         "--models",
         "codex-test-model,claude-test-model",
         "--yes",
+        "--no-window",
       ],
       { cwd: repositoryRoot, env, timeout: 60_000 },
     );

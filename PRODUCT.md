@@ -56,13 +56,13 @@ The user receives:
   scoring, and handoff.
 * A command to apply the winning solution.
 
-Interactive fights automatically open a compact terminal-native battle
-observatory. It uses crisp text, small provider sigils, selective ANSI color,
-and live output rather than rasterized bitmap logos. Use
-`--display auto|dashboard|terminal|plain`; `dashboard` launches the optional
-loopback-only React view, `terminal` forces Ink, and `plain` keeps CI output
-line-oriented. Both rich displays support cancellation and one-time queued
-contestant steering, but not pause, stage skipping, or arbitrary retries.
+Fights automatically launch the React battle observatory in a dedicated
+Electron window. `--no-window` opts out, selecting Ink in an interactive TTY
+and line-oriented output when redirected or running in CI. Explicit
+`--display window|terminal|plain` modes remain available, and the legacy
+`dashboard` value aliases `window` without opening a browser. Both rich displays
+support cancellation and one-time queued contestant steering, but not pause,
+stage skipping, or arbitrary retries.
 
 Attack telemetry distinguishes mounting, landed, and evidence-revision events.
 The observatory shows their live counts and timeline, and uses a brief red
@@ -74,20 +74,41 @@ checks, current work, or the underlying engineering event log.
 The arena uses a restrained game-battle structure: opposing provider identities,
 separate status/HP regions, a VS divider, live agent output, and an evidence
 rail. The terminal represents Claude with a yellow-orange Spark sigil and keeps
-provider names primary. The optional browser dashboard uses the orange Claude
-product mark and native PNG rendering. No web page is opened unless the user
-explicitly selects `--display dashboard`.
+provider names primary. The desktop observatory uses the orange Claude product
+mark and native PNG rendering. Its React assets and event stream are served only
+on a random loopback port inside a sandboxed window; Agent Arena never opens the
+observatory in the user's browser.
 The registry covers the supported providers plus widely used providers and
 coding-agent products for future adapters. No third-party game characters or
 sprite assets are used.
 Persistent wayfinding shows the numbered round (or opening, recovery, and final
 phase), a plain-language stage name and objective, and the active step within
 the round attack loop. Attack events retain their originating round.
+The desktop observatory makes fighter cards navigable. A fighter detail view
+shows its current or recorded workstream, invocation status and duration, full
+output, checks, health changes, attack involvement, and live steering when the
+active view is selected. The round rail provides read-only replay of recorded
+round state and a direct return to the live arena. It does not claim to rewind,
+rerun, pause, or mutate live execution; durable resume remains the recovery
+mechanism for sealed runs.
 Completion automatically opens an evidence-backed success screen with both
 final fighter states, the arena champion and recommended patch, landed defects,
 verified health-restoring improvements, and the next human-review command. Its
 product-value statement is derived from recorded attack and repair evidence,
 not unverified agent narration.
+The desktop window opens in a spacious live-battle layout with taller retained
+fighter output. When a terminal result arrives, it automatically contracts into
+a focused results view; users can still inspect either fighter or return to the
+recorded round timeline before finishing the session.
+The desktop observatory ships five supported visual themes: Classic Shell,
+Sticker League, Night Edition, Live Arena Broadcast, and Evidence Deck. Classic
+Shell is the first-run fallback. A persistent swatch picker remains available in
+the arena, replay, fighter detail, and results views; changing it preserves the
+current view and live connection. The last valid selection is stored atomically
+as an app-wide local Electron preference. Save failures keep the current
+selection and surface a non-blocking warning. Theme choice is display-only and
+never enters battle events, artifacts, scoring, configuration, or recovery
+hashes. Terminal and plain displays remain unchanged.
 
 Applying an operator steering note changes run integrity from `competitive` to
 `assisted`. The health ledger and review recommendation remain available, but

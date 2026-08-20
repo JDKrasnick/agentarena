@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createReadStream, existsSync } from "node:fs";
 import {
   createServer,
@@ -45,22 +44,6 @@ function sendJson(response: ServerResponse, status: number, body: unknown) {
   response.end(JSON.stringify(body));
 }
 
-function openBrowser(url: string): void {
-  if (process.env["AGENT_ARENA_NO_OPEN"] === "1") return;
-  const executable =
-    process.platform === "darwin"
-      ? "open"
-      : process.platform === "win32"
-        ? "cmd"
-        : "xdg-open";
-  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
-  const child = spawn(executable, args, {
-    detached: true,
-    stdio: "ignore",
-  });
-  child.unref();
-}
-
 export interface WebDashboard {
   readonly url: string;
   readonly observer: ArenaObserver;
@@ -70,7 +53,6 @@ export interface WebDashboard {
 
 export async function startWebDashboard(
   control: ArenaBattleControl,
-  options: { open?: boolean } = {},
 ): Promise<WebDashboard> {
   const state = new DashboardObserver();
   const clients = new Set<ServerResponse>();
@@ -80,6 +62,7 @@ export async function startWebDashboard(
     resolveClosed = resolve;
   });
   let closing = false;
+  let allowedOrigin = "";
   let closeDashboard: () => Promise<void> = async () => {};
   const emitSnapshot = () => {
     const message = `data: ${JSON.stringify(state.snapshot())}\n\n`;
@@ -92,6 +75,10 @@ export async function startWebDashboard(
     response: ServerResponse,
   ) => {
     try {
+      if (request.headers.origin && request.headers.origin !== allowedOrigin) {
+        sendJson(response, 403, { error: "Cross-origin request denied" });
+        return;
+      }
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (request.method === "GET" && url.pathname === "/api/state") {
         sendJson(response, 200, state.snapshot());
@@ -109,7 +96,7 @@ export async function startWebDashboard(
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/cancel") {
-        control.cancel(new Error("Cancelled from web dashboard"));
+        control.cancel(new Error("Cancelled from desktop observatory"));
         sendJson(response, 202, { status: "cancelling" });
         return;
       }
@@ -119,14 +106,25 @@ export async function startWebDashboard(
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/steer") {
-        const body = await requestBody(request);
+        if (!request.headers["content-type"]?.startsWith("application/json")) {
+          sendJson(response, 415, { error: "Expected application/json" });
+          return;
+        }
+        let body: unknown;
+        try {
+          body = await requestBody(request);
+        } catch {
+          sendJson(response, 400, { error: "Invalid JSON request body" });
+          return;
+        }
         if (
           !body ||
           typeof body !== "object" ||
           !("contestantId" in body) ||
           !("note" in body) ||
           (body.contestantId !== "a" && body.contestantId !== "b") ||
-          typeof body.note !== "string"
+          typeof body.note !== "string" ||
+          !body.note.trim()
         ) {
           sendJson(response, 400, { error: "Invalid steering request" });
           return;
@@ -145,7 +143,14 @@ export async function startWebDashboard(
 
       const relative =
         url.pathname === "/" ? "index.html" : url.pathname.slice(1);
-      const file = path.resolve(root, decodeURIComponent(relative));
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(relative);
+      } catch {
+        sendJson(response, 404, { error: "Not found" });
+        return;
+      }
+      const file = path.resolve(root, decoded);
       if (!file.startsWith(`${root}${path.sep}`) || !existsSync(file)) {
         sendJson(response, 404, { error: "Not found" });
         return;
@@ -181,8 +186,7 @@ export async function startWebDashboard(
     throw new Error("Unable to determine dashboard address");
   }
   const url = `http://127.0.0.1:${String(address.port)}`;
-  if (options.open !== false) openBrowser(url);
-
+  allowedOrigin = url;
   closeDashboard = async () => {
     if (closing) {
       await closed;

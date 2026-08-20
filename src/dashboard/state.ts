@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import type {
   ArenaEvent,
   ArenaEventInput,
+  ArenaEventSink,
   ArenaObserver,
 } from "../observability/events.js";
 import type { RoundId, Stage } from "../core/types.js";
@@ -12,9 +13,22 @@ export interface DashboardContestant {
   health: number;
   status: string;
   activity: string;
-  checks: Array<{ id: string; status: string }>;
-  invocations: Array<{ id: string; stage: string; status: string }>;
-  output: Array<{ stream: "stdout" | "stderr"; text: string }>;
+  checks: Array<{ id: string; status: string; round?: RoundId }>;
+  invocations: Array<{
+    id: string;
+    stage: string;
+    status: string;
+    round?: RoundId;
+    startedAt: string;
+    durationMs?: number;
+  }>;
+  output: Array<{
+    stream: "stdout" | "stderr";
+    text: string;
+    invocationId: string;
+    timestamp: string;
+    round?: RoundId;
+  }>;
   lastHealthChange?: {
     sequence: number;
     amount: number;
@@ -54,12 +68,30 @@ export interface DashboardState {
   contestants: { a: DashboardContestant; b: DashboardContestant };
   systemOutput: Array<{ source: string; stream: string; text: string }>;
   attacks: DashboardAttackActivity[];
+  failures: Array<{
+    id: string;
+    stage: string;
+    subject: string;
+    attempt: number;
+    status: string;
+    state: "retrying" | "recovered" | "resolved";
+    terminalDisposition?: string;
+    contestantId?: string;
+    laneId?: string;
+    attackId?: string;
+    diagnosticArtifactRefs: string[];
+  }>;
   result?: {
     roundsCompleted?: number;
     championId?: string;
     recommendedId?: string;
     recommendationReason?: string;
     coverageConfidence?: string;
+    terminalOutcome?: {
+      kind: string;
+      reasonCode: string;
+      reason: string;
+    };
     contestants?: Array<{
       id: "a" | "b";
       health: number;
@@ -98,6 +130,7 @@ export function initialDashboardState(): DashboardState {
     contestants: { a: contestant(), b: contestant() },
     systemOutput: [],
     attacks: [],
+    failures: [],
     links: [],
   };
 }
@@ -136,6 +169,10 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
           id: event.invocationId,
           stage: event.stage,
           status: "running",
+          startedAt: event.timestamp,
+          ...((event.round ?? state.round)
+            ? { round: event.round ?? state.round }
+            : {}),
         });
       }
       return;
@@ -147,14 +184,26 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
         const invocation = target.invocations.find(
           (entry) => entry.id === event.invocationId,
         );
-        if (invocation) invocation.status = event.status;
+        if (invocation) {
+          invocation.status = event.status;
+          invocation.durationMs = event.durationMs;
+        }
       }
       return;
     case "output":
       if (event.contestantId) {
-        appendBounded(state.contestants[event.contestantId].output, {
+        const target = state.contestants[event.contestantId];
+        const invocation = target.invocations.find(
+          (entry) => entry.id === event.invocationId,
+        );
+        appendBounded(target.output, {
           stream: event.stream,
           text: event.text,
+          invocationId: event.invocationId,
+          timestamp: event.timestamp,
+          ...((invocation?.round ?? state.round)
+            ? { round: invocation?.round ?? state.round }
+            : {}),
         });
       } else {
         appendBounded(state.systemOutput, {
@@ -185,6 +234,7 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
         appendBounded(state.contestants[event.contestantId].checks, {
           id: event.checkId,
           status: event.status,
+          ...(state.round ? { round: state.round } : {}),
         });
       }
       return;
@@ -225,6 +275,29 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
     case "warning":
       appendBounded(state.warnings, event.message, 20);
       return;
+    case "failure_updated": {
+      const failure = {
+        id: event.failureId,
+        stage: event.stage,
+        subject: event.subject,
+        attempt: event.attempt,
+        status: event.attemptStatus,
+        state: event.state,
+        diagnosticArtifactRefs: [...event.diagnosticArtifactRefs],
+        ...(event.terminalDisposition
+          ? { terminalDisposition: event.terminalDisposition }
+          : {}),
+        ...(event.contestantId ? { contestantId: event.contestantId } : {}),
+        ...(event.laneId ? { laneId: event.laneId } : {}),
+        ...(event.attackId ? { attackId: event.attackId } : {}),
+      };
+      const index = state.failures.findIndex(
+        (entry) => entry.id === failure.id,
+      );
+      if (index === -1) appendBounded(state.failures, failure);
+      else state.failures[index] = failure;
+      return;
+    }
     case "steering_applied":
       state.assisted = true;
       return;
@@ -248,6 +321,15 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
         ...(event.coverageConfidence
           ? { coverageConfidence: event.coverageConfidence }
           : {}),
+        ...(event.terminalOutcome
+          ? {
+              terminalOutcome: {
+                kind: event.terminalOutcome.kind,
+                reasonCode: event.terminalOutcome.reasonCode,
+                reason: event.terminalOutcome.reason,
+              },
+            }
+          : {}),
         ...(event.contestants ? { contestants: event.contestants } : {}),
       };
       for (const final of event.contestants ?? []) {
@@ -261,18 +343,23 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
   }
 }
 
-export class DashboardObserver implements ArenaObserver {
+export class DashboardObserver implements ArenaObserver, ArenaEventSink {
   private readonly emitter = new EventEmitter();
   private sequence = 0;
   readonly state = initialDashboardState();
 
-  publish(input: ArenaEventInput): void {
-    const event = {
-      ...input,
-      version: 1 as const,
-      sequence: ++this.sequence,
-      timestamp: new Date().toISOString(),
-    } as ArenaEvent;
+  publish(input: ArenaEventInput | ArenaEvent): void {
+    const finalized =
+      "sequence" in input && "timestamp" in input && "version" in input;
+    const event = finalized
+      ? input
+      : ({
+          ...input,
+          version: 1 as const,
+          sequence: ++this.sequence,
+          timestamp: new Date().toISOString(),
+        } as ArenaEvent);
+    this.sequence = Math.max(this.sequence, event.sequence);
     projectEvent(this.state, event);
     this.emitter.emit("change");
   }

@@ -208,6 +208,7 @@ async function supervise(
 
   let stdout = "";
   let stderr = "";
+  let outputQueue: Promise<void> = Promise.resolve();
   const redactors = {
     stdout: new StreamingRedactor(options.secrets),
     stderr: new StreamingRedactor(options.secrets),
@@ -216,7 +217,9 @@ async function supervise(
     if (!text) return;
     if (stream === "stdout") stdout += text;
     else stderr += text;
-    void options.onOutput?.(stream, text);
+    outputQueue = outputQueue.then(async () => {
+      await options.onOutput?.(stream, text);
+    });
   };
   const flushStreams = (): void => {
     publish("stdout", redactors.stdout.flush());
@@ -268,6 +271,7 @@ async function supervise(
   try {
     const result = await subprocess;
     flushStreams();
+    await outputQueue;
     const cleanupResult = cleanup === undefined ? undefined : await cleanup;
     return {
       stdout,
@@ -281,6 +285,7 @@ async function supervise(
     };
   } catch (spawnError) {
     flushStreams();
+    await outputQueue;
     const cleanupResult = cleanup === undefined ? undefined : await cleanup;
     return {
       stdout,
@@ -331,7 +336,7 @@ async function run(
         : undefined;
   if (result.spawnError) {
     result.stderr = redact(describeError(result.spawnError), request.secrets);
-    void request.onOutput?.("stderr", result.stderr);
+    await request.onOutput?.("stderr", result.stderr);
   }
   const stdoutPath = `${request.logPrefix}.stdout.log`;
   const stderrPath = `${request.logPrefix}.stderr.log`;

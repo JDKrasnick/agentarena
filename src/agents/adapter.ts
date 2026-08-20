@@ -10,6 +10,7 @@ import {
   StageSubmissionSchema,
   type AgentId,
   type AgentInvocation,
+  type CommandResult,
   type Attack,
   type ContestantId,
   type AttackSubmission,
@@ -25,6 +26,62 @@ import { sha256 } from "../core/ids.js";
 import { buildJudgePacket } from "../judge/packets.js";
 import { runProcess, type ProcessRequest } from "../runner/process-runner.js";
 import { z } from "zod";
+import type { ArenaObserver, OutputSource } from "../observability/events.js";
+
+async function runObservedProcess(
+  request: ProcessRequest,
+  observation?: {
+    observer?: ArenaObserver;
+    source: OutputSource;
+    stage: string;
+    contestantId?: ContestantId;
+    round?: 1 | 2 | 3 | "recovery" | "reconciliation";
+  },
+): Promise<CommandResult> {
+  if (!observation?.observer) return runProcess(request);
+  const invocationId = `${observation.stage}-${path.basename(request.logPrefix)}-${String(Date.now())}`;
+  await observation.observer.publish({
+    type: "invocation_started",
+    invocationId,
+    source: observation.source,
+    stage: observation.stage,
+    ...(observation.contestantId
+      ? { contestantId: observation.contestantId }
+      : {}),
+    ...(observation.round === undefined ? {} : { round: observation.round }),
+  });
+  const result = await runProcess({
+    ...request,
+    onOutput: (stream, text) =>
+      observation.observer?.publish({
+        type: "output",
+        invocationId,
+        source: observation.source,
+        stream,
+        text,
+        ...(observation.contestantId
+          ? { contestantId: observation.contestantId }
+          : {}),
+      }),
+  });
+  await observation.observer.publish({
+    type: "invocation_finished",
+    invocationId,
+    status:
+      result.failureClass === "arena_infrastructure"
+        ? "infrastructure_error"
+        : result.timedOut
+          ? "timed_out"
+          : result.exitCode === 0
+            ? "succeeded"
+            : "failed",
+    durationMs: result.durationMs,
+    ...(observation.contestantId
+      ? { contestantId: observation.contestantId }
+      : {}),
+  });
+  return result;
+}
 
 export interface Availability {
   available: boolean;
@@ -41,6 +98,8 @@ interface InvocationInput {
   timeoutMs: number;
   signal: AbortSignal;
   round?: 1 | 2 | 3 | "recovery" | "reconciliation";
+  observer?: ArenaObserver;
+  outputSource?: OutputSource;
 }
 
 export type ImplementInput = InvocationInput;
@@ -109,6 +168,7 @@ export interface AnonymizedAttackInput {
   timeoutMs: number;
   signal: AbortSignal;
   retryReason?: string;
+  observer?: ArenaObserver;
 }
 
 export interface AttackVerifier {
@@ -161,6 +221,7 @@ export interface JudgeRepairInput {
   timeoutMs: number;
   signal: AbortSignal;
   retryReason?: string;
+  observer?: ArenaObserver;
 }
 
 export interface JudgeRepairVerdict {
@@ -184,6 +245,7 @@ export interface AnonymizedInfrastructurePacket {
   timeoutMs: number;
   transcriptPrefix: string;
   round: 1 | 2 | 3;
+  observer?: ArenaObserver;
 }
 
 export interface HarnessMaintainer {
@@ -201,6 +263,7 @@ export interface StructuredGeneratorInput {
   transcriptPrefix: string;
   signal: AbortSignal;
   round: 1 | 2 | 3;
+  observer?: ArenaObserver;
 }
 
 export interface RawStructuredSubmission {
@@ -394,7 +457,7 @@ export class CommandAgentAdapter implements AgentAdapter {
       // A bare executable name is resolved through PATH by the invocation below.
     }
     const controller = new AbortController();
-    const result = await runProcess({
+    const result = await runObservedProcess({
       executable: this.options.executable,
       args: ["--version"],
       cwd: process.cwd(),
@@ -437,6 +500,15 @@ export class CommandAgentAdapter implements AgentAdapter {
     input: InvocationInput,
   ): Promise<AgentInvocation> {
     const started = new Date();
+    const invocationId = `${input.contestantId ?? this.id}-${stage}-${input.round ?? "none"}-${String(started.getTime())}`;
+    await input.observer?.publish({
+      type: "invocation_started",
+      invocationId,
+      source: input.outputSource ?? "agent",
+      ...(input.contestantId ? { contestantId: input.contestantId } : {}),
+      stage,
+      ...(input.round === undefined ? {} : { round: input.round }),
+    });
     const request: ProcessRequest = {
       executable: this.options.executable,
       args: this.options.args,
@@ -456,6 +528,15 @@ export class CommandAgentAdapter implements AgentAdapter {
         ),
       },
       signal: input.signal,
+      onOutput: (stream, text) =>
+        input.observer?.publish({
+          type: "output",
+          invocationId,
+          source: input.outputSource ?? "agent",
+          stream,
+          text,
+          ...(input.contestantId ? { contestantId: input.contestantId } : {}),
+        }),
     };
     const command = await runProcess(request);
     const finished = new Date();
@@ -469,7 +550,7 @@ export class CommandAgentAdapter implements AgentAdapter {
       input.worktree,
       ".agent-arena-submission.json",
     );
-    return AgentInvocationSchema.parse({
+    const invocation = AgentInvocationSchema.parse({
       agent: this.id,
       ...(this.options.model ? { model: this.options.model } : {}),
       stage,
@@ -490,6 +571,14 @@ export class CommandAgentAdapter implements AgentAdapter {
       submissionPath,
       explanation,
     });
+    await input.observer?.publish({
+      type: "invocation_finished",
+      invocationId,
+      status: invocation.status,
+      durationMs: invocation.durationMs,
+      ...(input.contestantId ? { contestantId: input.contestantId } : {}),
+    });
+    return invocation;
   }
 }
 
@@ -608,15 +697,22 @@ export class CommandAttackVerifier implements AttackVerifier {
         : []),
     ].join("\n");
     await rm(outputPath, { force: true });
-    const result = await runProcess({
-      executable: this.command.executable,
-      args: this.command.args,
-      input: prompt,
-      cwd: input.worktree,
-      timeoutMs: input.timeoutMs,
-      logPrefix: input.transcriptPrefix,
-      signal: input.signal,
-    });
+    const result = await runObservedProcess(
+      {
+        executable: this.command.executable,
+        args: this.command.args,
+        input: prompt,
+        cwd: input.worktree,
+        timeoutMs: input.timeoutMs,
+        logPrefix: input.transcriptPrefix,
+        signal: input.signal,
+      },
+      {
+        ...(input.observer ? { observer: input.observer } : {}),
+        source: "verifier",
+        stage: "attack-verifier",
+      },
+    );
     if (result.failureClass === "arena_infrastructure")
       throw new Error("Verifier provider infrastructure failed");
     try {
@@ -726,15 +822,22 @@ export class CommandAttackVerifier implements AttackVerifier {
         : []),
     ].join("\n\n");
     await rm(outputPath, { force: true });
-    const result = await runProcess({
-      executable: this.command.executable,
-      args: this.command.args,
-      input: prompt,
-      cwd: input.worktree,
-      timeoutMs: input.timeoutMs,
-      logPrefix: input.transcriptPrefix,
-      signal: input.signal,
-    });
+    const result = await runObservedProcess(
+      {
+        executable: this.command.executable,
+        args: this.command.args,
+        input: prompt,
+        cwd: input.worktree,
+        timeoutMs: input.timeoutMs,
+        logPrefix: input.transcriptPrefix,
+        signal: input.signal,
+      },
+      {
+        ...(input.observer ? { observer: input.observer } : {}),
+        source: "verifier",
+        stage: "judge-fallback",
+      },
+    );
     if (result.failureClass === "arena_infrastructure")
       throw new Error("Judge provider infrastructure failed");
     try {
@@ -821,15 +924,22 @@ export class CommandAttackVerifier implements AttackVerifier {
       decision: z.enum(["repaired", "not_repaired", "unable"]),
       rationale: z.string().min(1),
     });
-    const result = await runProcess({
-      executable: this.command.executable,
-      args: this.command.args,
-      input: prompt,
-      cwd: input.worktree,
-      timeoutMs: input.timeoutMs,
-      logPrefix: input.transcriptPrefix,
-      signal: input.signal,
-    });
+    const result = await runObservedProcess(
+      {
+        executable: this.command.executable,
+        args: this.command.args,
+        input: prompt,
+        cwd: input.worktree,
+        timeoutMs: input.timeoutMs,
+        logPrefix: input.transcriptPrefix,
+        signal: input.signal,
+      },
+      {
+        ...(input.observer ? { observer: input.observer } : {}),
+        source: "verifier",
+        stage: "repair-judge",
+      },
+    );
     if (result.failureClass === "arena_infrastructure")
       throw new Error("Repair judge provider infrastructure failed");
     try {
@@ -858,21 +968,30 @@ async function invokeStructuredGenerator(
   const command = commandOverride ?? providerCommand(id);
   const outputPath = path.join(input.worktree, outputName);
   await rm(outputPath, { force: true });
-  const result = await runProcess({
-    executable: command.executable,
-    args: command.args,
-    input: input.prompt,
-    cwd: input.worktree,
-    timeoutMs: input.timeoutMs,
-    logPrefix: input.transcriptPrefix,
-    signal: input.signal,
-    env: {
-      AGENT_ARENA_AGENT: id,
-      AGENT_ARENA_STAGE: stage,
-      AGENT_ARENA_ROUND: String(input.round),
-      AGENT_ARENA_SUBMISSION: outputPath,
+  const result = await runObservedProcess(
+    {
+      executable: command.executable,
+      args: command.args,
+      input: input.prompt,
+      cwd: input.worktree,
+      timeoutMs: input.timeoutMs,
+      logPrefix: input.transcriptPrefix,
+      signal: input.signal,
+      env: {
+        AGENT_ARENA_AGENT: id,
+        AGENT_ARENA_STAGE: stage,
+        AGENT_ARENA_ROUND: String(input.round),
+        AGENT_ARENA_SUBMISSION: outputPath,
+      },
     },
-  });
+    {
+      ...(input.observer ? { observer: input.observer } : {}),
+      source:
+        stage === "house" || stage === "case_builder" ? "verifier" : "harness",
+      stage,
+      round: input.round,
+    },
+  );
   if (result.exitCode !== 0 || result.failureClass) {
     throw new Error(`${stage} invocation failed`);
   }

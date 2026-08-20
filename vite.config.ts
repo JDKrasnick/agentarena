@@ -5,6 +5,6 @@ export default defineConfig({
   root: path.resolve("src/web/client"),
   build: {
     outDir: path.resolve("dist/web"),
-    emptyOutDir: false,
+    emptyOutDir: true,
   },
 });
