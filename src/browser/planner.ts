@@ -84,6 +84,38 @@ function literalCommand(content: string): string | undefined {
   return /command\s*:\s*["']([^"']+)["']/u.exec(content)?.[1];
 }
 
+function literalPackageScriptUrl(
+  commands: Array<string | undefined>,
+): string | undefined {
+  for (const command of commands) {
+    if (!command) continue;
+    const environmentUrl =
+      /\b(?:BASE_URL|PLAYWRIGHT_BASE_URL|CYPRESS_BASE_URL|HEALTH_URL)=(?:["']?)(https?:\/\/[^\s"']+)/iu.exec(
+        command,
+      )?.[1];
+    if (environmentUrl) return environmentUrl;
+    const port =
+      /(?:^|\s)(?:--port(?:=|\s+)|-p\s+)(\d{1,5})(?:\s|$)/u.exec(
+        command,
+      )?.[1] ?? /\bPORT=(\d{1,5})(?:\s|$)/u.exec(command)?.[1];
+    if (!port || Number(port) > 65_535) continue;
+    const declaredHost = /(?:^|\s)--host(?:=|\s+)([^\s]+)(?:\s|$)/u.exec(
+      command,
+    )?.[1];
+    if (
+      declaredHost &&
+      !["localhost", "127.0.0.1", "::1", "[::1]"].includes(declaredHost)
+    )
+      continue;
+    const host = declaredHost ?? "127.0.0.1";
+    const urlHost = host.includes(":")
+      ? `[${host.replace(/^\[|\]$/gu, "")}]`
+      : host;
+    return `http://${urlHost}:${port}`;
+  }
+  return undefined;
+}
+
 export function planBrowserValidation(
   config: FightConfig,
   reconnaissance: ReconnaissanceSnapshot,
@@ -195,7 +227,7 @@ export function planBrowserValidation(
     });
 
   const startupName = ["dev", "start", "serve"].find((name) => scripts[name]);
-  const testName = ["test:e2e", "test:browser", "e2e"].find(
+  const testName = ["test:e2e", "test:browser", "e2e", "browser"].find(
     (name) => scripts[name],
   );
   const playwright = reconnaissance.repositoryEvidence.find((entry) =>
@@ -217,7 +249,12 @@ export function planBrowserValidation(
       ...base,
       unavailableReason: "test_command_missing",
     });
-  const baseUrl = browserConfig && literalUrl(browserConfig.content);
+  const baseUrl = browserConfig
+    ? literalUrl(browserConfig.content)
+    : literalPackageScriptUrl([
+        startupName ? scripts[startupName] : undefined,
+        testName ? scripts[testName] : undefined,
+      ]);
   if (!baseUrl)
     return BrowserPlanSchema.parse({
       ...base,
@@ -231,7 +268,15 @@ export function planBrowserValidation(
         : cypress
           ? "cypress_configuration"
           : "package_scripts",
-      runner: playwright ? "playwright" : cypress ? "cypress" : "custom",
+      runner: playwright
+        ? "playwright"
+        : cypress
+          ? "cypress"
+          : /\bplaywright\b/iu.test(scripts[testName] ?? "")
+            ? "playwright"
+            : /\bcypress\b/iu.test(scripts[testName] ?? "")
+              ? "cypress"
+              : "custom",
       startupCommand:
         configuredStartup ?? scriptCommand(startupName!, reconnaissance),
       healthUrl: baseUrl,

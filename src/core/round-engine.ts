@@ -91,7 +91,10 @@ import {
   BrowserValidationResultSchema,
   type BrowserValidationResult,
 } from "../contracts/browser.js";
-import { findBrowserProbeResult } from "../browser/results.js";
+import {
+  attributeBrowserResult,
+  findBrowserProbeResult,
+} from "../browser/results.js";
 import {
   FailureRecordSchema,
   type FailureCategory,
@@ -164,8 +167,10 @@ import {
 } from "../recovery/contracts.js";
 import {
   applyEnvelopeExactlyOnce,
+  readBrowserBaseline,
   sealRoundEnvelope,
   writeBaseline,
+  writeBrowserBaseline,
   writeCheckpoint,
   writeFinalizationRecord,
 } from "../recovery/durable.js";
@@ -809,6 +814,14 @@ export class RoundEngine {
       persistedRunSpecHash !== summary.runSpecHash
     )
       throw new Error("RunSpec hash mismatch");
+    const browserBaseline = runSpec.browserValidation
+      ? await readBrowserBaseline(store, {
+          runId: runSpec.runId,
+          baseCommit: runSpec.baseCommit,
+          runSpecHash: runSpec.contentHash,
+          browserValidation: runSpec.browserValidation,
+        })
+      : undefined;
     const permissions = PermissionPolicySchema.parse(
       JSON.parse(await readFile(store.resolve("permissions.json"), "utf8")),
     );
@@ -1076,6 +1089,7 @@ export class RoundEngine {
       roundInvocations: [],
       priorEnvelopeHash: envelopes.at(-1)?.envelopeHash ?? null,
       appliedEnvelopes: ledger,
+      ...(browserBaseline ? { browserBaseline } : {}),
     };
     try {
       let priorReplayHash = envelopes.at(-1)?.replayHash ?? null;
@@ -2564,10 +2578,19 @@ export class RoundEngine {
           signal: context.controller.signal,
         });
         context.browserBaseline = browserBaseline;
-        const artifactPath = await context.store.writeJson(
+        const artifactPath = context.store.resolve(
           "browser/baseline-result.json",
-          browserBaseline,
         );
+        await writeBrowserBaseline({
+          store: context.store,
+          identity: {
+            runId: context.runSpec.runId,
+            baseCommit: context.runSpec.baseCommit,
+            runSpecHash: context.runSpec.contentHash,
+            browserValidation: browser,
+          },
+          result: browserBaseline,
+        });
         context.state.artifacts["browser-baseline"] = artifactPath;
         if (
           browser.requirement === "required" &&
@@ -2930,31 +2953,7 @@ export class RoundEngine {
     context: ArenaContext,
     result: BrowserValidationResult,
   ): BrowserValidationResult {
-    const baselinePassed = context.browserBaseline?.status === "verified";
-    const candidateLifecycleFailure =
-      result.status === "unverified" &&
-      (result.reason === "server_command_failure" ||
-        result.reason === "health_failure");
-    if (baselinePassed && candidateLifecycleFailure)
-      return {
-        ...result,
-        status: "failed",
-        failureAttribution: "contestant_application",
-      };
-    if (result.status === "failed")
-      return {
-        ...result,
-        failureAttribution: baselinePassed
-          ? "contestant_application"
-          : "unattributed",
-      };
-    if (result.status === "unverified" && !baselinePassed)
-      return {
-        ...result,
-        failureAttribution:
-          context.browserBaseline?.failureAttribution ?? "unattributed",
-      };
-    return result;
+    return attributeBrowserResult(context.browserBaseline, result);
   }
 
   private browserProbeValidator(

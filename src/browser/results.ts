@@ -24,3 +24,33 @@ export function findBrowserProbeResult(
 ): BrowserProbeResult | undefined {
   return result.probes.find((probe) => probe.probeId === probeId);
 }
+
+export function attributeBrowserResult(
+  baseline: BrowserValidationResult | undefined,
+  result: BrowserValidationResult,
+): BrowserValidationResult {
+  const baselinePassed = baseline?.status === "verified";
+  const candidateLifecycleFailure =
+    result.status === "unverified" &&
+    (result.reason === "server_command_failure" ||
+      result.reason === "health_failure");
+  if (baselinePassed && candidateLifecycleFailure)
+    return {
+      ...result,
+      status: "failed",
+      failureAttribution: "contestant_application",
+    };
+  if (result.status === "failed")
+    return {
+      ...result,
+      failureAttribution: baselinePassed
+        ? "contestant_application"
+        : "unattributed",
+    };
+  if (result.status === "unverified" && !baselinePassed)
+    return {
+      ...result,
+      failureAttribution: baseline?.failureAttribution ?? "unattributed",
+    };
+  return result;
+}

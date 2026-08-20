@@ -207,6 +207,41 @@ export async function executeBrowserValidation(options: {
   let lastAttribution: "harness_transport" | "harness_configuration" =
     "harness_transport";
   const artifacts: BrowserArtifact[] = [];
+  let completedNativeResult: BrowserNativeSuiteResult | undefined;
+  let completedNativeProbe: BrowserProbeResult | undefined;
+  const completedProbes = new Map<string, BrowserProbeResult>();
+  const seenProbeIds = new Set<string>();
+  const requests = [
+    ...mandatoryBrowserProbes(),
+    ...options.selectedProbes,
+  ].filter((request) => {
+    if (seenProbeIds.has(request.id)) return false;
+    seenProbeIds.add(request.id);
+    return true;
+  });
+  const accumulatedInfrastructureResult = (
+    reason: BrowserUnavailableReason,
+    provisionAttempts: number,
+    failureAttribution: "harness_transport" | "harness_configuration",
+  ): BrowserValidationResult => {
+    const probes = [
+      completedNativeProbe,
+      ...requests.map((request) => completedProbes.get(request.id)),
+    ].filter((probe): probe is BrowserProbeResult => probe !== undefined);
+    const hasFunctionalFailure = probes.some(
+      (probe) => probe.status === "failed",
+    );
+    return BrowserValidationResultSchema.parse({
+      status: hasFunctionalFailure ? "failed" : "unverified",
+      provisionAttempts,
+      reason: hasFunctionalFailure ? "application_failure" : reason,
+      probes,
+      artifacts,
+      failureAttribution: hasFunctionalFailure
+        ? "contestant_application"
+        : failureAttribution,
+    });
+  };
   for (const attempt of [1, 2] as const) {
     if (options.signal.aborted) return unverified("interrupted", attempt - 1);
     const attemptController = new AbortController();
@@ -221,9 +256,11 @@ export async function executeBrowserValidation(options: {
     let session: BrowserSession | undefined;
     let launchPromise: Promise<BrowserSession> | undefined;
     try {
-      const cachedNativeResult = options.nativeSuiteCacheKey
-        ? options.nativeSuiteCache?.get(options.nativeSuiteCacheKey)
-        : undefined;
+      const cachedNativeResult =
+        completedNativeResult ??
+        (options.nativeSuiteCacheKey
+          ? options.nativeSuiteCache?.get(options.nativeSuiteCacheKey)
+          : undefined);
       let nativeResult = cachedNativeResult;
       if (profile.nativeSuiteMode === "self_managed" && !nativeResult) {
         if (!adapter.runNativeSuiteStandalone)
@@ -260,6 +297,7 @@ export async function executeBrowserValidation(options: {
             options.nativeSuiteCacheKey,
             nativeResult,
           );
+        completedNativeResult = nativeResult;
       }
       launchPromise = adapter.launch({
         plan: { ...options.plan, profile },
@@ -292,8 +330,6 @@ export async function executeBrowserValidation(options: {
             );
       }
 
-      const probes: BrowserProbeResult[] = [];
-      const nativeContextId = randomUUID();
       if (!nativeResult)
         nativeResult = await beforeDeadline(
           () => activeSession.runNativeSuite(),
@@ -319,24 +355,17 @@ export async function executeBrowserValidation(options: {
           options.nativeSuiteCacheKey,
           nativeResult,
         );
-      probes.push({
+      completedNativeResult = nativeResult;
+      completedNativeProbe ??= {
         ...nativeResult,
         probeId: "arena-repository-native",
         family: "visual_regression",
         profile: "repository_native",
-        contextId: nativeContextId,
+        contextId: randomUUID(),
         requiredCapabilityIds: ["browser_dom_validation"],
-      });
-      const seenProbeIds = new Set<string>();
-      const requests = [
-        ...mandatoryBrowserProbes(),
-        ...options.selectedProbes,
-      ].filter((request) => {
-        if (seenProbeIds.has(request.id)) return false;
-        seenProbeIds.add(request.id);
-        return true;
-      });
+      };
       for (const request of requests) {
+        if (completedProbes.has(request.id)) continue;
         const contextId = randomUUID();
         const result = await beforeDeadline(
           () =>
@@ -357,7 +386,7 @@ export async function executeBrowserValidation(options: {
             result.reason ?? "launch_failure",
           );
         }
-        probes.push({
+        completedProbes.set(request.id, {
           ...result,
           probeId: request.id,
           family: request.family,
@@ -366,6 +395,10 @@ export async function executeBrowserValidation(options: {
           requiredCapabilityIds: ["browser_dom_validation"],
         });
       }
+      const probes = [
+        completedNativeProbe,
+        ...requests.map((request) => completedProbes.get(request.id)),
+      ].filter((probe): probe is BrowserProbeResult => probe !== undefined);
       const status = probes.some((probe) => probe.status === "failed")
         ? "failed"
         : probes.some((probe) => probe.status === "unverified")
@@ -401,23 +434,21 @@ export async function executeBrowserValidation(options: {
           .then((lateSession) => lateSession.stop())
           .catch(() => undefined);
       }
-      if (
-        options.signal.aborted ||
-        lastReason === "interrupted" ||
-        lastReason === "timed_out" ||
-        lastReason === "unapproved_origin"
-      )
+      if (options.signal.aborted || lastReason === "interrupted")
         return BrowserValidationResultSchema.parse({
           ...unverified(lastReason, attempt, artifacts),
           failureAttribution: lastAttribution,
         });
+      if (lastReason === "timed_out" || lastReason === "unapproved_origin")
+        return accumulatedInfrastructureResult(
+          lastReason,
+          attempt,
+          lastAttribution,
+        );
     } finally {
       attemptController.abort();
       if (session) await Promise.resolve(session.stop()).catch(() => undefined);
     }
   }
-  return BrowserValidationResultSchema.parse({
-    ...unverified(lastReason, 2, artifacts),
-    failureAttribution: lastAttribution,
-  });
+  return accumulatedInfrastructureResult(lastReason, 2, lastAttribution);
 }

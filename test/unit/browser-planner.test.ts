@@ -133,6 +133,30 @@ describe("browser validation planner", () => {
     });
   });
 
+  it("resolves a literal package-script profile without runner configuration", () => {
+    const plan = planBrowserValidation(
+      config({ task: "Fix browser navigation" }),
+      reconnaissance({
+        "package.json": JSON.stringify({
+          scripts: {
+            dev: "vite --host 127.0.0.1 --port 4173",
+            browser: "playwright test",
+          },
+        }),
+      }),
+    );
+
+    expect(plan?.profile).toMatchObject({
+      source: "package_scripts",
+      runner: "playwright",
+      startupCommand: "npm run dev",
+      testCommand: "npm run browser",
+      healthUrl: "http://127.0.0.1:4173",
+      baseUrl: "http://127.0.0.1:4173",
+      allowedOrigins: ["http://127.0.0.1:4173"],
+    });
+  });
+
   it("omits browser validation for a backend-only task and repository", () => {
     expect(
       planBrowserValidation(

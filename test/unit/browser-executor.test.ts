@@ -220,6 +220,80 @@ describe("browser validation executor", () => {
     expect(stops[1]).toHaveBeenCalledOnce();
   });
 
+  it("preserves completed functional failures when a later probe needs infrastructure retry", async () => {
+    const calls: string[] = [];
+    let launchAttempt = 0;
+    const launch = vi.fn<BrowserAdapter["launch"]>().mockImplementation(() => {
+      const currentAttempt = ++launchAttempt;
+      return Promise.resolve({
+        toolVersion: "1",
+        browserVersion: "1",
+        artifacts: [],
+        waitUntilReady: vi.fn().mockResolvedValue(undefined),
+        runNativeSuite: vi.fn().mockResolvedValue({
+          family: "visual_regression",
+          profile: "repository_native",
+          status: "verified",
+          blockedOrigins: [],
+          artifacts: [],
+        }),
+        runProbe: vi
+          .fn<BrowserSession["runProbe"]>()
+          .mockImplementation(({ request }) => {
+            calls.push(request.id);
+            if (request.id === "arena-runtime-smoke")
+              return Promise.resolve({
+                family: request.family,
+                profile: request.profile,
+                status: "failed",
+                reason: "application_failure",
+                blockedOrigins: [],
+                artifacts: [],
+              });
+            if (request.id === "arena-semantics-smoke" && currentAttempt === 1)
+              return Promise.resolve({
+                family: request.family,
+                profile: request.profile,
+                status: "unverified",
+                reason: "launch_failure",
+                blockedOrigins: [],
+                artifacts: [],
+              });
+            return Promise.resolve({
+              family: request.family,
+              profile: request.profile,
+              status: "verified",
+              blockedOrigins: [],
+              artifacts: [],
+            });
+          }),
+        stop: vi.fn().mockResolvedValue(undefined),
+      });
+    });
+
+    const result = await executeBrowserValidation({
+      plan,
+      decision: "approved",
+      adapter: { runner: "playwright", launch },
+      worktree: "/worktree/a",
+      artifactDirectory: "/artifacts/a",
+      selectedProbes: [],
+      approvedOrigins: ["http://127.0.0.1:4173"],
+      timeoutMs: 10_000,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.provisionAttempts).toBe(2);
+    expect(calls.filter((id) => id === "arena-runtime-smoke")).toHaveLength(1);
+    expect(calls.filter((id) => id === "arena-semantics-smoke")).toHaveLength(
+      2,
+    );
+    expect(
+      result.probes.find((probe) => probe.probeId === "arena-runtime-smoke"),
+    ).toMatchObject({ status: "failed", reason: "application_failure" });
+  });
+
   it("returns denied without launching tooling", async () => {
     const browser = adapter({} as BrowserSession);
     const result = await executeBrowserValidation({
