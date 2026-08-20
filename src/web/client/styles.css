@@ -2430,7 +2430,7 @@ main {
 .theme-retro-tactics {
   color: var(--tactics-text);
   background: var(--tactics-ground);
-  font-family: "Arena Silkscreen", ui-monospace, monospace;
+  font-family: "Arena Space", system-ui, sans-serif;
   --line: #40335f;
   --muted: #b8aecb;
   --cyan: #43d5d1;
@@ -2478,7 +2478,7 @@ main {
 .retro-tactics {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(530px, 1fr) auto;
+  grid-template-rows: auto minmax(560px, 1fr) auto;
   min-height: calc(100vh - 64px);
   overflow: hidden;
   border: 4px solid var(--tactics-line);
@@ -2494,8 +2494,8 @@ main {
   display: grid;
   grid-template-columns: 1fr 52px 1fr;
   gap: 10px;
-  padding: 12px 14px 14px;
-  border-bottom: 6px double var(--tactics-aqua);
+  padding: 9px 12px 10px;
+  border-bottom: 4px double var(--tactics-aqua);
   background:
     repeating-linear-gradient(
       90deg,
@@ -2507,13 +2507,13 @@ main {
 .tactics-status {
   position: relative;
   display: grid;
-  grid-template-columns: 58px minmax(120px, 1fr) minmax(150px, 0.7fr) 74px;
-  gap: 13px;
+  grid-template-columns: 50px minmax(120px, 1fr) minmax(135px, 0.7fr) 68px;
+  gap: 11px;
   align-items: center;
   min-width: 0;
   border: 4px solid currentColor;
   border-radius: 2px;
-  padding: 9px 13px;
+  padding: 7px 11px;
   color: var(--tactics-purple);
   background: var(--tactics-ground);
   box-shadow:
@@ -2572,15 +2572,15 @@ main {
   background: var(--tactics-panel);
 }
 .tactics-status .provider-disc {
-  width: 54px;
-  height: 54px;
+  width: 46px;
+  height: 46px;
   border: 2px solid currentColor;
   border-radius: 2px;
   background: var(--tactics-chassis);
 }
 .tactics-status .provider-disc img {
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   object-fit: contain;
 }
 .tactics-identity,
@@ -2592,7 +2592,8 @@ main {
 .tactics-identity strong {
   overflow: hidden;
   color: currentColor;
-  font-size: clamp(18px, 1.6vw, 28px);
+  font-family: "Arena Silkscreen", ui-monospace, monospace;
+  font-size: clamp(16px, 1.35vw, 23px);
   text-overflow: ellipsis;
   text-transform: uppercase;
   white-space: nowrap;
@@ -2602,7 +2603,8 @@ main {
 .tactics-checks small {
   overflow: hidden;
   color: var(--tactics-muted);
-  font-size: 10px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
   text-overflow: ellipsis;
   text-transform: uppercase;
   white-space: nowrap;
@@ -2614,7 +2616,8 @@ main {
 }
 .tactics-hp b {
   color: var(--tactics-text);
-  font-size: clamp(25px, 2.4vw, 40px);
+  font-family: "Arena Silkscreen", ui-monospace, monospace;
+  font-size: clamp(22px, 2vw, 34px);
   line-height: 0.9;
   font-variant-numeric: tabular-nums;
 }
@@ -2639,6 +2642,7 @@ main {
   color: var(--tactics-text);
 }
 .tactics-checks b {
+  font-family: "Arena Silkscreen", ui-monospace, monospace;
   font-size: 18px;
   font-variant-numeric: tabular-nums;
 }
@@ -2653,11 +2657,12 @@ main {
   border: 4px double var(--tactics-aqua);
   color: var(--tactics-aqua);
   background: var(--tactics-ground);
+  font-family: "Arena Silkscreen", ui-monospace, monospace;
   font-weight: 800;
 }
 .tactics-console {
   display: grid;
-  grid-template-columns: 126px minmax(0, 1fr) 300px;
+  grid-template-columns: 112px minmax(0, 1fr) 280px;
   min-height: 0;
 }
 .tactics-mobile-inspect {
@@ -2680,13 +2685,12 @@ main {
   padding: 13px 10px;
 }
 .tactics-rounds::before {
-  top: -4px;
-  left: -4px;
-  background-position: -95px -20px;
+  display: none;
 }
 .tactics-rounds > strong,
 .tactics-activity > header strong {
   color: var(--tactics-aqua);
+  font-family: "Arena Silkscreen", ui-monospace, monospace;
   font-size: 11px;
   letter-spacing: 0.08em;
 }
@@ -2701,6 +2705,7 @@ main {
   border-radius: 1px;
   color: var(--tactics-muted);
   background: var(--tactics-ground);
+  font-family: "Arena Silkscreen", ui-monospace, monospace;
   font-weight: 800;
 }
 .tactics-rounds .compact-rounds button.is-selected {
@@ -2733,10 +2738,11 @@ main {
 .tactics-map {
   position: relative;
   min-width: 0;
-  min-height: 530px;
+  min-height: 560px;
   overflow: hidden;
   isolation: isolate;
-  background: #10170f;
+  border: 7px solid #090713;
+  background: #090713;
 }
 .tactics-map > header {
   position: absolute;
@@ -2757,6 +2763,7 @@ main {
   display: grid;
 }
 .tactics-map > header strong {
+  font-family: "Arena Silkscreen", ui-monospace, monospace;
   font-size: 12px;
 }
 .tactics-map > header span {
@@ -2780,7 +2787,8 @@ main {
   padding: 6px 8px;
   color: var(--tactics-muted);
   background: var(--tactics-ground);
-  font-size: 8px;
+  font-size: 9px;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 .tactics-legend span {
@@ -2808,19 +2816,20 @@ main {
 .tactics-terrain {
   position: absolute;
   z-index: -2;
-  inset: 0;
+  inset: 5px;
   background:
-    linear-gradient(rgb(5 8 12 / 38%), rgb(5 8 12 / 48%)),
-    url("./assets/retro-tactics/terrain-background.png") center / cover
+    linear-gradient(rgb(5 8 12 / 25%), rgb(5 8 12 / 34%)),
+    url("./assets/retro-tactics/terrain-background.png") center / 100% 100%
       no-repeat;
-  filter: brightness(0.72) saturate(0.82);
+  border: 2px solid var(--tactics-line);
+  filter: brightness(0.8) saturate(0.9);
 }
 .tactics-terrain::after {
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(rgb(67 51 95 / 52%) 2px, transparent 2px),
-    linear-gradient(90deg, rgb(67 51 95 / 52%) 2px, transparent 2px);
+    linear-gradient(rgb(67 51 95 / 25%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(67 51 95 / 25%) 1px, transparent 1px);
   background-size: calc(100% / 12) calc(100% / 8);
   content: "";
 }
@@ -2837,11 +2846,11 @@ main {
 }
 .tactics-paths .route {
   fill: none;
-  stroke-width: 5;
-  stroke-linecap: square;
-  stroke-linejoin: bevel;
-  stroke-dasharray: 13 9;
-  opacity: 0.82;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 8 8;
+  opacity: 0.74;
 }
 .tactics-paths .route-a {
   stroke: var(--tactics-purple);
@@ -2853,13 +2862,13 @@ main {
 }
 .tactics-paths .route-neutral {
   stroke: var(--tactics-aqua);
-  stroke-width: 3;
+  stroke-width: 2.5;
   marker-end: url("#tactics-arrow-neutral");
 }
 .tactics-paths .route-repair {
   stroke: #75d278;
-  stroke-width: 7;
-  stroke-dasharray: 5 7;
+  stroke-width: 4.5;
+  stroke-dasharray: 5 8;
   marker-end: url("#tactics-arrow-neutral");
 }
 #tactics-arrow-a path {
@@ -2872,9 +2881,9 @@ main {
   fill: var(--tactics-aqua);
 }
 .tactics-paths .route-latest {
-  stroke-width: 8;
-  opacity: 1;
-  animation: tactics-route 900ms steps(3, end) infinite;
+  stroke-width: 5.5;
+  opacity: 0.95;
+  animation: tactics-route 1100ms linear infinite;
 }
 .tactics-nodes {
   position: absolute;
@@ -2885,10 +2894,10 @@ main {
   position: absolute;
   display: grid;
   justify-items: center;
-  width: 116px;
-  border: 4px solid currentColor;
+  width: 102px;
+  border: 3px solid currentColor;
   border-radius: 1px;
-  padding: 9px 8px 8px;
+  padding: 7px 7px 6px;
   color: var(--tactics-text);
   background: var(--tactics-ground);
   box-shadow:
@@ -2909,9 +2918,9 @@ main {
   opacity: 1;
 }
 .tactics-node > span {
-  width: 68px;
-  height: 64px;
-  margin-bottom: 5px;
+  width: 60px;
+  height: 56px;
+  margin-bottom: 4px;
   background-image: url("./assets/retro-tactics/tactical-sprites.png");
   background-repeat: no-repeat;
   background-size: 418px 418px;
@@ -2941,12 +2950,13 @@ main {
   white-space: nowrap;
 }
 .tactics-node strong {
-  font-size: 10px;
+  font-family: "Arena Silkscreen", ui-monospace, monospace;
+  font-size: 9px;
 }
 .tactics-node small {
   margin-top: 2px;
   color: var(--tactics-muted);
-  font-size: 8px;
+  font-size: 9px;
 }
 .tactics-node.is-a {
   border-color: var(--tactics-purple);
@@ -2958,26 +2968,26 @@ main {
   border-color: var(--tactics-aqua);
 }
 .tactics-node-a-base {
-  top: 42%;
-  left: 6%;
+  top: 45%;
+  left: 8%;
 }
 .tactics-node-a-work {
-  top: 19%;
-  left: 28%;
+  top: 23%;
+  left: 29%;
 }
 .tactics-node-verify {
-  top: 43%;
+  top: 46%;
   left: 50%;
-  width: 136px;
+  width: 118px;
   transform: translate(-50%, -50%);
 }
 .tactics-node-b-work {
-  top: 19%;
-  right: 28%;
+  top: 23%;
+  right: 29%;
 }
 .tactics-node-b-base {
-  top: 42%;
-  right: 6%;
+  top: 45%;
+  right: 8%;
 }
 .tactics-map > footer {
   position: absolute;
@@ -2997,13 +3007,14 @@ main {
 .tactics-map > footer strong {
   min-width: 0;
   overflow: hidden;
-  font-size: 11px;
+  font-family: "Arena Silkscreen", ui-monospace, monospace;
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .tactics-map > footer span {
   color: var(--tactics-aqua);
-  font-size: 9px;
+  font-size: 10px;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -3012,10 +3023,7 @@ main {
   border-left: 3px solid var(--tactics-line);
 }
 .tactics-activity::before {
-  top: -4px;
-  right: -4px;
-  background-position: -95px -20px;
-  transform: scaleX(-1);
+  display: none;
 }
 .tactics-activity > header {
   display: flex;
@@ -3057,19 +3065,21 @@ main {
   display: -webkit-box;
   overflow: hidden;
   color: var(--tactics-text);
-  font-size: 10px;
-  line-height: 1.35;
+  font-size: 12px;
+  line-height: 1.3;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 .tactics-activity article p {
   margin: 4px 0 0;
   color: var(--tactics-muted);
-  font-size: 8px;
+  font-size: 10px;
+  line-height: 1.4;
   text-transform: uppercase;
 }
 .tactics-activity article > b {
   color: var(--tactics-danger);
+  font-family: "Arena Silkscreen", ui-monospace, monospace;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
@@ -3083,7 +3093,7 @@ main {
   grid-template-columns: minmax(220px, 1fr) minmax(460px, auto);
   gap: 16px;
   align-items: center;
-  min-height: 78px;
+  min-height: 68px;
   padding: 9px 12px;
   border-top: 6px double var(--tactics-aqua);
   background:
@@ -3102,7 +3112,8 @@ main {
 .tactics-commands > div strong {
   overflow: hidden;
   color: var(--tactics-text);
-  font-size: 11px;
+  font-family: "Arena Silkscreen", ui-monospace, monospace;
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3110,7 +3121,7 @@ main {
 .tactics-commands > div span {
   margin-top: 3px;
   color: var(--tactics-muted);
-  font-size: 8px;
+  font-size: 9px;
   text-transform: uppercase;
 }
 .tactics-commands nav {
@@ -3173,7 +3184,8 @@ main {
 }
 .tactics-commands nav strong {
   overflow: hidden;
-  font-size: 11px;
+  font-family: "Arena Silkscreen", ui-monospace, monospace;
+  font-size: 10px;
   text-overflow: ellipsis;
   text-transform: uppercase;
   white-space: nowrap;
@@ -3482,18 +3494,18 @@ main {
     flex: 1;
   }
   .tactics-map {
-    min-height: 500px;
+    min-height: 520px;
   }
   .tactics-node {
-    width: 112px;
-    padding: 7px 5px;
+    width: 88px;
+    padding: 6px 5px;
   }
   .tactics-node > span {
-    width: 64px;
-    height: 58px;
+    width: 52px;
+    height: 48px;
   }
   .tactics-node-verify {
-    width: 124px;
+    width: 100px;
   }
   .tactics-node-a-work {
     left: 24%;

@@ -1140,20 +1140,23 @@ function RetroTacticsArena({
             </defs>
             <path
               className="route route-attack route-a"
-              d="M135 285 310 170 500 260"
+              d="M135 285 C220 285 242 175 310 170 S430 225 500 260"
             />
             <path
               className="route route-attack route-b"
-              d="M865 285 690 170 500 260"
+              d="M865 285 C780 285 758 175 690 170 S570 225 500 260"
             />
-            <path className="route route-neutral" d="M500 260 500 88" />
+            <path
+              className="route route-neutral"
+              d="M500 260 C505 205 495 145 500 88"
+            />
             {latestRepair ? (
               <path
                 className={`route route-repair route-${latestRepair.id}`}
                 d={
                   latestRepair.id === "b"
-                    ? "M500 260 690 170 865 285"
-                    : "M500 260 310 170 135 285"
+                    ? "M500 260 C570 225 620 170 690 170 S780 285 865 285"
+                    : "M500 260 C430 225 380 170 310 170 S220 285 135 285"
                 }
               />
             ) : null}
@@ -1162,8 +1165,8 @@ function RetroTacticsArena({
                 className={`route route-attack route-latest route-${latest.attacker === "b" ? "b" : "a"}`}
                 d={
                   latest.attacker === "b"
-                    ? "M865 285 690 170 500 260 310 170"
-                    : "M135 285 310 170 500 260 690 170"
+                    ? "M865 285 C780 285 758 175 690 170 S570 225 500 260 S380 170 310 170"
+                    : "M135 285 C220 285 242 175 310 170 S430 225 500 260 S620 170 690 170"
                 }
               />
             ) : null}
