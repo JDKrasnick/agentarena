@@ -432,11 +432,15 @@ makes the capability optional; otherwise it is absent.
 Profile resolution uses this order: explicit `browser` configuration, literal
 Playwright/Cypress configuration, recognized package scripts, then unavailable.
 Arena does not guess between monorepo applications. An explicit profile names
-`runner`, `startup`, `health_url`, `base_url`, `test`, optional `teardown`,
-projects, and allowed origins. The main permission request is `harness_only`,
-brokered, and scoped to exact commands and loopback origins. Every non-loopback
-origin is a separate exact, explicit capability; package installation, browser
-downloads, and wildcard origins are never implied.
+`runner`, `startup`, `health_url`, `base_url`, `test`, optional `teardown`, a
+native-suite service mode, projects, and allowed origins. The main permission
+request is `harness_only` and scoped to exact commands and loopback origins.
+Arena-managed probes broker their HTTP and WebSocket traffic, but the unchanged
+repository-native command has no cross-platform network sandbox. The combined
+capability therefore advertises `advisory` enforcement and cannot be silently
+approved in `auto` mode. Every non-loopback origin is still a separate exact,
+explicit capability; package installation, browser downloads, and wildcard
+origins are never implied.
 
 Each contestant runs in its own patched worktree and service process. Readiness
 polling, timeouts, process-group teardown, fresh contexts, and clean storage are
@@ -446,8 +450,10 @@ chooses the task-specific probe family, profile, accessible actions, and
 expected behavior from this safe envelope. Repository browser projects are not
 translated into Arena profiles: the repository's configured browser command
 and complete project matrix run unchanged as the native suite. Requests outside
-approved origins are blocked and recorded for both HTTP(S) and WebSocket
-traffic. `ws` and `wss` use the corresponding approved HTTP transport origin.
+approved origins are blocked and recorded for Arena-managed HTTP(S) and
+WebSocket traffic. `ws` and `wss` use the corresponding approved HTTP transport
+origin. The approval UI states that a native repository runner retains the host
+account's network authority.
 
 Runtime-error/DOM-integrity, accessible-name, and 320 CSS-pixel overflow smoke
 probes are mandatory on every browser run; the attacker-selected probe is
@@ -470,6 +476,12 @@ port on the exact loopback protocol and host. Fixed-port profiles continue to
 run comparative lanes sequentially. Native-suite results are reused within the
 run only when the exact command and immutable patch bytes match; service and
 probe lifecycles are never skipped.
+
+`native_suite_mode` is `reuse_started_service` by default and passes `PORT`,
+`BASE_URL`, `PLAYWRIGHT_BASE_URL`, and `CYPRESS_BASE_URL` to the exact native
+command. `self_managed` runs the native suite before Arena starts its probe
+service. Literal Playwright configurations with a `webServer.command` resolve
+to `self_managed`, avoiding duplicate ownership of the configured port.
 
 The reviewer decides whether an already approved external origin is appropriate
 evidence, but cannot add an origin after consolidated approval. Authenticated

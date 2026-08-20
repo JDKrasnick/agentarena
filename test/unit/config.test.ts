@@ -18,6 +18,7 @@ describe("configuration", () => {
         "  base_url: http://127.0.0.1:4173",
         "  test: npm run test:e2e",
         "  port_mode: dynamic",
+        "  native_suite_mode: self_managed",
         "  projects: [chromium]",
         "  allowed_origins: [http://127.0.0.1:4173]",
       ].join("\n"),
@@ -30,6 +31,7 @@ describe("configuration", () => {
         startupCommand: "npm run dev",
         testCommand: "npm run test:e2e",
         portMode: "dynamic",
+        nativeSuiteMode: "self_managed",
         projects: ["chromium"],
       },
     });

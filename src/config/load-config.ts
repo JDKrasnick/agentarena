@@ -117,6 +117,9 @@ const FileConfigSchema = z
         test: z.string().trim().min(1),
         teardown: z.string().trim().min(1).optional(),
         port_mode: z.enum(["fixed", "dynamic"]).default("fixed"),
+        native_suite_mode: z
+          .enum(["reuse_started_service", "self_managed"])
+          .default("reuse_started_service"),
         projects: z.array(z.string().trim().min(1)).default([]),
         allowed_origins: z.array(z.string().url()).min(1),
       })
@@ -485,6 +488,7 @@ export async function loadFightConfig(
               ? { teardownCommand: file.browser.teardown }
               : {}),
             portMode: file.browser.port_mode,
+            nativeSuiteMode: file.browser.native_suite_mode,
             projects: file.browser.projects,
             allowedOrigins: file.browser.allowed_origins,
           },

@@ -176,6 +176,9 @@ export function renderBattleHtml(state: RunState): string {
             .join(", ");
           const evidence = [
             link(state, "attack", attack.patchPath),
+            ...(attack.browserArtifactRefs ?? []).map((artifact, index) =>
+              link(state, `browser artifact ${String(index + 1)}`, artifact),
+            ),
             ...attack.checks.flatMap((check) =>
               check.command
                 ? [

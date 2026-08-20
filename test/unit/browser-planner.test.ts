@@ -76,7 +76,21 @@ describe("browser validation planner", () => {
       unavailableReason: "startup_command_missing",
       capabilityId: "browser_dom_validation",
       role: "harness_only",
-      enforcement: "brokered",
+      enforcement: "advisory",
+    });
+  });
+
+  it.each([
+    "Improve accessibility",
+    "Make the controls accessible",
+    "Fix rendering on the settings page",
+    "Correct the rendered detail view",
+  ])("requires browser validation for documented task wording: %s", (task) => {
+    expect(
+      planBrowserValidation(config({ task }), reconnaissance()),
+    ).toMatchObject({
+      requirement: "required",
+      enforcement: "advisory",
     });
   });
 
@@ -88,6 +102,35 @@ describe("browser validation planner", () => {
       }),
     );
     expect(plan?.requirement).toBe("optional");
+  });
+
+  it("recognizes frozen route metadata as optional browser evidence", () => {
+    const plan = planBrowserValidation(
+      config(),
+      reconnaissance({
+        "src/routes.ts": "export const routes = [{ path: '/settings' }]",
+      }),
+    );
+
+    expect(plan).toMatchObject({
+      requirement: "optional",
+      unavailableReason: "startup_command_missing",
+    });
+  });
+
+  it("recognizes literal frontend and custom browser scripts", () => {
+    const plan = planBrowserValidation(
+      config(),
+      reconnaissance({
+        "package.json":
+          '{"scripts":{"dev":"vite","test:browser":"node browser-tests.mjs"}}',
+      }),
+    );
+
+    expect(plan).toMatchObject({
+      requirement: "optional",
+      unavailableReason: "base_url_missing",
+    });
   });
 
   it("omits browser validation for a backend-only task and repository", () => {
@@ -122,6 +165,40 @@ describe("browser validation planner", () => {
     });
   });
 
+  it("does not auto-approve the advisory native browser boundary", () => {
+    const fightConfig = config({
+      task: "Fix mobile navigation",
+      permissionMode: "auto",
+      reducedValidationAccepted: true,
+      permissionAllow: {
+        browser_dom_validation: {
+          mode: "auto",
+          role: "harness_only",
+          scopes: [],
+        },
+      },
+      browserProfile: {
+        runner: "playwright",
+        startupCommand: "npm start",
+        healthUrl: "http://127.0.0.1:4173/health",
+        baseUrl: "http://127.0.0.1:4173",
+        testCommand: "npm run test:e2e",
+        projects: [],
+        allowedOrigins: ["http://127.0.0.1:4173"],
+      },
+    });
+    const policy = resolvePermissionPolicy(
+      fightConfig,
+      discoverCapabilities(fightConfig, reconnaissance()),
+    );
+
+    expect(
+      policy.capabilities.find(
+        (capability) => capability.id === "browser_dom_validation",
+      ),
+    ).toMatchObject({ enforcement: "advisory", status: "denied" });
+  });
+
   it("refuses to choose among monorepo applications", () => {
     const plan = planBrowserValidation(
       config({ task: "Fix UI layout" }),
@@ -140,13 +217,14 @@ describe("browser validation planner", () => {
         "package.json":
           '{"dependencies":{"@playwright/test":"1"},"scripts":{"dev":"vite","test:e2e":"playwright test"}}',
         "playwright.config.ts":
-          "export default { use: { baseURL: 'http://localhost:4173' }, projects: [{ name: 'chromium' }] }",
+          "export default { webServer: { command: 'npm run dev', url: 'http://localhost:4173' }, use: { baseURL: 'http://localhost:4173' }, projects: [{ name: 'chromium' }] }",
       }),
     );
     expect(plan?.profile).toMatchObject({
       source: "playwright_configuration",
       startupCommand: "npm run dev",
       testCommand: "npm run test:e2e",
+      nativeSuiteMode: "self_managed",
       baseUrl: "http://localhost:4173",
       projects: ["chromium"],
       allowedOrigins: ["http://localhost:4173"],
@@ -183,7 +261,7 @@ describe("browser validation planner", () => {
           risk: "medium",
           requirement: "required",
           role: "harness_only",
-          enforcement: "brokered",
+          enforcement: "advisory",
           scopes: [],
           available: false,
         },
@@ -300,7 +378,7 @@ describe("browser validation planner", () => {
             risk: "medium",
             requirement: "required",
             role: "harness_only",
-            enforcement: "brokered",
+            enforcement: "advisory",
             mode: "confirm",
             scopes,
             status: "approved",

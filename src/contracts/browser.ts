@@ -28,6 +28,9 @@ export const BrowserPlanSchema = z
         testCommand: z.string().min(1),
         teardownCommand: z.string().min(1).optional(),
         portMode: z.enum(["fixed", "dynamic"]).optional(),
+        nativeSuiteMode: z
+          .enum(["reuse_started_service", "self_managed"])
+          .optional(),
         projects: z.array(z.string().min(1)),
         allowedOrigins: z.array(z.string().url()).min(1),
       })
@@ -45,7 +48,9 @@ export const BrowserPlanSchema = z
       .optional(),
     capabilityId: z.literal("browser_dom_validation"),
     role: z.literal("harness_only"),
-    enforcement: z.literal("brokered"),
+    // Keep brokered readable for completed v1 plans; new plans advertise the
+    // weaker advisory boundary because they include a native repository command.
+    enforcement: z.enum(["brokered", "advisory"]),
     probeFamilies: z.array(
       z.enum([
         "interaction",
@@ -202,6 +207,7 @@ export const BrowserArtifactSchema = z
       "startup_log",
       "health_log",
       "runner_result",
+      "result_manifest",
       "blocked_origin",
       "screenshot",
       "trace",

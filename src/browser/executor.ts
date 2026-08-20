@@ -33,6 +33,13 @@ export interface BrowserSession {
 
 export interface BrowserAdapter {
   runner: "playwright" | "cypress" | "custom";
+  runNativeSuiteStandalone?(input: {
+    plan: BrowserPlan & { profile: NonNullable<BrowserPlan["profile"]> };
+    worktree: string;
+    artifactDirectory: string;
+    signal: AbortSignal;
+    deadlineAt: number;
+  }): Promise<BrowserNativeSuiteResult>;
   launch(input: {
     plan: BrowserPlan & { profile: NonNullable<BrowserPlan["profile"]> };
     worktree: string;
@@ -214,6 +221,46 @@ export async function executeBrowserValidation(options: {
     let session: BrowserSession | undefined;
     let launchPromise: Promise<BrowserSession> | undefined;
     try {
+      const cachedNativeResult = options.nativeSuiteCacheKey
+        ? options.nativeSuiteCache?.get(options.nativeSuiteCacheKey)
+        : undefined;
+      let nativeResult = cachedNativeResult;
+      if (profile.nativeSuiteMode === "self_managed" && !nativeResult) {
+        if (!adapter.runNativeSuiteStandalone)
+          throw new BrowserInfrastructureError(
+            "The browser adapter cannot run a self-managed native suite",
+            "tool_missing",
+            "harness_configuration",
+          );
+        nativeResult = await beforeDeadline(
+          () =>
+            adapter.runNativeSuiteStandalone!({
+              plan: { ...options.plan, profile },
+              worktree: options.worktree,
+              artifactDirectory: path.join(
+                attemptArtifactDirectory,
+                "native-suite-standalone",
+              ),
+              signal: attemptSignal,
+              deadlineAt,
+            }),
+          deadlineAt,
+          attemptSignal,
+          () => attemptController.abort(),
+        );
+        artifacts.push(...nativeResult.artifacts);
+        if (nativeResult.status === "unverified")
+          throw new BrowserInfrastructureError(
+            nativeResult.detail ??
+              "Repository-native browser suite was unverified",
+            nativeResult.reason ?? "launch_failure",
+          );
+        if (options.nativeSuiteCacheKey)
+          options.nativeSuiteCache?.set(
+            options.nativeSuiteCacheKey,
+            nativeResult,
+          );
+      }
       launchPromise = adapter.launch({
         plan: { ...options.plan, profile },
         worktree: options.worktree,
@@ -247,18 +294,15 @@ export async function executeBrowserValidation(options: {
 
       const probes: BrowserProbeResult[] = [];
       const nativeContextId = randomUUID();
-      const cachedNativeResult = options.nativeSuiteCacheKey
-        ? options.nativeSuiteCache?.get(options.nativeSuiteCacheKey)
-        : undefined;
-      const nativeResult =
-        cachedNativeResult ??
-        (await beforeDeadline(
+      if (!nativeResult)
+        nativeResult = await beforeDeadline(
           () => activeSession.runNativeSuite(),
           deadlineAt,
           attemptSignal,
           () => attemptController.abort(),
-        ));
-      artifacts.push(...nativeResult.artifacts);
+        );
+      if (!cachedNativeResult && profile.nativeSuiteMode !== "self_managed")
+        artifacts.push(...nativeResult.artifacts);
       if (nativeResult.status === "unverified") {
         throw new BrowserInfrastructureError(
           nativeResult.detail ??
@@ -266,7 +310,11 @@ export async function executeBrowserValidation(options: {
           nativeResult.reason ?? "launch_failure",
         );
       }
-      if (!cachedNativeResult && options.nativeSuiteCacheKey)
+      if (
+        !cachedNativeResult &&
+        profile.nativeSuiteMode !== "self_managed" &&
+        options.nativeSuiteCacheKey
+      )
         options.nativeSuiteCache?.set(
           options.nativeSuiteCacheKey,
           nativeResult,

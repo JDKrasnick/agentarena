@@ -24,7 +24,7 @@ const plan: BrowserPlan = {
   },
   capabilityId: "browser_dom_validation",
   role: "harness_only",
-  enforcement: "brokered",
+  enforcement: "advisory",
   probeFamilies: ["interaction", "responsive"],
 };
 
@@ -34,6 +34,68 @@ function adapter(session: BrowserSession) {
 }
 
 describe("browser validation executor", () => {
+  it("runs self-managed native suites before starting the probe service", async () => {
+    const events: string[] = [];
+    const sessionNativeSuite = vi.fn();
+    const session: BrowserSession = {
+      toolVersion: "1",
+      browserVersion: "1",
+      artifacts: [],
+      waitUntilReady: vi.fn().mockResolvedValue(undefined),
+      runProbe: vi
+        .fn<BrowserSession["runProbe"]>()
+        .mockImplementation(({ request }) =>
+          Promise.resolve({
+            family: request.family,
+            profile: request.profile,
+            status: "verified",
+            blockedOrigins: [],
+            artifacts: [],
+          }),
+        ),
+      runNativeSuite: sessionNativeSuite,
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const selfManagedPlan: BrowserPlan = {
+      ...plan,
+      profile: {
+        ...plan.profile!,
+        nativeSuiteMode: "self_managed",
+      },
+    };
+    const result = await executeBrowserValidation({
+      plan: selfManagedPlan,
+      decision: "approved",
+      adapter: {
+        runner: "playwright",
+        runNativeSuiteStandalone: vi.fn().mockImplementation(() => {
+          events.push("native");
+          return Promise.resolve({
+            family: "visual_regression" as const,
+            profile: "repository_native" as const,
+            status: "verified" as const,
+            blockedOrigins: [],
+            artifacts: [],
+          });
+        }),
+        launch: vi.fn().mockImplementation(() => {
+          events.push("launch");
+          return Promise.resolve(session);
+        }),
+      },
+      worktree: "/worktree/a",
+      artifactDirectory: "/artifacts/a",
+      selectedProbes: [],
+      approvedOrigins: ["http://127.0.0.1:4173"],
+      timeoutMs: 10_000,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.status).toBe("verified");
+    expect(events).toEqual(["native", "launch"]);
+    expect(sessionNativeSuite).not.toHaveBeenCalled();
+  });
+
   it("uses fresh contexts and never retries functional failures", async () => {
     const stop = vi.fn().mockResolvedValue(undefined);
     const runProbe = vi

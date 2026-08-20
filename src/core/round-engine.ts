@@ -80,13 +80,17 @@ import {
   buildRunSpec,
   calculateRunSpecHash,
   collectFightReconnaissance,
+  assertReconnaissanceRepositoryInputsCurrent,
   GitHubPullRequestResolver,
   type ResolvedPullRequest,
   type ReconnaissanceSnapshot,
   validateReconnaissance,
 } from "../task/task-contract.js";
 import type { RunSpec } from "../contracts/round.js";
-import type { BrowserValidationResult } from "../contracts/browser.js";
+import {
+  BrowserValidationResultSchema,
+  type BrowserValidationResult,
+} from "../contracts/browser.js";
 import { findBrowserProbeResult } from "../browser/results.js";
 import {
   FailureRecordSchema,
@@ -467,6 +471,7 @@ export class RoundEngine {
       config,
       discoverCapabilities(config, reconnaissance),
     );
+    await assertReconnaissanceRepositoryInputsCurrent(reconnaissance);
     const runId = createRunId(this.now());
     const store = new ArtifactStore(config.artifactRoot, runId, {
       durableV5: true,
@@ -2037,7 +2042,10 @@ export class RoundEngine {
                 : ("missed" as const),
         ...(attack.rootDefectId ? { defectId: attack.rootDefectId } : {}),
         ...(attack.adjudication ? { adjudication: attack.adjudication } : {}),
-        artifactIds: artifactIdFor(attack.patchPath),
+        artifactIds: [
+          ...artifactIdFor(attack.patchPath),
+          ...(attack.browserArtifactRefs ?? []).flatMap(artifactIdFor),
+        ],
       })),
     );
     const checks = (
@@ -3005,11 +3013,21 @@ export class RoundEngine {
           signal: context.controller.signal,
         }),
       );
-      await context.store.writeJson(
+      const resultManifestPath = await context.store.writeJson(
         `browser/attacks/${attackId}/${subject}-${String(invocation)}-result.json`,
         result,
       );
-      return result;
+      return BrowserValidationResultSchema.parse({
+        ...result,
+        artifacts: [
+          ...result.artifacts,
+          {
+            kind: "result_manifest",
+            path: resultManifestPath,
+            failureOnly: false,
+          },
+        ],
+      });
     };
   }
 

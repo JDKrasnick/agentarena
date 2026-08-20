@@ -60,6 +60,11 @@ export function renderConsoleSummary(
   const contestants = reportContestants(state);
   const defects = reportDefects(state);
   const unresolved = defects.filter((defect) => defect.active);
+  const browserAttackArtifacts = [
+    ...new Set(
+      state.attacks.flatMap((attack) => attack.browserArtifactRefs ?? []),
+    ),
+  ];
   const completedRounds = Math.max(
     0,
     ...contestants.flatMap((contestant) =>
@@ -107,6 +112,17 @@ export function renderConsoleSummary(
                 `${contestantLabel(state.config.contestants, contestant.id)} ${contestant.browserValidation?.status ?? "not run"}${contestant.browserValidation?.reason ? ` (${contestant.browserValidation.reason})` : ""}`,
             )
             .join("; ")}`,
+        ]
+      : []),
+    ...(browserAttackArtifacts.length
+      ? [
+          terminalLink(
+            `Browser attack evidence (${String(browserAttackArtifacts.length)} artifacts)`,
+            browserAttackArtifacts.find((artifact) =>
+              artifact.endsWith("-result.json"),
+            ) ?? browserAttackArtifacts[0],
+            hyperlinks,
+          ),
         ]
       : []),
     "",

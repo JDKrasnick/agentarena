@@ -8,9 +8,14 @@ export {
 export type { BrowserPlan } from "../contracts/browser.js";
 
 const TASK_PATTERN =
-  /\b(ui|user[- ]visible|browser|dom|responsive|viewport|mobile|desktop|accessib|keyboard|focus|dialog|modal|drawer|navigation|interaction|click|hover|persistence|localstorage|sessionstorage|visual|layout|render)\b/iu;
+  /\b(ui|user[- ]visible|browser|dom|responsive|viewport|mobile|desktop|accessib(?:le|ility)|keyboard|focus|dialog|modal|drawer|navigation|interaction|click|hover|persistence|localstorage|sessionstorage|visual|layout|render(?:ed|ing|s)?)\b/iu;
 const FRONTEND_PATTERN =
   /(?:"(?:react|next|vue|svelte|angular|@playwright\/test|cypress|selenium-webdriver|webdriverio)"|playwright\.config|cypress\.config)/iu;
+const FRONTEND_EVIDENCE_PATH_PATTERN =
+  /^(?:vite\.config\.[^.]+|next\.config\.[^.]+|angular\.json|src\/routes\.ts|src\/router\.ts|app\/routes\.ts)$/u;
+const BROWSER_TEST_SCRIPT_PATTERN = /^(?:test:e2e|test:browser|e2e|browser)$/u;
+const FRONTEND_SCRIPT_COMMAND_PATTERN =
+  /\b(?:vite|next|playwright|cypress|webdriverio|selenium)\b/iu;
 const PROBE_FAMILIES: BrowserPlan["probeFamilies"] = [
   "interaction",
   "responsive",
@@ -89,8 +94,17 @@ export function planBrowserValidation(
     ...reconnaissance.sources.map((source) => source.content),
   ].join("\n");
   const taskRequired = TASK_PATTERN.test(taskText);
-  const repositoryMatches = reconnaissance.repositoryEvidence.filter((entry) =>
-    FRONTEND_PATTERN.test(`${entry.path}\n${entry.content}`),
+  const scripts = packageScripts(reconnaissance);
+  const browserScriptEvidence = Object.entries(scripts).some(
+    ([name, command]) =>
+      BROWSER_TEST_SCRIPT_PATTERN.test(name) ||
+      FRONTEND_SCRIPT_COMMAND_PATTERN.test(command),
+  );
+  const repositoryMatches = reconnaissance.repositoryEvidence.filter(
+    (entry) =>
+      FRONTEND_EVIDENCE_PATH_PATTERN.test(entry.path) ||
+      FRONTEND_PATTERN.test(`${entry.path}\n${entry.content}`) ||
+      (entry.path === "package.json" && browserScriptEvidence),
   );
   if (!taskRequired && !repositoryMatches.length && !config.browserProfile)
     return undefined;
@@ -121,7 +135,10 @@ export function planBrowserValidation(
     evidence,
     capabilityId: "browser_dom_validation" as const,
     role: "harness_only" as const,
-    enforcement: "brokered" as const,
+    // Managed Playwright contexts enforce approved origins, but the native
+    // repository command is not a cross-platform network sandbox. Advertise
+    // the weakest boundary so auto mode cannot silently approve it.
+    enforcement: "advisory" as const,
     probeFamilies: [
       ...PROBE_FAMILIES,
       ...(/\b(?:html|url|message|rich text|xss|injection)\b/iu.test(taskText)
@@ -177,7 +194,6 @@ export function planBrowserValidation(
       unavailableReason: "ambiguous_monorepo",
     });
 
-  const scripts = packageScripts(reconnaissance);
   const startupName = ["dev", "start", "serve"].find((name) => scripts[name]);
   const testName = ["test:e2e", "test:browser", "e2e"].find(
     (name) => scripts[name],
@@ -222,6 +238,10 @@ export function planBrowserValidation(
       baseUrl,
       testCommand: scriptCommand(testName, reconnaissance),
       portMode: "fixed",
+      nativeSuiteMode:
+        playwright && configuredStartup
+          ? "self_managed"
+          : "reuse_started_service",
       projects: browserConfig ? literalProjects(browserConfig.content) : [],
       allowedOrigins: [new URL(baseUrl).origin],
     },

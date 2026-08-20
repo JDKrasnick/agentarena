@@ -33,7 +33,7 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
         evidence: [{ source: "task", location: "fixture", detail: "UI task" }],
         capabilityId: "browser_dom_validation",
         role: "harness_only",
-        enforcement: "brokered",
+        enforcement: "advisory",
         probeFamilies: [
           "interaction",
           "responsive",

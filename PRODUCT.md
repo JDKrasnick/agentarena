@@ -235,9 +235,13 @@ evidence makes it optional. Resolution prefers an explicit Arena profile, then
 literal Playwright or Cypress configuration, then recognized package scripts.
 Ambiguous monorepos remain unresolved rather than selecting an application.
 
-Approved browser execution is `harness_only` and brokered to exact commands and
-approved origins. Arena never installs packages or browser binaries and treats
-every exact non-local origin as a separate capability. Built-in adapters use
+Approved browser execution is `harness_only`. Arena-managed probes broker HTTP
+and WebSocket traffic to approved origins, but the unchanged repository-native
+browser command is advisory because it executes repository code without a
+cross-platform network sandbox. The combined capability therefore advertises
+the weaker `advisory` boundary and is never silently approved in `auto` mode.
+Arena never installs packages or browser binaries and treats every exact
+non-local origin as a separate capability. Built-in adapters use
 `playwright-core` with an already installed Chrome/Chromium binary to manage
 the service and Arena probes, while the repository's declared browser command
 and project matrix run unchanged as the native suite. Each contestant gets an
@@ -268,15 +272,21 @@ The reviewing contestant decides whether an already approved exact external
 origin provides suitable evidence. It cannot expand network authority after
 approval. Authenticated sessions and secret brokering are deferred to #66;
 until that contract exists, coverage requiring login remains unavailable.
-The browser broker applies the exact-origin decision to HTTP(S) and WebSocket
-traffic, mapping `ws` and `wss` to the corresponding approved transport origin,
-and records blocked socket origins with other network violations.
+For Arena-managed probes, the browser broker applies the exact-origin decision
+to HTTP(S) and WebSocket traffic, mapping `ws` and `wss` to the corresponding
+approved transport origin, and records blocked socket origins with other
+network violations. Native repository commands retain the host account's
+network authority and are labeled accordingly during approval.
 
 Explicit profiles may choose `dynamic` loopback ports when their startup
 command honors the harness-provided `PORT`; otherwise they retain the exact
 fixed port and comparative lanes run sequentially. Repository-native suite
 results are cached within a run by immutable patch bytes and the exact command,
 while service startup and browser probes still execute for each lane.
+Profiles also declare whether the native suite reuses Arena's started service
+or manages its own service lifecycle. Auto-discovered Playwright `webServer`
+commands use the self-managed mode so Arena does not occupy the runner's port;
+reuse mode receives the resolved `PORT` and base-URL environment.
 
 Functional assertions run once. Browser/server infrastructure may receive one
 bounded retry with guaranteed teardown; a first-fail/second-pass assertion is

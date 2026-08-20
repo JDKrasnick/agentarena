@@ -606,17 +606,20 @@ export async function validateAttack(
     );
   }
 
-  const denied = attack.requiredCapabilities.find((id) => {
+  const unavailable = attack.requiredCapabilities.find((id) => {
     const capability = options.permissionPolicy.capabilities.find(
       (entry) => entry.id === id,
     );
-    return capability?.status === "denied";
+    return capability && capability.status !== "approved";
   });
-  if (denied) {
+  if (unavailable) {
+    const status = options.permissionPolicy.capabilities.find(
+      (entry) => entry.id === unavailable,
+    )?.status;
     return withOutcome(
       attack,
       "capability_denied",
-      `Capability ${denied} is denied`,
+      `Capability ${unavailable} is ${status ?? "unavailable"}`,
     );
   }
   const unknown = attack.requiredCapabilities.find(
@@ -834,13 +837,20 @@ export async function validateAttack(
             : [attack.patchPath]),
         ],
       );
+      attack.browserArtifactRefs = [
+        ...new Set(
+          [...authorBrowser.artifacts, ...targetBrowser.artifacts].map(
+            (artifact) => artifact.path,
+          ),
+        ),
+      ];
       if (
         authorBrowser.reason === "timed_out" ||
         targetBrowser.reason === "timed_out"
       )
         return withOutcome(
           attack,
-          "invalid",
+          "execution_inconclusive",
           "Browser attack exceeded its configured stage budget",
         );
       const authorProbe = findBrowserProbeResult(
@@ -881,12 +891,10 @@ export async function validateAttack(
         authorProbe.status === "unverified" ||
         targetProbe.status === "unverified"
       )
-        return judgeFallback(
-          options,
+        return withOutcome(
           attack,
+          "execution_inconclusive",
           "Comparative browser execution was unverified",
-          options.targetPatch,
-          target,
         );
       if (authorProbe.status === "failed")
         return withOutcome(

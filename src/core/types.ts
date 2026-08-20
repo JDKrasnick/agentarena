@@ -649,6 +649,7 @@ export const AttackSchema = z.object({
   focusedCommand: z.string(),
   evidenceKind: z.enum(["patch", "browser_probe"]).optional(),
   browserProbe: BrowserProbeRequestSchema.optional(),
+  browserArtifactRefs: z.array(z.string().min(1)).optional(),
   status: AttackStatusSchema,
   recoil: z.union([z.literal(5), z.literal(10), z.literal(15)]).optional(),
   proposedSeverity: SeveritySchema.optional(),
@@ -827,6 +828,9 @@ export const BrowserProfileSchema = z
     testCommand: z.string().trim().min(1),
     teardownCommand: z.string().trim().min(1).optional(),
     portMode: z.enum(["fixed", "dynamic"]).default("fixed"),
+    nativeSuiteMode: z
+      .enum(["reuse_started_service", "self_managed"])
+      .default("reuse_started_service"),
     projects: z.array(z.string().trim().min(1)).default([]),
     allowedOrigins: z.array(z.string().url()).min(1),
   })

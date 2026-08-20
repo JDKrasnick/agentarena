@@ -32,7 +32,7 @@ export interface CapabilityRequest {
 
 export function discoverCapabilities(
   config: FightConfig,
-  _reconnaissance?: ReconnaissanceSnapshot,
+  reconnaissance?: ReconnaissanceSnapshot,
 ): CapabilityRequest[] {
   const requests: CapabilityRequest[] = [
     {
@@ -81,14 +81,14 @@ export function discoverCapabilities(
       });
     }
   }
-  if (_reconnaissance) {
-    const browser = planBrowserValidation(config, _reconnaissance);
+  if (reconnaissance) {
+    const browser = planBrowserValidation(config, reconnaissance);
     if (browser) {
       const profile = browser.profile;
       requests.push({
         id: browser.capabilityId,
         reason: profile
-          ? `Browser/DOM validation via ${profile.runner}; startup ${profile.startupCommand}; health ${profile.healthUrl}; base ${profile.baseUrl}; tests ${profile.testCommand}; projects ${profile.projects.join(", ") || "default"}; evidence ${browser.evidence.map((entry) => entry.location).join(", ")}`
+          ? `Browser/DOM validation via ${profile.runner}; Arena probes broker approved origins, while native command execution is advisory; startup ${profile.startupCommand}; health ${profile.healthUrl}; base ${profile.baseUrl}; tests ${profile.testCommand}; native suite ${profile.nativeSuiteMode ?? "reuse_started_service"}; projects ${profile.projects.join(", ") || "default"}; evidence ${browser.evidence.map((entry) => entry.location).join(", ")}`
           : `Browser/DOM validation is ${browser.requirement} but unavailable: ${browser.unavailableReason}`,
         risk: "medium",
         requirement: browser.requirement,

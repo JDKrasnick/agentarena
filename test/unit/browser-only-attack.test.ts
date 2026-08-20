@@ -154,7 +154,13 @@ describe("browser-only attacks", () => {
                 artifacts: [],
               },
             ],
-            artifacts: [],
+            artifacts: [
+              {
+                kind: "result_manifest",
+                path: `/artifacts/${subject}-result.json`,
+                failureOnly: false,
+              },
+            ],
             ...(subject === "target"
               ? {
                   reason: "application_failure" as const,
@@ -198,6 +204,10 @@ describe("browser-only attacks", () => {
 
       expect(result.status).toBe("landed");
       expect(result.evidenceKind).toBe("browser_probe");
+      expect(result.browserArtifactRefs).toEqual([
+        "/artifacts/author-result.json",
+        "/artifacts/target-result.json",
+      ]);
       expect(validateBrowser).toHaveBeenCalledTimes(2);
 
       const selectedProbePasses = vi.fn(
@@ -282,6 +292,107 @@ describe("browser-only attacks", () => {
       });
 
       expect(unrelatedFailure.status).toBe("blocked");
+
+      const adjudicate = vi.fn().mockResolvedValue({
+        decision: "confirmed" as const,
+        relevant: true,
+        expectedBehaviorClearlySupported: true,
+        evidencePointsToDefect: true,
+        rootDefectId: "settings-dialog",
+        severity: "medium" as const,
+        rationale: "The task supports the behavior",
+      });
+      const unverified = await validateAttack({
+        attack: { ...attack, id: "browser-only-timeout", checks: [] },
+        authorPatch,
+        targetPatch,
+        runSpec: {} as never,
+        permissionPolicy: {
+          defaultMode: "confirm",
+          reducedValidationAccepted: false,
+          capabilities: [
+            {
+              id: "browser_dom_validation",
+              reason: "Browser comparison",
+              risk: "medium",
+              requirement: "required",
+              role: "harness_only",
+              enforcement: "brokered",
+              mode: "confirm",
+              scopes: [],
+              status: "approved",
+            },
+          ],
+        },
+        config,
+        worktrees,
+        verifier: { ...verifier, adjudicate },
+        validateBrowser: (_worktree, probe, subject) =>
+          Promise.resolve({
+            status: "unverified",
+            provisionAttempts: 2,
+            reason: "timed_out",
+            probes: [
+              {
+                probeId: probe.id,
+                family: probe.family,
+                profile: probe.profile,
+                status: "unverified",
+                reason: "timed_out",
+                contextId: `${subject}-unverified`,
+                requiredCapabilityIds: ["browser_dom_validation"],
+                blockedOrigins: [],
+                artifacts: [],
+              },
+            ],
+            artifacts: [],
+            failureAttribution: "harness_transport",
+          }),
+        logRoot: path.join(temporaryRoot, "unverified-logs"),
+        signal: new AbortController().signal,
+        knownRootDefects: new Set(),
+      });
+
+      expect(unverified.status).toBe("execution_inconclusive");
+      expect(unverified.damage).toBeUndefined();
+      expect(adjudicate).not.toHaveBeenCalled();
+
+      const unavailableCapability = await validateAttack({
+        attack: { ...attack, id: "browser-only-capability-gap", checks: [] },
+        authorPatch,
+        targetPatch,
+        runSpec: {} as never,
+        permissionPolicy: {
+          defaultMode: "confirm",
+          reducedValidationAccepted: true,
+          capabilities: [
+            {
+              id: "browser_dom_validation",
+              reason: "Browser comparison",
+              risk: "medium",
+              requirement: "required",
+              role: "harness_only",
+              enforcement: "brokered",
+              mode: "confirm",
+              scopes: [],
+              status: "provisioning_failed",
+            },
+          ],
+        },
+        config,
+        worktrees,
+        verifier,
+        validateBrowser,
+        logRoot: path.join(temporaryRoot, "capability-gap-logs"),
+        signal: new AbortController().signal,
+        knownRootDefects: new Set(),
+      });
+
+      expect(unavailableCapability).toMatchObject({
+        status: "capability_denied",
+        outcomeReason:
+          "Capability browser_dom_validation is provisioning_failed",
+      });
     } finally {
       await worktrees.cleanup();
     }

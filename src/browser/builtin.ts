@@ -15,7 +15,10 @@ import {
   type BrowserContext,
   type Page,
 } from "playwright-core";
-import { runShellCommand } from "../runner/process-runner.js";
+import {
+  minimalEnvironment,
+  runShellCommand,
+} from "../runner/process-runner.js";
 import type {
   BrowserArtifact,
   BrowserProbeResult,
@@ -287,6 +290,54 @@ async function familyInvariant(
   return undefined;
 }
 
+function nativeSuiteEnvironment(
+  profile: NonNullable<
+    Parameters<BrowserAdapter["launch"]>[0]["plan"]["profile"]
+  >,
+): Record<string, string> {
+  const port = new URL(profile.baseUrl).port;
+  return {
+    ...(port ? { PORT: port } : {}),
+    BASE_URL: profile.baseUrl,
+    PLAYWRIGHT_BASE_URL: profile.baseUrl,
+    CYPRESS_BASE_URL: profile.baseUrl,
+  };
+}
+
+async function runNativeSuiteCommand(
+  input: Parameters<BrowserAdapter["launch"]>[0],
+): Promise<Omit<BrowserProbeResult, "contextId" | "requiredCapabilityIds">> {
+  const result = await runShellCommand(input.plan.profile.testCommand, {
+    cwd: input.worktree,
+    timeoutMs: Math.max(1, input.deadlineAt - Date.now()),
+    logPrefix: path.join(input.artifactDirectory, "native-suite"),
+    env: nativeSuiteEnvironment(input.plan.profile),
+    signal: input.signal,
+  });
+  const artifacts: BrowserArtifact[] = [
+    { kind: "runner_result", path: result.stdoutPath, failureOnly: false },
+    { kind: "runner_result", path: result.stderrPath, failureOnly: false },
+  ];
+  return {
+    family: "visual_regression",
+    profile: "repository_native",
+    status:
+      result.failureClass === "arena_infrastructure"
+        ? "unverified"
+        : result.exitCode === 0
+          ? "verified"
+          : "failed",
+    ...(result.failureClass === "arena_infrastructure"
+      ? { reason: "launch_failure" as const }
+      : result.exitCode === 0
+        ? {}
+        : { reason: "application_failure" as const }),
+    detail: `Repository-native browser command exited with ${String(result.exitCode)}`,
+    blockedOrigins: [],
+    artifacts,
+  };
+}
+
 class BuiltInBrowserSession implements BrowserSession {
   readonly artifacts: BrowserArtifact[];
   readonly toolVersion = "playwright-core-1.62.1";
@@ -341,34 +392,7 @@ class BuiltInBrowserSession implements BrowserSession {
   async runNativeSuite(): Promise<
     Omit<BrowserProbeResult, "contextId" | "requiredCapabilityIds">
   > {
-    const result = await runShellCommand(this.input.plan.profile.testCommand, {
-      cwd: this.input.worktree,
-      timeoutMs: Math.max(1, this.input.deadlineAt - Date.now()),
-      logPrefix: path.join(this.input.artifactDirectory, "native-suite"),
-      signal: this.input.signal,
-    });
-    const artifacts: BrowserArtifact[] = [
-      { kind: "runner_result", path: result.stdoutPath, failureOnly: false },
-      { kind: "runner_result", path: result.stderrPath, failureOnly: false },
-    ];
-    return {
-      family: "visual_regression",
-      profile: "repository_native",
-      status:
-        result.failureClass === "arena_infrastructure"
-          ? "unverified"
-          : result.exitCode === 0
-            ? "verified"
-            : "failed",
-      ...(result.failureClass === "arena_infrastructure"
-        ? { reason: "launch_failure" as const }
-        : result.exitCode === 0
-          ? {}
-          : { reason: "application_failure" as const }),
-      detail: `Repository-native browser command exited with ${String(result.exitCode)}`,
-      blockedOrigins: [],
-      artifacts,
-    };
+    return runNativeSuiteCommand(this.input);
   }
 
   async runProbe({
@@ -549,6 +573,12 @@ class BuiltInBrowserSession implements BrowserSession {
 class BuiltInBrowserAdapter implements BrowserAdapter {
   constructor(readonly runner: BrowserAdapter["runner"]) {}
 
+  runNativeSuiteStandalone(
+    input: Parameters<BrowserAdapter["launch"]>[0],
+  ): ReturnType<NonNullable<BrowserAdapter["runNativeSuiteStandalone"]>> {
+    return runNativeSuiteCommand(input);
+  }
+
   async launch(
     input: Parameters<BrowserAdapter["launch"]>[0],
   ): Promise<BrowserSession> {
@@ -607,7 +637,7 @@ class BuiltInBrowserAdapter implements BrowserAdapter {
       shell: true,
       detached: process.platform !== "win32",
       stdio: ["ignore", stdout.fd, stderr.fd],
-      env: { ...process.env, ...(port ? { PORT: port } : {}) },
+      env: minimalEnvironment(port ? { PORT: port } : {}),
     });
     child.once("error", () => undefined);
     return new BuiltInBrowserSession(runtimeInput, child, stdout, stderr, [
