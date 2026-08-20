@@ -9,6 +9,10 @@ colors:
   classic-mint: "#70d8c2"
   developer-canvas: "#0d1117"
   developer-panel: "#161b22"
+  developer-panel-raised: "#1c232d"
+  developer-line: "#30363d"
+  developer-text: "#f0f3f6"
+  developer-muted: "#9da7b3"
   developer-blue: "#4493f8"
   developer-green: "#3fb950"
   developer-red: "#f85149"
@@ -74,7 +78,7 @@ components:
     size: "28px"
   developer-card:
     backgroundColor: "{colors.developer-panel}"
-    textColor: "{colors.tactics-text}"
+    textColor: "{colors.developer-text}"
     rounded: "{rounded.dashboard-card}"
     padding: "18px"
   classic-card:
@@ -225,9 +229,11 @@ battle state.
 - **Classic Shell and Night Edition:** shared three-column topology: `176px`
   round rail, flexible arena (`minmax(600px, 1fr)`), and `310px` evidence rail.
   Equal fighter cards flank a narrow versus divider.
-- **Developer Dashboard:** the same semantic three-column topology rendered as
-  a conventional dense dark tool with flat panels, compact radii, and minimal
-  ornament. Redundant kickers are hidden so engineering facts lead.
+- **Developer Dashboard:** a dashboard-native three-column workspace: `260px`
+  dedicated vertical round timeline, flexible paired contestant workspaces,
+  and `310px` chronological activity rail, with a compact run-status bar
+  spanning the bottom. Check tables and summary logs make engineering facts
+  the primary visual material.
 - **Live Arena Broadcast:** a flexible live feed plus a `340px` Battle Desk.
   The feed contains a split field, opposing provider discs, versus marker, and
   scorebug; the desk holds round totals and play-by-play.
@@ -239,14 +245,17 @@ battle state.
   structures. The overview remains compact; detail exposes full output,
   invocations, checks, health changes, and attack involvement.
 
-At `1180px`, shared detail collapses to one column and the shared evidence rail
-moves below the arena. At `980px`, hardware frames flatten, Broadcast stacks
-its Battle Desk, and the Tactics evidence rail becomes a two-column band below
-the map. At `760px`, shared arenas switch to a horizontal round strip and
-stacked fighters. At `700px`, Tactics compresses matchup bars, turns the round
-rail into a horizontal strip, and installs a fixed two-command inspect dock at
-the bottom edge. Those compact Inspect controls remain visible while the map
-scrolls and open the same full-detail view as the desktop command strip.
+At `1200px`, Developer Dashboard moves its activity rail below the timeline and
+contestant workspace. At `1180px`, shared detail collapses to one column and the
+shared evidence rail moves below the arena. At `980px`, hardware frames flatten,
+Broadcast stacks its Battle Desk, and the Tactics evidence rail becomes a
+two-column band below the map. At `760px`, shared arenas switch to a horizontal
+round strip and stacked fighters. At `700px`, Developer Dashboard becomes a
+horizontal round selector with stacked contestant workspaces; Tactics compresses
+matchup bars, turns the round rail into a horizontal strip, and installs a fixed
+two-command inspect dock at the bottom edge. Those compact Inspect controls
+remain visible while the map scrolls and open the same full-detail view as the
+desktop command strip.
 
 **The Metaphor-First Rule.** The renderer's cards, feed, or tactical map remain
 the first-viewport anchor; operator controls stay immediately reachable without
@@ -320,12 +329,16 @@ are explicitly read-only and never pause, rewind, rerun, or mutate execution.
 
 ### Developer Dashboard
 
-Developer Dashboard intentionally reuses the shared round/fighter/evidence
-topology. Its visual grammar is conventional: flat near-black canvas, charcoal
-sidebars and cards, `6px` card corners, compact provider wells, blue focus,
-green success, red failure, and no ornamental kicker text. It is the quiet,
-high-density option for developers who want the evidence model with minimal
-metaphor.
+Developer Dashboard owns the conventional operations-console topology shown in
+the approved canon concept: a true round timeline, paired contestant workspaces
+with health, metrics, check tables and normalized agent logs, an independent
+chronological activity rail, and a bottom run-status bar. Steering and Inspect
+remain present in each contestant workspace; Inspect opens the same complete
+terminal-order detail used by every theme. Its visual grammar is flat near-black
+canvas, charcoal sidebars and modules, `4–6px` corners, compact provider wells,
+blue focus, green success, red failure, and no ornamental game framing. It is
+the quiet, high-density option for developers who want the evidence model with
+minimal metaphor.
 
 ### Live Arena Broadcast
 

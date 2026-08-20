@@ -417,10 +417,13 @@ battle records, artifacts, scoring, project configuration, and recovery hashes.
 Ink and plain CLI behavior is unchanged.
 
 Developer Dashboard is a conventional dark observability renderer with the
-shared semantic three-column structure. 16-Bit Tactics uses a code-native tile
-field, tactical nodes, authoritative attack and repair routes, opposing status
-bars, inspection commands, and an evidence channel. It does not bundle
-third-party game characters, logos, sprites, or screenshots. Stored
+dashboard-native three-column structure: round timeline, paired contestant
+workspaces, and chronological activity. Each contestant workspace exposes
+health, checks, normalized work summaries, steering, and full-detail inspection;
+a bottom status bar keeps the run identity and state visible. 16-Bit Tactics
+uses a code-native tile field, tactical nodes, authoritative attack and repair
+routes, opposing status bars, inspection commands, and an evidence channel. It
+does not bundle third-party game characters, logos, sprites, or screenshots. Stored
 `sticker-league` preferences migrate to `developer-dashboard`; `evidence-deck`
 and `monster-battle` preferences migrate to `retro-tactics`.
 

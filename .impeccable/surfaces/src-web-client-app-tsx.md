@@ -7,7 +7,7 @@ related_targets: ["src/web/client/styles.css", "src/web/client/index.html"]
 
 # Retro Tactics renderer brief
 
-- Scope: replace Monster Battle across live arena, replay, fighter detail, and results; replace Sticker League with a conventional developer-dashboard theme using the shared semantic layout.
+- Scope: replace Monster Battle across live arena, replay, fighter detail, and results; replace Sticker League with a conventional developer-dashboard theme using its own operations-console layout.
 - Mode: Operate. Developers must read health, checks, current work, rounds, evidence, and actions at a glance.
 - Direction: an original late-16-bit tactical strategy console for coding agents. No copied game characters, sprites, logos, or proprietary UI.
 - Approved composition: `.impeccable/mocks/retro-tactics-b-operator-console.png`.
@@ -16,17 +16,17 @@ related_targets: ["src/web/client/styles.css", "src/web/client/index.html"]
 
 ## Implementation inventory
 
-| Ingredient          | Commitment                                                                                 | Medium                                                           |
-| ------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
-| Match header        | Two angular contestant status bars, provider, model, HP, checks, VS                        | Semantic HTML/CSS plus existing provider PNGs                    |
-| Round rail          | Persistent compact numbered live/recorded navigation in the left bezel                     | Existing round state and native buttons                          |
-| Tactical map        | Dense rectangular tile field covering most of the central pane                             | Responsive CSS tile field with authored SVG geometry             |
-| Agent territories   | Purple left and orange right base nodes with actual activity labels                        | Semantic buttons with CSS pixel geometry                         |
-| Battle paths        | Attack, repair, and neutral routes derived from recorded events                            | SVG paths and state classes; motion only on authoritative change |
-| Activity rail       | Recent attacks/evidence, phase and directional ownership                                   | Semantic aside and real recorded text                            |
-| Command strip       | Inspect Codex and Inspect Claude as prominent angular controls                             | Native buttons opening full-output detail                        |
-| Developer dashboard | Conventional dark three-column shared renderer replacing the redundant second Pocket theme | Existing semantic React components with neutral theme tokens     |
-| Results/detail      | Shared structures in tactical violet/orange/aqua materials; full output remains unbounded  | Existing React structures plus theme CSS                         |
+| Ingredient          | Commitment                                                                                | Medium                                                           |
+| ------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Match header        | Two angular contestant status bars, provider, model, HP, checks, VS                       | Semantic HTML/CSS plus existing provider PNGs                    |
+| Round rail          | Persistent compact numbered live/recorded navigation in the left bezel                    | Existing round state and native buttons                          |
+| Tactical map        | Dense rectangular tile field covering most of the central pane                            | Responsive CSS tile field with authored SVG geometry             |
+| Agent territories   | Purple left and orange right base nodes with actual activity labels                       | Semantic buttons with CSS pixel geometry                         |
+| Battle paths        | Attack, repair, and neutral routes derived from recorded events                           | SVG paths and state classes; motion only on authoritative change |
+| Activity rail       | Recent attacks/evidence, phase and directional ownership                                  | Semantic aside and real recorded text                            |
+| Command strip       | Inspect Codex and Inspect Claude as prominent angular controls                            | Native buttons opening full-output detail                        |
+| Developer dashboard | Round timeline, paired check/log workspaces, chronological activity, and run status bar   | Dedicated semantic React renderer with neutral dashboard tokens  |
+| Results/detail      | Shared structures in tactical violet/orange/aqua materials; full output remains unbounded | Existing React structures plus theme CSS                         |
 
 ## Component grammar
 

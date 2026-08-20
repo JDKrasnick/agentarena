@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-20T05:15:25.962Z",
+  "generatedAt": "2026-08-20T05:51:13.000Z",
   "title": "Design System: Agent Arena Desktop Observatory",
   "extensions": {
     "colorMeta": {
@@ -107,6 +107,66 @@
           "color-mix(in oklch, #161b22 82%, white)",
           "color-mix(in oklch, #161b22 55%, white)",
           "color-mix(in oklch, #161b22 28%, white)"
+        ]
+      },
+      "developer-panel-raised": {
+        "role": "neutral",
+        "displayName": "Developer Raised Panel",
+        "canonical": "#1c232d",
+        "tonalRamp": [
+          "color-mix(in oklch, #1c232d 36%, black)",
+          "color-mix(in oklch, #1c232d 52%, black)",
+          "color-mix(in oklch, #1c232d 68%, black)",
+          "color-mix(in oklch, #1c232d 84%, black)",
+          "#1c232d",
+          "color-mix(in oklch, #1c232d 82%, white)",
+          "color-mix(in oklch, #1c232d 55%, white)",
+          "color-mix(in oklch, #1c232d 28%, white)"
+        ]
+      },
+      "developer-line": {
+        "role": "neutral",
+        "displayName": "Developer Rule",
+        "canonical": "#30363d",
+        "tonalRamp": [
+          "color-mix(in oklch, #30363d 36%, black)",
+          "color-mix(in oklch, #30363d 52%, black)",
+          "color-mix(in oklch, #30363d 68%, black)",
+          "color-mix(in oklch, #30363d 84%, black)",
+          "#30363d",
+          "color-mix(in oklch, #30363d 82%, white)",
+          "color-mix(in oklch, #30363d 55%, white)",
+          "color-mix(in oklch, #30363d 28%, white)"
+        ]
+      },
+      "developer-text": {
+        "role": "neutral",
+        "displayName": "Developer Text",
+        "canonical": "#f0f3f6",
+        "tonalRamp": [
+          "color-mix(in oklch, #f0f3f6 36%, black)",
+          "color-mix(in oklch, #f0f3f6 52%, black)",
+          "color-mix(in oklch, #f0f3f6 68%, black)",
+          "color-mix(in oklch, #f0f3f6 84%, black)",
+          "#f0f3f6",
+          "color-mix(in oklch, #f0f3f6 82%, white)",
+          "color-mix(in oklch, #f0f3f6 55%, white)",
+          "color-mix(in oklch, #f0f3f6 28%, white)"
+        ]
+      },
+      "developer-muted": {
+        "role": "neutral",
+        "displayName": "Developer Muted",
+        "canonical": "#9da7b3",
+        "tonalRamp": [
+          "color-mix(in oklch, #9da7b3 36%, black)",
+          "color-mix(in oklch, #9da7b3 52%, black)",
+          "color-mix(in oklch, #9da7b3 68%, black)",
+          "color-mix(in oklch, #9da7b3 84%, black)",
+          "#9da7b3",
+          "color-mix(in oklch, #9da7b3 82%, white)",
+          "color-mix(in oklch, #9da7b3 55%, white)",
+          "color-mix(in oklch, #9da7b3 28%, white)"
         ]
       },
       "developer-blue": {
@@ -473,6 +533,10 @@
     ],
     "breakpoints": [
       {
+        "name": "developer-activity-stack",
+        "value": "1200px"
+      },
+      {
         "name": "shared-detail-stack",
         "value": "1180px"
       },
@@ -485,7 +549,7 @@
         "value": "760px"
       },
       {
-        "name": "compact-tactics-dock",
+        "name": "developer-mobile-and-compact-tactics",
         "value": "700px"
       }
     ]
@@ -500,12 +564,19 @@
       "css": ".ds-theme-option { display:grid; place-items:center; width:28px; height:28px; padding:0; border:1px solid #b8aecb; border-radius:8px; color:#f2ebdf; background:transparent; cursor:pointer; } .ds-theme-option span { width:13px; height:13px; border:2px solid #43d5d1; border-radius:1px; background:linear-gradient(135deg,#7949ba 0 44%,#396f38 44% 58%,#f08a22 58%); } .ds-theme-option[aria-pressed=\"true\"] { outline:2px solid currentColor; outline-offset:2px; } .ds-theme-option:hover { background:#211a38; } .ds-theme-option:focus-visible { outline:2px solid #43d5d1; outline-offset:2px; }"
     },
     {
-      "name": "Developer Card",
+      "name": "Developer Contestant Workspace",
       "kind": "card",
       "refersTo": "developer-card",
-      "description": "A quiet dense dashboard panel for normalized contestant facts.",
-      "html": "<article class=\"ds-developer-card\"><strong>Codex</strong><span>87 HP · 12/12 checks</span></article>",
-      "css": ".ds-developer-card { display:grid; gap:6px; padding:18px; border:1px solid #30363d; border-radius:6px; color:#f0f3f6; background:#161b22; font:400 14px/1.5 \"Arena Space\",sans-serif; } .ds-developer-card span { color:#9da7b3; } .ds-developer-card:hover { background:#1c232d; } .ds-developer-card:focus-within { outline:2px solid #4493f8; outline-offset:2px; }"
+      "description": "A paired operations workspace combining health, check facts, normalized summaries, steering, and the full-detail Inspect path.",
+      "html": "<article class=\"ds-developer-card\"><header><div><strong>Codex</strong><span>gpt-5 · 87 HP</span></div><b>12/12 checks</b></header><section><strong>CHECK RESULTS</strong><p><i></i> focused-test · passed</p></section><section><strong>AGENT LOG</strong><p><time>14:32:08</time> Added a regression test for sealed recovery.</p></section><footer><input aria-label=\"Steer Codex\" placeholder=\"Queue one note…\"><button type=\"button\">Queue</button><button type=\"button\">Inspect Codex</button></footer></article>",
+      "css": ".ds-developer-card { display:grid; gap:12px; overflow:hidden; border:1px solid #3f70c8; border-radius:6px; color:#f0f3f6; background:#161b22; font:400 12px/1.45 \"Arena Space\",sans-serif; } .ds-developer-card>header { display:flex; align-items:center; justify-content:space-between; padding:14px 16px 2px; } .ds-developer-card>header div { display:grid; } .ds-developer-card>header span,.ds-developer-card time { color:#9da7b3; font:10px ui-monospace,SFMono-Regular,Menlo,monospace; } .ds-developer-card section { margin:0 12px; border:1px solid #30363d; border-radius:4px; padding:10px; background:#11161d; } .ds-developer-card section>strong { font-size:10px; letter-spacing:.05em; } .ds-developer-card section p { margin:8px 0 0; } .ds-developer-card section i { display:inline-block; width:7px; height:7px; margin-right:6px; border-radius:50%; background:#56d364; } .ds-developer-card footer { display:grid; grid-template-columns:minmax(0,1fr) auto auto; border-top:1px solid #30363d; padding:10px 12px; } .ds-developer-card input { min-width:0; border:1px solid #30363d; border-radius:4px 0 0 4px; padding:8px; color:#f0f3f6; background:#0d1117; } .ds-developer-card button { border:1px solid #3f70c8; padding:8px 10px; color:#fff; background:#1f6feb; font-weight:700; cursor:pointer; } .ds-developer-card button:last-child { margin-left:8px; border-radius:4px; } .ds-developer-card button:hover { background:#388bfd; } .ds-developer-card :is(button,input):focus-visible { outline:2px solid #58a6ff; outline-offset:2px; }"
+    },
+    {
+      "name": "Developer Round Timeline",
+      "kind": "nav",
+      "description": "A dedicated vertical live-and-recorded round selector that becomes horizontal below 700px.",
+      "html": "<nav class=\"ds-developer-timeline\" aria-label=\"Round timeline\"><button type=\"button\"><i></i><span><strong>Live arena</strong><small>Attack validation</small></span></button><button class=\"is-selected\" type=\"button\" aria-current=\"page\"><i>2</i><span><strong>Round 2</strong><small>3 recorded moves</small></span></button></nav>",
+      "css": ".ds-developer-timeline { position:relative; display:grid; gap:2px; width:232px; padding:12px 14px; color:#9da7b3; background:#11161d; font-family:\"Arena Space\",sans-serif; } .ds-developer-timeline::before { position:absolute; top:34px; bottom:34px; left:31px; width:1px; background:#596575; content:\"\"; } .ds-developer-timeline button { position:relative; display:grid; grid-template-columns:34px minmax(0,1fr); gap:10px; align-items:center; border:0; border-radius:6px; padding:11px 8px 11px 0; color:inherit; background:transparent; text-align:left; cursor:pointer; } .ds-developer-timeline i { z-index:1; display:grid; place-items:center; width:26px; height:26px; margin-left:4px; border:1px solid #596575; border-radius:50%; background:#11161d; font:normal 11px ui-monospace,monospace; } .ds-developer-timeline span { display:grid; gap:2px; } .ds-developer-timeline strong { color:#f0f3f6; font-size:13px; } .ds-developer-timeline small { font-size:10px; } .ds-developer-timeline button:hover,.ds-developer-timeline .is-selected { color:#f0f3f6; background:#1c232d; } .ds-developer-timeline .is-selected i { border-color:#4493f8; color:#fff; background:#1f6feb; } .ds-developer-timeline button:focus-visible { outline:2px solid #58a6ff; outline-offset:2px; }"
     },
     {
       "name": "Classic Action",

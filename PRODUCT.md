@@ -111,10 +111,12 @@ never enters battle events, artifacts, scoring, configuration, or recovery
 hashes. Terminal and plain displays remain unchanged.
 
 Developer Dashboard replaces the redundant second Pocket-family variant with a
-conventional dark observability layout. 16-Bit Tactics is an original retro
-strategy renderer: opposing status bars, a data-driven tactical node map,
-recorded attack and repair routes, an evidence channel, and inspect commands.
-It ships no third-party characters, logos, sprites, or game assets. Existing
+conventional dark observability workspace: a round timeline, paired contestant
+check and summary-log panels, a chronological activity rail, steering controls,
+and a compact run-status bar. 16-Bit Tactics is an original retro strategy
+renderer: opposing status bars, a data-driven tactical node map, recorded attack
+and repair routes, an evidence channel, and inspect commands. It ships no
+third-party characters, logos, sprites, or game assets. Existing
 `sticker-league` preferences migrate to `developer-dashboard`; `evidence-deck`
 and `monster-battle` preferences migrate to `retro-tactics`.
 

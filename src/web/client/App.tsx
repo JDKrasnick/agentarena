@@ -841,6 +841,305 @@ interface AlternateArenaProps {
   onFighter: (id: ContestantId) => void;
 }
 
+interface DeveloperDashboardProps extends AlternateArenaProps {
+  onSteer: (id: ContestantId, note: string) => Promise<void>;
+  canSteer: boolean;
+  steeringUnavailable: string;
+}
+
+function DeveloperAgentPanel({
+  id,
+  fighter,
+  isHistorical,
+  canSteer,
+  steeringUnavailable,
+  onFighter,
+  onSteer,
+}: {
+  id: ContestantId;
+  fighter: DashboardContestant;
+  isHistorical: boolean;
+  canSteer: boolean;
+  steeringUnavailable: string;
+  onFighter: (id: ContestantId) => void;
+  onSteer: (id: ContestantId, note: string) => Promise<void>;
+}) {
+  const [note, setNote] = useState("");
+  const provider = title(fighter.provider);
+  const checksPassed = fighter.checks.filter(
+    (check) => check.status === "passed",
+  ).length;
+  const summaries = fighter.summaries.slice(-4).reverse();
+
+  return (
+    <article className={`developer-agent developer-agent-${id}`}>
+      <header>
+        <ProviderDisc fighter={fighter} id={id} />
+        <div>
+          <strong>{provider}</strong>
+          <span>{fighter.model ?? "Default model"}</span>
+        </div>
+        <div className="developer-health">
+          <b>{fighter.health}</b>
+          <span>HP</span>
+        </div>
+      </header>
+      <div
+        className="developer-health-track"
+        aria-label={`${provider} health ${String(fighter.health)} of 100`}
+      >
+        <span style={{ width: `${String(fighter.health)}%` }} />
+      </div>
+      <dl className="developer-metrics">
+        <div>
+          <dt>Checks</dt>
+          <dd>
+            {checksPassed}/{fighter.checks.length}
+          </dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd>{fighter.status.replaceAll("_", " ")}</dd>
+        </div>
+        <div>
+          <dt>Runs</dt>
+          <dd>{fighter.invocations.length}</dd>
+        </div>
+      </dl>
+      <section className="developer-checks">
+        <header>
+          <strong>Check results</strong>
+          <span>{checksPassed} passing</span>
+        </header>
+        {fighter.checks.length ? (
+          <table>
+            <thead>
+              <tr>
+                <th>Check</th>
+                <th>Round</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {fighter.checks.slice(-5).map((check) => (
+                <tr key={`${check.id}-${check.status}`}>
+                  <td>{check.id}</td>
+                  <td>{check.round ? `R${check.round}` : "—"}</td>
+                  <td>
+                    <span className={`developer-check is-${check.status}`}>
+                      <i /> {check.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p>No checks recorded yet.</p>
+        )}
+      </section>
+      <section className="developer-log">
+        <header>
+          <strong>Agent log</strong>
+          <button type="button" onClick={() => onFighter(id)}>
+            View full log
+          </button>
+        </header>
+        <div>
+          {summaries.length ? (
+            summaries.map((summary) => (
+              <p key={summary.invocationId}>
+                <time>{summary.timestamp.slice(11, 19)}</time>
+                <span>{summary.text}</span>
+              </p>
+            ))
+          ) : (
+            <p className="is-empty">Waiting for a work summary…</p>
+          )}
+        </div>
+      </section>
+      <footer>
+        {isHistorical ? (
+          <span>Read-only recorded state</span>
+        ) : canSteer ? (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!note.trim()) return;
+              void onSteer(id, note).then(() => setNote(""));
+            }}
+          >
+            <input
+              aria-label={`Steer ${provider}`}
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder={`Queue one note for ${provider}…`}
+            />
+            <button type="submit" disabled={!note.trim()}>
+              Queue
+            </button>
+          </form>
+        ) : (
+          <span>{steeringUnavailable}</span>
+        )}
+        <button type="button" onClick={() => onFighter(id)}>
+          Inspect {provider} <OpenIcon />
+        </button>
+      </footer>
+    </article>
+  );
+}
+
+function DeveloperDashboardArena({
+  state,
+  rounds,
+  selectedRound,
+  contestants,
+  attacks,
+  stage,
+  onRound,
+  onFighter,
+  onSteer,
+  canSteer,
+  steeringUnavailable,
+}: DeveloperDashboardProps) {
+  const latest = attacks.at(-1);
+  const activeRound = state.round ?? rounds.at(-1) ?? 1;
+  const isHistorical = selectedRound !== "live";
+
+  return (
+    <main className="developer-console">
+      <aside className="developer-timeline" aria-label="Round timeline">
+        <header>
+          <strong>Round timeline</strong>
+          <span>{isHistorical ? "Replay" : "Live run"}</span>
+        </header>
+        <nav>
+          <button
+            type="button"
+            className={selectedRound === "live" ? "is-selected" : ""}
+            onClick={() => onRound("live")}
+          >
+            <i />
+            <span>
+              <strong>Live arena</strong>
+              <small>{stage}</small>
+            </span>
+          </button>
+          {rounds.map((round) => {
+            const available = isRoundAvailable(state, round);
+            const current = state.round === round && state.status === "running";
+            return (
+              <button
+                type="button"
+                className={selectedRound === round ? "is-selected" : ""}
+                disabled={!available}
+                key={round}
+                onClick={() => onRound(round)}
+              >
+                <i>{round}</i>
+                <span>
+                  <strong>{roundLabel(round)}</strong>
+                  <small>
+                    {current
+                      ? "In progress"
+                      : available
+                        ? `${String(recordedRoundMoveCount(state, round))} recorded moves`
+                        : "Upcoming"}
+                  </small>
+                </span>
+              </button>
+            );
+          })}
+        </nav>
+        <section>
+          <strong>Objective</strong>
+          <p>{stage}</p>
+          <span>
+            {isHistorical
+              ? "Recorded state. Live execution is unchanged."
+              : state.task}
+          </span>
+        </section>
+      </aside>
+
+      <section className="developer-workspace">
+        <header className="developer-workspace-header">
+          <div>
+            <h1>
+              {roundLabel(selectedRound)}: {stage}
+            </h1>
+            <p>
+              {isHistorical
+                ? "Review the recorded checks, summaries, and evidence for this round."
+                : "Both agents are running concurrently. Inspect evidence before selecting a patch."}
+            </p>
+          </div>
+          <span className={state.assisted ? "is-assisted" : ""}>
+            {state.assisted ? "Assisted run" : "Competitive run"}
+          </span>
+        </header>
+        <div className="developer-agents">
+          {(["a", "b"] as const).map((id) => (
+            <DeveloperAgentPanel
+              id={id}
+              fighter={contestants[id]}
+              isHistorical={isHistorical}
+              canSteer={canSteer}
+              steeringUnavailable={steeringUnavailable}
+              onFighter={onFighter}
+              onSteer={onSteer}
+              key={id}
+            />
+          ))}
+        </div>
+        <footer className="developer-current-event">
+          <span>{latest?.phase.replaceAll("_", " ") ?? "Current move"}</span>
+          <strong>
+            {attackDisplayLabel(latest) ?? `${stage} is underway`}
+          </strong>
+        </footer>
+      </section>
+
+      <aside className="developer-events">
+        <header>
+          <strong>Activity</strong>
+          <span>{attacks.length} events</span>
+        </header>
+        <div>
+          {attacks.length ? (
+            attacks
+              .slice(-10)
+              .reverse()
+              .map((attack, index) => (
+                <article key={`${attack.id}-${attack.phase}-${String(index)}`}>
+                  <i className={`is-${attack.phase}`} />
+                  <div>
+                    <strong>{attackDisplayLabel(attack)}</strong>
+                    <span>
+                      {attack.attacker?.toUpperCase() ?? "House"} →{" "}
+                      {attack.target?.toUpperCase() ?? "both"}
+                    </span>
+                  </div>
+                  <small>{attack.round ? `R${attack.round}` : "—"}</small>
+                </article>
+              ))
+          ) : (
+            <p>No attack evidence has been recorded yet.</p>
+          )}
+        </div>
+      </aside>
+
+      <footer className="developer-statusbar">
+        <span>Run {state.runId ?? "preflight"}</span>
+        <span>Round {activeRound}</span>
+        <span>{state.status.replaceAll("_", " ")}</span>
+        <span>{attacks.length} evidence events</span>
+      </footer>
+    </main>
+  );
+}
+
 function BroadcastArena({
   state,
   rounds,
@@ -1438,7 +1737,23 @@ export function App() {
         </div>
       ) : null}
 
-      {!showResults && !selectedFighter && theme === "live-arena-broadcast" ? (
+      {!showResults && !selectedFighter && theme === "developer-dashboard" ? (
+        <DeveloperDashboardArena
+          state={state}
+          rounds={rounds}
+          selectedRound={selectedRound}
+          contestants={viewContestants}
+          attacks={viewAttacks}
+          stage={stage}
+          onRound={selectRound}
+          onFighter={setSelectedFighter}
+          onSteer={steer}
+          canSteer={canSteer}
+          steeringUnavailable={steeringUnavailable}
+        />
+      ) : !showResults &&
+        !selectedFighter &&
+        theme === "live-arena-broadcast" ? (
         <BroadcastArena
           state={state}
           rounds={rounds}
