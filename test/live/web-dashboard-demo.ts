@@ -63,7 +63,14 @@ try {
     source: "agent",
     stream: "stdout",
     contestantId: "a",
-    text: "Tracing refresh-token state transitions…\n",
+    text: [
+      '$ rg -n "rotate|invalidate" src test',
+      "src/session/token-family.ts:41:export async function rotateTokenFamily(...)",
+      'test/session/token-family.test.ts:88:it("rejects stale rotations", ...)',
+      "$ sed -n '1,180p' src/session/token-family.ts",
+      "Tracing the compare-and-swap boundary before editing the transaction.",
+      "",
+    ].join("\n"),
   });
   await emit({
     type: "invocation_started",
@@ -79,7 +86,15 @@ try {
     source: "agent",
     stream: "stdout",
     contestantId: "b",
-    text: "Implementing atomic token-family invalidation…\n",
+    text: [
+      "$ git status --short",
+      '$ rg -n "invalidateFamily" src test',
+      "src/auth/session-store.ts:132:await invalidateFamily(familyId)",
+      "Adding an atomic invalidation predicate to the session-store transaction.",
+      "$ npm test -- --run token-family",
+      "✓ token-family.test.ts (12 tests)",
+      "",
+    ].join("\n"),
   });
   await emit({
     type: "invocation_finished",
@@ -87,6 +102,7 @@ try {
     contestantId: "a",
     status: "succeeded",
     durationMs: 4_300,
+    summary: "Traced refresh-token state transitions and isolated the race.",
   });
   await emit({
     type: "invocation_finished",
@@ -94,6 +110,7 @@ try {
     contestantId: "b",
     status: "succeeded",
     durationMs: 4_900,
+    summary: "Implemented atomic token-family invalidation.",
   });
   await emit({
     type: "check_completed",
@@ -170,7 +187,18 @@ try {
     source: "agent",
     stream: "stdout",
     contestantId: "b",
-    text: "Repairing stale-session invalidation and replaying holdouts…\n",
+    text: [
+      "$ npm test -- --run stale-session",
+      "× rejects replay after logout",
+      "AssertionError: expected 401, received 200",
+      "$ sed -n '120,190p' src/auth/session-store.ts",
+      "Applying the logout tombstone inside the same transaction as rotation.",
+      "$ npm test -- --run stale-session",
+      "✓ stale-session.test.ts (8 tests)",
+      "$ npm test",
+      "✓ 253 tests passed",
+      "",
+    ].join("\n"),
   });
   await emit({
     type: "invocation_finished",
@@ -178,6 +206,7 @@ try {
     contestantId: "b",
     status: "succeeded",
     durationMs: 3_100,
+    summary: "Repaired stale-session invalidation and replayed holdouts.",
   });
   await emit({
     type: "health_changed",

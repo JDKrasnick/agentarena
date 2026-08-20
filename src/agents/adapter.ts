@@ -571,12 +571,14 @@ export class CommandAgentAdapter implements AgentAdapter {
       submissionPath,
       explanation,
     });
+    const summary = invocation.explanation?.trim();
     await input.observer?.publish({
       type: "invocation_finished",
       invocationId,
       status: invocation.status,
       durationMs: invocation.durationMs,
       ...(input.contestantId ? { contestantId: input.contestantId } : {}),
+      ...(summary ? { summary } : {}),
     });
     return invocation;
   }

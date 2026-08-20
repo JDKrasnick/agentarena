@@ -22,6 +22,12 @@ export interface DashboardContestant {
     startedAt: string;
     durationMs?: number;
   }>;
+  summaries: Array<{
+    text: string;
+    invocationId: string;
+    timestamp: string;
+    round?: RoundId;
+  }>;
   output: Array<{
     stream: "stdout" | "stderr";
     text: string;
@@ -115,6 +121,7 @@ function contestant(): DashboardContestant {
     activity: "Waiting",
     checks: [],
     invocations: [],
+    summaries: [],
     output: [],
     healthChanges: [],
   };
@@ -174,6 +181,14 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
             ? { round: event.round ?? state.round }
             : {}),
         });
+        appendBounded(target.summaries, {
+          text: `${event.stage.replaceAll("_", " ")} in progress…`,
+          invocationId: event.invocationId,
+          timestamp: event.timestamp,
+          ...((event.round ?? state.round)
+            ? { round: event.round ?? state.round }
+            : {}),
+        });
       }
       return;
     case "invocation_finished":
@@ -188,6 +203,23 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
           invocation.status = event.status;
           invocation.durationMs = event.durationMs;
         }
+        const summary = target.summaries.find(
+          (entry) => entry.invocationId === event.invocationId,
+        );
+        const text =
+          event.summary?.trim() ||
+          `${(invocation?.stage ?? "invocation").replaceAll("_", " ")} ${event.status.replaceAll("_", " ")}.`;
+        if (summary) {
+          summary.text = text;
+          summary.timestamp = event.timestamp;
+        } else {
+          appendBounded(target.summaries, {
+            text,
+            invocationId: event.invocationId,
+            timestamp: event.timestamp,
+            ...(invocation?.round ? { round: invocation.round } : {}),
+          });
+        }
       }
       return;
     case "output":
@@ -197,7 +229,7 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
           (entry) => entry.id === event.invocationId,
         );
         // Fighter detail is the authoritative live transcript. Keep every
-        // redacted chunk; only the compact fighter card selects a recent tail.
+        // redacted chunk; compact fighter cards use invocation summaries.
         target.output.push({
           stream: event.stream,
           text: event.text,

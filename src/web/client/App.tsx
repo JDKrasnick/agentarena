@@ -72,6 +72,7 @@ const fallbackState: DashboardState = {
       activity: "Waiting",
       checks: [],
       invocations: [],
+      summaries: [],
       output: [],
       healthChanges: [],
     },
@@ -82,6 +83,7 @@ const fallbackState: DashboardState = {
       activity: "Waiting",
       checks: [],
       invocations: [],
+      summaries: [],
       output: [],
       healthChanges: [],
     },
@@ -160,7 +162,6 @@ function Fighter({
   const checksPassed = fighter.checks.filter(
     (check) => check.status === "passed",
   ).length;
-  const output = fighter.output.slice(-10);
   const logo = providerLogo(fighter.provider);
   const provider = title(fighter.provider);
 
@@ -225,20 +226,7 @@ function Fighter({
         </div>
       </dl>
 
-      <div className="agent-output" aria-label={`${provider} output`}>
-        {output.length ? (
-          output.map((line, index) => (
-            <p
-              className={line.stream === "stderr" ? "stderr" : ""}
-              key={`${line.text}-${String(index)}`}
-            >
-              <span>›</span> {line.text.trim()}
-            </p>
-          ))
-        ) : (
-          <p className="quiet">Waiting for agent output…</p>
-        )}
-      </div>
+      <CompactAgentOutput fighter={fighter} provider={provider} />
 
       {isHistorical ? (
         <div className="replay-card-note">Read-only round replay</div>
@@ -265,6 +253,29 @@ function Fighter({
         <div className="replay-card-note">{steeringUnavailable}</div>
       )}
     </article>
+  );
+}
+
+export function CompactAgentOutput({
+  fighter,
+  provider,
+}: {
+  fighter: DashboardContestant;
+  provider: string;
+}) {
+  const summaries = fighter.summaries.slice(-10);
+  return (
+    <div className="agent-output" aria-label={`${provider} work summary`}>
+      {summaries.length ? (
+        summaries.map((summary) => (
+          <p key={summary.invocationId}>
+            <span>›</span> {summary.text}
+          </p>
+        ))
+      ) : (
+        <p className="quiet">Waiting for a work summary…</p>
+      )}
+    </div>
   );
 }
 

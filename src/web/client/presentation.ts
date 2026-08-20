@@ -106,6 +106,7 @@ function fighterAtRound(
   const invocations = fighter.invocations.filter(
     (invocation) => invocation.round === round,
   );
+  const summaries = fighter.summaries.filter((line) => line.round === round);
   const output = fighter.output.filter((line) => line.round === round);
   const checks = fighter.checks.filter((check) => check.round === round);
   const healthChanges = fighter.healthChanges.filter(
@@ -125,6 +126,7 @@ function fighterAtRound(
       invocations.at(-1)?.status ?? (invocations.length ? "complete" : "idle"),
     activity: invocations.at(-1)?.stage ?? "No recorded activity",
     invocations,
+    summaries,
     output,
     checks,
     healthChanges,

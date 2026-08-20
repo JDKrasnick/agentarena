@@ -118,4 +118,50 @@ describe("dashboard presentation model", () => {
       "Invocation b-repair is running.",
     );
   });
+
+  it("keeps compact summaries separate from the full transcript", () => {
+    const state = initialDashboardState();
+    const timestamp = "2026-08-19T12:00:00.000Z";
+    projectEvent(state, {
+      version: 1,
+      sequence: 1,
+      timestamp,
+      type: "invocation_started",
+      invocationId: "a-implement",
+      source: "agent",
+      contestantId: "a",
+      stage: "implement",
+      round: 1,
+    });
+    projectEvent(state, {
+      version: 1,
+      sequence: 2,
+      timestamp,
+      type: "output",
+      invocationId: "a-implement",
+      source: "agent",
+      stream: "stdout",
+      text: "$ npm test\n✓ 253 tests passed\n",
+      contestantId: "a",
+    });
+    projectEvent(state, {
+      version: 1,
+      sequence: 3,
+      timestamp,
+      type: "invocation_finished",
+      invocationId: "a-implement",
+      contestantId: "a",
+      status: "succeeded",
+      durationMs: 2_000,
+      summary: "Implemented atomic token-family invalidation.",
+    });
+
+    const fighter = createArenaPresentation(state, "live", true).contestants.a;
+    expect(fighter.summaries.map((entry) => entry.text)).toEqual([
+      "Implemented atomic token-family invalidation.",
+    ]);
+    expect(fighter.output.map((entry) => entry.text)).toEqual([
+      "$ npm test\n✓ 253 tests passed\n",
+    ]);
+  });
 });

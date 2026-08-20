@@ -68,6 +68,7 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
     status: z.string(),
     durationMs: z.number().int().nonnegative(),
     contestantId: ContestantIdSchema.optional(),
+    summary: z.string().min(1).optional(),
   }),
   event("output", {
     invocationId: z.string(),

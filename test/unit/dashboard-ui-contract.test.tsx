@@ -4,7 +4,11 @@ import {
   initialDashboardState,
   projectEvent,
 } from "../../src/dashboard/state.js";
-import { CompactRoundNav, FullAgentOutput } from "../../src/web/client/App.js";
+import {
+  CompactAgentOutput,
+  CompactRoundNav,
+  FullAgentOutput,
+} from "../../src/web/client/App.js";
 
 describe("dashboard UI contracts", () => {
   it("exposes the selected compact round to assistive technology", () => {
@@ -61,6 +65,11 @@ describe("dashboard UI contracts", () => {
 
   it("renders full fighter output as one whitespace-preserving terminal stream", () => {
     const fighter = initialDashboardState().contestants.a;
+    fighter.summaries.push({
+      text: "Implemented the token-family repair.",
+      invocationId: "a-implement",
+      timestamp: "2026-08-19T12:00:02.000Z",
+    });
     fighter.output.push(
       {
         stream: "stdout",
@@ -76,14 +85,20 @@ describe("dashboard UI contracts", () => {
       },
     );
 
-    const markup = renderToStaticMarkup(
+    const detailMarkup = renderToStaticMarkup(
       <FullAgentOutput fighter={fighter} provider="Codex" />,
     );
+    const compactMarkup = renderToStaticMarkup(
+      <CompactAgentOutput fighter={fighter} provider="Codex" />,
+    );
 
-    expect(markup).toContain("  first line\nsecond line\n");
-    expect(markup).toContain("warning: keep trailing space \n");
-    expect(markup).toContain("output-stderr");
-    expect(markup).not.toContain("12:00:00");
+    expect(detailMarkup).toContain("  first line\nsecond line\n");
+    expect(detailMarkup).toContain("warning: keep trailing space \n");
+    expect(detailMarkup).toContain("output-stderr");
+    expect(detailMarkup).not.toContain("Implemented the token-family repair.");
+    expect(detailMarkup).not.toContain("12:00:00");
+    expect(compactMarkup).toContain("Implemented the token-family repair.");
+    expect(compactMarkup).not.toContain("first line");
   });
 
   it("retains the complete fighter transcript beyond the compact list bound", () => {

@@ -118,14 +118,14 @@ Retries reuse the prompt that already consumed the note. Applied steering marks 
 
 In the desktop window, click either fighter to open its complete workstream.
 The expanded view preserves the full redacted output stream in terminal order,
-including whitespace and chunk boundaries, while the arena cards retain only
-their ten most recent output chunks. Use **Back to main arena** to return. The
+including whitespace and chunk boundaries, while arena cards show up to ten
+concise invocation summaries. Use **Back to main arena** to return. The
 round timeline can replay the recorded state of completed rounds without
 changing the active fight. Agent Arena does not currently rewind or rerun live
 rounds; `resume` continues from a sealed durable boundary.
 
 The desktop window opens in a spacious, work-area-clamped live layout and keeps
-up to ten recent output lines visible for each fighter. A terminal result
+up to ten recent work summaries visible for each fighter. A terminal result
 automatically contracts the window into a results-first view with the independent
 arena champion and recommended patch, coverage, run integrity, completed rounds,
 final fighter scores, defects, verified repairs, outcome, and evidence links.
