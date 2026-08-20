@@ -231,7 +231,9 @@ Browser and DOM planning consumes only the frozen task sources and bounded
 repository evidence. Task language about visible UI, interaction, responsive
 behavior, accessibility, persistence, browser, or DOM behavior makes browser
 validation required even when tooling is unavailable; repository-only frontend
-evidence makes it optional. Resolution prefers an explicit Arena profile, then
+evidence makes it optional. Standing instruction files describe the repository
+rather than the task, so matches there are optional evidence and never make
+browser validation required on their own. Resolution prefers an explicit Arena profile, then
 literal Playwright or Cypress configuration, then recognized package scripts.
 Ambiguous monorepos remain unresolved rather than selecting an application.
 
@@ -255,7 +257,11 @@ DOM-security probes use a dedicated accessible-label fill action whose inert
 markup sentinel is supplied and observed by the harness rather than by the
 contestant.
 Every browser run also includes harness-owned runtime-error, accessible-name,
-and 320 CSS-pixel overflow smoke probes. Probe families cover
+and 320 CSS-pixel overflow smoke probes. Those mandatory probes fail only on
+uncaught runtime errors and their own invariant; console output and requests to
+unapproved origins are recorded as diagnostics rather than failures, because the
+repository never chose that policy. A contestant-selected probe declares its own
+expected behavior and does fail on both. Probe families cover
 interaction, responsive layout, keyboard/focus, semantics, task-declared
 persistence, runtime DOM integrity, risk-triggered inert DOM-XSS canaries, and
 unchanged repository-owned visual baselines. New screenshots are diagnostics,
@@ -285,8 +291,9 @@ results are cached within a run by immutable patch bytes and the exact command,
 while service startup and browser probes still execute for each lane.
 Profiles also declare whether the native suite reuses Arena's started service
 or manages its own service lifecycle. Auto-discovered Playwright `webServer`
-commands use the self-managed mode so Arena does not occupy the runner's port;
-reuse mode receives the resolved `PORT` and base-URL environment.
+commands use the self-managed mode so Arena does not occupy the runner's port.
+Both modes receive the resolved `PORT` and base-URL environment; a self-managed
+suite binds that reserved port itself before Arena starts its probe service.
 
 Functional assertions run once. Browser/server infrastructure may receive one
 bounded retry with guaranteed teardown; a first-fail/second-pass assertion is

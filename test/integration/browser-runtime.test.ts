@@ -186,6 +186,41 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
       });
       await expect(fetch(`${origin}/health`)).rejects.toThrow();
 
+      const cdnReference = await executeBrowserValidation({
+        plan: {
+          ...plan,
+          profile: {
+            ...plan.profile!,
+            startupCommand:
+              "ARENA_FIXTURE_CDN=1 node test/fixtures/browser-app/server.mjs",
+          },
+        },
+        decision: "approved",
+        adapter: adapter!,
+        worktree: process.cwd(),
+        artifactDirectory: path.join(artifacts, "cdn-reference"),
+        approvedOrigins: [origin],
+        dynamicLoopbackApproved: true,
+        timeoutMs: 30_000,
+        selectedProbes: [],
+        signal: controller.signal,
+      });
+      expect(cdnReference.status).toBe("verified");
+      expect(
+        cdnReference.probes.find(
+          (probe) => probe.probeId === "arena-runtime-smoke",
+        ),
+      ).toMatchObject({
+        status: "verified",
+        blockedOrigins: ["https://cdn.example"],
+      });
+      expect(
+        cdnReference.artifacts.some(
+          (artifact) => artifact.kind === "blocked_origin",
+        ),
+      ).toBe(true);
+      await expect(fetch(`${origin}/health`)).rejects.toThrow();
+
       const blocked = await executeBrowserValidation({
         plan,
         decision: "approved",

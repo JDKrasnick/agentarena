@@ -45,9 +45,14 @@ const server = createServer((request, response) => {
           });
         </script>`
       : "";
+  // An ordinary application referencing a CDN from its root route. The
+  // mandatory smoke probes must record the blocked origin without failing.
+  const cdnStylesheet = process.env.ARENA_FIXTURE_CDN
+    ? '<link rel="stylesheet" href="https://cdn.example/app.css">'
+    : "";
   response.writeHead(200, { "content-type": "text/html" });
   response.end(`<!doctype html>
-    <html><head><title>Arena fixture</title></head>
+    <html><head><title>Arena fixture</title>${cdnStylesheet}</head>
     <body><main>
       <h1>browser-ready</h1>
       <label>Wrapped label <input></label>

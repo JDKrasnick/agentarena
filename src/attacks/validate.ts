@@ -55,6 +55,22 @@ interface RepeatedCheck {
   infrastructure: boolean;
 }
 
+/**
+ * Browser-only attacks reproduce through their bounded probe, so there is no
+ * focused command to run. Skipping is not a pass: the browser lane below still
+ * has to establish the author/target asymmetry before the attack can land.
+ */
+const SKIPPED_FOCUSED_CHECK: RepeatedCheck = {
+  checks: [],
+  stable: true,
+  passed: true,
+  infrastructure: false,
+};
+
+function focusedLaneSkipped(attack: Attack): boolean {
+  return attack.evidenceKind === "browser_probe";
+}
+
 type AttackAssessment = Awaited<ReturnType<AttackVerifier["assess"]>>;
 
 class AttackPatchApplicationError extends Error {}
@@ -652,16 +668,18 @@ export async function validateAttack(
       // implementation patch. Baseline execution is diagnostic when possible.
     }
     if (baseline) {
-      const baselineResult = await runTwice(
-        "baseline-focused",
-        "baseline",
-        attack.focusedCommand,
-        baseline,
-        options.config,
-        options.logRoot,
-        options.signal,
-        options,
-      );
+      const baselineResult = focusedLaneSkipped(attack)
+        ? SKIPPED_FOCUSED_CHECK
+        : await runTwice(
+            "baseline-focused",
+            "baseline",
+            attack.focusedCommand,
+            baseline,
+            options.config,
+            options.logRoot,
+            options.signal,
+            options,
+          );
       attack.checks.push(...baselineResult.checks);
       if (baselineResult.infrastructure) {
         return judgeFallback(
@@ -720,16 +738,18 @@ export async function validateAttack(
     const [[authorFocused, authorFull], [targetFocused, targetFull]] =
       await Promise.all([
         (async () => {
-          const focused = await runTwice(
-            "author-focused",
-            "focused",
-            attack.focusedCommand,
-            author,
-            options.config,
-            options.logRoot,
-            options.signal,
-            options,
-          );
+          const focused = focusedLaneSkipped(attack)
+            ? SKIPPED_FOCUSED_CHECK
+            : await runTwice(
+                "author-focused",
+                "focused",
+                attack.focusedCommand,
+                author,
+                options.config,
+                options.logRoot,
+                options.signal,
+                options,
+              );
           const full = await runTwice(
             "author-required",
             "required",
@@ -743,16 +763,18 @@ export async function validateAttack(
           return [focused, full] as const;
         })(),
         (async () => {
-          const focused = await runTwice(
-            "target-focused",
-            "focused",
-            attack.focusedCommand,
-            target,
-            options.config,
-            options.logRoot,
-            options.signal,
-            options,
-          );
+          const focused = focusedLaneSkipped(attack)
+            ? SKIPPED_FOCUSED_CHECK
+            : await runTwice(
+                "target-focused",
+                "focused",
+                attack.focusedCommand,
+                target,
+                options.config,
+                options.logRoot,
+                options.signal,
+                options,
+              );
           const full = await runTwice(
             "target-required",
             "required",

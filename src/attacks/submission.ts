@@ -17,6 +17,13 @@ export function validateAttackOrdering(submission: {
     throw new Error("Attack ranks must be unique values from 1 through 3");
 }
 
+/**
+ * Browser-only attacks reproduce through their bounded probe, so validation
+ * skips the focused lanes for them. This keeps the persisted attack shape
+ * uniform and stays inert if any path ever does run it.
+ */
+export const BROWSER_PROBE_PLACEHOLDER_COMMAND = 'node -e "process.exit(0)"';
+
 export function browserProbeEvidencePatch(
   entry: AttackSubmission["attacks"][number],
   round: RoundId,
@@ -79,7 +86,8 @@ export async function materializeAttack(
     ),
     requiredCapabilities: submission.requiredCapabilities,
     patchPath: options.patchPath,
-    focusedCommand: submission.focusedCommand ?? 'node -e "process.exit(0)"',
+    focusedCommand:
+      submission.focusedCommand ?? BROWSER_PROBE_PLACEHOLDER_COMMAND,
     evidenceKind:
       submission.browserProbe && submission.paths.length === 0
         ? "browser_probe"

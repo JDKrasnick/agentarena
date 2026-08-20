@@ -94,7 +94,12 @@ function visibleReproducers(attack: Attack) {
   return [
     {
       artifactId: `attack:${attack.id}`,
-      command: attack.focusedCommand,
+      // A browser-only attack has no focused command; describing its probe is
+      // the only honest reproduction instruction we can give the repair agent.
+      command:
+        attack.evidenceKind === "browser_probe" && attack.browserProbe
+          ? `browser probe ${attack.browserProbe.id} (${attack.browserProbe.family}, ${attack.browserProbe.profile})`
+          : attack.focusedCommand,
       expectedBehavior: attack.oracle.expectedBehavior,
     },
   ];

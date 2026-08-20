@@ -574,4 +574,114 @@ describe("browser validation executor", () => {
       "arena-reflow-smoke",
     ]);
   });
+
+  it("marks only the mandatory smoke probes as harness owned", async () => {
+    const harnessOwnedById = new Map<string, boolean>();
+    const session: BrowserSession = {
+      toolVersion: "1",
+      browserVersion: "1",
+      artifacts: [],
+      waitUntilReady: vi.fn().mockResolvedValue(undefined),
+      runProbe: vi
+        .fn<BrowserSession["runProbe"]>()
+        .mockImplementation(({ request, harnessOwned }) => {
+          harnessOwnedById.set(request.id, harnessOwned);
+          return Promise.resolve({
+            family: request.family,
+            profile: request.profile,
+            status: "verified",
+            blockedOrigins: [],
+            artifacts: [],
+          });
+        }),
+      runNativeSuite: vi.fn().mockResolvedValue({
+        family: "visual_regression" as const,
+        profile: "repository_native" as const,
+        status: "verified" as const,
+        blockedOrigins: [],
+        artifacts: [],
+      }),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await executeBrowserValidation({
+      plan,
+      decision: "approved",
+      adapter: adapter(session).value,
+      worktree: "/worktree/a",
+      artifactDirectory: "/artifacts/a",
+      selectedProbes: [
+        {
+          id: "contestant-choice",
+          family: "interaction",
+          profile: "desktop",
+          expectedBehavior: "No undeclared network dependency",
+          actions: [{ kind: "goto", path: "/" }],
+        },
+      ],
+      approvedOrigins: ["http://127.0.0.1:4173"],
+      timeoutMs: 10_000,
+      signal: new AbortController().signal,
+    });
+
+    expect(Object.fromEntries(harnessOwnedById)).toEqual({
+      "arena-runtime-smoke": true,
+      "arena-semantics-smoke": true,
+      "arena-reflow-smoke": true,
+      "contestant-choice": false,
+    });
+  });
+
+  it("reports a cache hit only for reuse across invocations", async () => {
+    let readyCalls = 0;
+    const session: BrowserSession = {
+      toolVersion: "1",
+      browserVersion: "1",
+      artifacts: [],
+      // Fail readiness once so attempt 2 carries attempt 1's native result.
+      waitUntilReady: vi.fn().mockImplementation(() => {
+        readyCalls += 1;
+        return readyCalls === 1
+          ? Promise.reject(new Error("health check failed"))
+          : Promise.resolve(undefined);
+      }),
+      runProbe: vi
+        .fn<BrowserSession["runProbe"]>()
+        .mockImplementation(({ request }) =>
+          Promise.resolve({
+            family: request.family,
+            profile: request.profile,
+            status: "verified",
+            blockedOrigins: [],
+            artifacts: [],
+          }),
+        ),
+      runNativeSuite: vi.fn().mockResolvedValue({
+        family: "visual_regression" as const,
+        profile: "repository_native" as const,
+        status: "verified" as const,
+        blockedOrigins: [],
+        artifacts: [],
+      }),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const result = await executeBrowserValidation({
+      plan,
+      decision: "approved",
+      adapter: adapter(session).value,
+      worktree: "/worktree/a",
+      artifactDirectory: "/artifacts/a",
+      selectedProbes: [],
+      approvedOrigins: ["http://127.0.0.1:4173"],
+      timeoutMs: 10_000,
+      nativeSuiteCache: new Map(),
+      nativeSuiteCacheKey: "frozen-tree-and-command",
+      signal: new AbortController().signal,
+    });
+
+    expect(result.status).toBe("verified");
+    expect(result.provisionAttempts).toBe(2);
+    expect(result.nativeSuiteCacheHit).toBe(false);
+  });
 });

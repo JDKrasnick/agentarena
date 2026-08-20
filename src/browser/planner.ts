@@ -1,5 +1,6 @@
 import type { FightConfig } from "../core/types.js";
 import type { ReconnaissanceSnapshot } from "../task/task-contract.js";
+import { INSTRUCTION_PATHS } from "../repo/instructions.js";
 import { BrowserPlanSchema, type BrowserPlan } from "../contracts/browser.js";
 export {
   BrowserEvidenceSchema,
@@ -120,12 +121,25 @@ export function planBrowserValidation(
   config: FightConfig,
   reconnaissance: ReconnaissanceSnapshot,
 ): BrowserPlan | undefined {
+  // Standing instruction files are part of reconnaissance.sources and
+  // routinely use words like "render", "navigation", or "focus" for unrelated
+  // reasons, so they describe the repository rather than the task. Only what
+  // actually states the task can make browser validation required; instruction
+  // matches downgrade to optional repository evidence.
+  const instructionPaths = new Set<string>(INSTRUCTION_PATHS);
+  const taskSources = reconnaissance.sources.filter(
+    (source) => !instructionPaths.has(source.origin),
+  );
   const taskText = [
     config.task,
     ...config.acceptanceCriteria,
-    ...reconnaissance.sources.map((source) => source.content),
+    ...taskSources.map((source) => source.content),
   ].join("\n");
   const taskRequired = TASK_PATTERN.test(taskText);
+  const instructionMatches = reconnaissance.sources.filter(
+    (source) =>
+      instructionPaths.has(source.origin) && TASK_PATTERN.test(source.content),
+  );
   const scripts = packageScripts(reconnaissance);
   const browserScriptEvidence = Object.entries(scripts).some(
     ([name, command]) =>
@@ -138,7 +152,12 @@ export function planBrowserValidation(
       FRONTEND_PATTERN.test(`${entry.path}\n${entry.content}`) ||
       (entry.path === "package.json" && browserScriptEvidence),
   );
-  if (!taskRequired && !repositoryMatches.length && !config.browserProfile)
+  if (
+    !taskRequired &&
+    !instructionMatches.length &&
+    !repositoryMatches.length &&
+    !config.browserProfile
+  )
     return undefined;
 
   const evidence: BrowserPlan["evidence"] = [];
@@ -147,6 +166,12 @@ export function planBrowserValidation(
       source: "task",
       location: "frozen task sources",
       detail: "Task names user-visible browser or DOM behavior",
+    });
+  for (const match of instructionMatches)
+    evidence.push({
+      source: "repository",
+      location: match.origin,
+      detail: "Repository instructions name browser or DOM behavior",
     });
   for (const match of repositoryMatches)
     evidence.push({

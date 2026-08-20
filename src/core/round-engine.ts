@@ -2958,6 +2958,15 @@ export class RoundEngine {
     return attributeBrowserResult(context.browserBaseline, result);
   }
 
+  /** Spreadable `validateAttack` option, so the closure is built exactly once. */
+  private browserValidatorOption(
+    context: ArenaContext,
+    attackId: string,
+  ): Pick<Parameters<typeof validateAttack>[0], "validateBrowser"> {
+    const validateBrowser = this.browserProbeValidator(context, attackId);
+    return validateBrowser ? { validateBrowser } : {};
+  }
+
   private browserProbeValidator(
     context: ArenaContext,
     attackId: string,
@@ -4967,14 +4976,7 @@ export class RoundEngine {
                   context.state,
                   attack.targets,
                 ),
-                ...(this.browserProbeValidator(context, attack.id)
-                  ? {
-                      validateBrowser: this.browserProbeValidator(
-                        context,
-                        attack.id,
-                      )!,
-                    }
-                  : {}),
+                ...this.browserValidatorOption(context, attack.id),
                 persistFailureRecord: (record) =>
                   this.persistFailureRecord(context, record),
               })
@@ -6087,14 +6089,7 @@ export class RoundEngine {
           context.state,
           provisional.targets,
         ),
-        ...(this.browserProbeValidator(context, provisional.id)
-          ? {
-              validateBrowser: this.browserProbeValidator(
-                context,
-                provisional.id,
-              )!,
-            }
-          : {}),
+        ...this.browserValidatorOption(context, provisional.id),
       });
       if (replay.status === "provisional_infrastructure") {
         replay.status = "execution_inconclusive";

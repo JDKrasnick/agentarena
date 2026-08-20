@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execa } from "execa";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { browserProbeEvidencePatch } from "../../src/attacks/submission.js";
 import { validateAttack } from "../../src/attacks/validate.js";
 import type { AttackVerifier } from "../../src/agents/adapter.js";
@@ -10,6 +10,9 @@ import {
   AttackSubmissionV2Schema,
   FightConfigSchema,
   type Attack,
+  type CapabilityDecision,
+  type FightConfig,
+  type PermissionPolicy,
 } from "../../src/core/types.js";
 import type {
   BrowserProbeRequest,
@@ -18,452 +21,408 @@ import type {
 import { WorktreeManager } from "../../src/repo/git.js";
 import { createSlugRepository } from "../helpers/repository.js";
 
+type ValidateBrowser = (
+  worktree: string,
+  probe: BrowserProbeRequest,
+  subject: "author" | "target",
+  nativeSuiteIdentityPaths: string[],
+) => Promise<BrowserValidationResult>;
+
+function browserCapability(
+  overrides: Partial<CapabilityDecision> = {},
+): PermissionPolicy {
+  return {
+    defaultMode: "confirm",
+    reducedValidationAccepted: false,
+    capabilities: [
+      {
+        id: "browser_dom_validation",
+        reason: "Browser comparison",
+        risk: "medium",
+        requirement: "required",
+        role: "harness_only",
+        enforcement: "brokered",
+        mode: "confirm",
+        scopes: [],
+        status: "approved",
+        ...overrides,
+      },
+    ],
+  };
+}
+
+/** Author passes, target fails, attributed to the contestant application. */
+const symmetricReproduction: ValidateBrowser = (_worktree, probe, subject) =>
+  Promise.resolve({
+    status: subject === "author" ? "verified" : "failed",
+    provisionAttempts: 1,
+    probes: [
+      {
+        probeId: probe.id,
+        family: probe.family,
+        profile: probe.profile,
+        status: subject === "author" ? "verified" : "failed",
+        contextId: `${subject}-${probe.id}`,
+        requiredCapabilityIds: ["browser_dom_validation"],
+        blockedOrigins: [],
+        artifacts: [],
+      },
+    ],
+    artifacts: [
+      {
+        kind: "result_manifest",
+        path: `/artifacts/${subject}-result.json`,
+        failureOnly: false,
+      },
+    ],
+    ...(subject === "target"
+      ? {
+          reason: "application_failure" as const,
+          failureAttribution: "contestant_application" as const,
+        }
+      : {}),
+  });
+
 describe("browser-only attacks", () => {
-  it("lands only after a symmetric author pass and target failure", async () => {
+  let temporaryRoot: string;
+  let worktrees: WorktreeManager;
+  let authorPatch: string;
+  let targetPatch: string;
+  let probePatch: string;
+  let config: FightConfig;
+  let attack: Attack;
+  let verifier: AttackVerifier;
+
+  beforeAll(async () => {
     const repositoryRoot = await createSlugRepository();
     const baseCommit = (
       await execa("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot })
     ).stdout;
-    const temporaryRoot = await mkdtemp(
+    temporaryRoot = await mkdtemp(
       path.join(os.tmpdir(), "arena-browser-only-"),
     );
-    const worktrees = new WorktreeManager(
-      repositoryRoot,
-      temporaryRoot,
-      baseCommit,
-    );
+    worktrees = new WorktreeManager(repositoryRoot, temporaryRoot, baseCommit);
     await worktrees.initialize();
 
-    try {
-      const patches: string[] = [];
-      for (const lane of ["author", "target"] as const) {
-        const tree = await worktrees.create(lane);
-        const relativePath = `src/${lane}.txt`;
-        await mkdir(path.dirname(path.join(tree, relativePath)), {
-          recursive: true,
-        });
-        await writeFile(path.join(tree, relativePath), `${lane}\n`);
-        const patchPath = path.join(temporaryRoot, `${lane}.diff`);
-        await worktrees.capturePatch(tree, patchPath, undefined, true);
-        patches.push(patchPath);
-      }
-      const [authorPatch, targetPatch] = patches as [string, string];
-      const evidenceEntry = AttackSubmissionV2Schema.parse({
-        version: 2,
-        attacks: [
-          {
-            rank: 1,
-            claim: "The settings dialog does not open",
-            impact: "The user cannot change settings",
-            oracle: {
-              expectedBehavior: "The settings dialog opens",
-              rationale: "The task explicitly requires the dialog",
-            },
-            proposedSeverity: "medium",
-            confidence: 90,
-            reproduction: "Open the settings dialog in the browser",
-            requiredCapabilities: ["browser_dom_validation"],
-            browserProbe: {
-              id: "settings-dialog",
-              family: "interaction",
-              profile: "desktop",
-              expectedBehavior: "The settings dialog opens",
-              actions: [{ kind: "goto", path: "/" }],
-            },
-          },
-        ],
-      }).attacks[0]!;
-      const probePatch = path.join(temporaryRoot, "probe.diff");
-      await writeFile(
-        probePatch,
-        browserProbeEvidencePatch(evidenceEntry, 1, "a"),
-      );
-      const config = FightConfigSchema.parse({
-        task: "Fix the dialog",
-        agents: ["codex", "claude"],
-        attackVerifier: "codex",
-        rounds: 3,
-        maxAttacksPerRound: 3,
-        testCommand: "npm test",
-        repositoryRoot,
-        artifactRoot: path.join(repositoryRoot, ".agent-arena", "runs"),
-        permissionMode: "confirm",
-        nonInteractiveApproval: true,
-        limits: {
-          implementationMs: 10_000,
-          reviewMs: 10_000,
-          attackMs: 10_000,
-          verifierMs: 10_000,
-          repairMs: 10_000,
-        },
+    const patches: string[] = [];
+    for (const lane of ["author", "target"] as const) {
+      const tree = await worktrees.create(lane);
+      const relativePath = `src/${lane}.txt`;
+      await mkdir(path.dirname(path.join(tree, relativePath)), {
+        recursive: true,
       });
-      const attack: Attack = {
-        id: "browser-only-dialog",
-        round: 1,
-        origin: { kind: "contestant", contestant: "a", provider: "codex" },
-        rank: 1,
-        targets: ["b"],
-        claim: "The settings dialog does not open",
-        impact: "The user cannot change settings",
-        oracle: {
-          expectedBehavior: "The settings dialog opens",
-          rationale: "The task explicitly requires the dialog",
-        },
-        assertionFingerprint: "settings-dialog-opens",
-        requiredCapabilities: ["browser_dom_validation"],
-        patchPath: probePatch,
-        focusedCommand: 'node -e "process.exit(0)"',
-        evidenceKind: "browser_probe",
-        browserProbe: evidenceEntry.browserProbe,
-        status: "submitted",
-        proposedSeverity: "medium",
-        checks: [],
-      };
-      const verifier: AttackVerifier = {
-        id: "codex",
-        assess: () =>
-          Promise.resolve({
-            relevant: true,
-            oracleSupported: true,
-            oracleRationale: "The behavior is explicit",
-            rootDefectId: "settings-dialog",
-            severity: "medium",
-            rationale: "The comparative browser evidence is deterministic",
-          }),
-      };
-      const validateBrowser = vi.fn(
-        (
-          _worktree: string,
-          _probe: BrowserProbeRequest,
-          subject: "author" | "target",
-          _nativeSuiteIdentityPaths: string[],
-        ): Promise<BrowserValidationResult> => {
-          void _nativeSuiteIdentityPaths;
-          return Promise.resolve({
-            status: subject === "author" ? "verified" : "failed",
-            provisionAttempts: 1,
-            probes: [
-              {
-                probeId: "settings-dialog",
-                family: "interaction",
-                profile: "desktop",
-                status: subject === "author" ? "verified" : "failed",
-                contextId: `${subject}-settings-dialog`,
-                requiredCapabilityIds: ["browser_dom_validation"],
-                blockedOrigins: [],
-                artifacts: [],
-              },
-            ],
-            artifacts: [
-              {
-                kind: "result_manifest",
-                path: `/artifacts/${subject}-result.json`,
-                failureOnly: false,
-              },
-            ],
-            ...(subject === "target"
-              ? {
-                  reason: "application_failure" as const,
-                  failureAttribution: "contestant_application" as const,
-                }
-              : {}),
-          });
-        },
-      );
-
-      const result = await validateAttack({
-        attack,
-        authorPatch,
-        targetPatch,
-        runSpec: {} as never,
-        permissionPolicy: {
-          defaultMode: "confirm",
-          reducedValidationAccepted: false,
-          capabilities: [
-            {
-              id: "browser_dom_validation",
-              reason: "Browser comparison",
-              risk: "medium",
-              requirement: "required",
-              role: "harness_only",
-              enforcement: "brokered",
-              mode: "confirm",
-              scopes: [],
-              status: "approved",
-            },
-          ],
-        },
-        config,
-        worktrees,
-        verifier,
-        validateBrowser,
-        logRoot: path.join(temporaryRoot, "logs"),
-        signal: new AbortController().signal,
-        knownRootDefects: new Set(),
-      });
-
-      expect(result.status).toBe("landed");
-      expect(result.evidenceKind).toBe("browser_probe");
-      expect(result.browserArtifactRefs).toEqual([
-        "/artifacts/author-result.json",
-        "/artifacts/target-result.json",
-      ]);
-      expect(validateBrowser).toHaveBeenCalledTimes(2);
-
-      const selectedProbePasses = vi.fn(
-        (
-          _worktree: string,
-          _probe: BrowserProbeRequest,
-          subject: "author" | "target",
-          _nativeSuiteIdentityPaths: string[],
-        ): Promise<BrowserValidationResult> => {
-          void _nativeSuiteIdentityPaths;
-          return Promise.resolve({
-            status: subject === "target" ? "failed" : "verified",
-            provisionAttempts: 1,
-            probes: [
-              {
-                probeId: "settings-dialog",
-                family: "interaction",
-                profile: "desktop",
-                status: "verified",
-                contextId: `${subject}-settings-dialog-pass`,
-                requiredCapabilityIds: ["browser_dom_validation"],
-                blockedOrigins: [],
-                artifacts: [],
-              },
-              ...(subject === "target"
-                ? [
-                    {
-                      probeId: "arena-reflow-smoke",
-                      family: "responsive" as const,
-                      profile: "reflow_320" as const,
-                      status: "failed" as const,
-                      contextId: "target-unrelated-smoke",
-                      requiredCapabilityIds: [
-                        "browser_dom_validation" as const,
-                      ],
-                      reason: "application_failure" as const,
-                      blockedOrigins: [],
-                      artifacts: [],
-                    },
-                  ]
-                : []),
-            ],
-            artifacts: [],
-            ...(subject === "target"
-              ? {
-                  reason: "application_failure" as const,
-                  failureAttribution: "contestant_application" as const,
-                }
-              : {}),
-          });
-        },
-      );
-      const unrelatedFailure = await validateAttack({
-        attack: { ...attack, id: "browser-only-unrelated", checks: [] },
-        authorPatch,
-        targetPatch,
-        runSpec: {} as never,
-        permissionPolicy: {
-          defaultMode: "confirm",
-          reducedValidationAccepted: false,
-          capabilities: [
-            {
-              id: "browser_dom_validation",
-              reason: "Browser comparison",
-              risk: "medium",
-              requirement: "required",
-              role: "harness_only",
-              enforcement: "brokered",
-              mode: "confirm",
-              scopes: [],
-              status: "approved",
-            },
-          ],
-        },
-        config,
-        worktrees,
-        verifier,
-        validateBrowser: selectedProbePasses,
-        logRoot: path.join(temporaryRoot, "unrelated-logs"),
-        signal: new AbortController().signal,
-        knownRootDefects: new Set(),
-      });
-
-      expect(unrelatedFailure.status).toBe("blocked");
-
-      const unattributedAssess = vi.fn().mockResolvedValue({
-        relevant: true,
-        oracleSupported: true,
-        oracleRationale: "The behavior is explicit",
-        rootDefectId: "settings-dialog",
-        severity: "medium" as const,
-        rationale: "The comparative browser evidence is deterministic",
-      });
-      const unattributedFailure = await validateAttack({
-        attack: { ...attack, id: "browser-only-unattributed", checks: [] },
-        authorPatch,
-        targetPatch,
-        runSpec: {} as never,
-        permissionPolicy: {
-          defaultMode: "confirm",
-          reducedValidationAccepted: false,
-          capabilities: [
-            {
-              id: "browser_dom_validation",
-              reason: "Browser comparison",
-              risk: "medium",
-              requirement: "optional",
-              role: "harness_only",
-              enforcement: "brokered",
-              mode: "confirm",
-              scopes: [],
-              status: "approved",
-            },
-          ],
-        },
-        config,
-        worktrees,
-        verifier: { id: "codex", assess: unattributedAssess },
-        validateBrowser: (_worktree, probe, subject) =>
-          Promise.resolve({
-            status: subject === "author" ? "verified" : "failed",
-            provisionAttempts: 1,
-            probes: [
-              {
-                probeId: probe.id,
-                family: probe.family,
-                profile: probe.profile,
-                status: subject === "author" ? "verified" : "failed",
-                ...(subject === "target"
-                  ? { reason: "application_failure" as const }
-                  : {}),
-                contextId: `${subject}-unattributed`,
-                requiredCapabilityIds: ["browser_dom_validation"],
-                blockedOrigins: [],
-                artifacts: [],
-              },
-            ],
-            artifacts: [],
-            ...(subject === "target"
-              ? {
-                  reason: "application_failure" as const,
-                  failureAttribution: "unattributed" as const,
-                }
-              : {}),
-          }),
-        logRoot: path.join(temporaryRoot, "unattributed-logs"),
-        signal: new AbortController().signal,
-        knownRootDefects: new Set(),
-      });
-
-      expect(unattributedFailure.status).toBe("execution_inconclusive");
-      expect(unattributedFailure.damage).toBeUndefined();
-      expect(unattributedAssess).not.toHaveBeenCalled();
-
-      const adjudicate = vi.fn().mockResolvedValue({
-        decision: "confirmed" as const,
-        relevant: true,
-        expectedBehaviorClearlySupported: true,
-        evidencePointsToDefect: true,
-        rootDefectId: "settings-dialog",
-        severity: "medium" as const,
-        rationale: "The task supports the behavior",
-      });
-      const unverified = await validateAttack({
-        attack: { ...attack, id: "browser-only-timeout", checks: [] },
-        authorPatch,
-        targetPatch,
-        runSpec: {} as never,
-        permissionPolicy: {
-          defaultMode: "confirm",
-          reducedValidationAccepted: false,
-          capabilities: [
-            {
-              id: "browser_dom_validation",
-              reason: "Browser comparison",
-              risk: "medium",
-              requirement: "required",
-              role: "harness_only",
-              enforcement: "brokered",
-              mode: "confirm",
-              scopes: [],
-              status: "approved",
-            },
-          ],
-        },
-        config,
-        worktrees,
-        verifier: { ...verifier, adjudicate },
-        validateBrowser: (_worktree, probe, subject) =>
-          Promise.resolve({
-            status: "unverified",
-            provisionAttempts: 2,
-            reason: "timed_out",
-            probes: [
-              {
-                probeId: probe.id,
-                family: probe.family,
-                profile: probe.profile,
-                status: "unverified",
-                reason: "timed_out",
-                contextId: `${subject}-unverified`,
-                requiredCapabilityIds: ["browser_dom_validation"],
-                blockedOrigins: [],
-                artifacts: [],
-              },
-            ],
-            artifacts: [],
-            failureAttribution: "harness_transport",
-          }),
-        logRoot: path.join(temporaryRoot, "unverified-logs"),
-        signal: new AbortController().signal,
-        knownRootDefects: new Set(),
-      });
-
-      expect(unverified.status).toBe("execution_inconclusive");
-      expect(unverified.damage).toBeUndefined();
-      expect(adjudicate).not.toHaveBeenCalled();
-
-      const unavailableCapability = await validateAttack({
-        attack: { ...attack, id: "browser-only-capability-gap", checks: [] },
-        authorPatch,
-        targetPatch,
-        runSpec: {} as never,
-        permissionPolicy: {
-          defaultMode: "confirm",
-          reducedValidationAccepted: true,
-          capabilities: [
-            {
-              id: "browser_dom_validation",
-              reason: "Browser comparison",
-              risk: "medium",
-              requirement: "required",
-              role: "harness_only",
-              enforcement: "brokered",
-              mode: "confirm",
-              scopes: [],
-              status: "provisioning_failed",
-            },
-          ],
-        },
-        config,
-        worktrees,
-        verifier,
-        validateBrowser,
-        logRoot: path.join(temporaryRoot, "capability-gap-logs"),
-        signal: new AbortController().signal,
-        knownRootDefects: new Set(),
-      });
-
-      expect(unavailableCapability).toMatchObject({
-        status: "capability_denied",
-        outcomeReason:
-          "Capability browser_dom_validation is provisioning_failed",
-      });
-    } finally {
-      await worktrees.cleanup();
+      await writeFile(path.join(tree, relativePath), `${lane}\n`);
+      const patchPath = path.join(temporaryRoot, `${lane}.diff`);
+      await worktrees.capturePatch(tree, patchPath, undefined, true);
+      patches.push(patchPath);
     }
+    [authorPatch, targetPatch] = patches as [string, string];
+
+    const evidenceEntry = AttackSubmissionV2Schema.parse({
+      version: 2,
+      attacks: [
+        {
+          rank: 1,
+          claim: "The settings dialog does not open",
+          impact: "The user cannot change settings",
+          oracle: {
+            expectedBehavior: "The settings dialog opens",
+            rationale: "The task explicitly requires the dialog",
+          },
+          proposedSeverity: "medium",
+          confidence: 90,
+          reproduction: "Open the settings dialog in the browser",
+          requiredCapabilities: ["browser_dom_validation"],
+          browserProbe: {
+            id: "settings-dialog",
+            family: "interaction",
+            profile: "desktop",
+            expectedBehavior: "The settings dialog opens",
+            actions: [{ kind: "goto", path: "/" }],
+          },
+        },
+      ],
+    }).attacks[0]!;
+    probePatch = path.join(temporaryRoot, "probe.diff");
+    await writeFile(probePatch, browserProbeEvidencePatch(evidenceEntry, 1, "a"));
+
+    config = FightConfigSchema.parse({
+      task: "Fix the dialog",
+      agents: ["codex", "claude"],
+      attackVerifier: "codex",
+      rounds: 3,
+      maxAttacksPerRound: 3,
+      testCommand: "npm test",
+      repositoryRoot,
+      artifactRoot: path.join(repositoryRoot, ".agent-arena", "runs"),
+      permissionMode: "confirm",
+      nonInteractiveApproval: true,
+      limits: {
+        implementationMs: 10_000,
+        reviewMs: 10_000,
+        attackMs: 10_000,
+        verifierMs: 10_000,
+        repairMs: 10_000,
+      },
+    });
+
+    attack = {
+      id: "browser-only-dialog",
+      round: 1,
+      origin: { kind: "contestant", contestant: "a", provider: "codex" },
+      rank: 1,
+      targets: ["b"],
+      claim: "The settings dialog does not open",
+      impact: "The user cannot change settings",
+      oracle: {
+        expectedBehavior: "The settings dialog opens",
+        rationale: "The task explicitly requires the dialog",
+      },
+      assertionFingerprint: "settings-dialog-opens",
+      requiredCapabilities: ["browser_dom_validation"],
+      patchPath: probePatch,
+      focusedCommand: 'node -e "process.exit(0)"',
+      evidenceKind: "browser_probe",
+      browserProbe: evidenceEntry.browserProbe,
+      status: "submitted",
+      proposedSeverity: "medium",
+      checks: [],
+    };
+
+    verifier = {
+      id: "codex",
+      assess: () =>
+        Promise.resolve({
+          relevant: true,
+          oracleSupported: true,
+          oracleRationale: "The behavior is explicit",
+          rootDefectId: "settings-dialog",
+          severity: "medium",
+          rationale: "The comparative browser evidence is deterministic",
+        }),
+    };
+  });
+
+  afterAll(async () => {
+    await worktrees.cleanup();
+  });
+
+  function validate(options: {
+    id: string;
+    validateBrowser: ValidateBrowser;
+    permissionPolicy?: PermissionPolicy;
+    verifier?: AttackVerifier;
+  }) {
+    return validateAttack({
+      attack: { ...attack, id: options.id, checks: [] },
+      authorPatch,
+      targetPatch,
+      runSpec: {} as never,
+      permissionPolicy: options.permissionPolicy ?? browserCapability(),
+      config,
+      worktrees,
+      verifier: options.verifier ?? verifier,
+      validateBrowser: options.validateBrowser,
+      logRoot: path.join(temporaryRoot, `${options.id}-logs`),
+      signal: new AbortController().signal,
+      knownRootDefects: new Set(),
+    });
+  }
+
+  it("lands after a symmetric author pass and target failure", async () => {
+    const validateBrowser = vi.fn(symmetricReproduction);
+
+    const result = await validate({
+      id: "browser-only-dialog",
+      validateBrowser,
+    });
+
+    expect(result.status).toBe("landed");
+    expect(result.evidenceKind).toBe("browser_probe");
+    expect(validateBrowser).toHaveBeenCalledTimes(2);
+  });
+
+  it("runs no focused command when the probe is the only evidence", async () => {
+    const result = await validate({
+      id: "browser-only-no-focused-command",
+      validateBrowser: symmetricReproduction,
+    });
+
+    expect(result.checks.filter((check) => check.kind === "focused")).toEqual(
+      [],
+    );
+    expect(result.checks.map((check) => check.id)).toEqual(
+      expect.arrayContaining(["author-browser-probe", "target-browser-probe"]),
+    );
+  });
+
+  it("retains both lanes' result manifests as artifact references", async () => {
+    const result = await validate({
+      id: "browser-only-artifacts",
+      validateBrowser: symmetricReproduction,
+    });
+
+    expect(result.browserArtifactRefs).toEqual([
+      "/artifacts/author-result.json",
+      "/artifacts/target-result.json",
+    ]);
+  });
+
+  it("ignores an unrelated smoke-probe failure on the target", async () => {
+    // The selected probe passes on both lanes; only a mandatory smoke probe
+    // fails on the target, which is not the reproduction this attack claims.
+    const result = await validate({
+      id: "browser-only-unrelated",
+      validateBrowser: (_worktree, probe, subject) =>
+        Promise.resolve({
+          status: subject === "target" ? "failed" : "verified",
+          provisionAttempts: 1,
+          probes: [
+            {
+              probeId: probe.id,
+              family: probe.family,
+              profile: probe.profile,
+              status: "verified",
+              contextId: `${subject}-${probe.id}-pass`,
+              requiredCapabilityIds: ["browser_dom_validation"],
+              blockedOrigins: [],
+              artifacts: [],
+            },
+            ...(subject === "target"
+              ? [
+                  {
+                    probeId: "arena-reflow-smoke",
+                    family: "responsive" as const,
+                    profile: "reflow_320" as const,
+                    status: "failed" as const,
+                    contextId: "target-unrelated-smoke",
+                    requiredCapabilityIds: ["browser_dom_validation" as const],
+                    reason: "application_failure" as const,
+                    blockedOrigins: [],
+                    artifacts: [],
+                  },
+                ]
+              : []),
+          ],
+          artifacts: [],
+          ...(subject === "target"
+            ? {
+                reason: "application_failure" as const,
+                failureAttribution: "contestant_application" as const,
+              }
+            : {}),
+        }),
+    });
+
+    expect(result.status).toBe("blocked");
+  });
+
+  it("stays score-neutral when the failure cannot be attributed", async () => {
+    const assess = vi.fn().mockResolvedValue({
+      relevant: true,
+      oracleSupported: true,
+      oracleRationale: "The behavior is explicit",
+      rootDefectId: "settings-dialog",
+      severity: "medium" as const,
+      rationale: "The comparative browser evidence is deterministic",
+    });
+
+    const result = await validate({
+      id: "browser-only-unattributed",
+      verifier: { id: "codex", assess },
+      permissionPolicy: browserCapability({ requirement: "optional" }),
+      validateBrowser: (_worktree, probe, subject) =>
+        Promise.resolve({
+          status: subject === "author" ? "verified" : "failed",
+          provisionAttempts: 1,
+          probes: [
+            {
+              probeId: probe.id,
+              family: probe.family,
+              profile: probe.profile,
+              status: subject === "author" ? "verified" : "failed",
+              ...(subject === "target"
+                ? { reason: "application_failure" as const }
+                : {}),
+              contextId: `${subject}-unattributed`,
+              requiredCapabilityIds: ["browser_dom_validation"],
+              blockedOrigins: [],
+              artifacts: [],
+            },
+          ],
+          artifacts: [],
+          ...(subject === "target"
+            ? {
+                reason: "application_failure" as const,
+                failureAttribution: "unattributed" as const,
+              }
+            : {}),
+        }),
+    });
+
+    expect(result.status).toBe("execution_inconclusive");
+    expect(result.damage).toBeUndefined();
+    expect(assess).not.toHaveBeenCalled();
+  });
+
+  it("stays score-neutral when the browser lane times out", async () => {
+    const adjudicate = vi.fn().mockResolvedValue({
+      decision: "confirmed" as const,
+      relevant: true,
+      expectedBehaviorClearlySupported: true,
+      evidencePointsToDefect: true,
+      rootDefectId: "settings-dialog",
+      severity: "medium" as const,
+      rationale: "The task supports the behavior",
+    });
+
+    const result = await validate({
+      id: "browser-only-timeout",
+      verifier: { ...verifier, adjudicate },
+      validateBrowser: (_worktree, probe, subject) =>
+        Promise.resolve({
+          status: "unverified",
+          provisionAttempts: 2,
+          reason: "timed_out",
+          probes: [
+            {
+              probeId: probe.id,
+              family: probe.family,
+              profile: probe.profile,
+              status: "unverified",
+              reason: "timed_out",
+              contextId: `${subject}-unverified`,
+              requiredCapabilityIds: ["browser_dom_validation"],
+              blockedOrigins: [],
+              artifacts: [],
+            },
+          ],
+          artifacts: [],
+          failureAttribution: "harness_transport",
+        }),
+    });
+
+    expect(result.status).toBe("execution_inconclusive");
+    expect(result.damage).toBeUndefined();
+    expect(adjudicate).not.toHaveBeenCalled();
+  });
+
+  it("reports a capability gap without running the browser lane", async () => {
+    const validateBrowser = vi.fn(symmetricReproduction);
+
+    const result = await validate({
+      id: "browser-only-capability-gap",
+      validateBrowser,
+      permissionPolicy: {
+        ...browserCapability({ status: "provisioning_failed" }),
+        reducedValidationAccepted: true,
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "capability_denied",
+      outcomeReason: "Capability browser_dom_validation is provisioning_failed",
+    });
+    expect(validateBrowser).not.toHaveBeenCalled();
   });
 });

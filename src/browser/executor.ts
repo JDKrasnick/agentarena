@@ -26,6 +26,14 @@ export interface BrowserSession {
     contextId: string;
     freshStorage: true;
     allowedOrigins: string[];
+    /**
+     * True for the mandatory smoke probes the harness injects. These assert
+     * only uncaught runtime errors and the family invariant; console noise and
+     * blocked third-party origins stay diagnostic, because the repository never
+     * opted into that policy. Contestant-selected probes declare their own
+     * expected behavior and keep the stricter reading.
+     */
+    harnessOwned: boolean;
   }): Promise<Omit<BrowserProbeResult, "contextId" | "requiredCapabilityIds">>;
   runNativeSuite(): Promise<BrowserNativeSuiteResult>;
   stop(): Promise<void>;
@@ -221,6 +229,9 @@ export async function executeBrowserValidation(options: {
   let completedNativeProbe: BrowserProbeResult | undefined;
   const completedProbes = new Map<string, BrowserProbeResult>();
   const seenProbeIds = new Set<string>();
+  const mandatoryProbeIds = new Set(
+    mandatoryBrowserProbes().map((request) => request.id),
+  );
   const requests = [
     ...mandatoryBrowserProbes(),
     ...options.selectedProbes,
@@ -285,11 +296,15 @@ export async function executeBrowserValidation(options: {
             plan: { ...options.plan, profile },
             approvedOrigins: options.approvedOrigins,
           };
-      const cachedNativeResult =
-        completedNativeResult ??
-        (options.nativeSuiteCacheKey
-          ? options.nativeSuiteCache?.get(options.nativeSuiteCacheKey)
-          : undefined);
+      // Distinguish cross-lane reuse from an attempt-1 result carried into
+      // attempt 2 of this same invocation; only the former is a cache hit.
+      const sharedNativeResult = options.nativeSuiteCacheKey
+        ? options.nativeSuiteCache?.get(options.nativeSuiteCacheKey)
+        : undefined;
+      const cachedNativeResult = completedNativeResult ?? sharedNativeResult;
+      const nativeSuiteCacheHit = Boolean(
+        !completedNativeResult && sharedNativeResult,
+      );
       let nativeResult = cachedNativeResult;
       if (profile.nativeSuiteMode === "self_managed" && !nativeResult) {
         if (!adapter.runNativeSuiteStandalone)
@@ -403,6 +418,7 @@ export async function executeBrowserValidation(options: {
               contextId,
               freshStorage: true,
               allowedOrigins: runtime.approvedOrigins,
+              harnessOwned: mandatoryProbeIds.has(request.id),
             }),
           deadlineAt,
           attemptSignal,
@@ -438,7 +454,7 @@ export async function executeBrowserValidation(options: {
         provisionAttempts: attempt,
         toolVersion: session.toolVersion,
         browserVersion: session.browserVersion,
-        nativeSuiteCacheHit: Boolean(cachedNativeResult),
+        nativeSuiteCacheHit,
         probes,
         artifacts,
         failureAttribution:

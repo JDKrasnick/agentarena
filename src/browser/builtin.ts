@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   access,
   mkdir,
@@ -6,6 +8,7 @@ import {
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
@@ -19,6 +22,7 @@ import {
   minimalEnvironment,
   runShellCommand,
 } from "../runner/process-runner.js";
+import { ProcessTreeSupervisor } from "../runner/process-supervisor.js";
 import type {
   BrowserArtifact,
   BrowserProbeResult,
@@ -41,6 +45,36 @@ const CHROMIUM_PATHS = [
 
 const DOM_XSS_CANARY_ATTRIBUTE = "data-agent-arena-dom-xss-canary";
 const DOM_XSS_CANARY_PAYLOAD = `<span ${DOM_XSS_CANARY_ATTRIBUTE}="present"></span>`;
+
+/** Smallest readiness window; slower services scale with the stage budget. */
+const MIN_READINESS_MS = 15_000;
+/** Share of the remaining stage budget a service may spend becoming healthy. */
+const READINESS_BUDGET_SHARE = 0.5;
+/** Share of the remaining stage budget the repository-native suite may spend. */
+const NATIVE_SUITE_BUDGET_SHARE = 0.6;
+/** Grace period teardown always receives, measured from when teardown starts. */
+const TEARDOWN_GRACE_MS = 1_500;
+
+function readPlaywrightCoreVersion(): string {
+  try {
+    const manifestPath = createRequire(import.meta.url).resolve(
+      "playwright-core/package.json",
+    );
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      version?: unknown;
+    };
+    return typeof manifest.version === "string" ? manifest.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+let playwrightCoreVersion: string | undefined;
+
+function toolVersion(): string {
+  playwrightCoreVersion ??= readPlaywrightCoreVersion();
+  return `playwright-core-${playwrightCoreVersion}`;
+}
 
 async function unusedLoopbackPort(): Promise<number> {
   const server = createServer();
@@ -168,11 +202,29 @@ function approvedNetworkOrigin(input: {
   );
 }
 
-async function stopProcess(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.pid === undefined) return;
+async function stopProcess(
+  child: ChildProcess,
+  supervisor: ProcessTreeSupervisor | undefined,
+): Promise<void> {
+  if (child.exitCode !== null || child.pid === undefined) {
+    supervisor?.stopTracking();
+    return;
+  }
+  if (supervisor) {
+    // Same descendant tracking and identity-checked escalation the rest of the
+    // runner uses, so a dev server that spawns workers outside the process
+    // group cannot survive teardown and hold the port.
+    await supervisor.cleanup((signal) => {
+      try {
+        child.kill(signal);
+      } catch {
+        // The direct child may already have exited.
+      }
+    });
+    return;
+  }
   try {
-    if (process.platform === "win32") child.kill("SIGTERM");
-    else process.kill(-child.pid, "SIGTERM");
+    child.kill("SIGTERM");
   } catch {
     return;
   }
@@ -182,8 +234,7 @@ async function stopProcess(child: ChildProcess): Promise<void> {
   ]);
   if (child.exitCode === null) {
     try {
-      if (process.platform === "win32") child.kill("SIGKILL");
-      else process.kill(-child.pid, "SIGKILL");
+      child.kill("SIGKILL");
     } catch {
       // The process exited between the identity check and escalation.
     }
@@ -259,13 +310,18 @@ async function familyInvariant(
       'button,input,select,textarea,a[href],[role="button"],[role="link"]',
     );
     const controlCount = await controls.count();
-    let missingCount = 0;
-    for (let index = 0; index < controlCount; index += 1) {
-      const snapshot = await controls.nth(index).ariaSnapshot();
-      if (!snapshot) continue;
+    // Playwright owns accessible-name computation; issue the snapshots
+    // concurrently instead of one sequential round trip per control.
+    const snapshots = await Promise.all(
+      Array.from({ length: controlCount }, (_value, index) =>
+        controls.nth(index).ariaSnapshot(),
+      ),
+    );
+    const missingCount = snapshots.filter((snapshot) => {
+      if (!snapshot) return false;
       const root = snapshot.split("\n", 1)[0]?.trim() ?? "";
-      if (!/^-\s+\S+\s+"/u.test(root)) missingCount += 1;
-    }
+      return !/^-\s+\S+\s+"/u.test(root);
+    }).length;
     return missingCount > 0
       ? `${String(missingCount)} actionable element(s) lack an accessible name`
       : undefined;
@@ -295,6 +351,10 @@ function nativeSuiteEnvironment(
     Parameters<BrowserAdapter["launch"]>[0]["plan"]["profile"]
   >,
 ): Record<string, string> {
+  // Both service modes receive the resolved runtime address. `self_managed`
+  // owns the service lifecycle rather than the port choice: Arena still
+  // reserves the port and the suite binds it before Arena starts its own
+  // service, which is what keeps the two from colliding.
   const port = new URL(profile.baseUrl).port;
   return {
     ...(port ? { PORT: port } : {}),
@@ -307,9 +367,12 @@ function nativeSuiteEnvironment(
 async function runNativeSuiteCommand(
   input: Parameters<BrowserAdapter["launch"]>[0],
 ): Promise<Omit<BrowserProbeResult, "contextId" | "requiredCapabilityIds">> {
+  // Leave room in the stage budget for the probe phase; a slow repository
+  // suite should not starve the probes it exists alongside.
+  const remainingMs = Math.max(1, input.deadlineAt - Date.now());
   const result = await runShellCommand(input.plan.profile.testCommand, {
     cwd: input.worktree,
-    timeoutMs: Math.max(1, input.deadlineAt - Date.now()),
+    timeoutMs: Math.max(1, Math.floor(remainingMs * NATIVE_SUITE_BUDGET_SHARE)),
     logPrefix: path.join(input.artifactDirectory, "native-suite"),
     env: nativeSuiteEnvironment(input.plan.profile),
     signal: input.signal,
@@ -340,13 +403,14 @@ async function runNativeSuiteCommand(
 
 class BuiltInBrowserSession implements BrowserSession {
   readonly artifacts: BrowserArtifact[];
-  readonly toolVersion = "playwright-core-1.62.1";
+  readonly toolVersion = toolVersion();
   browserVersion = "unlaunched";
   private browser?: Browser;
 
   constructor(
     private readonly input: Parameters<BrowserAdapter["launch"]>[0],
     private readonly child: ChildProcess,
+    private readonly supervisor: ProcessTreeSupervisor | undefined,
     private readonly stdout: FileHandle,
     private readonly stderr: FileHandle,
     artifacts: BrowserArtifact[],
@@ -355,7 +419,16 @@ class BuiltInBrowserSession implements BrowserSession {
   }
 
   async waitUntilReady(): Promise<void> {
-    const deadline = Math.min(Date.now() + 15_000, this.input.deadlineAt);
+    // Scale readiness with the stage budget so a slower contestant service is
+    // not misread as an application failure, while still reserving time for
+    // the probe phase.
+    const readinessMs = Math.max(
+      MIN_READINESS_MS,
+      Math.floor(
+        (this.input.deadlineAt - Date.now()) * READINESS_BUDGET_SHARE,
+      ),
+    );
+    const deadline = Math.min(Date.now() + readinessMs, this.input.deadlineAt);
     while (Date.now() < deadline) {
       if (this.input.signal.aborted)
         throw new BrowserInfrastructureError(
@@ -399,6 +472,7 @@ class BuiltInBrowserSession implements BrowserSession {
     request,
     contextId,
     allowedOrigins,
+    harnessOwned,
   }: Parameters<BrowserSession["runProbe"]>[0]): Promise<
     Omit<BrowserProbeResult, "contextId" | "requiredCapabilityIds">
   > {
@@ -408,7 +482,8 @@ class BuiltInBrowserSession implements BrowserSession {
         "launch_failure",
       );
     const blockedOrigins: string[] = [];
-    const errors: string[] = [];
+    const pageErrors: string[] = [];
+    const consoleErrors: string[] = [];
     let context: BrowserContext | undefined;
     let page: Page | undefined;
     let phase: "provision" | "application" = "provision";
@@ -461,9 +536,9 @@ class BuiltInBrowserSession implements BrowserSession {
       });
       page = await context.newPage();
       page.on("console", (message) => {
-        if (message.type() === "error") errors.push(message.text());
+        if (message.type() === "error") consoleErrors.push(message.text());
       });
-      page.on("pageerror", (error) => errors.push(error.message));
+      page.on("pageerror", (error) => pageErrors.push(error.message));
       phase = "application";
       await executeActions(
         page,
@@ -471,9 +546,33 @@ class BuiltInBrowserSession implements BrowserSession {
         request.actions,
       );
       const invariant = await familyInvariant(page, request.family);
-      if (invariant) errors.push(invariant);
-      const status =
-        errors.length || blockedOrigins.length ? "failed" : "verified";
+      // Harness-owned smoke probes assert only what the repository opted into
+      // by having a browser lane at all: no uncaught runtime errors and the
+      // family invariant. Console noise and blocked third-party origins are
+      // recorded as diagnostics, because an approved profile allows exactly
+      // one origin and ordinary applications legitimately reference CDNs.
+      // A contestant-selected probe declares its own expected behavior, so it
+      // keeps the stricter reading.
+      const failures = [
+        ...pageErrors,
+        ...(invariant ? [invariant] : []),
+        ...(harnessOwned ? [] : consoleErrors),
+        ...(harnessOwned || !blockedOrigins.length
+          ? []
+          : [
+              `Blocked unapproved origin(s): ${[...new Set(blockedOrigins)].join(", ")}`,
+            ]),
+      ];
+      const diagnostics = [
+        ...failures,
+        ...(harnessOwned ? consoleErrors : []),
+        ...(harnessOwned && blockedOrigins.length
+          ? [
+              `Recorded blocked origin(s): ${[...new Set(blockedOrigins)].join(", ")}`,
+            ]
+          : []),
+      ];
+      const status = failures.length ? "failed" : "verified";
       const artifacts: BrowserArtifact[] = [];
       if (status === "failed") {
         const screenshotPath = path.join(
@@ -499,7 +598,8 @@ class BuiltInBrowserSession implements BrowserSession {
         artifacts.push({
           kind: "blocked_origin",
           path: blockedPath,
-          failureOnly: true,
+          // Blocked origins are evidence whether or not the probe failed.
+          failureOnly: false,
         });
       }
       return {
@@ -509,7 +609,7 @@ class BuiltInBrowserSession implements BrowserSession {
         ...(status === "failed"
           ? { reason: "application_failure" as const }
           : {}),
-        detail: errors.join("; ") || request.expectedBehavior,
+        detail: diagnostics.join("; ") || request.expectedBehavior,
         blockedOrigins: [...new Set(blockedOrigins)],
         artifacts,
       };
@@ -552,7 +652,7 @@ class BuiltInBrowserSession implements BrowserSession {
 
   async stop(): Promise<void> {
     await this.browser?.close().catch(() => undefined);
-    await stopProcess(this.child);
+    await stopProcess(this.child, this.supervisor);
     await Promise.all([
       this.stdout.close().catch(() => undefined),
       this.stderr.close().catch(() => undefined),
@@ -560,10 +660,10 @@ class BuiltInBrowserSession implements BrowserSession {
     if (this.input.plan.profile.teardownCommand)
       await runShellCommand(this.input.plan.profile.teardownCommand, {
         cwd: this.input.worktree,
-        timeoutMs: Math.max(
-          1,
-          Math.min(1_500, this.input.deadlineAt + 1_500 - Date.now()),
-        ),
+        // Teardown is measured from when teardown starts, not from the stage
+        // deadline: it matters most on the path where that deadline already
+        // expired.
+        timeoutMs: TEARDOWN_GRACE_MS,
         logPrefix: path.join(this.input.artifactDirectory, "teardown"),
         signal: new AbortController().signal,
       });
@@ -643,18 +743,34 @@ class BuiltInBrowserAdapter implements BrowserAdapter {
       open(stderrPath, "w"),
     ]);
     const port = new URL(runtimeInput.plan.profile.baseUrl).port;
+    const owner = randomUUID();
     const child = spawn(runtimeInput.plan.profile.startupCommand, {
       cwd: runtimeInput.worktree,
       shell: true,
       detached: process.platform !== "win32",
       stdio: ["ignore", stdout.fd, stderr.fd],
-      env: minimalEnvironment(port ? { PORT: port } : {}),
+      env: minimalEnvironment({
+        ...(port ? { PORT: port } : {}),
+        AGENT_ARENA_PROCESS_OWNER: owner,
+      }),
     });
     child.once("error", () => undefined);
-    return new BuiltInBrowserSession(runtimeInput, child, stdout, stderr, [
-      { kind: "startup_log", path: stdoutPath, failureOnly: false },
-      { kind: "startup_log", path: stderrPath, failureOnly: false },
-    ]);
+    const supervisor =
+      child.pid === undefined
+        ? undefined
+        : new ProcessTreeSupervisor(child.pid, owner);
+    supervisor?.startTracking();
+    return new BuiltInBrowserSession(
+      runtimeInput,
+      child,
+      supervisor,
+      stdout,
+      stderr,
+      [
+        { kind: "startup_log", path: stdoutPath, failureOnly: false },
+        { kind: "startup_log", path: stderrPath, failureOnly: false },
+      ],
+    );
   }
 }
 

@@ -37,8 +37,25 @@ function config(overrides: Record<string, unknown> = {}) {
   });
 }
 
+function source(
+  kind: "user_task" | "issue" | "repo_spec",
+  origin: string,
+  content: string,
+): ReconnaissanceSnapshot["sources"][number] {
+  return {
+    id: origin,
+    kind,
+    origin,
+    retrievedAt: "2026-08-18T12:00:00.000Z",
+    visibility: "shared",
+    content,
+    contentHash: "c".repeat(64),
+  };
+}
+
 function reconnaissance(
   files: Record<string, string> = {},
+  sources: ReconnaissanceSnapshot["sources"] = [],
 ): ReconnaissanceSnapshot {
   const snapshot = {
     version: 1 as const,
@@ -52,7 +69,7 @@ function reconnaissance(
       taskReferences: [],
     },
     capturedAt: "2026-08-18T12:00:00.000Z",
-    sources: [],
+    sources,
     repositoryEvidence: Object.entries(files).map(([path, content]) => ({
       path,
       content,
@@ -92,6 +109,37 @@ describe("browser validation planner", () => {
       requirement: "required",
       enforcement: "advisory",
     });
+  });
+
+  it("keeps instruction-file wording optional rather than required", () => {
+    const plan = planBrowserValidation(
+      config({ task: "Change parser behavior" }),
+      reconnaissance({ "package.json": '{"dependencies":{"react":"18"}}' }, [
+        source(
+          "repo_spec",
+          "CLAUDE.md",
+          "Prefer self-documenting code. Keep navigation and rendering fast.",
+        ),
+      ]),
+    );
+
+    expect(plan?.requirement).toBe("optional");
+    expect(plan?.evidence).toContainEqual({
+      source: "repository",
+      location: "CLAUDE.md",
+      detail: "Repository instructions name browser or DOM behavior",
+    });
+  });
+
+  it("requires browser validation from a resolved issue body", () => {
+    const plan = planBrowserValidation(
+      config({ task: "Resolve issue 12" }),
+      reconnaissance({}, [
+        source("issue", "issue 12", "The settings dialog does not open"),
+      ]),
+    );
+
+    expect(plan?.requirement).toBe("required");
   });
 
   it("makes repository-only frontend evidence optional", () => {

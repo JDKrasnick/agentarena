@@ -425,9 +425,14 @@ The user can choose one overall mode:
 The static browser planner consumes the approved reconnaissance snapshot and
 never executes configuration. Task evidence makes `browser_dom_validation`
 required when it names visible UI, interaction, responsive behavior,
-accessibility, persistence, browser, or DOM requirements. Frontend evidence
-found only in manifests, scripts, routes, or literal browser configuration
-makes the capability optional; otherwise it is absent.
+accessibility, persistence, browser, or DOM requirements. Task evidence means
+the task statement, its acceptance criteria, and resolved issue, pull-request,
+or specification sources. Standing instruction files such as `AGENTS.md` and
+`CLAUDE.md` are excluded: they describe the repository rather than the task and
+routinely use words like "render" or "navigation" for unrelated reasons.
+Frontend evidence found only in instruction files, manifests, scripts, routes,
+or literal browser configuration makes the capability optional; otherwise it is
+absent.
 
 Profile resolution uses this order: explicit `browser` configuration, literal
 Playwright/Cypress configuration, recognized package scripts, then unavailable.
@@ -444,7 +449,10 @@ origins are never implied.
 
 Each contestant runs in its own patched worktree and service process. Readiness
 polling, timeouts, process-group teardown, fresh contexts, and clean storage are
-harness responsibilities. Generated probes use Chromium desktop 1440×900,
+harness responsibilities. The readiness window scales with the stage budget
+rather than using a fixed constant, so a contestant whose patch makes the
+service slower to boot is not misread as an application failure; the repository
+suite is likewise capped below the full budget so it cannot starve the probes. Generated probes use Chromium desktop 1440×900,
 mobile 390×844 with touch, or a 320 CSS-pixel reflow check. The attacking agent
 chooses the task-specific probe family, profile, accessible actions, and
 expected behavior from this safe envelope. Repository browser projects are not
@@ -457,7 +465,14 @@ account's network authority.
 
 Runtime-error/DOM-integrity, accessible-name, and 320 CSS-pixel overflow smoke
 probes are mandatory on every browser run; the attacker-selected probe is
-additive. A browser-only attack may omit repository paths and a focused command.
+additive. Because the repository never opted into the mandatory probes, they
+fail only on uncaught runtime errors and their own family invariant. Console
+messages and requests to unapproved origins are recorded on the result and in
+artifacts but do not fail a mandatory probe: an approved profile allows exactly
+the application's own origins, and ordinary applications legitimately reference
+CDNs. A contestant-selected probe states its own expected behavior, so console
+errors and blocked origins do fail it, which is what makes an undeclared
+network dependency a usable attack. A browser-only attack may omit repository paths and a focused command.
 The harness records it as reproducible evidence only after it passes on the
 author worktree, fails on the target worktree, and survives normal oracle
 adjudication. More complex flows use repository-authored tests or fixtures and
@@ -477,11 +492,14 @@ run comparative lanes sequentially. Native-suite results are reused within the
 run only when the exact command and immutable patch bytes match; service and
 probe lifecycles are never skipped.
 
-`native_suite_mode` is `reuse_started_service` by default and passes `PORT`,
-`BASE_URL`, `PLAYWRIGHT_BASE_URL`, and `CYPRESS_BASE_URL` to the exact native
-command. `self_managed` runs the native suite before Arena starts its probe
-service. Literal Playwright configurations with a `webServer.command` resolve
-to `self_managed`, avoiding duplicate ownership of the configured port.
+`native_suite_mode` is `reuse_started_service` by default. Both modes receive
+`PORT`, `BASE_URL`, `PLAYWRIGHT_BASE_URL`, and `CYPRESS_BASE_URL` for the
+resolved runtime address; the modes differ in who owns the service lifecycle,
+not in who chooses the port. `reuse_started_service` runs against the service
+Arena already started. `self_managed` runs the native suite first and expects
+it to bind the reserved port itself, before Arena starts its probe service.
+Literal Playwright configurations with a `webServer.command` resolve to
+`self_managed`, avoiding duplicate ownership of the configured port.
 
 The reviewer decides whether an already approved external origin is appropriate
 evidence, but cannot add an origin after consolidated approval. Authenticated
