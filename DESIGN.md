@@ -240,8 +240,10 @@ recovery digests; terminal and plain displays do not consume it.
 
 Both fighter surfaces are always actionable and open the same workstream detail
 view. Provider imagery comes from the provider registry; provider names remain
-primary. Cards show health, status, current move, checks, retained output, and a
-textual damage cue. Returning to the arena preserves the selected recorded
+primary. Cards show health, status, current move, checks, the ten most recent
+output chunks, and a textual damage cue. Detail preserves and renders the full
+redacted stream in terminal order without trimming whitespace or adding
+presentation timestamps. Returning to the arena preserves the selected recorded
 round.
 
 ### Round navigation and replay

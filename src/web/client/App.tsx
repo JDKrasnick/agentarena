@@ -405,30 +405,7 @@ function FighterDetail({
             <h2>Agent workstream</h2>
             <span>{fighter.activity.replaceAll("_", " ")}</span>
           </header>
-          <div className="detail-output" aria-label={`${provider} full output`}>
-            {fighter.output.length ? (
-              fighter.output.map((line, index) => (
-                <p
-                  className={line.stream === "stderr" ? "stderr" : ""}
-                  key={`${line.timestamp}-${String(index)}`}
-                >
-                  <time>
-                    {new Date(line.timestamp).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      second: "2-digit",
-                      hour12: false,
-                    })}
-                  </time>
-                  <span>{line.text.trim()}</span>
-                </p>
-              ))
-            ) : (
-              <p className="detail-empty">
-                No output was recorded for this view yet.
-              </p>
-            )}
-          </div>
+          <FullAgentOutput fighter={fighter} provider={provider} />
           {round === "live" && canSteer ? (
             <form
               className="detail-steer"
@@ -535,6 +512,34 @@ function FighterDetail({
         </aside>
       </div>
     </section>
+  );
+}
+
+export function FullAgentOutput({
+  fighter,
+  provider,
+}: {
+  fighter: DashboardContestant;
+  provider: string;
+}) {
+  return (
+    <pre className="detail-output" aria-label={`${provider} full output`}>
+      {fighter.output.length ? (
+        fighter.output.map((chunk, index) => (
+          <span
+            className={`output-chunk output-${chunk.stream}`}
+            data-invocation={chunk.invocationId}
+            key={`${chunk.timestamp}-${String(index)}`}
+          >
+            {chunk.text}
+          </span>
+        ))
+      ) : (
+        <span className="detail-empty">
+          No output was recorded for this view yet.
+        </span>
+      )}
+    </pre>
   );
 }
 

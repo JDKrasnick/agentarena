@@ -1264,6 +1264,7 @@ main {
   text-transform: capitalize;
 }
 .detail-output {
+  display: block;
   min-height: 360px;
   max-height: calc(100vh - 390px);
   overflow: auto;
@@ -1276,24 +1277,19 @@ main {
     SFMono-Regular,
     Menlo,
     monospace;
+  overflow-wrap: anywhere;
   scrollbar-color: var(--app-scroll-thumb) var(--surface);
+  tab-size: 2;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
-.detail-output p {
-  display: grid;
-  grid-template-columns: 66px minmax(0, 1fr);
-  gap: 10px;
-  margin: 0 0 7px;
+.detail-output .output-chunk {
   color: var(--app-text-secondary);
 }
-.detail-output time {
-  color: var(--app-text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-.detail-output .stderr {
+.detail-output .output-stderr {
   color: var(--app-danger-title);
 }
 .detail-output .detail-empty {
-  display: block;
   color: var(--app-text-faint);
 }
 .detail-steer {

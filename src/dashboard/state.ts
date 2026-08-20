@@ -196,7 +196,9 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
         const invocation = target.invocations.find(
           (entry) => entry.id === event.invocationId,
         );
-        appendBounded(target.output, {
+        // Fighter detail is the authoritative live transcript. Keep every
+        // redacted chunk; only the compact fighter card selects a recent tail.
+        target.output.push({
           stream: event.stream,
           text: event.text,
           invocationId: event.invocationId,
