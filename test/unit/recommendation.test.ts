@@ -44,4 +44,29 @@ describe("recommended patch selection", () => {
       }),
     ).toMatchObject({ contestantId: "b", reason: "correctness" });
   });
+
+  it("does not recommend a patch that failed required browser validation", () => {
+    const state = makeRunState();
+    state.contestants.a!.checks.push({
+      id: "final-browser-required",
+      kind: "required",
+      status: "failed",
+      reason: "application_failure",
+    });
+
+    const recommendation = selectRecommendedPatch({
+      contestants: state.contestants,
+      championId: "a",
+    });
+
+    expect(recommendation).toMatchObject({ contestantId: "b" });
+    expect(
+      recommendation.comparison.find(
+        (candidate) => candidate.contestantId === "a",
+      ),
+    ).toMatchObject({
+      eligible: false,
+      requiredValidationPassed: false,
+    });
+  });
 });

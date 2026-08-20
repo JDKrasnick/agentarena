@@ -1,13 +1,6 @@
 import { createHash } from "node:crypto";
-import { createReadStream, realpathSync } from "node:fs";
-import {
-  mkdir,
-  open,
-  readFile,
-  realpath,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { constants, realpathSync } from "node:fs";
+import { mkdir, open, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
 import { sha256, stableId } from "../core/ids.js";
@@ -22,7 +15,11 @@ import {
   type TaskReference,
 } from "../core/types.js";
 import { RunSpecSchema, type RunSpec } from "../contracts/round.js";
-import { discoverInstructions } from "../repo/instructions.js";
+import {
+  discoverInstructions,
+  INSTRUCTION_PATHS,
+} from "../repo/instructions.js";
+import { planBrowserValidation } from "../browser/planner.js";
 
 export interface ResolvedIssue {
   origin: string;
@@ -426,6 +423,12 @@ const RECONNAISSANCE_PATHS = [
   "pdm.lock",
   "tox.ini",
   "pytest.ini",
+  "go.mod",
+  "go.sum",
+  "Cargo.toml",
+  "Cargo.lock",
+  "Gemfile",
+  "Gemfile.lock",
   "playwright.config.ts",
   "playwright.config.js",
   "playwright.config.mjs",
@@ -454,6 +457,9 @@ const LOCKFILE_PATHS = new Set([
   "poetry.lock",
   "uv.lock",
   "pdm.lock",
+  "go.sum",
+  "Cargo.lock",
+  "Gemfile.lock",
 ]);
 const MAX_RECONNAISSANCE_FILE_BYTES = 256 * 1024;
 const MAX_RECONNAISSANCE_TEXT_BYTES = 2 * 1024 * 1024;
@@ -462,7 +468,10 @@ async function readBoundedTextFile(
   filePath: string,
   label: string,
 ): Promise<string> {
-  const handle = await open(filePath, "r");
+  const handle = await open(
+    filePath,
+    constants.O_RDONLY | constants.O_NOFOLLOW,
+  );
   try {
     const file = await handle.stat();
     if (!file.isFile())
@@ -552,11 +561,31 @@ function assertContainedPath(
     );
 }
 
-async function hashFile(filePath: string): Promise<string> {
-  const digest = createHash("sha256");
-  for await (const chunk of createReadStream(filePath))
-    digest.update(chunk as Buffer);
-  return digest.digest("hex");
+async function hashFile(filePath: string): Promise<{
+  contentHash: string;
+  byteLength: number;
+}> {
+  const handle = await open(
+    filePath,
+    constants.O_RDONLY | constants.O_NOFOLLOW,
+  );
+  try {
+    const file = await handle.stat();
+    if (!file.isFile())
+      throw new Error(
+        `Repository reconnaissance path is not a regular file: ${filePath}`,
+      );
+    const digest = createHash("sha256");
+    let byteLength = 0;
+    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+      const bytes = Buffer.from(chunk as Uint8Array);
+      digest.update(bytes);
+      byteLength += bytes.length;
+    }
+    return { contentHash: digest.digest("hex"), byteLength };
+  } finally {
+    await handle.close();
+  }
 }
 
 async function collectRepositoryEvidence(
@@ -570,26 +599,17 @@ async function collectRepositoryEvidence(
       const evidencePath = path.join(repositoryRoot, relativePath);
       const canonicalPath = await realpath(evidencePath);
       assertContainedPath(canonicalRoot, canonicalPath, relativePath);
-      const file = await stat(canonicalPath);
-      if (!file.isFile())
-        throw new Error(
-          `Repository reconnaissance path is not a regular file: ${relativePath}`,
-        );
       if (LOCKFILE_PATHS.has(relativePath)) {
+        const hashed = await hashFile(canonicalPath);
         evidence.push({
           path: relativePath,
           content: "",
-          contentHash: await hashFile(canonicalPath),
-          byteLength: file.size,
+          ...hashed,
           contentOmitted: "lockfile_hash_only",
         });
         continue;
       }
-      if (file.size > MAX_RECONNAISSANCE_FILE_BYTES)
-        throw new Error(
-          `Repository reconnaissance file ${relativePath} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
-        );
-      const content = await readFile(canonicalPath, "utf8");
+      const content = await readBoundedTextFile(canonicalPath, relativePath);
       const byteLength = budget.include(relativePath, content);
       evidence.push({
         path: relativePath,
@@ -602,6 +622,42 @@ async function collectRepositoryEvidence(
     }
   }
   return evidence;
+}
+
+export async function assertReconnaissanceRepositoryInputsCurrent(
+  snapshot: ReconnaissanceSnapshot,
+): Promise<void> {
+  const current = await collectRepositoryEvidence(
+    snapshot.request.repositoryRoot,
+    new ReconnaissanceTextBudget(),
+  );
+  if (canonicalJson(current) !== canonicalJson(snapshot.repositoryEvidence))
+    throw new Error(
+      "Repository reconnaissance evidence changed after permission planning; rerun the fight to approve a fresh capability plan",
+    );
+
+  const currentInstructions = new Map(
+    (await discoverInstructions(snapshot.request.repositoryRoot)).map(
+      (instruction) => [instruction.path, instruction.content],
+    ),
+  );
+  for (const instructionPath of INSTRUCTION_PATHS) {
+    const approved = snapshot.sources.find(
+      (source) =>
+        source.id === stableId("instructions", instructionPath) &&
+        source.origin === instructionPath,
+    );
+    const content = currentInstructions.get(instructionPath);
+    if (
+      (approved === undefined) !== (content === undefined) ||
+      (approved &&
+        content !== undefined &&
+        approved.contentHash !== sha256(content))
+    )
+      throw new Error(
+        "Repository instructions changed after permission planning; rerun the fight to approve a fresh capability plan",
+      );
+  }
 }
 
 export async function collectReconnaissance(
@@ -902,6 +958,20 @@ export async function buildRunSpec(
   options: BuildRunSpecOptions,
 ): Promise<RunSpec> {
   const config = FightConfigSchema.parse(options.config);
+  const reconnaissance =
+    options.reconnaissance ??
+    (await collectFightReconnaissance(config, {
+      ...(options.issueResolver
+        ? { issueResolver: options.issueResolver }
+        : {}),
+      ...(options.pullRequestResolver
+        ? { pullRequestResolver: options.pullRequestResolver }
+        : {}),
+      ...(options.localSpecResolver
+        ? { localSpecResolver: options.localSpecResolver }
+        : {}),
+      ...(options.now ? { now: options.now } : {}),
+    }));
   const snapshot = await buildTaskContract({
     ...options,
     task: config.task,
@@ -910,6 +980,7 @@ export async function buildRunSpec(
     issueReferences: config.issueReferences,
     pullRequestReferences: config.pullRequestReferences,
     taskReferences: config.taskReferences,
+    reconnaissance,
   });
   const commands: RunSpec["commands"] = [
     {
@@ -945,6 +1016,49 @@ export async function buildRunSpec(
       },
     );
   }
+  const browserValidation = planBrowserValidation(config, reconnaissance);
+  if (browserValidation?.profile) {
+    commands.push(
+      {
+        id: "browser-startup",
+        kind: "browser_startup",
+        command: browserValidation.profile.startupCommand,
+        timeoutMs: config.limits.attackMs,
+        required: browserValidation.requirement === "required",
+      },
+      {
+        id: "browser-test",
+        kind: "browser_test",
+        command: browserValidation.profile.testCommand,
+        timeoutMs: config.limits.attackMs,
+        required: browserValidation.requirement === "required",
+      },
+      ...(browserValidation.profile.teardownCommand
+        ? [
+            {
+              id: "browser-teardown",
+              kind: "browser_teardown" as const,
+              command: browserValidation.profile.teardownCommand,
+              timeoutMs: config.limits.attackMs,
+              required: false,
+            },
+          ]
+        : []),
+    );
+  }
+  const browserCapability = options.permissions.capabilities.find(
+    (capability) => capability.id === "browser_dom_validation",
+  );
+  const blockedRequiredBrowserOrigin = options.permissions.capabilities.find(
+    (capability) =>
+      capability.id.startsWith("browser_origin_") &&
+      capability.requirement === "required" &&
+      capability.status !== "approved",
+  );
+  const browserDecision =
+    browserCapability?.status === "approved" && blockedRequiredBrowserOrigin
+      ? blockedRequiredBrowserOrigin.status
+      : browserCapability?.status;
   const base = {
     version: 1 as const,
     runId: options.runId,
@@ -983,6 +1097,27 @@ export async function buildRunSpec(
         scopes: capability.scopes,
       })),
     },
+    ...(browserValidation && browserCapability
+      ? {
+          browserValidation: {
+            ...browserValidation,
+            decision: browserDecision ?? browserCapability.status,
+            approvedScopes:
+              browserDecision === "approved"
+                ? [
+                    ...browserCapability.scopes,
+                    ...options.permissions.capabilities
+                      .filter(
+                        (capability) =>
+                          capability.id.startsWith("browser_origin_") &&
+                          capability.status === "approved",
+                      )
+                      .flatMap((capability) => capability.scopes),
+                  ]
+                : [],
+          },
+        }
+      : {}),
   } satisfies Omit<RunSpec, "contentHash">;
   return RunSpecSchema.parse({
     ...base,

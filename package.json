@@ -50,6 +50,7 @@
   "dependencies": {
     "commander": "^14.0.0",
     "execa": "^9.6.0",
+    "playwright-core": "^1.62.1",
     "yaml": "^2.8.0",
     "zod": "^4.0.0"
   },

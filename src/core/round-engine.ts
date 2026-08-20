@@ -25,6 +25,7 @@ import {
 } from "../agents/prompts.js";
 import { ArtifactStore } from "../artifacts/store.js";
 import {
+  browserProbeEvidencePatch,
   materializeAttack,
   materializeHouseAttack,
 } from "../attacks/submission.js";
@@ -79,12 +80,18 @@ import {
   buildRunSpec,
   calculateRunSpecHash,
   collectFightReconnaissance,
+  assertReconnaissanceRepositoryInputsCurrent,
   GitHubPullRequestResolver,
   type ResolvedPullRequest,
   type ReconnaissanceSnapshot,
   validateReconnaissance,
 } from "../task/task-contract.js";
 import type { RunSpec } from "../contracts/round.js";
+import {
+  BrowserValidationResultSchema,
+  type BrowserValidationResult,
+} from "../contracts/browser.js";
+import { findBrowserProbeResult } from "../browser/results.js";
 import {
   FailureRecordSchema,
   type FailureCategory,
@@ -179,6 +186,11 @@ import {
   assessBattleCoverage,
   assertTargetedRetryAllowed,
 } from "../confidence/assessment.js";
+import {
+  executeBrowserValidation,
+  type BrowserAdapter,
+  type BrowserNativeSuiteResult,
+} from "../browser/executor.js";
 
 export type { ReconnaissanceSnapshot } from "../task/task-contract.js";
 
@@ -202,6 +214,9 @@ export interface ArenaDependencies {
   consoleOptions?: ConsoleRenderOptions;
   /** Transactional executor hook used by isolated RoundEngine tests/adapters. */
   executeRound?: (snapshot: RoundSnapshot) => Promise<RoundResult>;
+  browserAdapters?: Partial<
+    Record<"playwright" | "cypress" | "custom", BrowserAdapter>
+  >;
 }
 
 /** Read-only legacy hooks kept out of the public runtime dependency surface. */
@@ -235,6 +250,7 @@ interface ArenaContext {
   roundInvocations: RecordedRoundInvocation[];
   priorEnvelopeHash: string | null;
   appliedEnvelopes: AppliedEnvelope[];
+  browserBaseline?: BrowserValidationResult;
 }
 
 interface RecordedRoundInvocation {
@@ -394,6 +410,11 @@ export class RoundEngine {
   private readonly generatedContestantAdapters: Partial<
     Record<ContestantId, AgentAdapter>
   > = {};
+  private readonly browserNativeSuiteCache = new Map<
+    string,
+    BrowserNativeSuiteResult
+  >();
+  private readonly browserProbeInvocationCounts = new Map<string, number>();
 
   constructor(
     private readonly dependencies: ArenaDependencies,
@@ -423,6 +444,8 @@ export class RoundEngine {
     externalSignal?: AbortSignal,
     suppliedReconnaissance?: ReconnaissanceSnapshot,
   ): Promise<FightOutcome> {
+    this.browserNativeSuiteCache.clear();
+    this.browserProbeInvocationCounts.clear();
     for (const contestantId of Object.keys(
       this.generatedContestantAdapters,
     ) as ContestantId[])
@@ -448,6 +471,7 @@ export class RoundEngine {
       config,
       discoverCapabilities(config, reconnaissance),
     );
+    await assertReconnaissanceRepositoryInputsCurrent(reconnaissance);
     const runId = createRunId(this.now());
     const store = new ArtifactStore(config.artifactRoot, runId, {
       durableV5: true,
@@ -745,6 +769,8 @@ export class RoundEngine {
     options: ResumeOptions,
     externalSignal?: AbortSignal,
   ): Promise<FightOutcome> {
+    this.browserNativeSuiteCache.clear();
+    this.browserProbeInvocationCounts.clear();
     const repositoryRoot = await resolveRepositoryRoot(
       options.repositoryRoot ?? process.cwd(),
     );
@@ -2016,7 +2042,10 @@ export class RoundEngine {
                 : ("missed" as const),
         ...(attack.rootDefectId ? { defectId: attack.rootDefectId } : {}),
         ...(attack.adjudication ? { adjudication: attack.adjudication } : {}),
-        artifactIds: artifactIdFor(attack.patchPath),
+        artifactIds: [
+          ...artifactIdFor(attack.patchPath),
+          ...(attack.browserArtifactRefs ?? []).flatMap(artifactIdFor),
+        ],
       })),
     );
     const checks = (
@@ -2508,6 +2537,47 @@ export class RoundEngine {
         throw new Error(
           "Baseline validation failed; pre-existing failures are unsupported",
         );
+      const browser = context.runSpec.browserValidation;
+      if (browser) {
+        const adapter = browser.profile
+          ? this.dependencies.browserAdapters?.[browser.profile.runner]
+          : undefined;
+        const browserBaseline = await executeBrowserValidation({
+          plan: { ...browser, requirement: "optional" },
+          decision: browser.decision,
+          ...(adapter ? { adapter } : {}),
+          worktree: baseline,
+          artifactDirectory: context.store.resolve("browser/baseline"),
+          selectedProbes: [],
+          nativeSuiteCache: this.browserNativeSuiteCache,
+          nativeSuiteCacheKey: sha256(
+            `${browser.profile?.testCommand ?? "unavailable"}\0base:${context.runSpec.baseCommit}`,
+          ),
+          approvedOrigins: browser.approvedScopes
+            .filter((scope) => scope.startsWith("origin:"))
+            .map((scope) => scope.slice("origin:".length)),
+          dynamicLoopbackApproved: browser.approvedScopes.some(
+            (scope) =>
+              scope.startsWith("loopback:") && scope.endsWith(":dynamic"),
+          ),
+          timeoutMs: context.config.limits.attackMs,
+          signal: context.controller.signal,
+        });
+        context.browserBaseline = browserBaseline;
+        const artifactPath = await context.store.writeJson(
+          "browser/baseline-result.json",
+          browserBaseline,
+        );
+        context.state.artifacts["browser-baseline"] = artifactPath;
+        if (
+          browser.requirement === "required" &&
+          browser.decision === "approved" &&
+          browserBaseline.status !== "verified"
+        )
+          throw new Error(
+            `Baseline browser validation ${browserBaseline.status}; configuration or harness failure prevents fair attribution`,
+          );
+      }
     } finally {
       await context.worktrees.remove(baseline);
     }
@@ -2752,11 +2822,213 @@ export class RoundEngine {
           throw new Error(
             `Initial required validation infrastructure failed for ${agent}`,
           );
+        await this.validateBrowserForContestant(
+          context,
+          contestant,
+          worktree,
+          "initial",
+        );
       } finally {
         await context.worktrees.remove(worktree);
       }
     }
     await this.persist(context);
+  }
+
+  private async validateBrowserForContestant(
+    context: ArenaContext,
+    contestant: ContestantResult,
+    worktree: string,
+    phase: "initial" | "final",
+  ): Promise<void> {
+    const validation = context.runSpec.browserValidation;
+    if (!validation) return;
+    const adapter = validation.profile
+      ? this.dependencies.browserAdapters?.[validation.profile.runner]
+      : undefined;
+    const patchDigest = contestant.currentPatchPath
+      ? sha256(await readFile(contestant.currentPatchPath))
+      : `contestant:${contestant.id}:${phase}`;
+    const result = this.attributeBrowserResult(
+      context,
+      await executeBrowserValidation({
+        plan: validation,
+        decision: validation.decision,
+        ...(adapter ? { adapter } : {}),
+        worktree,
+        artifactDirectory: context.store.resolve(
+          `browser/${contestant.id}/${phase}`,
+        ),
+        selectedProbes: [],
+        nativeSuiteCache: this.browserNativeSuiteCache,
+        nativeSuiteCacheKey: sha256(
+          `${validation.profile?.testCommand ?? "unavailable"}\0${patchDigest}`,
+        ),
+        approvedOrigins: validation.approvedScopes
+          .filter((scope) => scope.startsWith("origin:"))
+          .map((scope) => scope.slice("origin:".length)),
+        dynamicLoopbackApproved: validation.approvedScopes.some(
+          (scope) =>
+            scope.startsWith("loopback:") && scope.endsWith(":dynamic"),
+        ),
+        timeoutMs: context.config.limits.attackMs,
+        signal: context.controller.signal,
+      }),
+    );
+    contestant.browserValidation = result;
+    const artifactPath = await context.store.writeJson(
+      `browser/${contestant.id}/${phase}-result.json`,
+      result,
+    );
+    context.state.artifacts[`browser-${contestant.id}-${phase}`] = artifactPath;
+    contestant.checks.push({
+      id: `${phase}-browser`,
+      kind: "browser",
+      status:
+        result.status === "verified"
+          ? "passed"
+          : result.status === "failed"
+            ? "failed"
+            : "skipped",
+      ...(result.reason ? { reason: result.reason } : {}),
+    });
+    if (
+      validation.requirement === "required" &&
+      validation.decision === "approved"
+    ) {
+      const gateStatus =
+        result.status === "verified"
+          ? "passed"
+          : result.status === "failed"
+            ? "failed"
+            : "infrastructure_error";
+      contestant.checks.push({
+        id: `${phase}-browser-required`,
+        kind: "required",
+        status: gateStatus,
+        ...(result.reason ? { reason: result.reason } : {}),
+      });
+      if (phase === "final" && gateStatus === "failed") {
+        contestant.status = "eliminated";
+        contestant.healthLedger.eliminatedByRequiredCheck = true;
+      }
+      if (phase === "final" && gateStatus === "infrastructure_error")
+        throw new Error(
+          `Final required browser validation infrastructure failed for ${contestant.id}`,
+        );
+    }
+    if (validation.decision === "approved" && result.status === "unverified") {
+      const capability = context.permissions.capabilities.find(
+        (entry) => entry.id === "browser_dom_validation",
+      );
+      if (capability) capability.status = "provisioning_failed";
+      await context.store.writeJson("permissions.json", context.permissions);
+    }
+  }
+
+  private attributeBrowserResult(
+    context: ArenaContext,
+    result: BrowserValidationResult,
+  ): BrowserValidationResult {
+    const baselinePassed = context.browserBaseline?.status === "verified";
+    const candidateLifecycleFailure =
+      result.status === "unverified" &&
+      (result.reason === "server_command_failure" ||
+        result.reason === "health_failure");
+    if (baselinePassed && candidateLifecycleFailure)
+      return {
+        ...result,
+        status: "failed",
+        failureAttribution: "contestant_application",
+      };
+    if (result.status === "failed")
+      return {
+        ...result,
+        failureAttribution: baselinePassed
+          ? "contestant_application"
+          : "unattributed",
+      };
+    if (result.status === "unverified" && !baselinePassed)
+      return {
+        ...result,
+        failureAttribution:
+          context.browserBaseline?.failureAttribution ?? "unattributed",
+      };
+    return result;
+  }
+
+  private browserProbeValidator(
+    context: ArenaContext,
+    attackId: string,
+  ):
+    | ((
+        worktree: string,
+        probe: NonNullable<Attack["browserProbe"]>,
+        subject: "author" | "target",
+        nativeSuiteIdentityPaths: string[],
+      ) => Promise<BrowserValidationResult>)
+    | undefined {
+    const validation = context.runSpec.browserValidation;
+    if (!validation) return undefined;
+    const adapter = validation.profile
+      ? this.dependencies.browserAdapters?.[validation.profile.runner]
+      : undefined;
+    return async (worktree, probe, subject, nativeSuiteIdentityPaths) => {
+      const invocationKey = `${attackId}:${subject}`;
+      const invocation =
+        (this.browserProbeInvocationCounts.get(invocationKey) ?? 0) + 1;
+      this.browserProbeInvocationCounts.set(invocationKey, invocation);
+      const patchDigest = sha256(
+        (
+          await Promise.all(
+            nativeSuiteIdentityPaths.map(async (patchPath) =>
+              sha256(await readFile(patchPath)),
+            ),
+          )
+        ).join("\0"),
+      );
+      const result = this.attributeBrowserResult(
+        context,
+        await executeBrowserValidation({
+          plan: validation,
+          decision: validation.decision,
+          ...(adapter ? { adapter } : {}),
+          worktree,
+          artifactDirectory: context.store.resolve(
+            `browser/attacks/${attackId}/${subject}-${String(invocation)}`,
+          ),
+          selectedProbes: [probe],
+          nativeSuiteCache: this.browserNativeSuiteCache,
+          nativeSuiteCacheKey: sha256(
+            `${validation.profile?.testCommand ?? "unavailable"}\0${patchDigest}`,
+          ),
+          approvedOrigins: validation.approvedScopes
+            .filter((scope) => scope.startsWith("origin:"))
+            .map((scope) => scope.slice("origin:".length)),
+          dynamicLoopbackApproved: validation.approvedScopes.some(
+            (scope) =>
+              scope.startsWith("loopback:") && scope.endsWith(":dynamic"),
+          ),
+          timeoutMs: context.config.limits.attackMs,
+          signal: context.controller.signal,
+        }),
+      );
+      const resultManifestPath = await context.store.writeJson(
+        `browser/attacks/${attackId}/${subject}-${String(invocation)}-result.json`,
+        result,
+      );
+      return BrowserValidationResultSchema.parse({
+        ...result,
+        artifacts: [
+          ...result.artifacts,
+          {
+            kind: "result_manifest",
+            path: resultManifestPath,
+            failureOnly: false,
+          },
+        ],
+      });
+    };
   }
 
   private shouldStop(context: ArenaContext): boolean {
@@ -4236,6 +4508,22 @@ export class RoundEngine {
               const overlayPath = context.store.resolve(
                 `attacks/round-${String(round)}/${agent}/${String(entry.rank)}.diff`,
               );
+              if (entry.browserProbe && entry.paths.length === 0) {
+                await context.store.writeText(
+                  `attacks/round-${String(round)}/${agent}/${String(entry.rank)}.diff`,
+                  browserProbeEvidencePatch(entry, round, agent),
+                );
+                collected.push(
+                  await materializeAttack(entry, {
+                    author: agent,
+                    authorProvider: contestant.provider,
+                    target,
+                    round,
+                    patchPath: overlayPath,
+                  }),
+                );
+                continue;
+              }
               const overlayPaths = [
                 ...new Set([...submission.sharedSupportPaths, ...entry.paths]),
               ];
@@ -4616,7 +4904,11 @@ export class RoundEngine {
         });
         if (result.status === "landed" && result.rootDefectId)
           knownRoots.add(result.rootDefectId);
-        if (result.status === "landed" && typeof round === "number") {
+        if (
+          result.status === "landed" &&
+          result.evidenceKind !== "browser_probe" &&
+          typeof round === "number"
+        ) {
           if (
             context.state.schemaVersion < 6 ||
             result.patchPath.includes(`${path.sep}cases${path.sep}round-`)
@@ -4674,6 +4966,14 @@ export class RoundEngine {
                   context.state,
                   attack.targets,
                 ),
+                ...(this.browserProbeValidator(context, attack.id)
+                  ? {
+                      validateBrowser: this.browserProbeValidator(
+                        context,
+                        attack.id,
+                      )!,
+                    }
+                  : {}),
                 persistFailureRecord: (record) =>
                   this.persistFailureRecord(context, record),
               })
@@ -4681,7 +4981,11 @@ export class RoundEngine {
       if (!result) continue;
       if (result.status === "landed" && result.rootDefectId)
         knownRoots.add(result.rootDefectId);
-      if (result.status === "landed" && typeof round === "number") {
+      if (
+        result.status === "landed" &&
+        result.evidenceKind !== "browser_probe" &&
+        typeof round === "number"
+      ) {
         if (
           context.state.schemaVersion < 6 ||
           result.patchPath.includes(`${path.sep}cases${path.sep}round-`)
@@ -4850,6 +5154,10 @@ export class RoundEngine {
                 canonicalDefectId: attack.rootDefectId,
                 claim: attack.claim,
                 focusedCommand: attack.focusedCommand,
+                evidenceKind: attack.evidenceKind ?? "patch",
+                ...(attack.browserProbe
+                  ? { browserProbe: attack.browserProbe }
+                  : {}),
                 outcomeReason: attack.outcomeReason,
               })),
               null,
@@ -5020,18 +5328,78 @@ export class RoundEngine {
                 runLevel: true,
               });
               try {
-                const check = await runShellCommand(attack.focusedCommand, {
-                  cwd: checkTree,
-                  timeoutMs: context.config.limits.attackMs,
-                  logPrefix: context.store.resolve(
-                    `logs/round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-${attack.id}`,
-                  ),
-                  signal: context.controller.signal,
-                });
-                infrastructureFailure =
-                  check.failureClass === "arena_infrastructure";
-                mechanicsPassed = check.exitCode === 0 && !check.timedOut;
-                diagnosticArtifactRefs.push(check.stdoutPath, check.stderrPath);
+                if (attack.browserProbe) {
+                  const validateBrowser = this.browserProbeValidator(
+                    context,
+                    attack.id,
+                  );
+                  if (!validateBrowser) {
+                    infrastructureFailure = true;
+                    mechanicsPassed = false;
+                  } else {
+                    const check = await validateBrowser(
+                      checkTree,
+                      attack.browserProbe,
+                      "target",
+                      [
+                        candidatePath,
+                        ...(attack.evidenceKind === "browser_probe"
+                          ? []
+                          : [attack.patchPath]),
+                      ],
+                    );
+                    const probeResult = findBrowserProbeResult(
+                      check,
+                      attack.browserProbe.id,
+                    );
+                    infrastructureFailure =
+                      !probeResult || probeResult.status === "unverified";
+                    mechanicsPassed = probeResult?.status === "verified";
+                    diagnosticArtifactRefs.push(
+                      ...check.artifacts.map((artifact) => artifact.path),
+                    );
+                    if (
+                      mechanicsPassed &&
+                      attack.evidenceKind !== "browser_probe"
+                    ) {
+                      const focused = await runShellCommand(
+                        attack.focusedCommand,
+                        {
+                          cwd: checkTree,
+                          timeoutMs: context.config.limits.attackMs,
+                          logPrefix: context.store.resolve(
+                            `logs/round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-${attack.id}-focused`,
+                          ),
+                          signal: context.controller.signal,
+                        },
+                      );
+                      infrastructureFailure =
+                        focused.failureClass === "arena_infrastructure";
+                      mechanicsPassed =
+                        focused.exitCode === 0 && !focused.timedOut;
+                      diagnosticArtifactRefs.push(
+                        focused.stdoutPath,
+                        focused.stderrPath,
+                      );
+                    }
+                  }
+                } else {
+                  const check = await runShellCommand(attack.focusedCommand, {
+                    cwd: checkTree,
+                    timeoutMs: context.config.limits.attackMs,
+                    logPrefix: context.store.resolve(
+                      `logs/round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-${attack.id}`,
+                    ),
+                    signal: context.controller.signal,
+                  });
+                  infrastructureFailure =
+                    check.failureClass === "arena_infrastructure";
+                  mechanicsPassed = check.exitCode === 0 && !check.timedOut;
+                  diagnosticArtifactRefs.push(
+                    check.stdoutPath,
+                    check.stderrPath,
+                  );
+                }
               } finally {
                 await context.worktrees.remove(checkTree);
               }
@@ -5680,6 +6048,14 @@ export class RoundEngine {
           context.state,
           provisional.targets,
         ),
+        ...(this.browserProbeValidator(context, provisional.id)
+          ? {
+              validateBrowser: this.browserProbeValidator(
+                context,
+                provisional.id,
+              )!,
+            }
+          : {}),
       });
       if (replay.status === "provisional_infrastructure") {
         replay.status = "execution_inconclusive";
@@ -6216,6 +6592,13 @@ export class RoundEngine {
         } else {
           contestant.status = "survived";
         }
+        if (contestant.status !== "eliminated")
+          await this.validateBrowserForContestant(
+            context,
+            contestant,
+            worktree,
+            "final",
+          );
         if (contestant.status !== "eliminated") {
           for (const attack of context.state.attacks.filter(
             (candidate) =>
@@ -6229,6 +6612,39 @@ export class RoundEngine {
                 (caseEntry) => caseEntry.status !== "rejected",
               ) ?? [];
             let defectPasses = true;
+            if (attack.browserProbe) {
+              const validateBrowser = this.browserProbeValidator(
+                context,
+                attack.id,
+              );
+              const browserResult = validateBrowser
+                ? await validateBrowser(
+                    worktree,
+                    attack.browserProbe,
+                    "target",
+                    [currentPatch],
+                  )
+                : undefined;
+              const probeResult = browserResult
+                ? findBrowserProbeResult(browserResult, attack.browserProbe.id)
+                : undefined;
+              contestant.checks.push({
+                id: `final-browser-${attack.id}`,
+                kind: "browser",
+                status:
+                  probeResult?.status === "verified"
+                    ? "passed"
+                    : probeResult?.status === "failed"
+                      ? "failed"
+                      : "infrastructure_error",
+                ...(probeResult?.reason ? { reason: probeResult.reason } : {}),
+              });
+              if (!probeResult || probeResult.status === "unverified")
+                throw new Error(
+                  `Final browser reproducer was unverified for ${agent}`,
+                );
+              defectPasses = probeResult.status === "verified";
+            }
             for (const caseEntry of finalCases) {
               const caseTree = await this.prepareWorktree(context, {
                 name: `final-${agent}-${caseEntry.id}`,

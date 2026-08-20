@@ -19,6 +19,8 @@ import type {
   PermissionPolicy,
 } from "../core/types.js";
 import type { RunSpec } from "../contracts/round.js";
+import type { BrowserValidationResult } from "../contracts/browser.js";
+import { findBrowserProbeResult } from "../browser/results.js";
 import { changedPathsFromPatch, isAllowedAttackPath } from "../repo/git.js";
 import type { WorktreeManager } from "../repo/git.js";
 import { runShellCommand } from "../runner/process-runner.js";
@@ -38,6 +40,12 @@ interface ValidateAttackOptions {
   knownRootDefects: ReadonlySet<string>;
   priorCanonicalDefects?: JudgeAdjudicationInput["priorCanonicalDefects"];
   persistFailureRecord?: (record: FailureRecord) => Promise<void>;
+  validateBrowser?: (
+    worktree: string,
+    probe: NonNullable<Attack["browserProbe"]>,
+    subject: "author" | "target",
+    nativeSuiteIdentityPaths: string[],
+  ) => Promise<BrowserValidationResult>;
 }
 
 interface RepeatedCheck {
@@ -598,17 +606,20 @@ export async function validateAttack(
     );
   }
 
-  const denied = attack.requiredCapabilities.find((id) => {
+  const unavailable = attack.requiredCapabilities.find((id) => {
     const capability = options.permissionPolicy.capabilities.find(
       (entry) => entry.id === id,
     );
-    return capability?.status === "denied";
+    return capability && capability.status !== "approved";
   });
-  if (denied) {
+  if (unavailable) {
+    const status = options.permissionPolicy.capabilities.find(
+      (entry) => entry.id === unavailable,
+    )?.status;
     return withOutcome(
       attack,
       "capability_denied",
-      `Capability ${denied} is denied`,
+      `Capability ${unavailable} is ${status ?? "unavailable"}`,
     );
   }
   const unknown = attack.requiredCapabilities.find(
@@ -794,7 +805,111 @@ export async function validateAttack(
         "Attack fails on its author's patch",
       );
     }
-    if (targetFocused.passed) {
+    if (attack.browserProbe) {
+      if (!options.validateBrowser)
+        return withOutcome(
+          attack,
+          "capability_denied",
+          "Browser validation was requested but no harness adapter is available",
+        );
+      // Profiles commonly bind one exact approved loopback port. Run the
+      // symmetric lanes sequentially so their isolated server processes never
+      // contend for that port.
+      const authorBrowser = await options.validateBrowser(
+        author,
+        attack.browserProbe,
+        "author",
+        [
+          options.authorPatch,
+          ...(attack.evidenceKind === "browser_probe"
+            ? []
+            : [attack.patchPath]),
+        ],
+      );
+      const targetBrowser = await options.validateBrowser(
+        target,
+        attack.browserProbe,
+        "target",
+        [
+          options.targetPatch,
+          ...(attack.evidenceKind === "browser_probe"
+            ? []
+            : [attack.patchPath]),
+        ],
+      );
+      attack.browserArtifactRefs = [
+        ...new Set(
+          [...authorBrowser.artifacts, ...targetBrowser.artifacts].map(
+            (artifact) => artifact.path,
+          ),
+        ),
+      ];
+      if (
+        authorBrowser.reason === "timed_out" ||
+        targetBrowser.reason === "timed_out"
+      )
+        return withOutcome(
+          attack,
+          "execution_inconclusive",
+          "Browser attack exceeded its configured stage budget",
+        );
+      const authorProbe = findBrowserProbeResult(
+        authorBrowser,
+        attack.browserProbe.id,
+      );
+      const targetProbe = findBrowserProbeResult(
+        targetBrowser,
+        attack.browserProbe.id,
+      );
+      attack.checks.push(
+        {
+          id: "author-browser-probe",
+          kind: "browser",
+          status:
+            authorProbe?.status === "verified"
+              ? "passed"
+              : authorProbe?.status === "failed"
+                ? "failed"
+                : "infrastructure_error",
+          ...(authorProbe?.reason ? { reason: authorProbe.reason } : {}),
+        },
+        {
+          id: "target-browser-probe",
+          kind: "browser",
+          status:
+            targetProbe?.status === "verified"
+              ? "passed"
+              : targetProbe?.status === "failed"
+                ? "failed"
+                : "infrastructure_error",
+          ...(targetProbe?.reason ? { reason: targetProbe.reason } : {}),
+        },
+      );
+      if (
+        !authorProbe ||
+        !targetProbe ||
+        authorProbe.status === "unverified" ||
+        targetProbe.status === "unverified"
+      )
+        return withOutcome(
+          attack,
+          "execution_inconclusive",
+          "Comparative browser execution was unverified",
+        );
+      if (authorProbe.status === "failed")
+        return withOutcome(
+          attack,
+          "self_defeating",
+          "Agent-chosen browser probe fails on its author's patch",
+        );
+      if (targetProbe.status === "verified")
+        return withOutcome(
+          attack,
+          "blocked",
+          "Target patch passes the agent-chosen browser probe",
+        );
+    }
+    if (targetFocused.passed && attack.evidenceKind !== "browser_probe") {
       return withOutcome(
         attack,
         "blocked",

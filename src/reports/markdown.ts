@@ -37,6 +37,21 @@ function artifactLink(
   return href ? `[${label}](${href})` : `\`${label}\``;
 }
 
+function attackEvidenceLinks(state: RunState, attack: Attack): string {
+  return [
+    artifactLink(
+      state,
+      attack.evidenceKind === "browser_probe"
+        ? "browser probe evidence"
+        : "attack patch",
+      attack.patchPath,
+    ),
+    ...(attack.browserArtifactRefs ?? []).map((artifact, index) =>
+      artifactLink(state, `browser artifact ${String(index + 1)}`, artifact),
+    ),
+  ].join(" ");
+}
+
 function checkCell(state: RunState, check?: CheckResult): string {
   if (!check) return "NOT RUN";
   const duration = check.command
@@ -107,7 +122,7 @@ function decisiveDefects(state: RunState): string[] {
         const cases = attack.caseBundle?.cases ?? [];
         const observed = attack.outcomeReason ?? attack.impact;
         const evidence = [
-          artifactLink(state, "attack patch", attack.patchPath),
+          attackEvidenceLinks(state, attack),
           ...cases.map((entry) =>
             artifactLink(
               state,
@@ -196,7 +211,7 @@ function roundReplay(state: RunState): string[] {
         ? round.attacks.map((attack) => {
             const observed =
               attack.outcomeReason ?? "No adjudication detail was recorded.";
-            return `- **${tableCell(attack.claim)}** — ${attack.status.toUpperCase()}. Observed result: ${tableCell(observed)} Expected: ${tableCell(attack.oracle.expectedBehavior)} Why it matters: ${tableCell(attack.impact)} Evidence: ${artifactLink(state, "attack patch", attack.patchPath)}.`;
+            return `- **${tableCell(attack.claim)}** — ${attack.status.toUpperCase()}. Observed result: ${tableCell(observed)} Expected: ${tableCell(attack.oracle.expectedBehavior)} Why it matters: ${tableCell(attack.impact)} Evidence: ${attackEvidenceLinks(state, attack)}.`;
           })
         : ["- No attacks were submitted."]),
       "",
@@ -364,6 +379,17 @@ export function renderBattleReport(state: RunState): string {
           `Assessment digest: \`${state.coverageAssessment.assessmentDigest}\``,
         ]
       : ["Confidence: **legacy / unknown** (no coverage claim is inferred)."]),
+    "",
+    ...(contestants.some((contestant) => contestant.browserValidation)
+      ? [
+          `Browser coverage: ${contestants
+            .map(
+              (contestant) =>
+                `${contestantLabel(state.config.contestants, contestant.id)} **${contestant.browserValidation?.status ?? "not run"}**${contestant.browserValidation?.reason ? ` (${contestant.browserValidation.reason})` : ""}`,
+            )
+            .join(" · ")}`,
+        ]
+      : []),
     "",
     "## Developer takeaway",
     "",

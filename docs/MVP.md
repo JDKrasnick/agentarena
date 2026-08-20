@@ -420,6 +420,98 @@ The user can choose one overall mode:
   change, or deny each material capability.
 - `deny`: deny capabilities unless explicitly allowed in configuration.
 
+### Browser and DOM validation
+
+The static browser planner consumes the approved reconnaissance snapshot and
+never executes configuration. Task evidence makes `browser_dom_validation`
+required when it names visible UI, interaction, responsive behavior,
+accessibility, persistence, browser, or DOM requirements. Frontend evidence
+found only in manifests, scripts, routes, or literal browser configuration
+makes the capability optional; otherwise it is absent.
+
+Profile resolution uses this order: explicit `browser` configuration, literal
+Playwright/Cypress configuration, recognized package scripts, then unavailable.
+Arena does not guess between monorepo applications. An explicit profile names
+`runner`, `startup`, `health_url`, `base_url`, `test`, optional `teardown`, a
+native-suite service mode, projects, and allowed origins. The main permission
+request is `harness_only` and scoped to exact commands and loopback origins.
+Arena-managed probes broker their HTTP and WebSocket traffic, but the unchanged
+repository-native command has no cross-platform network sandbox. The combined
+capability therefore advertises `advisory` enforcement and cannot be silently
+approved in `auto` mode. Every non-loopback origin is still a separate exact,
+explicit capability; package installation, browser downloads, and wildcard
+origins are never implied.
+
+Each contestant runs in its own patched worktree and service process. Readiness
+polling, timeouts, process-group teardown, fresh contexts, and clean storage are
+harness responsibilities. Generated probes use Chromium desktop 1440×900,
+mobile 390×844 with touch, or a 320 CSS-pixel reflow check. The attacking agent
+chooses the task-specific probe family, profile, accessible actions, and
+expected behavior from this safe envelope. Repository browser projects are not
+translated into Arena profiles: the repository's configured browser command
+and complete project matrix run unchanged as the native suite. Requests outside
+approved origins are blocked and recorded for Arena-managed HTTP(S) and
+WebSocket traffic. `ws` and `wss` use the corresponding approved HTTP transport
+origin. The approval UI states that a native repository runner retains the host
+account's network authority.
+
+Runtime-error/DOM-integrity, accessible-name, and 320 CSS-pixel overflow smoke
+probes are mandatory on every browser run; the attacker-selected probe is
+additive. A browser-only attack may omit repository paths and a focused command.
+The harness records it as reproducible evidence only after it passes on the
+author worktree, fails on the target worktree, and survives normal oracle
+adjudication. More complex flows use repository-authored tests or fixtures and
+their focused command rather than adding general-purpose script to the probe
+DSL.
+
+Built-in Playwright, Cypress, and custom adapters use `playwright-core` with an
+already installed Chrome/Chromium binary for Arena-managed navigation,
+isolation, and artifacts. The adapter does not replace the repository runner;
+Playwright, Cypress, WebDriver, or other repository tests still execute through
+the exact approved native command.
+
+An explicit profile may set `port_mode: dynamic` when its startup command
+honors the harness-provided `PORT`. The permission scope then covers a dynamic
+port on the exact loopback protocol and host. Fixed-port profiles continue to
+run comparative lanes sequentially. Native-suite results are reused within the
+run only when the exact command and immutable patch bytes match; service and
+probe lifecycles are never skipped.
+
+`native_suite_mode` is `reuse_started_service` by default and passes `PORT`,
+`BASE_URL`, `PLAYWRIGHT_BASE_URL`, and `CYPRESS_BASE_URL` to the exact native
+command. `self_managed` runs the native suite before Arena starts its probe
+service. Literal Playwright configurations with a `webServer.command` resolve
+to `self_managed`, avoiding duplicate ownership of the configured port.
+
+The reviewer decides whether an already approved external origin is appropriate
+evidence, but cannot add an origin after consolidated approval. Authenticated
+routes, credential sources, and ephemeral storage-state handoff remain
+deliberately unsupported pending #66; secret-dependent checks are unverified.
+
+Probe families cover role/name/label-based interaction, responsive overflow and
+clipping, keyboard/focus behavior, accessible semantics, declared persistence,
+console/runtime/hydration/DOM integrity, risk-triggered inert DOM-XSS canaries,
+and existing visual snapshots without creating or updating baselines. Core
+accessibility checks do not constitute automated WCAG conformance.
+The bounded `fill_dom_xss_canary` action selects an accessible field by label;
+the harness supplies an inert markup sentinel and fails the probe only when the
+application interprets that sentinel as DOM markup.
+
+Functional assertions are not retried. Browser/server infrastructure gets one
+bounded retry; teardown runs after every attempt. Results are `verified`,
+`failed`, or `unverified`, with structured reasons for denial, missing tools or
+browsers, launch/health failure, blocked origins, and interruption. Real
+application failures remain valid evidence. Harness failures cause no damage;
+required unverified coverage flows into the provisional/inconclusive process,
+while optional gaps remain diagnostic.
+
+Failure attribution uses a baseline control. The resolved service lifecycle and
+native suite first run on the unpatched base. If that control cannot launch,
+become healthy, or pass, the result is a harness/configuration failure. If the
+control passes and the same bounded validation fails deterministically only on
+a contestant worktree, it is a contestant application failure. Ambiguous cases
+remain unverified and cannot affect health.
+
 `auto` is never permission to use production credentials, deploy infrastructure,
 access unrelated home-directory files, expose an SSH agent, or perform
 destructive cloud writes. Those remain hard-denied unless the user explicitly

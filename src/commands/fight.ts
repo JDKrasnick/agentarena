@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { createBuiltInBrowserAdapters } from "../browser/builtin.js";
 import {
   CommandAttackVerifier,
   createProviderAdapter,
@@ -58,6 +59,7 @@ function createArena(
     adapterFactory: (contestant) =>
       createProviderAdapter(contestant.provider, contestant.model),
     verifier: new CommandAttackVerifier(config.judge),
+    browserAdapters: createBuiltInBrowserAdapters(),
     onProgress: (message) => stdout.write(`${message}\n`),
   });
 }
