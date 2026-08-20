@@ -21,12 +21,34 @@ colors:
   broadcast-field-deep: "#173945"
   broadcast-live: "#f04d45"
   broadcast-score: "#ffdd52"
-  deck-felt: "#245c49"
-  deck-wood: "#684331"
-  deck-cream: "#f4ead1"
-  deck-attack: "#ef7568"
-  deck-repair: "#65b4bb"
-  deck-gold: "#e8bd4d"
+  monster-navy: "#071a3c"
+  monster-blue: "#2369d8"
+  monster-blue-deep: "#12449d"
+  monster-sky: "#65c9f3"
+  monster-sky-light: "#dff6ff"
+  monster-cream: "#fff9e9"
+  monster-cream-deep: "#efe3c3"
+  monster-red: "#d8463d"
+  monster-yellow: "#f3c83b"
+  monster-green: "#4aaf55"
+  monster-green-deep: "#21753a"
+  monster-grass: "#79bd58"
+  monster-grass-deep: "#3d823f"
+  monster-mountain: "#6ba69a"
+  monster-mountain-far: "#a9d4c4"
+  monster-coral: "#ee7359"
+  monster-header-muted: "#dcecff"
+  monster-text-muted: "#40556a"
+  monster-sand: "#dcbf86"
+  monster-sand-deep: "#cfae70"
+  monster-rule-soft: "#b4ab92"
+  monster-command-blue: "#dbeaff"
+  monster-command-red: "#ffe3dc"
+  monster-panel: "#eaf8ff"
+  monster-working-ink: "#0b4660"
+  monster-working-surface: "#cceef5"
+  monster-success-surface: "#dff0d8"
+  monster-shadow: "rgb(7 26 60 / 28%)"
 typography:
   pocket-display:
     fontFamily: "Arena Fredoka, ui-rounded, sans-serif"
@@ -51,11 +73,11 @@ changing a product fact. The active renderer's central metaphor dominates the
 first viewport while status, round navigation, theme selection, and cancellation
 remain reachable.
 
-The five worlds are chunky pocket hardware, a physical sticker sheet, a
-portable night console, a hard-edged sports broadcast, and a felt evidence
-table. Their shared story is: track the fight, inspect either contestant, review
-immutable recorded rounds, understand attacks and repairs, then review and
-finish the authoritative result. The approved direction seed is `a785963b`.
+The five worlds are Pocket Classic, Sticker League, Night Edition, Live Arena
+Broadcast, and Monster Battle. Their shared story is: track the fight, inspect
+either contestant, review immutable recorded rounds, understand attacks and
+repairs, then review and finish the authoritative result. The approved direction
+seed is `beaf8282`.
 
 **Key Characteristics:**
 
@@ -81,7 +103,8 @@ remain legible within that world rather than being forced into a universal skin.
   three Pocket themes.
 - **Broadcast Field:** the live-feed plane, split with its deeper companion to
   separate the two contestants.
-- **Deck Felt:** the tabletop field beneath all evidence cards.
+- **Monster Sky and Grass:** the cel-shaded outdoor battle field behind the
+  provider summons and status plates.
 
 ### Secondary
 
@@ -95,8 +118,8 @@ remain legible within that world rather than being forced into a universal skin.
   cues against the dark field.
 - **Broadcast Live and Score:** urgent evidence signals and the central versus
   marker; neither is decorative filler.
-- **Deck Attack, Repair, and Gold:** attack card, repair card, and ledger/versus
-  emphasis respectively.
+- **Monster Blue, Coral, Yellow, Red, and Green:** opposing summons, focus and
+  selection, objective urgency, and authoritative HP/success states.
 
 ### Neutral
 
@@ -105,10 +128,11 @@ remain legible within that world rather than being forced into a universal skin.
 - **Night Field, Hardware, and Cream:** the dark console body and readable battle
   cards.
 - **Broadcast Ink and Paper:** the network chrome and editorial Battle Desk.
-- **Deck Wood and Cream:** the outer rail and face-up card stock.
+- **Monster Navy and Cream:** the `3–5px` framing and readable status/dialogue
+  stock; sky-light, sand, and mountain tones build the field depth.
 
 **The Family Integrity Rule.** Do not recolor one renderer into another theme.
-Pocket, Broadcast, and Evidence Deck use different compositions as well as
+Pocket, Broadcast, and Monster Battle use different compositions as well as
 different palettes.
 
 **The Result Contrast Rule.** Terminal views use the per-family semantic
@@ -127,7 +151,7 @@ introduce literal foreground colors outside these tokens.
   `--result-*`) own chrome, text hierarchy, controls, warnings, evidence states,
   focus, and terminal semantics.
 - Family palette tokens (`--pocket-*`, `--sticker-*`, `--night-*`,
-  `--broadcast-*`, and `--deck-*`) own the physical materials and tonal ramps
+  `--broadcast-*`, and `--monster-*`) own the physical materials and tonal ramps
   unique to each renderer.
 - The small compatibility aliases (`--surface`, `--line`, `--muted`, `--cyan`,
   `--green`, `--amber`, and `--red`) let the shared behavioral components
@@ -145,8 +169,9 @@ inset band and Sticker retains its warm paper shadow.
 **Body Font:** Arena Space (with `sans-serif` fallback)
 **Broadcast Headline Font:** Arena Barlow (with `sans-serif` fallback)
 
-Fredoka supplies the friendly, tactile voice for Pocket hardware and tabletop
-cards. Space Grotesk carries operational copy in Broadcast and Evidence Deck.
+Fredoka supplies the friendly, tactile voice for Pocket hardware and Monster
+Battle labels. Space Grotesk carries operational copy in Broadcast and Monster
+Battle.
 Barlow Condensed Black is reserved for broadcast headlines, provider names,
 score data, and other network-scale moments; it is not general body copy.
 
@@ -167,19 +192,23 @@ place. Theme changes do not replace or reconnect this shell.
   fighter cards around a compact versus divider.
 - **Broadcast:** the feed dominates a flexible left column while a `340px`
   Battle Desk carries counts and play-by-play.
-- **Evidence Deck:** the table uses `220px` and `250px` player stacks around a
-  flexible center playmat containing the attack and repair cards.
+- **Monster Battle:** an asymmetric, full-width original creature-battle field
+  layers inline SVG clouds and mountains with CSS grass and oval battle rings.
+  Opposing status plates and provider-logo summons frame the objective badge;
+  turn dialogue, exactly two real Inspect commands, and a recent-evidence ticker
+  complete the operator dock.
 - **Results and detail:** all renderer families return to the same semantic
   result and fighter-detail structures, inheriting the active theme's material,
   type, focus, and colors.
 
 At `1180px`, the Pocket evidence rail moves below the arena. At `980px`, the
 physical outer frames flatten, Broadcast stacks the Battle Desk below the feed,
-and Evidence Deck becomes a single-column sequence with its objective and
-playmat before either fighter stack. At `760px`, Pocket uses a horizontal round
-strip and stacked fighters. At `700px`, compact controls wrap, Broadcast retains
-two opposing fighters in a reduced stage, and the Evidence Deck playmat becomes
-a vertical card sequence. The document minimum is `320px`.
+and the Monster Battle dock stacks dialogue above its commands. At `760px`,
+Pocket uses a horizontal round strip and stacked fighters. At `700px`, compact
+controls wrap, Broadcast retains two opposing fighters in a reduced stage, and
+the Monster field compacts and repositions both fighters while its two Inspect
+commands remain side by side. Theme-picker targets remain `44px`; the document
+minimum is `320px`.
 
 **The Metaphor-First Rule.** The renderer's fight, feed, or played cards must
 remain the first-viewport anchor; operational controls stay visible without
@@ -191,8 +220,9 @@ Depth is structural and physical. Pocket cards use dark ink borders plus short,
 soft shadows; Classic and Night add inset shell bands to read as hardware.
 Sticker League adds restrained rotations to the rail, fighters, and battle call.
 Broadcast is mostly flat and editorial, using the provider-disc shadow to lift
-the contestants from the feed. Evidence Deck uses deeper card and rail shadows
-to separate stock, felt, and wood.
+the contestants from the feed. Monster Battle uses navy contour framing and
+short structural shadows to separate cream plates, diamond summons, dialogue,
+and objective badge from the cel-shaded field.
 
 Damage uses a brief `220ms` pop/hit response. All animation and transition
 durations collapse to `0.01ms` under `prefers-reduced-motion: reduce`; the
@@ -211,13 +241,13 @@ paper decals. Night Edition repeats the hardware silhouette in violet with cream
 cards.
 
 Broadcast uses squared editorial panels, a diagonal field split, circular
-provider portraits, and a hard rectangular scorebug. Evidence Deck combines a
-rounded wood rail, lightly rotated player cards, dashed playmat boundary,
-rounded stock, and a circular gold versus marker.
+provider portraits, and a hard rectangular scorebug. Monster Battle uses
+`3–5px` navy framing, cream status plates, diamond provider summons, and oval
+battle rings.
 
 **The Silhouette Rule.** Preserve the family's geometry with its palette:
-Pocket is rounded hardware, Broadcast is hard editorial framing, and Evidence
-Deck is tactile tabletop stock.
+Pocket is rounded hardware, Broadcast is hard editorial framing, and Monster
+Battle is a cel-shaded creature-battle field.
 
 ## Components
 
@@ -242,11 +272,11 @@ recovery digests; terminal and plain displays do not consume it.
 
 Both fighter surfaces are always actionable and open the same workstream detail
 view. Provider imagery comes from the provider registry; provider names remain
-primary. Cards show health, status, current move, checks, up to ten concise
-invocation summaries, and a textual damage cue. Detail uses a separate data path
-that preserves and renders the full redacted stream in terminal order without
-trimming whitespace or adding presentation timestamps. Returning to the arena
-preserves the selected recorded round.
+primary. Overview surfaces show normalized summaries and current state rather
+than raw output. Detail uses a separate data path that preserves and renders the
+full redacted stream in terminal order without trimming whitespace, truncating
+content, or adding presentation timestamps. Returning to the arena preserves
+the selected recorded round.
 
 Operational text in the detail view uses theme-local semantic colors. Transcript,
 empty, error, steering, and ledger text must retain at least WCAG AA 4.5:1
@@ -278,15 +308,32 @@ fighter outcomes, defects, verified repairs, terminal outcome, artifact links,
 round review, fighter inspection, and Finish Session. Provisional coverage must
 withhold champion and recommendation language.
 
+Results and fighter detail reuse the shared semantic structures while inheriting
+Monster Battle's cream, navy, sky, green, yellow, and contour materials.
+
+### Monster Battle arena
+
+`MonsterBattleArena` owns the original asymmetric field composition and
+`BattleTerrain` owns its inline SVG clouds, mountains, and rings. CSS supplies
+the grass, sand field, navy framing, responsive positioning, and motion. The
+arena must keep opposing cream status plates with HP, diamond provider-logo
+summons, the objective badge, turn dialogue, exactly two working Inspect
+commands, and the recent evidence ticker visible as one battle system.
+
+This family borrows only the readable battle grammar of creature-battle games.
+It must not ship third-party Pokémon characters, logos, sprites, game assets, or
+a generated raster composition; all production visuals remain original and
+code-native.
+
 ### Approved reference mapping
 
-| Approved reference                     | Production mapping                                                                                               |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `08-pocket-rivals-classic.html`        | Shared top bar, `RoundNavigator`, Pocket fighter cards, battle call, evidence stream, themed results and detail. |
-| `09-pocket-rivals-sticker-league.html` | Pocket renderer plus sticker rail, rotated navigation/fighters, and yellow stage material.                       |
-| `12-pocket-rivals-night-edition.html`  | Pocket renderer plus violet console shell, cream cards, and mint focus/control treatment.                        |
-| `13-live-arena-broadcast.html`         | `BroadcastArena`: network header, live field, provider discs, scorebug, Battle Desk, and play-by-play.           |
-| `15-evidence-deck.html`                | `EvidenceDeckArena`: wood/felt table, player stacks, attack/repair playmat, and health ledger.                   |
+| Approved reference                                | Production mapping                                                                                                                                      |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `08-pocket-rivals-classic.html`                   | Shared top bar, `RoundNavigator`, Pocket fighter cards, battle call, evidence stream, themed results and detail.                                        |
+| `09-pocket-rivals-sticker-league.html`            | Pocket renderer plus sticker rail, rotated navigation/fighters, and yellow stage material.                                                              |
+| `12-pocket-rivals-night-edition.html`             | Pocket renderer plus violet console shell, cream cards, and mint focus/control treatment.                                                               |
+| `13-live-arena-broadcast.html`                    | `BroadcastArena`: network header, live field, provider discs, scorebug, Battle Desk, and play-by-play.                                                  |
+| `.impeccable/mocks/monster-battle-b-approved.png` | `MonsterBattleArena` plus `BattleTerrain`: asymmetric original field, terrain, status plates, summons, dialogue, Inspect commands, and evidence ticker. |
 
 ### Accessibility contract
 
@@ -310,7 +357,9 @@ textual state cues.
 
 ### Don't
 
-- **Don't** turn Broadcast or Evidence Deck into palette variants of Pocket.
+- **Don't** turn Broadcast or Monster Battle into palette variants of Pocket.
+- **Don't** copy third-party Pokémon characters, logos, sprites, or game assets,
+  or ship the approved raster reference as production UI.
 - **Don't** imply that replay controls execution or that recorded rounds can be
   rewound, paused, or rerun.
 - **Don't** allow display preferences to affect scoring, artifacts, recovery, or

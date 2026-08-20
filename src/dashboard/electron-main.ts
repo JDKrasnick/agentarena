@@ -119,7 +119,7 @@ function createWindow(): void {
         }
         if (fighter === "a" || fighter === "b") {
           await window.webContents.executeJavaScript(
-            `document.querySelector('.fighter-${fighter} .fighter-hitbox, .result-fighter.fighter-${fighter}, .broadcast-fighter-${fighter}, .deck-player-${fighter} .deck-identity')?.click()`,
+            `document.querySelector('.fighter-${fighter} .fighter-hitbox, .result-fighter.fighter-${fighter}, .broadcast-fighter-${fighter}, .monster-fighter-${fighter}')?.click()`,
           );
           await new Promise((resolve) => setTimeout(resolve, 250));
         }

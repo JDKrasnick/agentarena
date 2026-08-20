@@ -101,7 +101,7 @@ fighter output. When a terminal result arrives, it automatically contracts into
 a focused results view; users can still inspect either fighter or return to the
 recorded round timeline before finishing the session.
 The desktop observatory ships five supported visual themes: Classic Shell,
-Sticker League, Night Edition, Live Arena Broadcast, and Evidence Deck. Classic
+Sticker League, Night Edition, Live Arena Broadcast, and Monster Battle. Classic
 Shell is the first-run fallback. A persistent swatch picker remains available in
 the arena, replay, fighter detail, and results views; changing it preserves the
 current view and live connection. The last valid selection is stored atomically
@@ -109,6 +109,12 @@ as an app-wide local Electron preference. Save failures keep the current
 selection and surface a non-blocking warning. Theme choice is display-only and
 never enters battle events, artifacts, scoring, configuration, or recovery
 hashes. Terminal and plain displays remain unchanged.
+
+Monster Battle is an original creature-battle renderer: a cel-shaded arena,
+provider summons, opposing status plates, turn dialogue, inspect commands, and
+an evidence ticker. It borrows the readable grammar of handheld monster-battle
+games without shipping third-party characters, logos, sprites, or game assets.
+Existing `evidence-deck` display preferences migrate to `monster-battle`.
 
 Applying an operator steering note changes run integrity from `competitive` to
 `assisted`. The health ledger and review recommendation remain available, but

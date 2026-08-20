@@ -9,7 +9,7 @@ const stylesheet = readFileSync(
 const themes = [
   "night-edition",
   "live-arena-broadcast",
-  "evidence-deck",
+  "monster-battle",
 ] as const;
 
 const operationalThemes = [
@@ -17,7 +17,7 @@ const operationalThemes = [
   "sticker-league",
   "night-edition",
   "live-arena-broadcast",
-  "evidence-deck",
+  "monster-battle",
 ] as const;
 
 const operationalTextPairs = [
@@ -26,10 +26,10 @@ const operationalTextPairs = [
   ["--detail-page-faint", "--detail-page-surface"],
   ["--detail-accent", "--detail-page-surface"],
   ["--detail-success", "--detail-page-surface"],
-  ["--detail-danger", "--detail-page-surface"],
+  ["--detail-page-danger", "--detail-page-surface"],
   ["--detail-output-fg", "--detail-output-surface"],
   ["--detail-output-muted", "--detail-output-surface"],
-  ["--detail-danger", "--detail-output-surface"],
+  ["--detail-output-danger", "--detail-output-surface"],
   ["--detail-input-fg", "--detail-input-surface"],
   ["--detail-input-placeholder", "--detail-input-surface"],
   ["--detail-button-fg", "--detail-button-surface"],
@@ -170,4 +170,18 @@ describe("fighter detail theme contrast", () => {
       }
     });
   }
+});
+
+describe("monster battle header contrast", () => {
+  it("keeps connection status readable on the navy top bar", () => {
+    const tokens = operationalThemeTokens("monster-battle");
+    const foreground = tokens.get("--header-status-fg");
+    const background = tokens.get("--header-surface");
+
+    expect(foreground).toBeDefined();
+    expect(background).toBeDefined();
+    expect(
+      contrastRatio(foreground ?? "#000", background ?? "#fff"),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
 });

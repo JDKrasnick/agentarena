@@ -31,7 +31,6 @@ import {
 import {
   attackDisplayLabel,
   createArenaPresentation,
-  invocationStatusSentence,
   isRoundAvailable,
   recordedRoundMoveCount,
   roundLabel,
@@ -55,7 +54,7 @@ const themeNames: Record<ArenaTheme, string> = {
   "sticker-league": "Sticker League",
   "night-edition": "Night Edition",
   "live-arena-broadcast": "Live Broadcast",
-  "evidence-deck": "Evidence Deck",
+  "monster-battle": "Monster Battle",
 };
 
 const fallbackState: DashboardState = {
@@ -950,7 +949,49 @@ function BroadcastArena({
   );
 }
 
-function EvidenceDeckArena({
+function BattleTerrain() {
+  return (
+    <svg
+      className="monster-terrain"
+      viewBox="0 0 1200 640"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <path
+        className="monster-cloud monster-cloud-a"
+        d="M54 104h72c8-34 62-38 76-6 32-20 75 2 72 34h-220z"
+      />
+      <path
+        className="monster-cloud monster-cloud-b"
+        d="M836 72h58c12-43 74-47 91-8 38-18 82 12 74 43H836z"
+      />
+      <path
+        className="monster-mountain monster-mountain-far"
+        d="M0 350 180 190l112 102 135-148 137 142 126-102 174 144 150-134 186 156v290H0z"
+      />
+      <path
+        className="monster-mountain monster-mountain-near"
+        d="M0 420 160 318l122 84 140-96 166 108 142-76 172 88 150-104 148 104v214H0z"
+      />
+      <ellipse
+        className="monster-ring monster-ring-a"
+        cx="322"
+        cy="476"
+        rx="202"
+        ry="54"
+      />
+      <ellipse
+        className="monster-ring monster-ring-b"
+        cx="888"
+        cy="340"
+        rx="150"
+        ry="40"
+      />
+    </svg>
+  );
+}
+
+function MonsterBattleArena({
   state,
   rounds,
   selectedRound,
@@ -961,22 +1002,19 @@ function EvidenceDeckArena({
   onFighter,
 }: AlternateArenaProps) {
   const latest = attacks.at(-1);
-  const repairOwner: ContestantId =
-    latest?.target === "a" || latest?.target === "b" ? latest.target : "b";
-  const repair = contestants[repairOwner].invocations
-    .filter((item) => item.stage === "repair")
-    .at(-1);
-  const deckItems = (id: ContestantId) => {
-    const items = attacks
-      .filter((attack) => attack.attacker === id || attack.target === id)
-      .slice(-3)
-      .map((attack) => attackDisplayLabel(attack) ?? attack.id);
-    return items.length ? items : ["No evidence played yet"];
-  };
+  const checks = (id: ContestantId) =>
+    contestants[id].checks.filter((check) => check.status === "passed").length;
+  const turnOwner: ContestantId =
+    latest?.attacker === "b" || latest?.target === "b" ? "b" : "a";
+  const active = contestants[turnOwner];
+  const turnMessage = latest
+    ? `${attackDisplayLabel(latest)} is ${latest.phase}.`
+    : `${title(active.provider)} is ${active.activity.replaceAll("_", " ")}.`;
+
   return (
-    <main className="evidence-table">
-      <header className="deck-header">
-        <strong>AGENT ARENA · EVIDENCE DECK</strong>
+    <main className="monster-battle">
+      <header className="monster-header">
+        <strong>AGENT ARENA · MONSTER BATTLE</strong>
         <span>{state.task}</span>
         <CompactRoundNav
           state={state}
@@ -985,108 +1023,109 @@ function EvidenceDeckArena({
           onSelect={onRound}
         />
       </header>
-      <div className="deck-surface">
+
+      <section className="monster-field" aria-label="Agent battle field">
+        <BattleTerrain />
+        <div className="monster-objective">
+          <strong>{roundLabel(selectedRound)}</strong>
+          <span>{stage}</span>
+          <em>{selectedRound === "live" ? "LIVE TURN" : "RECORDED TURN"}</em>
+        </div>
+
         {(["a", "b"] as const).map((id) => (
-          <aside className={`deck-player deck-player-${id}`} key={id}>
-            <button
-              className="deck-identity"
-              type="button"
-              onClick={() => onFighter(id)}
-            >
-              <ProviderDisc fighter={contestants[id]} id={id} />
-              <strong>{title(contestants[id].provider)}</strong>
-              <span>{contestants[id].activity.replaceAll("_", " ")}</span>
-              <b>{contestants[id].health} HP</b>
-              <i>
-                <span style={{ width: `${contestants[id].health}%` }} />
-              </i>
-            </button>
-            <div
-              className={`deck-stack${deckItems(id)[0] === "No evidence played yet" ? " is-empty" : ""}`}
-            >
-              {deckItems(id).map((item, index) => (
-                <span key={`${item}-${index}`}>{item}</span>
-              ))}
-            </div>
-          </aside>
-        ))}
-        <section className="deck-center">
-          <div className="deck-objective">
-            <strong>
-              {roundLabel(selectedRound)} · {stage}
-            </strong>
-            <span>
-              {selectedRound === "live"
-                ? "Authoritative live table"
-                : "Read-only recorded table · live run unchanged"}
-            </span>
-          </div>
-          <div className="playmat">
-            <article className="evidence-card attack-card">
-              <span>
-                ATTACK ·{" "}
-                {latest?.severity?.toUpperCase() ??
-                  latest?.phase.toUpperCase() ??
-                  "WAITING"}
+          <button
+            className={`monster-fighter monster-fighter-${id}`}
+            type="button"
+            key={id}
+            aria-label={`Inspect ${title(contestants[id].provider)}`}
+            onClick={() => onFighter(id)}
+          >
+            <span className="monster-status-plate">
+              <span className="monster-status-heading">
+                <strong>{title(contestants[id].provider)}</strong>
+                <b>{contestants[id].health} HP</b>
               </span>
-              <h2>
-                {attackDisplayLabel(latest) ?? "Evidence has not been played"}
-              </h2>
-              <p>
-                {latest
-                  ? `${latest.attacker?.toUpperCase() ?? "House"} targets ${latest.target?.toUpperCase() ?? "both"}.`
-                  : "The next authoritative attack will appear here."}
-              </p>
-              <footer>
-                <b>
-                  {latest?.damage ? `${latest.damage} DAMAGE` : "NO DAMAGE"}
-                </b>
-                <b>{latest?.phase ?? "PENDING"}</b>
-              </footer>
-            </article>
-            <span className="deck-vs">VS</span>
-            <article className="evidence-card repair-card">
-              <span>REPAIR · {repair?.status.toUpperCase() ?? "WAITING"}</span>
-              <h2>{repair?.stage.replaceAll("_", " ") ?? "Repair response"}</h2>
-              <p>
-                {repair
-                  ? invocationStatusSentence(repair.id, repair.status)
-                  : "No repair invocation is recorded for this view."}
-              </p>
-              <footer>
-                <b>
-                  {repair?.durationMs === undefined
-                    ? "—"
-                    : `${(repair.durationMs / 1000).toFixed(1)}s`}
-                </b>
-                <b>{stage}</b>
-              </footer>
-            </article>
-          </div>
-          <div className="deck-ledger">
-            <strong>Health ledger</strong>
-            <span>
-              {title(contestants.a.provider)} {contestants.a.health} HP ·{" "}
-              {title(contestants.b.provider)} {contestants.b.health} HP
+              <small>{contestants[id].model ?? "Default model"}</small>
+              <span className="monster-health" aria-hidden="true">
+                <i
+                  style={{
+                    transform: `scaleX(${String(contestants[id].health / 100)})`,
+                  }}
+                />
+              </span>
+              <span className="monster-status-meta">
+                <span>{contestants[id].activity.replaceAll("_", " ")}</span>
+                <span>
+                  {checks(id)}/{contestants[id].checks.length} checks
+                </span>
+              </span>
             </span>
-          </div>
-        </section>
-      </div>
+            <span className="monster-summon" aria-hidden="true">
+              <span className="monster-aura" />
+              <ProviderDisc fighter={contestants[id]} id={id} />
+            </span>
+          </button>
+        ))}
+
+        <div className="monster-battle-dock">
+          <article className="monster-dialogue" aria-live="polite">
+            <strong>{turnMessage}</strong>
+            <p>
+              {latest
+                ? `${latest.attacker?.toUpperCase() ?? "House"} → ${latest.target?.toUpperCase() ?? "both"}${latest.damage ? ` · ${String(latest.damage)} HP` : ""}`
+                : (active.summaries.at(-1)?.text ??
+                  "The next authoritative move will appear here.")}
+            </p>
+            <span aria-hidden="true" />
+          </article>
+          <nav className="monster-commands" aria-label="Inspect contestants">
+            {(["a", "b"] as const).map((id) => (
+              <button type="button" key={id} onClick={() => onFighter(id)}>
+                <ProviderDisc fighter={contestants[id]} id={id} />
+                <span>
+                  <strong>Inspect {title(contestants[id].provider)}</strong>
+                  <small>Full output and evidence</small>
+                </span>
+              </button>
+            ))}
+          </nav>
+        </div>
+      </section>
+
+      <aside className="monster-evidence" aria-label="Recent battle evidence">
+        <strong>Battle log</strong>
+        {attacks.length ? (
+          attacks.slice(-4).map((attack, index) => (
+            <span key={`${attack.id}-${attack.phase}-${String(index)}`}>
+              <b>{attackDisplayLabel(attack)}</b>
+              <small>
+                {attack.phase} · {attack.attacker?.toUpperCase() ?? "House"} →{" "}
+                {attack.target?.toUpperCase() ?? "both"}
+              </small>
+            </span>
+          ))
+        ) : (
+          <span>
+            <b>Waiting for evidence</b>
+            <small>Verified attacks and repairs will appear here.</small>
+          </span>
+        )}
+      </aside>
     </main>
   );
 }
 
 const DESIGN_CONTRACT = {
   thesis:
-    "Turn recorded engineering evidence into five materially distinct competition views without changing a product fact.",
+    "Turn recorded engineering evidence into an original creature battle without changing a product fact.",
   ownWorld:
-    "Pocket hardware, sticker sheet, portable night console, sports broadcast, and felt evidence table.",
+    "Sky blue, cobalt, coral, health green, cream plates, navy contours, elemental sigils, and cel-shaded terrain.",
   story:
     "Track the fight, inspect either contestant, review recorded rounds, understand attacks and repairs, then finish the authoritative result.",
   firstViewport:
-    "The active renderer's central metaphor dominates while live status, rounds, theme selection, and cancellation remain reachable.",
-  form: "Operate-mode Electron observatory derived from approved outside concepts.",
-  seed: "a785963b",
+    "An asymmetric arena dominates while agent status, turn dialogue, inspection, rounds, evidence, and cancellation remain reachable.",
+  form: "User-pinned pocket-monster battle direction; top-ranked grounded candidate.",
+  seed: "beaf8282",
 } as const;
 
 export function App() {
@@ -1266,8 +1305,8 @@ export function App() {
           onRound={selectRound}
           onFighter={setSelectedFighter}
         />
-      ) : !showResults && !selectedFighter && theme === "evidence-deck" ? (
-        <EvidenceDeckArena
+      ) : !showResults && !selectedFighter && theme === "monster-battle" ? (
+        <MonsterBattleArena
           state={state}
           rounds={rounds}
           selectedRound={selectedRound}

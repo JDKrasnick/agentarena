@@ -52,9 +52,18 @@ describe("arena themes", () => {
 
   it("persists atomically without leaving temporary files", async () => {
     const directory = await tempDirectory();
-    await writeThemePreference(directory, "evidence-deck");
-    expect(await readThemePreference(directory)).toBe("evidence-deck");
+    await writeThemePreference(directory, "monster-battle");
+    expect(await readThemePreference(directory)).toBe("monster-battle");
     expect(await readdir(directory)).toEqual(["arena-theme.json"]);
+  });
+
+  it("migrates the retired evidence deck preference", async () => {
+    const directory = await tempDirectory();
+    await writeFile(
+      themePreferencePath(directory),
+      JSON.stringify({ theme: "evidence-deck" }),
+    );
+    expect(await readThemePreference(directory)).toBe("monster-battle");
   });
 
   it("exposes only getTheme and setTheme and keeps a failed save in session", async () => {

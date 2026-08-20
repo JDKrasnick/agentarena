@@ -136,31 +136,35 @@
   --broadcast-desk: #f5f2e9;
   --broadcast-replay: #ddd8ca;
 
-  /* Evidence Deck palette and card-stock ramps. */
-  --deck-ink: #1c2926;
-  --deck-felt: #245c49;
-  --deck-felt-deep: #1e5041;
-  --deck-felt-dark: #153f35;
-  --deck-header: #173b32;
-  --deck-wood: #684331;
-  --deck-wood-light: #b47c54;
-  --deck-cream: #f4ead1;
-  --deck-cream-soft: #f2e7ca;
-  --deck-card-back: #e1d4b8;
-  --deck-card-track: #d4cfb9;
-  --deck-card-edge: #f7efdc;
-  --deck-paper-fg: #24342f;
-  --deck-muted: #52645e;
-  --deck-light-fg: #eef7e9;
-  --deck-header-fg: #f8f0dc;
-  --deck-rule: #8db7a6;
-  --deck-rule-light: #a8c8bb;
-  --deck-provider-a: #65d2c4;
-  --deck-provider-b: #f2a05a;
-  --deck-health: #54bf6d;
-  --deck-attack: #ef7568;
-  --deck-repair: #65b4bb;
-  --deck-gold: #e8bd4d;
+  /* Original creature-battle field palette. */
+  --monster-navy: #071a3c;
+  --monster-blue: #2369d8;
+  --monster-blue-deep: #12449d;
+  --monster-sky: #65c9f3;
+  --monster-sky-light: #dff6ff;
+  --monster-cream: #fff9e9;
+  --monster-cream-deep: #efe3c3;
+  --monster-red: #d8463d;
+  --monster-yellow: #f3c83b;
+  --monster-green: #4aaf55;
+  --monster-green-deep: #21753a;
+  --monster-grass: #79bd58;
+  --monster-grass-deep: #3d823f;
+  --monster-mountain: #6ba69a;
+  --monster-mountain-far: #a9d4c4;
+  --monster-coral: #ee7359;
+  --monster-header-muted: #dcecff;
+  --monster-text-muted: #40556a;
+  --monster-sand: #dcbf86;
+  --monster-sand-deep: #cfae70;
+  --monster-rule-soft: #b4ab92;
+  --monster-command-blue: #dbeaff;
+  --monster-command-red: #ffe3dc;
+  --monster-panel: #eaf8ff;
+  --monster-working-ink: #0b4660;
+  --monster-working-surface: #cceef5;
+  --monster-success-surface: #dff0d8;
+  --monster-shadow: rgb(7 26 60 / 28%);
 }
 
 * {
@@ -198,7 +202,8 @@ input:focus-visible {
   --detail-output-surface: #11120f;
   --detail-output-fg: #c9cac4;
   --detail-output-muted: #878980;
-  --detail-danger: #ff9b9b;
+  --detail-page-danger: #ff9b9b;
+  --detail-output-danger: #ff9b9b;
   --detail-success: #8ce6aa;
   --detail-accent: #7ce0da;
   --detail-input-surface: #161714;
@@ -1305,7 +1310,7 @@ main {
   color: var(--detail-output-fg);
 }
 .detail-output .output-stderr {
-  color: var(--detail-danger);
+  color: var(--detail-output-danger);
 }
 .detail-output .detail-empty {
   color: var(--detail-output-muted);
@@ -1413,7 +1418,7 @@ main {
 }
 .fighter-ledger .check-failed,
 .fighter-ledger .loss {
-  color: var(--detail-danger);
+  color: var(--detail-page-danger);
 }
 .ledger-summary {
   font-variant-numeric: tabular-nums;
@@ -1671,9 +1676,14 @@ main {
     var(--broadcast-live) 50%
   );
 }
-.theme-option-evidence-deck > span {
-  border-color: var(--deck-wood);
-  background: var(--deck-felt);
+.theme-option-monster-battle > span {
+  border-color: var(--monster-cream);
+  background: linear-gradient(
+    135deg,
+    var(--monster-blue) 0 48%,
+    var(--monster-yellow) 48% 55%,
+    var(--monster-red) 55%
+  );
 }
 .top-actions .theme-option[aria-pressed="true"] {
   outline: 2px solid currentColor;
@@ -1738,7 +1748,8 @@ main {
   --detail-output-surface: #ffffff;
   --detail-output-fg: #314951;
   --detail-output-muted: #40585f;
-  --detail-danger: #9f262b;
+  --detail-page-danger: #9f262b;
+  --detail-output-danger: #9f262b;
   --detail-success: #315c3a;
   --detail-accent: #0f7078;
   --detail-input-surface: #fffdf0;
@@ -1951,7 +1962,8 @@ main {
   --detail-output-surface: #ffffff;
   --detail-output-fg: #314951;
   --detail-output-muted: #40585f;
-  --detail-danger: #9f262b;
+  --detail-page-danger: #9f262b;
+  --detail-output-danger: #9f262b;
   --detail-success: #315c3a;
   --detail-accent: #0f7078;
   --detail-input-surface: #fffdf0;
@@ -2006,7 +2018,8 @@ main {
   --detail-output-surface: #11120f;
   --detail-output-fg: #c9cac4;
   --detail-output-muted: #878980;
-  --detail-danger: #ff9b9b;
+  --detail-page-danger: #ff9b9b;
+  --detail-output-danger: #ff9b9b;
   --detail-success: #75efd0;
   --detail-accent: #75efd0;
   --detail-input-surface: #161714;
@@ -2102,7 +2115,8 @@ main {
   --detail-output-surface: #ffffff;
   --detail-output-fg: #161a1c;
   --detail-output-muted: #465256;
-  --detail-danger: #a52722;
+  --detail-page-danger: #a52722;
+  --detail-output-danger: #a52722;
   --detail-success: #216331;
   --detail-accent: #17616a;
   --detail-input-surface: #ffffff;
@@ -2397,304 +2411,589 @@ main {
   text-transform: uppercase;
 }
 
-/* Evidence Deck renderer */
-.theme-evidence-deck {
-  border: 14px solid var(--deck-wood);
-  border-radius: 42px;
-  color: var(--deck-ink);
-  background: var(--deck-felt);
-  box-shadow:
-    inset 0 0 0 4px var(--deck-wood-light),
-    0 22px 50px var(--shadow-deep);
+/* Original creature-battle renderer */
+.theme-monster-battle {
+  color: var(--monster-navy);
+  background: var(--monster-blue-deep);
   font-family: "Arena Space", sans-serif;
-  --detail-page-fg: #eef7e9;
-  --detail-page-surface: #245c49;
-  --detail-page-muted: #c8dcd3;
-  --detail-page-faint: #c8dcd3;
-  --detail-output-surface: #153f35;
-  --detail-output-fg: #eef7e9;
-  --detail-output-muted: #c8dcd3;
-  --detail-danger: #ffb5af;
-  --detail-success: #b6f2c3;
-  --detail-accent: #b9eee4;
-  --detail-input-surface: #f4ead1;
-  --detail-input-fg: #1c2926;
-  --detail-input-placeholder: #52645e;
-  --detail-button-surface: #e8bd4d;
-  --detail-button-fg: #1c2926;
-  --result-surface: #f4ead1;
-  --result-fg: #1c2926;
-  --result-muted: #4b5a55;
-  --result-link: #1c2926;
-  --result-border: #5c685f;
-  --result-card-surface: #fff8e7;
-  --result-card-hover: #f8edcf;
-  --result-winner-surface: #dcebd3;
-  --result-card-fg: #1c2926;
-  --result-card-muted: #4b5a55;
-  --result-stat: #1c2926;
-  --result-focus: #8b4a20;
+  --line: #174779;
+  --muted: #3e5c72;
+  --cyan: #176a82;
+  --green: #21753a;
+  --red: #a82d2d;
+  --header-status-fg: #dcecff;
+  --header-surface: #071a3c;
+  --detail-page-fg: #071a3c;
+  --detail-page-surface: #dff6ff;
+  --detail-page-muted: #3e5368;
+  --detail-page-faint: #3e5368;
+  --detail-output-surface: #071a3c;
+  --detail-output-fg: #f8fbff;
+  --detail-output-muted: #b8cbe0;
+  --detail-page-danger: #a82d2d;
+  --detail-output-danger: #ffaaa3;
+  --detail-success: #21753a;
+  --detail-accent: #155f78;
+  --detail-input-surface: #fff9e9;
+  --detail-input-fg: #071a3c;
+  --detail-input-placeholder: #526172;
+  --detail-button-surface: #f3c83b;
+  --detail-button-fg: #071a3c;
+  --result-surface: #fff9e9;
+  --result-fg: #071a3c;
+  --result-muted: #40556a;
+  --result-link: #12449d;
+  --result-border: #40556a;
+  --result-card-surface: #ffffff;
+  --result-card-hover: #eef7ff;
+  --result-winner-surface: #dff0d8;
+  --result-card-fg: #071a3c;
+  --result-card-muted: #40556a;
+  --result-stat: #071a3c;
+  --result-focus: #12449d;
 }
-.theme-evidence-deck > .topbar {
-  color: var(--deck-header-fg);
-  background: var(--deck-header);
+.theme-monster-battle > .topbar {
+  border-bottom: 3px solid var(--monster-yellow);
+  color: var(--app-white);
+  background: var(--monster-navy);
 }
-.theme-evidence-deck .brand strong,
-.deck-header > strong {
+.theme-monster-battle .connection {
+  color: var(--header-status-fg);
+}
+.theme-monster-battle .brand strong,
+.monster-header > strong,
+.monster-status-heading strong,
+.monster-dialogue strong,
+.monster-commands strong,
+.theme-monster-battle .result-verdict h1 {
   font-family: "Arena Fredoka", sans-serif;
 }
-.evidence-table {
-  display: block;
+.monster-battle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(580px, 1fr) auto;
   min-height: calc(100vh - 64px);
-  padding: 0;
-  background: var(--deck-felt);
+  overflow: hidden;
+  background: var(--monster-navy);
 }
-.deck-header {
+.monster-header {
+  z-index: 5;
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 14px 24px;
-  border-bottom: 2px solid var(--deck-rule);
-  color: var(--deck-header-fg);
-  background: var(--deck-header);
+  min-height: 52px;
+  padding: 9px 20px;
+  color: var(--app-white);
+  background: var(--monster-navy);
 }
-.deck-header > span {
+.monster-header > strong {
+  flex: 0 0 auto;
+  font-size: 16px;
+  letter-spacing: 0.025em;
+}
+.monster-header > span {
   min-width: 0;
+  flex: 1;
   overflow: hidden;
+  color: var(--monster-header-muted);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.deck-header .compact-rounds button.is-selected {
-  color: var(--deck-ink);
-  background: var(--deck-gold);
+.monster-header .compact-rounds button {
+  border-width: 2px;
+  border-radius: 8px;
 }
-.deck-surface {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 250px;
-  gap: 22px;
-  min-height: 650px;
-  padding: 24px;
+.monster-header .compact-rounds button.is-selected {
+  border-color: var(--monster-yellow);
+  color: var(--monster-navy);
+  background: var(--monster-yellow);
 }
-.deck-player {
+.monster-field {
+  position: relative;
+  min-height: 580px;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--monster-sky);
+}
+.monster-field::before {
+  position: absolute;
+  z-index: -2;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 54%;
+  background: linear-gradient(
+    174deg,
+    transparent 0 18%,
+    var(--monster-grass) 18% 56%,
+    var(--monster-grass-deep) 56% 100%
+  );
+  content: "";
+}
+.monster-field::after {
+  position: absolute;
+  z-index: -1;
+  right: -8%;
+  bottom: -25%;
+  left: -8%;
+  height: 58%;
+  border: 14px solid color-mix(in srgb, var(--monster-cream) 82%, transparent);
+  border-radius: 50%;
+  background: var(--monster-sand);
+  box-shadow: inset 0 0 0 18px var(--monster-sand-deep);
+  content: "";
+}
+.monster-terrain {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.monster-cloud {
+  fill: var(--monster-sky-light);
+}
+.monster-mountain-far {
+  fill: var(--monster-mountain-far);
+}
+.monster-mountain-near {
+  fill: var(--monster-mountain);
+}
+.monster-ring {
+  fill: none;
+  stroke: color-mix(in srgb, var(--monster-cream) 86%, transparent);
+  stroke-width: 15;
+}
+.monster-objective {
+  position: absolute;
+  z-index: 3;
+  top: 18px;
+  left: 50%;
   display: flex;
-  flex-direction: column;
-  gap: 14px;
+  align-items: center;
+  gap: 9px;
+  border: 3px solid var(--monster-navy);
+  border-radius: 10px;
+  padding: 7px 10px;
+  color: var(--monster-navy);
+  background: var(--monster-cream);
+  box-shadow: 0 8px 18px var(--monster-shadow);
+  transform: translateX(-50%);
 }
-.deck-player-b {
-  grid-column: 3;
+.monster-objective strong {
+  font-family: "Arena Fredoka", sans-serif;
+  font-size: 15px;
 }
-.deck-identity {
-  display: grid;
-  justify-items: start;
+.monster-objective span {
+  color: var(--monster-text-muted);
+  font-size: 11px;
+  text-transform: capitalize;
+}
+.monster-objective em {
+  border-radius: 6px;
+  padding: 4px 6px;
+  color: var(--app-white);
+  background: var(--monster-red);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 800;
+}
+.monster-fighter {
+  position: absolute;
+  z-index: 2;
+  width: min(42vw, 590px);
   border: 0;
-  border-radius: 14px;
-  padding: 16px;
-  color: var(--deck-ink);
-  background: var(--deck-cream);
-  box-shadow: 0 12px 22px var(--shadow-medium);
+  padding: 0;
+  color: var(--monster-navy);
+  background: transparent;
   text-align: left;
-  transform: rotate(-1deg);
   cursor: pointer;
 }
-.deck-player-b .deck-identity {
-  transform: rotate(1deg);
+.monster-fighter-a {
+  top: 50px;
+  left: 3%;
+  height: 390px;
 }
-.deck-identity .provider-disc {
-  width: 74px;
-  height: 74px;
-  border: 4px solid var(--deck-ink);
-  border-radius: 50%;
-  background: var(--deck-provider-a);
+.monster-fighter-b {
+  top: 115px;
+  right: 3%;
+  height: 320px;
 }
-.deck-player-b .provider-disc {
-  background: var(--deck-provider-b);
+.monster-status-plate {
+  position: relative;
+  z-index: 3;
+  display: block;
+  width: min(100%, 480px);
+  border: 4px solid var(--monster-navy);
+  border-radius: 14px 14px 22px 14px;
+  padding: 14px 18px 13px;
+  background: var(--monster-cream);
+  box-shadow: 0 10px 20px var(--monster-shadow);
 }
-.deck-identity .provider-disc img {
-  width: 48px;
-  height: 48px;
-  object-fit: contain;
+.monster-fighter-b .monster-status-plate {
+  margin-left: auto;
+  border-radius: 14px 14px 14px 22px;
 }
-.deck-identity > strong {
-  margin-top: 10px;
-  font:
-    700 30px "Arena Fredoka",
-    sans-serif;
+.monster-status-heading,
+.monster-status-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
-.deck-identity > span {
-  color: var(--deck-muted);
-  font-size: 11px;
+.monster-status-heading strong {
+  overflow: hidden;
+  font-size: clamp(22px, 2.2vw, 34px);
+  text-overflow: ellipsis;
   text-transform: capitalize;
+  white-space: nowrap;
 }
-.deck-identity > b {
-  margin-top: 12px;
-  font-size: 12px;
+.monster-status-heading b {
+  flex: 0 0 auto;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
 }
-.deck-identity > i {
+.monster-status-plate > small {
   display: block;
-  width: 100%;
-  height: 9px;
-  margin-top: 5px;
+  margin-top: 1px;
   overflow: hidden;
-  border-radius: 9px;
-  background: var(--deck-card-track);
-}
-.deck-identity > i span {
-  display: block;
-  height: 100%;
-  background: var(--deck-health);
-}
-.deck-stack {
-  display: grid;
-  gap: 7px;
-  margin-top: auto;
-}
-.deck-stack span {
-  min-height: 48px;
-  border-radius: 9px;
-  padding: 12px;
-  overflow: hidden;
-  color: var(--deck-paper-fg);
-  background: var(--deck-card-back);
-  box-shadow: 0 5px 10px var(--shadow-soft);
-  font-weight: 700;
+  color: var(--monster-text-muted);
+  font:
+    12px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.deck-stack span:nth-child(2) {
-  transform: translateX(6px);
+.monster-health {
+  display: block;
+  height: 14px;
+  margin-top: 10px;
+  overflow: hidden;
+  border: 3px solid var(--monster-navy);
+  border-radius: 9px;
+  background: var(--monster-cream-deep);
 }
-.deck-stack span:nth-child(3) {
-  transform: translateX(12px);
+.monster-health i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--monster-green);
+  transform-origin: left center;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-.deck-center {
-  grid-column: 2;
-  grid-row: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-.deck-objective {
-  display: flex;
-  justify-content: space-between;
-  gap: 15px;
-  border: 2px solid var(--deck-rule-light);
-  border-radius: 12px;
-  padding: 12px 16px;
-  color: var(--deck-light-fg);
-  background: var(--deck-felt-dark);
-}
-.deck-objective strong {
-  font:
-    700 20px "Arena Fredoka",
-    sans-serif;
-  text-transform: capitalize;
-}
-.deck-objective span {
+.monster-status-meta {
+  margin-top: 8px;
+  color: var(--monster-text-muted);
   font-size: 11px;
-}
-.playmat {
-  display: grid;
-  grid-template-columns: 1fr 80px 1fr;
-  align-items: center;
-  gap: 12px;
-  min-height: 390px;
-  border: 2px dashed var(--deck-rule);
-  border-radius: 26px;
-  padding: 28px;
-  background: var(--deck-felt-deep);
-}
-.evidence-card {
-  position: relative;
-  min-height: 280px;
-  border: 7px solid var(--deck-card-edge);
-  border-radius: 18px;
-  padding: 18px;
-  background: var(--deck-cream);
-  box-shadow: 0 18px 30px var(--shadow-raised);
-}
-.attack-card {
-  border-color: var(--deck-attack);
-}
-.repair-card {
-  border-color: var(--deck-repair);
-}
-.evidence-card > span {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-.evidence-card h2 {
-  margin: 28px 0 9px;
-  font:
-    700 clamp(26px, 3vw, 38px) / 0.96 "Arena Fredoka",
-    sans-serif;
   text-transform: capitalize;
 }
-.evidence-card p {
-  font-size: 12px;
-  line-height: 1.55;
-}
-.evidence-card footer {
+.monster-summon {
   position: absolute;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 190px;
+  height: 190px;
+  border: 8px solid var(--app-white);
+  background: var(--monster-blue);
+  box-shadow: 0 18px 34px var(--monster-shadow);
+  transform: rotate(45deg);
+}
+.monster-fighter-a .monster-summon {
+  bottom: 0;
+  left: 21%;
+}
+.monster-fighter-b .monster-summon {
+  right: 18%;
+  bottom: 0;
+  width: 150px;
+  height: 150px;
+  background: var(--monster-coral);
+}
+.monster-aura {
+  position: absolute;
+  inset: -27px;
+  border: 4px dashed var(--monster-yellow);
+  transform: rotate(12deg);
+}
+.monster-fighter-a .monster-aura {
+  border-color: var(--monster-sky-light);
+}
+.monster-summon .provider-disc {
+  width: 112px;
+  height: 112px;
+  border: 0;
+  border-radius: 24px;
+  background: var(--monster-navy);
+  transform: rotate(-45deg);
+}
+.monster-fighter-b .monster-summon .provider-disc {
+  width: 90px;
+  height: 90px;
+}
+.monster-summon .provider-disc img {
+  width: 70%;
+  height: 70%;
+  object-fit: contain;
+}
+.monster-fighter:hover .monster-status-plate,
+.monster-fighter:focus-visible .monster-status-plate {
+  background: var(--app-white);
+}
+.monster-fighter:focus-visible {
+  outline: 4px solid var(--monster-yellow);
+  outline-offset: 8px;
+}
+.monster-battle-dock {
+  position: absolute;
+  z-index: 4;
   right: 18px;
   bottom: 16px;
   left: 18px;
-  display: flex;
-  justify-content: space-between;
-  border-top: 2px solid var(--deck-ink);
-  padding-top: 10px;
-  font-size: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr);
+  gap: 10px;
+  border: 5px solid var(--monster-navy);
+  border-radius: 18px;
+  padding: 8px;
+  background: var(--monster-navy);
+  box-shadow: 0 16px 28px var(--monster-shadow);
 }
-.deck-vs {
+.monster-dialogue {
+  position: relative;
+  min-width: 0;
+  border-radius: 10px;
+  padding: 18px 22px;
+  color: var(--monster-navy);
+  background: var(--monster-cream);
+}
+.monster-dialogue strong {
+  display: block;
+  overflow: hidden;
+  font-size: clamp(17px, 2vw, 26px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.monster-dialogue p {
+  max-width: 70ch;
+  margin: 7px 30px 0 0;
+  color: var(--monster-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.monster-dialogue > span {
+  position: absolute;
+  right: 18px;
+  bottom: 15px;
+  width: 0;
+  height: 0;
+  border-top: 10px solid var(--monster-navy);
+  border-right: 8px solid transparent;
+  border-left: 8px solid transparent;
+  animation: monster-prompt 900ms cubic-bezier(0.22, 1, 0.36, 1) infinite
+    alternate;
+}
+.monster-commands {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+.monster-commands button {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  border: 0;
+  border-radius: 9px;
+  padding: 11px 12px;
+  color: var(--monster-navy);
+  background: var(--monster-command-blue);
+  text-align: left;
+  cursor: pointer;
+}
+.monster-commands button:last-child {
+  background: var(--monster-command-red);
+}
+.monster-commands button:hover {
+  background: var(--monster-yellow);
+}
+.monster-commands .provider-disc {
+  width: 42px;
+  height: 42px;
+  border-radius: 9px;
+  background: var(--monster-navy);
+}
+.monster-commands .provider-disc img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+.monster-commands strong,
+.monster-commands small {
+  display: block;
+}
+.monster-commands strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.monster-commands small {
+  margin-top: 2px;
+  color: var(--monster-text-muted);
+  font-size: 9px;
+}
+.monster-evidence {
+  z-index: 5;
+  display: flex;
+  align-items: stretch;
+  min-height: 76px;
+  overflow-x: auto;
+  color: var(--monster-navy);
+  background: var(--monster-cream);
+}
+.monster-evidence > strong {
   display: grid;
   place-items: center;
-  width: 70px;
-  height: 70px;
-  border-radius: 50%;
-  background: var(--deck-gold);
-  font:
-    700 25px "Arena Fredoka",
-    sans-serif;
-}
-.deck-ledger {
-  display: flex;
-  justify-content: space-between;
-  gap: 14px;
-  border-radius: 12px;
-  padding: 14px 16px;
-  background: var(--deck-cream-soft);
-  box-shadow: 0 9px 18px var(--shadow-soft);
-}
-.deck-ledger strong {
+  flex: 0 0 132px;
+  padding: 12px;
+  color: var(--app-white);
+  background: var(--monster-navy);
   font-family: "Arena Fredoka", sans-serif;
+  font-size: 14px;
 }
-.deck-ledger span {
+.monster-evidence > span {
+  display: grid;
+  align-content: center;
+  min-width: 220px;
+  flex: 1;
+  border-right: 1px solid var(--monster-rule-soft);
+  padding: 11px 16px;
+}
+.monster-evidence b,
+.monster-evidence small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.monster-evidence b {
   font-size: 11px;
 }
-.theme-evidence-deck > main:not(.evidence-table) {
-  background: var(--deck-felt);
+.monster-evidence small {
+  margin-top: 4px;
+  color: var(--monster-text-muted);
+  font-size: 9px;
+  text-transform: capitalize;
 }
-.theme-evidence-deck .results-screen {
-  border: 10px solid var(--deck-card-edge);
+.theme-monster-battle > main:not(.monster-battle) {
+  background: var(--monster-sky-light);
+}
+.theme-monster-battle :is(.round-rail, .activity) {
+  background: var(--monster-panel);
+}
+.theme-monster-battle .activity-list strong,
+.theme-monster-battle .activity > header strong {
+  color: var(--monster-navy);
+}
+.theme-monster-battle
+  :is(
+    .round-nav small,
+    .replay-explainer,
+    .activity-list p,
+    .activity-list time,
+    .activity .empty
+  ) {
+  color: var(--monster-text-muted);
+}
+.theme-monster-battle .activity > header em {
+  color: var(--monster-navy);
+  background: var(--monster-yellow);
+}
+.theme-monster-battle .status-working {
+  color: var(--monster-working-ink);
+  background: var(--monster-working-surface);
+}
+.theme-monster-battle .status-succeeded,
+.theme-monster-battle .status-survived {
+  color: var(--monster-green-deep);
+  background: var(--monster-success-surface);
+}
+.theme-monster-battle .is-results > .arena {
+  max-width: none;
+  background:
+    linear-gradient(
+      152deg,
+      transparent 0 66%,
+      color-mix(in srgb, var(--monster-grass-deep) 24%, transparent) 66%
+    ),
+    linear-gradient(
+      28deg,
+      transparent 0 72%,
+      color-mix(in srgb, var(--monster-mountain) 28%, transparent) 72%
+    ),
+    var(--monster-sky-light);
+}
+.theme-monster-battle .results-screen {
+  max-width: 1180px;
+  margin: 0 auto;
+  border: 5px solid var(--monster-navy);
   border-radius: 18px;
   padding: 28px;
-  color: var(--deck-ink);
+  color: var(--monster-navy);
   background: var(--result-surface);
-  box-shadow: 0 18px 30px var(--shadow-raised);
+  box-shadow: 0 18px 34px var(--monster-shadow);
 }
-.theme-evidence-deck .result-verdict h1,
-.theme-evidence-deck .result-summary dd {
-  color: var(--deck-ink);
+.theme-monster-battle .result-verdict {
+  border-color: var(--monster-navy);
 }
-.theme-evidence-deck .result-verdict h1 {
-  font-family: "Arena Fredoka", sans-serif;
+.theme-monster-battle .result-verdict h1,
+.theme-monster-battle .result-summary dd {
+  color: var(--monster-navy);
+}
+.theme-monster-battle .result-verdict h1::before {
+  color: var(--monster-yellow);
+  content: "VICTORY! ";
+}
+.theme-monster-battle .result-fighter.is-winner {
+  border-width: 3px;
+  border-color: var(--monster-green-deep);
+}
+.theme-monster-battle .result-actions button {
+  border: 3px solid var(--monster-navy);
+  color: var(--monster-navy);
+  background: var(--monster-yellow);
+}
+.theme-monster-battle .result-actions button:hover {
+  border-color: var(--monster-navy);
+  color: var(--app-white);
+  background: var(--monster-blue);
+}
+.theme-monster-battle .result-actions .finish-session {
+  border-color: var(--monster-navy);
+  color: var(--monster-navy);
+  background: var(--monster-success-surface);
+}
+.theme-monster-battle ::selection {
+  color: var(--monster-navy);
+  background: var(--monster-yellow);
+}
+@keyframes monster-prompt {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(4px);
+  }
 }
 
 @media (max-width: 980px) {
   .theme-classic-shell,
   .theme-sticker-league,
-  .theme-night-edition,
-  .theme-evidence-deck {
+  .theme-night-edition {
     border-width: 8px;
     border-radius: 0;
     padding: 0;
@@ -2710,34 +3009,22 @@ main {
     border-top: 1px solid var(--broadcast-ink);
     border-left: 0;
   }
-  .deck-surface {
+  .monster-field {
+    min-height: 680px;
+  }
+  .monster-fighter {
+    width: 46vw;
+  }
+  .monster-summon {
+    width: 150px;
+    height: 150px;
+  }
+  .monster-fighter-b .monster-summon {
+    width: 125px;
+    height: 125px;
+  }
+  .monster-battle-dock {
     grid-template-columns: 1fr;
-  }
-  .deck-player,
-  .deck-player-b,
-  .deck-center {
-    grid-column: auto;
-    grid-row: auto;
-  }
-  .deck-center {
-    order: -1;
-  }
-  .deck-player {
-    display: grid;
-    grid-template-columns: 150px minmax(0, 1fr);
-    align-items: start;
-  }
-  .deck-stack {
-    align-self: start;
-    grid-auto-rows: min-content;
-    height: max-content;
-    margin-top: 0;
-  }
-  .deck-stack span {
-    height: 52px;
-  }
-  .deck-player-b {
-    order: 3;
   }
   .theme-sticker-league main {
     grid-template-columns: 190px minmax(600px, 1fr);
@@ -2753,9 +3040,6 @@ main {
     overflow-wrap: anywhere;
     white-space: normal;
   }
-  .deck-stack.is-empty {
-    display: none;
-  }
 }
 @media (max-width: 700px) {
   .top-actions .connection,
@@ -2768,6 +3052,10 @@ main {
   }
   .theme-picker {
     order: 2;
+  }
+  .top-actions .theme-option {
+    width: 44px;
+    height: 44px;
   }
   .broadcast-field {
     grid-template-columns: 1fr 58px 1fr;
@@ -2801,36 +3089,78 @@ main {
   .feed-header .compact-rounds button {
     flex: 1;
   }
-  .deck-header {
+  .monster-header {
     flex-wrap: wrap;
     padding: 12px;
   }
-  .deck-header .compact-rounds {
+  .monster-header > span {
+    order: 3;
+    flex-basis: 100%;
+  }
+  .monster-header .compact-rounds {
     width: 100%;
   }
-  .deck-header .compact-rounds button {
+  .monster-header .compact-rounds button {
     flex: 1;
   }
-  .deck-surface {
-    display: flex;
-    flex-direction: column;
-    padding: 14px;
+  .monster-field {
+    min-height: 680px;
   }
-  .deck-player {
-    grid-template-columns: 125px minmax(0, 1fr);
+  .monster-objective {
+    top: 12px;
   }
-  .playmat {
-    grid-template-columns: 1fr;
-    padding: 16px;
+  .monster-fighter {
+    right: 3%;
+    left: 3%;
+    width: 94%;
+    height: 190px;
   }
-  .deck-vs {
-    margin: auto;
+  .monster-fighter-a {
+    top: 58px;
   }
-  .evidence-card {
-    min-height: 240px;
+  .monster-fighter-b {
+    top: 235px;
   }
-  .deck-objective,
-  .deck-ledger {
-    flex-direction: column;
+  .monster-status-plate {
+    width: 72%;
+    padding: 11px 13px;
+  }
+  .monster-fighter-b .monster-status-plate {
+    margin-left: auto;
+  }
+  .monster-summon,
+  .monster-fighter-b .monster-summon {
+    right: 7%;
+    bottom: 0;
+    left: auto;
+    width: 88px;
+    height: 88px;
+    border-width: 5px;
+  }
+  .monster-fighter-b .monster-summon {
+    right: auto;
+    left: 7%;
+  }
+  .monster-summon .provider-disc,
+  .monster-fighter-b .monster-summon .provider-disc {
+    width: 58px;
+    height: 58px;
+  }
+  .monster-aura {
+    inset: -17px;
+  }
+  .monster-battle-dock {
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+  }
+  .monster-dialogue strong {
+    white-space: normal;
+  }
+  .monster-commands {
+    grid-template-columns: 1fr 1fr;
+  }
+  .monster-evidence > strong {
+    flex-basis: 105px;
   }
 }

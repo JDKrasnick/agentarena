@@ -5,19 +5,21 @@ type ArenaTheme =
   | "sticker-league"
   | "night-edition"
   | "live-arena-broadcast"
-  | "evidence-deck";
+  | "monster-battle";
 
 const themes = new Set<ArenaTheme>([
   "classic-shell",
   "sticker-league",
   "night-edition",
   "live-arena-broadcast",
-  "evidence-deck",
+  "monster-battle",
 ]);
 const initialArgument = process.argv.find((entry) =>
   entry.startsWith("--agent-arena-theme="),
 );
-const initialTheme = initialArgument?.split("=")[1];
+const initialValue = initialArgument?.split("=")[1];
+const initialTheme =
+  initialValue === "evidence-deck" ? "monster-battle" : initialValue;
 let currentTheme: ArenaTheme = themes.has(initialTheme as ArenaTheme)
   ? (initialTheme as ArenaTheme)
   : "classic-shell";
