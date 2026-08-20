@@ -25,6 +25,15 @@ export function findBrowserProbeResult(
   return result.probes.find((probe) => probe.probeId === probeId);
 }
 
+export function browserRepairEvidencePasses(
+  result: BrowserValidationResult,
+  probeId: string,
+): boolean | undefined {
+  const probe = findBrowserProbeResult(result, probeId);
+  if (!probe || probe.status === "unverified") return undefined;
+  return probe.status === "verified";
+}
+
 export function attributeBrowserResult(
   baseline: BrowserValidationResult | undefined,
   result: BrowserValidationResult,

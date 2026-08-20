@@ -93,6 +93,7 @@ import {
 } from "../contracts/browser.js";
 import {
   attributeBrowserResult,
+  browserRepairEvidencePasses,
   findBrowserProbeResult,
 } from "../browser/results.js";
 import {
@@ -192,6 +193,7 @@ import {
   assertTargetedRetryAllowed,
 } from "../confidence/assessment.js";
 import {
+  BrowserInfrastructureError,
   executeBrowserValidation,
   type BrowserAdapter,
   type BrowserNativeSuiteResult,
@@ -5769,6 +5771,44 @@ export class RoundEngine {
               runLevel: true,
             });
             try {
+              const isVisibleBrowserReproducer =
+                Boolean(attack.browserProbe) &&
+                caseEntry.visibility === "visible";
+              if (isVisibleBrowserReproducer && attack.browserProbe) {
+                const validateBrowser = this.browserProbeValidator(
+                  context,
+                  attack.id,
+                );
+                if (!validateBrowser)
+                  throw new Error(
+                    `Browser repair evidence is unavailable for ${agent} on ${caseEntry.id}`,
+                  );
+                const browserResult = await validateBrowser(
+                  caseTree,
+                  attack.browserProbe,
+                  "target",
+                  [
+                    currentPatch,
+                    ...(attack.evidenceKind === "browser_probe"
+                      ? []
+                      : [caseEntry.patchPath]),
+                  ],
+                );
+                const browserEvidencePasses = browserRepairEvidencePasses(
+                  browserResult,
+                  attack.browserProbe.id,
+                );
+                if (browserEvidencePasses === undefined)
+                  throw new BrowserInfrastructureError(
+                    `Browser repair evidence was unverified for ${agent} on ${caseEntry.id}`,
+                    browserResult.reason ?? "launch_failure",
+                    browserResult.failureAttribution === "harness_configuration"
+                      ? "harness_configuration"
+                      : "harness_transport",
+                  );
+                if (!browserEvidencePasses) allCasesPass = false;
+                if (attack.evidenceKind === "browser_probe") continue;
+              }
               const checks = [];
               for (const sample of [1, 2] as const) {
                 let infrastructureFailure: FailureRecord | undefined;

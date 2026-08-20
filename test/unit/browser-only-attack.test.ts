@@ -293,6 +293,75 @@ describe("browser-only attacks", () => {
 
       expect(unrelatedFailure.status).toBe("blocked");
 
+      const unattributedAssess = vi.fn().mockResolvedValue({
+        relevant: true,
+        oracleSupported: true,
+        oracleRationale: "The behavior is explicit",
+        rootDefectId: "settings-dialog",
+        severity: "medium" as const,
+        rationale: "The comparative browser evidence is deterministic",
+      });
+      const unattributedFailure = await validateAttack({
+        attack: { ...attack, id: "browser-only-unattributed", checks: [] },
+        authorPatch,
+        targetPatch,
+        runSpec: {} as never,
+        permissionPolicy: {
+          defaultMode: "confirm",
+          reducedValidationAccepted: false,
+          capabilities: [
+            {
+              id: "browser_dom_validation",
+              reason: "Browser comparison",
+              risk: "medium",
+              requirement: "optional",
+              role: "harness_only",
+              enforcement: "brokered",
+              mode: "confirm",
+              scopes: [],
+              status: "approved",
+            },
+          ],
+        },
+        config,
+        worktrees,
+        verifier: { id: "codex", assess: unattributedAssess },
+        validateBrowser: (_worktree, probe, subject) =>
+          Promise.resolve({
+            status: subject === "author" ? "verified" : "failed",
+            provisionAttempts: 1,
+            probes: [
+              {
+                probeId: probe.id,
+                family: probe.family,
+                profile: probe.profile,
+                status: subject === "author" ? "verified" : "failed",
+                ...(subject === "target"
+                  ? { reason: "application_failure" as const }
+                  : {}),
+                contextId: `${subject}-unattributed`,
+                requiredCapabilityIds: ["browser_dom_validation"],
+                blockedOrigins: [],
+                artifacts: [],
+              },
+            ],
+            artifacts: [],
+            ...(subject === "target"
+              ? {
+                  reason: "application_failure" as const,
+                  failureAttribution: "unattributed" as const,
+                }
+              : {}),
+          }),
+        logRoot: path.join(temporaryRoot, "unattributed-logs"),
+        signal: new AbortController().signal,
+        knownRootDefects: new Set(),
+      });
+
+      expect(unattributedFailure.status).toBe("execution_inconclusive");
+      expect(unattributedFailure.damage).toBeUndefined();
+      expect(unattributedAssess).not.toHaveBeenCalled();
+
       const adjudicate = vi.fn().mockResolvedValue({
         decision: "confirmed" as const,
         relevant: true,

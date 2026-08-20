@@ -33,6 +33,16 @@ export interface BrowserSession {
 
 export interface BrowserAdapter {
   runner: "playwright" | "cypress" | "custom";
+  resolveRuntime?(input: {
+    plan: BrowserPlan & { profile: NonNullable<BrowserPlan["profile"]> };
+    approvedOrigins: string[];
+    dynamicLoopbackApproved: boolean;
+    signal: AbortSignal;
+    deadlineAt: number;
+  }): Promise<{
+    plan: BrowserPlan & { profile: NonNullable<BrowserPlan["profile"]> };
+    approvedOrigins: string[];
+  }>;
   runNativeSuiteStandalone?(input: {
     plan: BrowserPlan & { profile: NonNullable<BrowserPlan["profile"]> };
     worktree: string;
@@ -256,6 +266,25 @@ export async function executeBrowserValidation(options: {
     let session: BrowserSession | undefined;
     let launchPromise: Promise<BrowserSession> | undefined;
     try {
+      const runtime = adapter.resolveRuntime
+        ? await beforeDeadline(
+            () =>
+              adapter.resolveRuntime!({
+                plan: { ...options.plan, profile },
+                approvedOrigins: options.approvedOrigins,
+                dynamicLoopbackApproved:
+                  options.dynamicLoopbackApproved ?? false,
+                signal: attemptSignal,
+                deadlineAt,
+              }),
+            deadlineAt,
+            attemptSignal,
+            () => attemptController.abort(),
+          )
+        : {
+            plan: { ...options.plan, profile },
+            approvedOrigins: options.approvedOrigins,
+          };
       const cachedNativeResult =
         completedNativeResult ??
         (options.nativeSuiteCacheKey
@@ -272,7 +301,7 @@ export async function executeBrowserValidation(options: {
         nativeResult = await beforeDeadline(
           () =>
             adapter.runNativeSuiteStandalone!({
-              plan: { ...options.plan, profile },
+              plan: runtime.plan,
               worktree: options.worktree,
               artifactDirectory: path.join(
                 attemptArtifactDirectory,
@@ -300,7 +329,7 @@ export async function executeBrowserValidation(options: {
         completedNativeResult = nativeResult;
       }
       launchPromise = adapter.launch({
-        plan: { ...options.plan, profile },
+        plan: runtime.plan,
         worktree: options.worktree,
         artifactDirectory: attemptArtifactDirectory,
         signal: attemptSignal,
@@ -373,7 +402,7 @@ export async function executeBrowserValidation(options: {
               request,
               contextId,
               freshStorage: true,
-              allowedOrigins: options.approvedOrigins,
+              allowedOrigins: runtime.approvedOrigins,
             }),
           deadlineAt,
           attemptSignal,

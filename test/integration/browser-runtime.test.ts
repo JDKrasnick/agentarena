@@ -110,6 +110,29 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
       expect(verified.status).toBe("verified");
       expect(verified.probes).toHaveLength(8);
 
+      const selfManagedDynamic = await executeBrowserValidation({
+        plan: {
+          ...plan,
+          profile: {
+            ...plan.profile!,
+            nativeSuiteMode: "self_managed",
+            testCommand:
+              "node test/fixtures/browser-app/self-managed-native-test.mjs",
+          },
+        },
+        decision: "approved",
+        adapter: adapter!,
+        worktree: process.cwd(),
+        artifactDirectory: path.join(artifacts, "self-managed-dynamic-port"),
+        approvedOrigins: [origin],
+        dynamicLoopbackApproved: true,
+        timeoutMs: 30_000,
+        selectedProbes: [],
+        signal: controller.signal,
+      });
+      expect(selfManagedDynamic.status).toBe("verified");
+      expect(selfManagedDynamic.probes).toHaveLength(4);
+
       const fixedPortCollision = await executeBrowserValidation({
         plan: {
           ...plan,

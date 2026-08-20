@@ -573,6 +573,42 @@ class BuiltInBrowserSession implements BrowserSession {
 class BuiltInBrowserAdapter implements BrowserAdapter {
   constructor(readonly runner: BrowserAdapter["runner"]) {}
 
+  async resolveRuntime(
+    input: Parameters<NonNullable<BrowserAdapter["resolveRuntime"]>>[0],
+  ): Promise<
+    Awaited<ReturnType<NonNullable<BrowserAdapter["resolveRuntime"]>>>
+  > {
+    if (input.plan.profile.portMode !== "dynamic")
+      return {
+        plan: input.plan,
+        approvedOrigins: input.approvedOrigins,
+      };
+    const port = await unusedLoopbackPort();
+    const originalBaseOrigin = new URL(input.plan.profile.baseUrl).origin;
+    const baseUrl = replacePort(input.plan.profile.baseUrl, port);
+    const runtimeBaseOrigin = new URL(baseUrl).origin;
+    return {
+      plan: {
+        ...input.plan,
+        profile: {
+          ...input.plan.profile,
+          baseUrl,
+          healthUrl: replacePort(input.plan.profile.healthUrl, port),
+          allowedOrigins: input.plan.profile.allowedOrigins.map((origin) =>
+            new URL(origin).origin === originalBaseOrigin
+              ? runtimeBaseOrigin
+              : origin,
+          ),
+        },
+      },
+      approvedOrigins: input.approvedOrigins.map((origin) =>
+        new URL(origin).origin === originalBaseOrigin
+          ? runtimeBaseOrigin
+          : origin,
+      ),
+    };
+  }
+
   runNativeSuiteStandalone(
     input: Parameters<BrowserAdapter["launch"]>[0],
   ): ReturnType<NonNullable<BrowserAdapter["runNativeSuiteStandalone"]>> {
@@ -592,32 +628,7 @@ class BuiltInBrowserAdapter implements BrowserAdapter {
       ];
       for (const origin of origins) await assertLoopbackPortAvailable(origin);
     }
-    const runtimeInput =
-      input.plan.profile.portMode === "dynamic"
-        ? await (async () => {
-            const port = await unusedLoopbackPort();
-            const originalBaseOrigin = new URL(input.plan.profile.baseUrl)
-              .origin;
-            const baseUrl = replacePort(input.plan.profile.baseUrl, port);
-            return {
-              ...input,
-              plan: {
-                ...input.plan,
-                profile: {
-                  ...input.plan.profile,
-                  baseUrl,
-                  healthUrl: replacePort(input.plan.profile.healthUrl, port),
-                  allowedOrigins: input.plan.profile.allowedOrigins.map(
-                    (origin) =>
-                      new URL(origin).origin === originalBaseOrigin
-                        ? new URL(baseUrl).origin
-                        : origin,
-                  ),
-                },
-              },
-            };
-          })()
-        : input;
+    const runtimeInput = input;
     await mkdir(runtimeInput.artifactDirectory, { recursive: true });
     const stdoutPath = path.join(
       runtimeInput.artifactDirectory,

@@ -896,6 +896,17 @@ export async function validateAttack(
           "execution_inconclusive",
           "Comparative browser execution was unverified",
         );
+      if (
+        (authorProbe.status === "failed" &&
+          authorBrowser.failureAttribution !== "contestant_application") ||
+        (targetProbe.status === "failed" &&
+          targetBrowser.failureAttribution !== "contestant_application")
+      )
+        return withOutcome(
+          attack,
+          "execution_inconclusive",
+          "Comparative browser failure could not be attributed to a contestant against the frozen baseline",
+        );
       if (authorProbe.status === "failed")
         return withOutcome(
           attack,

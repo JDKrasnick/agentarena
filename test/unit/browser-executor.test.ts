@@ -36,6 +36,7 @@ function adapter(session: BrowserSession) {
 describe("browser validation executor", () => {
   it("runs self-managed native suites before starting the probe service", async () => {
     const events: string[] = [];
+    const runtimeOrigin = "http://127.0.0.1:5184";
     const sessionNativeSuite = vi.fn();
     const session: BrowserSession = {
       toolVersion: "1",
@@ -68,20 +69,54 @@ describe("browser validation executor", () => {
       decision: "approved",
       adapter: {
         runner: "playwright",
-        runNativeSuiteStandalone: vi.fn().mockImplementation(() => {
-          events.push("native");
-          return Promise.resolve({
-            family: "visual_regression" as const,
-            profile: "repository_native" as const,
-            status: "verified" as const,
-            blockedOrigins: [],
-            artifacts: [],
-          });
-        }),
-        launch: vi.fn().mockImplementation(() => {
-          events.push("launch");
-          return Promise.resolve(session);
-        }),
+        resolveRuntime: vi
+          .fn()
+          .mockImplementation(
+            (
+              input: Parameters<
+                NonNullable<BrowserAdapter["resolveRuntime"]>
+              >[0],
+            ) => {
+              events.push("resolve");
+              return Promise.resolve({
+                plan: {
+                  ...input.plan,
+                  profile: {
+                    ...input.plan.profile,
+                    baseUrl: runtimeOrigin,
+                    healthUrl: `${runtimeOrigin}/health`,
+                  },
+                },
+                approvedOrigins: [runtimeOrigin],
+              });
+            },
+          ),
+        runNativeSuiteStandalone: vi
+          .fn()
+          .mockImplementation(
+            (
+              input: Parameters<
+                NonNullable<BrowserAdapter["runNativeSuiteStandalone"]>
+              >[0],
+            ) => {
+              events.push("native");
+              expect(input.plan.profile.baseUrl).toBe(runtimeOrigin);
+              return Promise.resolve({
+                family: "visual_regression" as const,
+                profile: "repository_native" as const,
+                status: "verified" as const,
+                blockedOrigins: [],
+                artifacts: [],
+              });
+            },
+          ),
+        launch: vi
+          .fn<BrowserAdapter["launch"]>()
+          .mockImplementation((input) => {
+            events.push("launch");
+            expect(input.plan.profile.baseUrl).toBe(runtimeOrigin);
+            return Promise.resolve(session);
+          }),
       },
       worktree: "/worktree/a",
       artifactDirectory: "/artifacts/a",
@@ -92,7 +127,7 @@ describe("browser validation executor", () => {
     });
 
     expect(result.status).toBe("verified");
-    expect(events).toEqual(["native", "launch"]);
+    expect(events).toEqual(["resolve", "native", "launch"]);
     expect(sessionNativeSuite).not.toHaveBeenCalled();
   });
 
