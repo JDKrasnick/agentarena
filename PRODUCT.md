@@ -115,8 +115,11 @@ conventional dark observability workspace: a round timeline, paired contestant
 check and summary-log panels, a chronological activity rail, steering controls,
 and a compact run-status bar. 16-Bit Tactics is an original retro strategy
 renderer: opposing status bars, a data-driven tactical node map, recorded attack
-and repair routes, an evidence channel, and inspect commands. It ships no
-third-party characters, logos, sprites, or game assets. Existing
+and repair routes, an evidence channel, and inspect commands. At desktop widths
+its cartridge chassis fits the available window rather than turning the terrain
+into a separately scrolling poster; compact work nodes are derived from recorded
+contestant invocations. It ships no third-party characters, logos, sprites, or
+game assets. Existing
 `sticker-league` preferences migrate to `developer-dashboard`; `evidence-deck`
 and `monster-battle` preferences migrate to `retro-tactics`.
 

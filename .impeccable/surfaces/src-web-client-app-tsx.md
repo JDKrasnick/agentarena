@@ -20,8 +20,8 @@ related_targets: ["src/web/client/styles.css", "src/web/client/index.html"]
 | ------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | Match header        | Two angular contestant status bars, provider, model, HP, checks, VS                       | Semantic HTML/CSS plus existing provider PNGs                    |
 | Round rail          | Persistent compact numbered live/recorded navigation in the left bezel                    | Existing round state and native buttons                          |
-| Tactical map        | Dense rectangular tile field covering most of the central pane                            | Responsive CSS tile field with authored SVG geometry             |
-| Agent territories   | Purple left and orange right base nodes with actual activity labels                       | Semantic buttons with CSS pixel geometry                         |
+| Tactical map        | Dense rectangular tile field fitting inside the complete desktop cartridge chassis        | Responsive generated terrain with authored SVG route geometry    |
+| Agent territories   | Purple/orange bases plus compact work nodes derived from recorded contestant invocations  | Semantic buttons with generated sprite atlas and CSS positioning |
 | Battle paths        | Attack, repair, and neutral routes derived from recorded events                           | SVG paths and state classes; motion only on authoritative change |
 | Activity rail       | Recent attacks/evidence, phase and directional ownership                                  | Semantic aside and real recorded text                            |
 | Command strip       | Inspect Codex and Inspect Claude as prominent angular controls                            | Native buttons opening full-output detail                        |
@@ -36,5 +36,6 @@ related_targets: ["src/web/client/styles.css", "src/web/client/index.html"]
 - Type: Arena Space for operational copy; bundled monospace for measurements and map labels; display labels use a blocky uppercase treatment without rasterizing text.
 - Palette: ground `#080815`, chassis `#171329`, purple `#7949ba`, orange `#f08a22`, aqua `#43d5d1`, grass `#396f38`, water `#176287`, parchment `#ead8a6`, text `#f2ebdf`.
 - Density: the map occupies roughly two-thirds of the first viewport; status and evidence rails remain compact and factual.
+- Viewport fit: at desktop widths the matchup, round rail, map, evidence rail, and command strip remain visible as one bounded console; narrower layouts may scroll naturally.
 
 The approved comp is a topology and density contract, not permission to invent ten rounds, spectators, countdowns, map objects, or game mechanics. Only recorded dashboard facts ship.

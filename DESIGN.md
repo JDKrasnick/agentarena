@@ -238,9 +238,12 @@ battle state.
   The feed contains a split field, opposing provider discs, versus marker, and
   scorebug; the desk holds round totals and play-by-play.
 - **16-Bit Tactics:** the map-first operator-console topology is a top matchup
-  bar, a `126px` round rail, a flexible tactical map, a `300px` activity/evidence
-  rail, and bottom inspection commands. The terrain fills most of the central
-  pane while all operational state remains semantic HTML/SVG above it.
+  bar, a `142px` round rail, a flexible tactical map, a `280px` activity/evidence
+  rail, and bottom inspection commands. On desktop, the complete chassis is
+  locked to the available viewport: matchup, rails, terrain, and command strip
+  remain visible while the two rails scroll internally when their evidence is
+  taller than the frame. The brighter terrain fills most of the central pane
+  while all operational state remains semantic HTML/SVG above it.
 - **Results and contestant detail:** all five families reuse the same semantic
   structures. The overview remains compact; detail exposes full output,
   invocations, checks, health changes, and attack involvement.
@@ -248,14 +251,15 @@ battle state.
 At `1200px`, Developer Dashboard moves its activity rail below the timeline and
 contestant workspace. At `1180px`, shared detail collapses to one column and the
 shared evidence rail moves below the arena. At `980px`, hardware frames flatten,
-Broadcast stacks its Battle Desk, and the Tactics evidence rail becomes a
-two-column band below the map. At `760px`, shared arenas switch to a horizontal
-round strip and stacked fighters. At `700px`, Developer Dashboard becomes a
-horizontal round selector with stacked contestant workspaces; Tactics compresses
-matchup bars, turns the round rail into a horizontal strip, and installs a fixed
-two-command inspect dock at the bottom edge. Those compact Inspect controls
-remain visible while the map scrolls and open the same full-detail view as the
-desktop command strip.
+Broadcast stacks its Battle Desk, and Tactics releases its desktop viewport lock,
+returns to natural page scrolling, and moves the evidence rail into a two-column
+band below the map. At `760px`, shared arenas switch to a horizontal round strip
+and stacked fighters. At `700px`, Developer Dashboard becomes a horizontal round
+selector with stacked contestant workspaces; Tactics compresses matchup bars,
+turns the round rail into a horizontal strip, hides nonessential bezel ornaments
+that could cover status values, and installs a fixed two-command inspect dock at
+the bottom edge. Those compact Inspect controls remain visible while the map
+scrolls and open the same full-detail view as the desktop command strip.
 
 **The Metaphor-First Rule.** The renderer's cards, feed, or tactical map remain
 the first-viewport anchor; operator controls stay immediately reachable without
@@ -265,6 +269,10 @@ becoming the visual subject.
 behind map nodes or a menu. Keep the two explicit provider-labeled Inspect
 commands in the fixed dock.
 
+**The Full Chassis Rule.** At desktop widths, fit the complete Tactics console
+inside the application viewport. Do not make the terrain a separately cropped
+or page-scrolling poster; overflow belongs inside the round and activity rails.
+
 ## Elevation & Depth
 
 Depth is structural. Classic uses thick ink borders and soft card lift inside
@@ -273,9 +281,11 @@ and a short hard drop. Developer Dashboard is flat by default and separates
 canvas, panel, and raised-panel tones with one-pixel rules. Broadcast is mostly
 flat editorial stock; the large provider discs carry the strongest lift.
 Tactics uses doubled chassis rules, inset pixel bevels, short map-node shadows,
-and cartridge ornaments. It never uses glass or blur.
+and cartridge-bezel ornaments at the matchup, rails, map, and command strip.
+Terrain is kept bright enough for paths, node silhouettes, and map detail to
+remain readable beneath overlays. It never uses glass or blur.
 
-The latest Tactics route animates in `900ms` stepped increments; HP/damage state
+The latest Tactics route animates in a `1100ms` linear cycle; HP/damage state
 changes use `220ms` responses. Under `prefers-reduced-motion: reduce`, all
 durations collapse to `0.01ms`; numbers, labels, selection, and route classes
 remain the durable evidence.
@@ -351,11 +361,20 @@ remain visible in the stage.
 
 The matchup header exposes provider, model, HP bar, and check totals for both
 contestants. The left rail exposes actual round availability and phase. The map
-contains five semantic nodes—two bases, two current-work nodes, and a neutral
-verification node—with SVG attack, repair, and verify routes. The right rail
-shows recent authoritative activity; the footer restates the current route in
-text. The bottom command strip contains exactly two provider-labeled Inspect
-actions and the current task/read-only state.
+contains two bases, a neutral verification node, and up to two compact work
+nodes per contestant derived from that contestant's most recent recorded
+invocations. Work-node labels and metadata wrap instead of truncating. SVG
+attack routes render only for contestants with recorded attacks, verification
+renders only when checks or adjudication evidence exist, and repair/latest
+routes come from the corresponding recorded events. The right rail shows recent
+authoritative activity; the footer restates the current route in text. The
+bottom command strip contains exactly two provider-labeled Inspect actions and
+the current task/read-only state.
+
+On desktop the full cartridge chassis fits the available application viewport,
+with internal rail scrolling and a bounded map. Below the alternate-renderer
+breakpoint it returns to natural document flow; at narrow widths, decorative
+corner and rail ornaments are removed before they can obscure HP or check data.
 
 The map's generated bitmap assets are presentation layers only:
 
@@ -397,7 +416,11 @@ and reduced motion never removes the only durable cue.
 - **Do** keep theme selection, connection, round context, and cancellation
   reachable in the first viewport.
 - **Do** use the 16-Bit Tactics legend and textual route footer alongside color
-  and stepped motion.
+  and route motion.
+- **Do** derive compact Tactics work nodes from recorded invocations and render
+  routes only when their corresponding battle events exist.
+- **Do** keep the complete Tactics chassis visible at desktop widths and switch
+  to natural page scrolling for compact layouts.
 - **Do** preserve overview summaries and route Inspect to full terminal-order
   output and complete ledgers.
 - **Do** keep generated asset provenance sidecars adjacent to every shipping
@@ -412,6 +435,8 @@ and reduced motion never removes the only durable cue.
 - **Don't** copy third-party game characters, sprites, logos, maps, or UI, and
   don't use the approved comp itself as shipping production UI.
 - **Don't** bake operational state into terrain, sprite, or bezel bitmaps.
+- **Don't** darken Tactics terrain until paths, node silhouettes, or map detail
+  become difficult to read, or let decorative bezel pieces overlap status data.
 - **Don't** imply that replay controls execution or that recorded rounds can be
   rewound, paused, or rerun.
 - **Don't** let display preferences affect scoring, artifacts, recovery, or any

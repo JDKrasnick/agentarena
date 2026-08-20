@@ -3003,6 +3003,9 @@ main {
 
 /* 16-bit tactics renderer */
 .theme-retro-tactics {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
   color: var(--tactics-text);
   background: var(--tactics-ground);
   font-family: "Arena Space", system-ui, sans-serif;
@@ -3053,8 +3056,9 @@ main {
 .retro-tactics {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(560px, 1fr) auto;
-  min-height: calc(100vh - 64px);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: calc(100vh - 64px);
+  min-height: 520px;
   overflow: hidden;
   border: 4px solid var(--tactics-line);
   background: var(--tactics-ground);
@@ -3078,6 +3082,30 @@ main {
       transparent 2px 6px
     ),
     var(--tactics-chassis);
+}
+.tactics-matchup::before,
+.tactics-matchup::after,
+.tactics-map::after {
+  position: absolute;
+  z-index: 9;
+  width: 30px;
+  height: 30px;
+  background-image: url("./assets/retro-tactics/cartridge-bezel-atlas.png");
+  background-repeat: no-repeat;
+  background-size: 314px 314px;
+  content: "";
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+.tactics-matchup::before {
+  top: 0;
+  left: 0;
+  background-position: -20px -20px;
+}
+.tactics-matchup::after {
+  top: 0;
+  right: 0;
+  background-position: -170px -20px;
 }
 .tactics-status {
   position: relative;
@@ -3237,7 +3265,7 @@ main {
 }
 .tactics-console {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr) 280px;
+  grid-template-columns: 142px minmax(0, 1fr) 280px;
   min-height: 0;
 }
 .tactics-mobile-inspect {
@@ -3256,11 +3284,16 @@ main {
 }
 .tactics-rounds {
   position: relative;
+  overflow: auto;
   border-right: 3px solid var(--tactics-line);
   padding: 13px 10px;
 }
 .tactics-rounds::before {
-  display: none;
+  bottom: 0;
+  left: 0;
+  width: 30px;
+  height: 30px;
+  background-position: -95px -20px;
 }
 .tactics-rounds > strong,
 .tactics-activity > header strong {
@@ -3313,11 +3346,17 @@ main {
 .tactics-map {
   position: relative;
   min-width: 0;
-  min-height: 560px;
+  min-height: 0;
   overflow: hidden;
   isolation: isolate;
   border: 7px solid #090713;
   background: #090713;
+}
+.tactics-map::after {
+  right: 5px;
+  bottom: 5px;
+  background-position: -170px -170px;
+  transform: rotate(180deg);
 }
 .tactics-map > header {
   position: absolute;
@@ -3393,11 +3432,11 @@ main {
   z-index: -2;
   inset: 5px;
   background:
-    linear-gradient(rgb(5 8 12 / 25%), rgb(5 8 12 / 34%)),
+    linear-gradient(rgb(5 8 12 / 10%), rgb(5 8 12 / 17%)),
     url("./assets/retro-tactics/terrain-background.png") center / 100% 100%
       no-repeat;
   border: 2px solid var(--tactics-line);
-  filter: brightness(0.8) saturate(0.9);
+  filter: brightness(0.94) saturate(1.06) contrast(1.02);
 }
 .tactics-terrain::after {
   position: absolute;
@@ -3460,6 +3499,9 @@ main {
   opacity: 0.95;
   animation: tactics-route 1100ms linear infinite;
 }
+.tactics-paths .route-secondary {
+  opacity: 0.5;
+}
 .tactics-nodes {
   position: absolute;
   z-index: 4;
@@ -3469,10 +3511,10 @@ main {
   position: absolute;
   display: grid;
   justify-items: center;
-  width: 102px;
+  width: 72px;
   border: 3px solid currentColor;
   border-radius: 1px;
-  padding: 7px 7px 6px;
+  padding: 4px;
   color: var(--tactics-text);
   background: var(--tactics-ground);
   box-shadow:
@@ -3493,45 +3535,46 @@ main {
   opacity: 1;
 }
 .tactics-node > span {
-  width: 60px;
-  height: 56px;
-  margin-bottom: 4px;
+  width: 42px;
+  height: 38px;
+  margin-bottom: 2px;
   background-image: url("./assets/retro-tactics/tactical-sprites.png");
   background-repeat: no-repeat;
-  background-size: 418px 418px;
+  background-size: 301px 301px;
   image-rendering: pixelated;
 }
-.tactics-node-a-base > span {
-  background-position: -22px -49px;
+.tactics-node-kind-base.is-a > span {
+  background-position: -16px -35px;
 }
-.tactics-node-b-base > span {
-  background-position: -142px -49px;
+.tactics-node-kind-base.is-b > span {
+  background-position: -102px -35px;
 }
-.tactics-node-a-work > span {
-  background-position: -250px -62px;
+.tactics-node-kind-work.is-a > span {
+  background-position: -180px -45px;
 }
-.tactics-node-b-work > span {
-  background-position: -332px -62px;
+.tactics-node-kind-work.is-b > span {
+  background-position: -239px -45px;
 }
 .tactics-node-verify > span {
-  background-position: -276px -308px;
+  background-position: -199px -222px;
 }
 .tactics-node strong,
 .tactics-node small {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  text-align: center;
   text-transform: uppercase;
-  white-space: nowrap;
 }
 .tactics-node strong {
   font-family: "Arena Silkscreen", ui-monospace, monospace;
-  font-size: 9px;
+  font-size: 7px;
+  line-height: 1.2;
 }
 .tactics-node small {
   margin-top: 2px;
   color: var(--tactics-muted);
-  font-size: 9px;
+  font-size: 7px;
+  line-height: 1.25;
 }
 .tactics-node.is-a {
   border-color: var(--tactics-purple);
@@ -3543,26 +3586,36 @@ main {
   border-color: var(--tactics-aqua);
 }
 .tactics-node-a-base {
-  top: 45%;
-  left: 8%;
+  top: 47%;
+  left: 5%;
+  width: 80px;
 }
-.tactics-node-a-work {
-  top: 23%;
+.tactics-node-a-work-0 {
+  top: 22%;
+  left: 25%;
+}
+.tactics-node-a-work-1 {
+  top: 59%;
   left: 29%;
 }
 .tactics-node-verify {
-  top: 46%;
+  top: 48%;
   left: 50%;
-  width: 118px;
+  width: 84px;
   transform: translate(-50%, -50%);
 }
-.tactics-node-b-work {
-  top: 23%;
+.tactics-node-b-work-0 {
+  top: 22%;
+  right: 25%;
+}
+.tactics-node-b-work-1 {
+  top: 59%;
   right: 29%;
 }
 .tactics-node-b-base {
-  top: 45%;
-  right: 8%;
+  top: 47%;
+  right: 5%;
+  width: 80px;
 }
 .tactics-map > footer {
   position: absolute;
@@ -3595,10 +3648,16 @@ main {
 }
 .tactics-activity {
   position: relative;
+  overflow: auto;
   border-left: 3px solid var(--tactics-line);
 }
 .tactics-activity::before {
-  display: none;
+  right: 0;
+  bottom: 0;
+  width: 30px;
+  height: 30px;
+  background-position: -95px -20px;
+  transform: scaleX(-1);
 }
 .tactics-activity > header {
   display: flex;
@@ -3953,6 +4012,15 @@ main {
     border-top: 1px solid var(--broadcast-ink);
     border-left: 0;
   }
+  .retro-tactics {
+    height: auto;
+    min-height: calc(100vh - 64px);
+  }
+  .theme-retro-tactics {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
   .tactics-console {
     grid-template-columns: 110px minmax(0, 1fr);
   }
@@ -4175,21 +4243,25 @@ main {
     min-height: 520px;
   }
   .tactics-node {
-    width: 88px;
-    padding: 6px 5px;
+    width: 68px;
+    padding: 5px 4px;
   }
   .tactics-node > span {
-    width: 52px;
-    height: 48px;
+    width: 40px;
+    height: 36px;
   }
   .tactics-node-verify {
-    width: 100px;
+    width: 76px;
   }
-  .tactics-node-a-work {
-    left: 24%;
+  .tactics-node-a-base,
+  .tactics-node-b-base {
+    width: 72px;
   }
-  .tactics-node-b-work {
-    right: 24%;
+  .tactics-node-a-work-0 {
+    left: 22%;
+  }
+  .tactics-node-b-work-0 {
+    right: 22%;
   }
   .tactics-map > footer {
     bottom: 92px;
@@ -4207,6 +4279,13 @@ main {
   }
   .tactics-activity {
     display: block;
+  }
+  .tactics-map::after,
+  .tactics-matchup::before,
+  .tactics-matchup::after,
+  .tactics-rounds::before,
+  .tactics-activity::before {
+    display: none;
   }
   .tactics-commands {
     grid-template-columns: 1fr;

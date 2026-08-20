@@ -423,7 +423,10 @@ health, checks, normalized work summaries, steering, and full-detail inspection;
 a bottom status bar keeps the run identity and state visible. 16-Bit Tactics
 uses a code-native tile field, tactical nodes, authoritative attack and repair
 routes, opposing status bars, inspection commands, and an evidence channel. It
-does not bundle third-party game characters, logos, sprites, or screenshots. Stored
+keeps the complete cartridge HUD visible at desktop widths and derives compact
+work nodes from recorded contestant invocations rather than invented game
+state. It does not bundle third-party game characters, logos, sprites, or
+screenshots. Stored
 `sticker-league` preferences migrate to `developer-dashboard`; `evidence-deck`
 and `monster-battle` preferences migrate to `retro-tactics`.
 

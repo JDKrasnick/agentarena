@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-20T05:51:13.000Z",
+  "generatedAt": "2026-08-20T14:32:27.000Z",
   "title": "Design System: Agent Arena Desktop Observatory",
   "extensions": {
     "colorMeta": {
@@ -522,7 +522,7 @@
       },
       {
         "name": "tactics-route",
-        "value": "900ms steps(3, end) infinite",
+        "value": "1100ms linear infinite",
         "purpose": "Animate only the latest authoritative route."
       },
       {
@@ -603,9 +603,9 @@
     {
       "name": "Tactics Verification Node",
       "kind": "custom",
-      "description": "A semantic neutral node for the current verification phase.",
+      "description": "A compact semantic neutral node; contestant work-node siblings are derived from the two most recent recorded invocations.",
       "html": "<button class=\"ds-tactics-node\" type=\"button\" disabled><span aria-hidden=\"true\">◆</span><strong>VERIFY</strong><small>ROUND 2</small></button>",
-      "css": ".ds-tactics-node { display:grid; justify-items:center; width:136px; border:4px solid #43d5d1; border-radius:1px; padding:9px 8px 8px; color:#f2ebdf; background:#080815; box-shadow:inset -5px -5px 0 #080611,0 6px 14px rgb(2 2 10 / 58%); font:400 10px/1.35 \"Arena Silkscreen\",ui-monospace,monospace; text-transform:uppercase; clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px); opacity:1; } .ds-tactics-node > span { color:#43d5d1; font-size:42px; } .ds-tactics-node small { color:#b8aecb; font-size:8px; }"
+      "css": ".ds-tactics-node { display:grid; justify-items:center; width:84px; border:3px solid #43d5d1; border-radius:1px; padding:4px; color:#f2ebdf; background:#080815; box-shadow:inset -5px -5px 0 #080611,0 6px 14px rgb(2 2 10 / 58%); font:400 7px/1.25 \"Arena Silkscreen\",ui-monospace,monospace; text-align:center; text-transform:uppercase; overflow-wrap:anywhere; clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px); opacity:1; } .ds-tactics-node > span { width:42px; height:38px; margin-bottom:2px; color:#43d5d1; font-size:34px; } .ds-tactics-node small { margin-top:2px; color:#b8aecb; font-size:7px; }"
     },
     {
       "name": "Full Terminal Output",
@@ -643,7 +643,7 @@
       },
       {
         "name": "Semantic Route",
-        "body": "In 16-Bit Tactics, attack, repair, and verify are not decorative line colors. The legend, route class, latest-state treatment, and textual footer must agree with recorded state.",
+        "body": "In 16-Bit Tactics, attack, repair, and verify are not decorative line colors. A route exists only when its corresponding battle event or verification evidence is recorded; the legend, route class, latest-state treatment, and textual footer must agree with that state.",
         "section": "colors"
       },
       {
@@ -667,6 +667,11 @@
         "section": "layout"
       },
       {
+        "name": "Full Chassis",
+        "body": "At desktop widths, fit the complete Tactics console inside the application viewport, with overflow inside the round and activity rails. Below the alternate-renderer breakpoint, return to natural page scrolling and hide nonessential bezel ornaments before they can cover status values.",
+        "section": "layout"
+      },
+      {
         "name": "Structural Depth",
         "body": "A shadow or bevel must explain a card, chassis, provider disc, node, or operator control. Do not apply depth to arbitrary prose.",
         "section": "elevation"
@@ -680,7 +685,9 @@
     "dos": [
       "Do derive every label, quantity, route, node state, and result from normalized dashboard state.",
       "Do keep theme selection, connection, round context, and cancellation reachable in the first viewport.",
-      "Do use the 16-Bit Tactics legend and textual route footer alongside color and stepped motion.",
+      "Do use the 16-Bit Tactics legend and textual route footer alongside color and route motion.",
+      "Do derive compact Tactics work nodes from recorded invocations and render routes only when their corresponding battle events exist.",
+      "Do keep the complete Tactics chassis visible at desktop widths and switch to natural page scrolling for compact layouts.",
       "Do preserve overview summaries and route Inspect to full terminal-order output and complete ledgers.",
       "Do keep generated asset provenance sidecars adjacent to every shipping tactics bitmap.",
       "Do let each renderer collapse according to its own composition, including the fixed compact Tactics inspect dock."
@@ -689,6 +696,7 @@
       "Don't reduce Developer Dashboard, Broadcast, or Tactics to palette swaps of Classic Shell.",
       "Don't copy third-party game characters, sprites, logos, maps, or UI, and don't use the approved comp itself as shipping production UI.",
       "Don't bake operational state into terrain, sprite, or bezel bitmaps.",
+      "Don't darken Tactics terrain until paths, node silhouettes, or map detail become difficult to read, or let decorative bezel pieces overlap status data.",
       "Don't imply that replay controls execution or that recorded rounds can be rewound, paused, or rerun.",
       "Don't let display preferences affect scoring, artifacts, recovery, or any other source of battle authority.",
       "Don't hide provider identity, checks, failures, warnings, or coverage confidence behind competition language.",

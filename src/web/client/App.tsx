@@ -1268,36 +1268,57 @@ function RetroTacticsArena({
       .map((change) => ({ id, change })),
   );
   const latestRepair = repairs.at(-1);
+  const hasAttack = (id: ContestantId) =>
+    attacks.some((attack) => attack.attacker === id);
+  const hasVerification =
+    attacks.some((attack) =>
+      ["landed", "revised", "resolved"].includes(attack.phase),
+    ) || checks("a") + checks("b") > 0;
+  const workNodes = (id: ContestantId) => {
+    const recent = contestants[id].invocations.slice(-2);
+    const entries = recent.length
+      ? recent
+      : [
+          {
+            id: `${id}-current`,
+            stage: contestants[id].activity,
+            status: contestants[id].status,
+          },
+        ];
+    return entries.map((invocation, index) => ({
+      id: `${id}-work-${String(index)}`,
+      owner: id,
+      label: invocation.stage.replaceAll("_", " "),
+      meta:
+        "durationMs" in invocation && invocation.durationMs !== undefined
+          ? `${(invocation.durationMs / 1000).toFixed(1)}s · ${invocation.status}`
+          : invocation.status,
+      kind: "work" as const,
+    }));
+  };
   const mapNodes = [
     {
       id: "a-base",
       owner: "a" as const,
       label: `${title(contestants.a.provider)} base`,
       meta: `${contestants.a.health} HP`,
+      kind: "base" as const,
     },
-    {
-      id: "a-work",
-      owner: "a" as const,
-      label: contestants.a.activity.replaceAll("_", " "),
-      meta: `${String(checks("a"))} checks`,
-    },
+    ...workNodes("a"),
     {
       id: "verify",
       owner: "neutral" as const,
       label: stage,
       meta: roundLabel(selectedRound),
+      kind: "verify" as const,
     },
-    {
-      id: "b-work",
-      owner: "b" as const,
-      label: contestants.b.activity.replaceAll("_", " "),
-      meta: `${String(checks("b"))} checks`,
-    },
+    ...workNodes("b"),
     {
       id: "b-base",
       owner: "b" as const,
       label: `${title(contestants.b.provider)} base`,
       meta: `${contestants.b.health} HP`,
+      kind: "base" as const,
     },
   ];
 
@@ -1437,18 +1458,36 @@ function RetroTacticsArena({
                 <path d="M0 0 10 5 0 10z" />
               </marker>
             </defs>
-            <path
-              className="route route-attack route-a"
-              d="M135 285 C220 285 242 175 310 170 S430 225 500 260"
-            />
-            <path
-              className="route route-attack route-b"
-              d="M865 285 C780 285 758 175 690 170 S570 225 500 260"
-            />
-            <path
-              className="route route-neutral"
-              d="M500 260 C505 205 495 145 500 88"
-            />
+            {hasAttack("a") ? (
+              <>
+                <path
+                  className="route route-attack route-a"
+                  d="M135 285 C220 285 242 175 310 170 S430 225 500 260"
+                />
+                <path
+                  className="route route-attack route-secondary route-a"
+                  d="M135 285 C220 310 255 365 340 360 S430 300 500 260"
+                />
+              </>
+            ) : null}
+            {hasAttack("b") ? (
+              <>
+                <path
+                  className="route route-attack route-b"
+                  d="M865 285 C780 285 758 175 690 170 S570 225 500 260"
+                />
+                <path
+                  className="route route-attack route-secondary route-b"
+                  d="M865 285 C780 310 745 365 660 360 S570 300 500 260"
+                />
+              </>
+            ) : null}
+            {hasVerification ? (
+              <path
+                className="route route-neutral"
+                d="M500 260 C505 205 495 145 500 88"
+              />
+            ) : null}
             {latestRepair ? (
               <path
                 className={`route route-repair route-${latestRepair.id}`}
@@ -1478,7 +1517,7 @@ function RetroTacticsArena({
           <div className="tactics-nodes">
             {mapNodes.map((node) => (
               <button
-                className={`tactics-node tactics-node-${node.id} is-${node.owner}`}
+                className={`tactics-node tactics-node-${node.id} tactics-node-kind-${node.kind} is-${node.owner}`}
                 type="button"
                 key={node.id}
                 disabled={node.owner === "neutral"}
@@ -1603,6 +1642,10 @@ export function App() {
       : "Agent Arena · Live battle";
     if (!hasResult) setReviewingResults(false);
   }, [hasResult]);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [selectedFighter, selectedRound, theme]);
 
   const presentation = useMemo(
     () => createArenaPresentation(state, selectedRound, connected),
