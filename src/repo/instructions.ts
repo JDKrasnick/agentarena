@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 const INSTRUCTION_PATHS = [
@@ -18,13 +18,30 @@ export async function discoverInstructions(
   maxBytes = 128 * 1024,
 ): Promise<RepositoryInstruction[]> {
   const instructions: RepositoryInstruction[] = [];
+  const canonicalRoot = await realpath(repositoryRoot);
   let total = 0;
   for (const relativePath of INSTRUCTION_PATHS) {
     try {
-      const content = await readFile(
+      const instructionPath = await realpath(
         path.join(repositoryRoot, relativePath),
-        "utf8",
       );
+      const relative = path.relative(canonicalRoot, instructionPath);
+      if (
+        relative === ".." ||
+        relative.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relative)
+      )
+        throw new Error(
+          `Repository instruction path escapes the repository through a symbolic link: ${relativePath}`,
+        );
+      const file = await stat(instructionPath);
+      if (!file.isFile())
+        throw new Error(
+          `Repository instruction path is not a regular file: ${relativePath}`,
+        );
+      if (file.size > maxBytes)
+        throw new Error(`Repository instructions exceed ${maxBytes} bytes`);
+      const content = await readFile(instructionPath, "utf8");
       total += Buffer.byteLength(content);
       if (total > maxBytes)
         throw new Error(`Repository instructions exceed ${maxBytes} bytes`);

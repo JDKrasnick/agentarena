@@ -123,25 +123,6 @@ describe("bounded pre-permission reconnaissance", () => {
     ).rejects.toThrow("not a regular file");
   });
 
-  it.each(["package.json", "package-lock.json"])(
-    "rejects an outside-repository %s symlink",
-    async (evidencePath) => {
-      const root = await mkdtemp(
-        path.join(os.tmpdir(), "arena-recon-evidence-link-"),
-      );
-      const outside = path.join(
-        os.tmpdir(),
-        `arena-evidence-outside-${String(Date.now())}.json`,
-      );
-      await writeFile(outside, '{"secret":"outside"}\n');
-      await symlink(outside, path.join(root, evidencePath));
-
-      await expect(collectFightReconnaissance(config(root))).rejects.toThrow(
-        "Repository reconnaissance path escapes the repository through a symbolic link",
-      );
-    },
-  );
-
   it("caps text evidence per file and hashes lockfiles without retaining them", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-bounds-"));
     const lockContent = `${"lock-entry\n".repeat(40_000)}`;
@@ -166,6 +147,27 @@ describe("bounded pre-permission reconnaissance", () => {
     await expect(collectFightReconnaissance(config(root))).rejects.toThrow(
       "package.json exceeds 262144 bytes",
     );
+  });
+
+  it("applies the text bounds to explicit sources and their aggregate", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-sources-"));
+    await writeFile(
+      path.join(root, "oversized.md"),
+      "x".repeat(256 * 1024 + 1),
+    );
+    await expect(
+      collectFightReconnaissance(config(root, { specPaths: ["oversized.md"] })),
+    ).rejects.toThrow("specification oversized.md exceeds 262144 bytes");
+
+    const specPaths: string[] = [];
+    for (let index = 0; index < 9; index += 1) {
+      const specPath = `spec-${String(index)}.md`;
+      specPaths.push(specPath);
+      await writeFile(path.join(root, specPath), "x".repeat(240 * 1024));
+    }
+    await expect(
+      collectFightReconnaissance(config(root, { specPaths })),
+    ).rejects.toThrow("Repository reconnaissance exceeds 2097152 bytes");
   });
 
   it("retains Python manifests and stream-hashes Python lockfiles", async () => {
@@ -204,39 +206,54 @@ describe("bounded pre-permission reconnaissance", () => {
     }
   });
 
-  it("applies per-file and aggregate bounds to every retained text source", async () => {
-    const root = await mkdtemp(
-      path.join(os.tmpdir(), "arena-recon-source-bounds-"),
+  it("counts retained pull-request metadata against the aggregate text bound", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-pr-size-"));
+    const references = Array.from({ length: 5 }, (_, index) =>
+      String(index + 1),
     );
-    await writeFile(path.join(root, "spec.md"), "x".repeat(256 * 1024 + 1));
-    await expect(
-      collectFightReconnaissance(config(root, { specPaths: ["spec.md"] })),
-    ).rejects.toThrow("specification spec.md exceeds 262144 bytes");
 
-    const issueBody = "x".repeat(240 * 1024);
     await expect(
       collectFightReconnaissance(
-        config(root, {
-          specPaths: [],
-          issueReferences: Array.from({ length: 9 }, (_, index) =>
-            String(index + 1),
-          ),
-        }),
+        config(root, { pullRequestReferences: references }),
         {
-          issueResolver: {
+          pullRequestResolver: {
             resolve: vi.fn((reference: string) =>
               Promise.resolve({
-                origin: `https://github.com/acme/repo/issues/${reference}`,
-                title: "Bounded source",
-                body: issueBody,
+                origin: `https://github.com/acme/repo/pull/${reference}`,
+                repository: "acme/repo",
+                number: Number(reference),
+                url: `https://github.com/acme/repo/pull/${reference}`,
+                title: "Bounded pull request",
+                body: "x".repeat(220 * 1024),
                 comments: [],
+                baseBranch: "main",
+                headBranch: `feature-${reference}`,
+                headRepository: "acme/repo",
+                headCommit: reference.padStart(40, "0"),
               }),
             ),
           },
         },
       ),
-    ).rejects.toThrow("Reconnaissance text exceeds 2097152 bytes");
+    ).rejects.toThrow("Repository reconnaissance exceeds 2097152 bytes");
   });
+
+  it.each(["package.json", "package-lock.json", "AGENTS.md"])(
+    "rejects an allowlisted %s symlink that resolves outside the repository",
+    async (relativePath) => {
+      const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-link-"));
+      const outside = path.join(
+        os.tmpdir(),
+        `arena-recon-outside-${relativePath.replaceAll("/", "-")}-${String(Date.now())}`,
+      );
+      await writeFile(outside, "outside\n");
+      await symlink(outside, path.join(root, relativePath));
+
+      await expect(collectFightReconnaissance(config(root))).rejects.toThrow(
+        "escapes the repository through a symbolic link",
+      );
+    },
+  );
 
   it("resolves permission policy before Git, artifacts, worktrees, or agents", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-gate-"));
@@ -256,7 +273,7 @@ describe("bounded pre-permission reconnaissance", () => {
     expect(await readdir(root)).toEqual([]);
   });
 
-  it("persists the approved reconnaissance and policy before Git preflight", async () => {
+  it("persists approved reconnaissance and policy before Git preflight", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-audit-"));
     const engine = new RoundEngine({
       adapters: {},
@@ -295,5 +312,27 @@ describe("bounded pre-permission reconnaissance", () => {
       engine.fight(fightConfig, undefined, snapshot),
     ).rejects.toThrow("input hash does not match");
     expect(await readdir(root)).toEqual([]);
+  });
+
+  it("rejects a supplied snapshot collected for different source references", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-request-"));
+    const firstConfig = config(root, { issueReferences: ["1"] });
+    const snapshot = await collectFightReconnaissance(firstConfig, {
+      issueResolver: {
+        resolve: vi.fn().mockResolvedValue({
+          origin: "https://github.com/acme/repo/issues/1",
+          title: "First issue",
+          body: "First source",
+          comments: [],
+        }),
+      },
+    });
+
+    expect(() =>
+      validateReconnaissance(
+        snapshot,
+        config(root, { issueReferences: ["2"] }),
+      ),
+    ).toThrow("does not match the approved fight task");
   });
 });
