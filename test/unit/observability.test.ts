@@ -79,6 +79,39 @@ describe("arena observability", () => {
     expect(output).toBe("before [REDACTED] after");
   });
 
+  it("redacts credentials crossing the internal streaming boundary", () => {
+    const credential = "ghp_abcdefghijklmnopqrstuvwxyz";
+    const redactor = new StreamingRedactor();
+    const output = [
+      redactor.push(`${"x".repeat(39)}:${credential}:${"y".repeat(229)}`),
+      redactor.flush(),
+    ].join("");
+    expect(output).toBe(
+      `${"x".repeat(39)}:[REDACTED_CREDENTIAL]:${"y".repeat(229)}`,
+    );
+  });
+
+  it("redacts explicit secrets from streamed output and transcript logs", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "arena-secrets-"));
+    const secret = "custom credential value";
+    const output = `${"x".repeat(40)}${secret}${"y".repeat(240)}`;
+    const redacted = `${"x".repeat(40)}[REDACTED]${"y".repeat(240)}`;
+    const chunks: string[] = [];
+    const result = await runProcess({
+      executable: process.execPath,
+      args: ["-e", `process.stdout.write(${JSON.stringify(output)})`],
+      cwd: directory,
+      timeoutMs: 5_000,
+      logPrefix: path.join(directory, "process"),
+      secrets: [secret],
+      onOutput: (_stream, text) => {
+        chunks.push(text);
+      },
+    });
+    expect(chunks.join("")).toBe(redacted);
+    expect(await readFile(result.stdoutPath, "utf8")).toBe(redacted);
+  });
+
   it("streams output and retains a redacted complete transcript", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "arena-process-"));
     const chunks: string[] = [];

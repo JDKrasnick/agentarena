@@ -18,11 +18,10 @@ const contentTypes: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-function webRoot(): string {
-  const workspaceBuild = path.resolve(process.cwd(), "dist/web");
-  if (existsSync(path.join(workspaceBuild, "index.html")))
-    return workspaceBuild;
-  return fileURLToPath(new URL("../web", import.meta.url));
+export function resolveWebRoot(): string {
+  return path.resolve(
+    fileURLToPath(new URL("../../dist/web/", import.meta.url)),
+  );
 }
 
 async function requestBody(request: IncomingMessage) {
@@ -56,7 +55,7 @@ export async function startWebDashboard(
 ): Promise<WebDashboard> {
   const state = new DashboardObserver();
   const clients = new Set<ServerResponse>();
-  const root = webRoot();
+  const root = resolveWebRoot();
   let resolveClosed: () => void = () => {};
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve;

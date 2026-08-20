@@ -19,6 +19,8 @@ const INHERITED_ENV = [
 ] as const;
 const SECRET_NAME =
   /(token|secret|password|credential|api[_-]?key|private[_-]?key)/i;
+const CREDENTIAL_CANDIDATE =
+  /\b(?:ghp|github_pat|sk|xox[baprs])[-_A-Za-z0-9]*/g;
 
 export interface ProcessRequest {
   executable: string;
@@ -77,7 +79,9 @@ export class StreamingRedactor {
   push(chunk: string): string {
     this.pending += chunk;
     if (this.pending.length <= this.retainedCharacters) return "";
-    const splitAt = this.pending.length - this.retainedCharacters;
+    const splitAt = this.safeSplitAt(
+      this.pending.length - this.retainedCharacters,
+    );
     const output = this.pending.slice(0, splitAt);
     this.pending = this.pending.slice(splitAt);
     return redact(output, this.secrets);
@@ -87,6 +91,40 @@ export class StreamingRedactor {
     const output = redact(this.pending, this.secrets);
     this.pending = "";
     return output;
+  }
+
+  private safeSplitAt(initialSplit: number): number {
+    let splitAt = initialSplit;
+    let moved: boolean;
+    do {
+      moved = false;
+      for (const secret of this.secrets.filter((value) => value.length >= 4)) {
+        let match = this.pending.indexOf(
+          secret,
+          Math.max(0, splitAt - secret.length + 1),
+        );
+        while (match !== -1 && match < splitAt) {
+          if (match + secret.length > splitAt) {
+            splitAt = match;
+            moved = true;
+            break;
+          }
+          match = this.pending.indexOf(secret, match + 1);
+        }
+      }
+
+      CREDENTIAL_CANDIDATE.lastIndex = 0;
+      for (const match of this.pending.matchAll(CREDENTIAL_CANDIDATE)) {
+        const start = match.index;
+        const end = start + match[0].length;
+        if (start < splitAt && end > splitAt) {
+          splitAt = start;
+          moved = true;
+          break;
+        }
+      }
+    } while (moved);
+    return splitAt;
   }
 }
 
@@ -110,6 +148,7 @@ function describeError(error: unknown): string {
 
 function findTransportFailures(
   output: string,
+  secrets: readonly string[] = [],
 ): NonNullable<CommandResult["transportFailures"]> {
   const failures: NonNullable<CommandResult["transportFailures"]> = [];
   for (const line of output.split("\n")) {
@@ -131,7 +170,7 @@ function findTransportFailures(
         (failure) => failure.kind === kind && failure.detail === detail,
       )
     ) {
-      failures.push({ kind, detail: redact(detail).slice(0, 512) });
+      failures.push({ kind, detail: redact(detail, secrets).slice(0, 512) });
     }
     if (failures.length === 20) break;
   }
@@ -341,11 +380,12 @@ async function run(
   const stdoutPath = `${request.logPrefix}.stdout.log`;
   const stderrPath = `${request.logPrefix}.stderr.log`;
   await Promise.all([
-    writeFile(stdoutPath, redact(result.stdout), "utf8"),
-    writeFile(stderrPath, redact(result.stderr), "utf8"),
+    writeFile(stdoutPath, redact(result.stdout, request.secrets), "utf8"),
+    writeFile(stderrPath, redact(result.stderr, request.secrets), "utf8"),
   ]);
   const transportFailures = findTransportFailures(
     `${result.stdout}\n${result.stderr}`,
+    request.secrets,
   );
   const base = {
     command,

@@ -1,5 +1,11 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { startWebDashboard } from "../../src/dashboard/web-server.js";
+import {
+  resolveWebRoot,
+  startWebDashboard,
+} from "../../src/dashboard/web-server.js";
 import { ArenaBattleControl } from "../../src/observability/control.js";
 
 describe("web dashboard", () => {
@@ -51,6 +57,24 @@ describe("web dashboard", () => {
       expect(crossOrigin.status).toBe(403);
     } finally {
       await dashboard.close();
+    }
+  });
+
+  it("does not resolve dashboard assets from the target repository", async () => {
+    const repository = await mkdtemp(path.join(os.tmpdir(), "arena-target-"));
+    await mkdir(path.join(repository, "dist/web"), { recursive: true });
+    await writeFile(
+      path.join(repository, "dist/web/index.html"),
+      "TARGET-REPOSITORY-CONTENT",
+      "utf8",
+    );
+    const originalCwd = process.cwd();
+    process.chdir(repository);
+    try {
+      expect(resolveWebRoot()).not.toBe(path.join(repository, "dist/web"));
+      expect(resolveWebRoot()).toBe(path.join(originalCwd, "dist/web"));
+    } finally {
+      process.chdir(originalCwd);
     }
   });
 });
