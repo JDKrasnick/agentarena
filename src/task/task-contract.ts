@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 import { createReadStream, realpathSync } from "node:fs";
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
 import { sha256, stableId } from "../core/ids.js";
@@ -106,7 +113,10 @@ export class FileLocalSpecResolver implements LocalSpecResolver {
       );
     return {
       origin: reference,
-      content: await readFile(canonical, "utf8"),
+      content: await readBoundedTextFile(
+        canonical,
+        `specification ${reference}`,
+      ),
     };
   }
 }
@@ -342,6 +352,8 @@ export function validateReconnaissance(
       throw new Error(`Reconnaissance source hash drifted: ${source.origin}`);
     budget.include(source.origin, source.content);
   }
+  for (const pullRequest of Object.values(snapshot.resolvedPullRequests))
+    budget.includeSerialized(pullRequest);
   for (const evidence of snapshot.repositoryEvidence) {
     if (
       evidence.contentOmitted === "lockfile_hash_only" &&
@@ -402,6 +414,18 @@ const RECONNAISSANCE_PATHS = [
   "bun.lockb",
   "deno.json",
   "deno.jsonc",
+  "pyproject.toml",
+  "requirements.txt",
+  "requirements-dev.txt",
+  "setup.py",
+  "setup.cfg",
+  "Pipfile",
+  "Pipfile.lock",
+  "poetry.lock",
+  "uv.lock",
+  "pdm.lock",
+  "tox.ini",
+  "pytest.ini",
   "playwright.config.ts",
   "playwright.config.js",
   "playwright.config.mjs",
@@ -426,9 +450,44 @@ const LOCKFILE_PATHS = new Set([
   "yarn.lock",
   "bun.lock",
   "bun.lockb",
+  "Pipfile.lock",
+  "poetry.lock",
+  "uv.lock",
+  "pdm.lock",
 ]);
 const MAX_RECONNAISSANCE_FILE_BYTES = 256 * 1024;
 const MAX_RECONNAISSANCE_TEXT_BYTES = 2 * 1024 * 1024;
+
+async function readBoundedTextFile(
+  filePath: string,
+  label: string,
+): Promise<string> {
+  const handle = await open(filePath, "r");
+  try {
+    const file = await handle.stat();
+    if (!file.isFile())
+      throw new Error(`Reconnaissance path is not a regular file: ${label}`);
+    if (file.size > MAX_RECONNAISSANCE_FILE_BYTES)
+      throw new Error(
+        `Reconnaissance text ${label} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
+      );
+
+    const chunks: Buffer[] = [];
+    let byteLength = 0;
+    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+      const bytes = Buffer.from(chunk as Uint8Array);
+      byteLength += bytes.length;
+      if (byteLength > MAX_RECONNAISSANCE_FILE_BYTES)
+        throw new Error(
+          `Reconnaissance text ${label} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
+        );
+      chunks.push(bytes);
+    }
+    return Buffer.concat(chunks, byteLength).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
 
 function reconnaissanceRequest(
   value: Pick<
@@ -458,12 +517,22 @@ class ReconnaissanceTextBudget {
       throw new Error(
         `Repository reconnaissance source ${label} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
       );
+    this.retainBytes(byteLength);
+    return byteLength;
+  }
+
+  includeSerialized(value: unknown): number {
+    const byteLength = Buffer.byteLength(canonicalJson(value));
+    this.retainBytes(byteLength);
+    return byteLength;
+  }
+
+  private retainBytes(byteLength: number): void {
     this.totalBytes += byteLength;
     if (this.totalBytes > MAX_RECONNAISSANCE_TEXT_BYTES)
       throw new Error(
         `Repository reconnaissance exceeds ${String(MAX_RECONNAISSANCE_TEXT_BYTES)} bytes`,
       );
-    return byteLength;
   }
 }
 
@@ -626,7 +695,6 @@ export async function collectReconnaissance(
         { cause: error },
       );
     }
-    resolvedPullRequests[reference] = pullRequest;
     const content = [
       `# ${pullRequest.title}`,
       "",
@@ -648,6 +716,8 @@ export async function collectReconnaissance(
       "",
     ].join("\n");
     budget.include(`pull request ${reference}`, content);
+    budget.includeSerialized(pullRequest);
+    resolvedPullRequests[reference] = pullRequest;
     sources.push({
       id: stableId("pull-request", pullRequest.origin),
       kind: "pull_request",

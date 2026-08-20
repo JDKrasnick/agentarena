@@ -448,14 +448,16 @@ export class RoundEngine {
       config,
       discoverCapabilities(config, reconnaissance),
     );
-    const repositoryRoot = await resolveRepositoryRoot(config.repositoryRoot);
-    await assertCleanRepository(repositoryRoot);
-    config = FightConfigSchema.parse({ ...config, repositoryRoot });
     const runId = createRunId(this.now());
     const store = new ArtifactStore(config.artifactRoot, runId, {
       durableV5: true,
     });
     await store.initialize();
+    await store.writeImmutableJson("reconnaissance.json", reconnaissance);
+    await store.writeJson("permissions.json", permissions);
+    const repositoryRoot = await resolveRepositoryRoot(config.repositoryRoot);
+    await assertCleanRepository(repositoryRoot);
+    config = FightConfigSchema.parse({ ...config, repositoryRoot });
     let pullRequestFixture: PullRequestFixture | undefined;
     let frozenBasePullRequest: ResolvedPullRequest | undefined;
     let frozenModePullRequest: ResolvedPullRequest | undefined;
@@ -573,7 +575,6 @@ export class RoundEngine {
         warnings: contractWarnings,
         reconnaissance,
       });
-      await store.writeImmutableJson("reconnaissance.json", reconnaissance);
       await store.writeImmutableJson("run-spec.json", runSpec);
       const repositoryIdentity =
         await resolveGitHubRepositoryIdentity(repositoryRoot);
@@ -583,7 +584,6 @@ export class RoundEngine {
       );
       if (targetResolution.ambiguous && targetResolution.reason)
         contractWarnings.push(targetResolution.reason);
-      await store.writeJson("permissions.json", permissions);
       const startedAt = this.now().toISOString();
       const state: RunState = {
         schemaVersion: 7,
