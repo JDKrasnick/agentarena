@@ -51,10 +51,10 @@ declare global {
 
 const themeNames: Record<ArenaTheme, string> = {
   "classic-shell": "Classic Shell",
-  "sticker-league": "Sticker League",
+  "developer-dashboard": "Developer Dashboard",
   "night-edition": "Night Edition",
   "live-arena-broadcast": "Live Broadcast",
-  "monster-battle": "Monster Battle",
+  "retro-tactics": "16-Bit Tactics",
 };
 
 const fallbackState: DashboardState = {
@@ -949,49 +949,7 @@ function BroadcastArena({
   );
 }
 
-function BattleTerrain() {
-  return (
-    <svg
-      className="monster-terrain"
-      viewBox="0 0 1200 640"
-      preserveAspectRatio="none"
-      aria-hidden="true"
-    >
-      <path
-        className="monster-cloud monster-cloud-a"
-        d="M54 104h72c8-34 62-38 76-6 32-20 75 2 72 34h-220z"
-      />
-      <path
-        className="monster-cloud monster-cloud-b"
-        d="M836 72h58c12-43 74-47 91-8 38-18 82 12 74 43H836z"
-      />
-      <path
-        className="monster-mountain monster-mountain-far"
-        d="M0 350 180 190l112 102 135-148 137 142 126-102 174 144 150-134 186 156v290H0z"
-      />
-      <path
-        className="monster-mountain monster-mountain-near"
-        d="M0 420 160 318l122 84 140-96 166 108 142-76 172 88 150-104 148 104v214H0z"
-      />
-      <ellipse
-        className="monster-ring monster-ring-a"
-        cx="322"
-        cy="476"
-        rx="202"
-        ry="54"
-      />
-      <ellipse
-        className="monster-ring monster-ring-b"
-        cx="888"
-        cy="340"
-        rx="150"
-        ry="40"
-      />
-    </svg>
-  );
-}
-
-function MonsterBattleArena({
+function RetroTacticsArena({
   state,
   rounds,
   selectedRound,
@@ -1004,128 +962,311 @@ function MonsterBattleArena({
   const latest = attacks.at(-1);
   const checks = (id: ContestantId) =>
     contestants[id].checks.filter((check) => check.status === "passed").length;
-  const turnOwner: ContestantId =
-    latest?.attacker === "b" || latest?.target === "b" ? "b" : "a";
-  const active = contestants[turnOwner];
-  const turnMessage = latest
-    ? `${attackDisplayLabel(latest)} is ${latest.phase}.`
-    : `${title(active.provider)} is ${active.activity.replaceAll("_", " ")}.`;
+  const activeRound = state.round ?? rounds.at(-1) ?? 1;
+  const repairs = (["a", "b"] as const).flatMap((id) =>
+    contestants[id].healthChanges
+      .filter((change) => change.amount > 0)
+      .map((change) => ({ id, change })),
+  );
+  const latestRepair = repairs.at(-1);
+  const mapNodes = [
+    {
+      id: "a-base",
+      owner: "a" as const,
+      label: `${title(contestants.a.provider)} base`,
+      meta: `${contestants.a.health} HP`,
+    },
+    {
+      id: "a-work",
+      owner: "a" as const,
+      label: contestants.a.activity.replaceAll("_", " "),
+      meta: `${String(checks("a"))} checks`,
+    },
+    {
+      id: "verify",
+      owner: "neutral" as const,
+      label: stage,
+      meta: roundLabel(selectedRound),
+    },
+    {
+      id: "b-work",
+      owner: "b" as const,
+      label: contestants.b.activity.replaceAll("_", " "),
+      meta: `${String(checks("b"))} checks`,
+    },
+    {
+      id: "b-base",
+      owner: "b" as const,
+      label: `${title(contestants.b.provider)} base`,
+      meta: `${contestants.b.health} HP`,
+    },
+  ];
 
   return (
-    <main className="monster-battle">
-      <header className="monster-header">
-        <strong>AGENT ARENA · MONSTER BATTLE</strong>
-        <span>{state.task}</span>
-        <CompactRoundNav
-          state={state}
-          rounds={rounds}
-          selected={selectedRound}
-          onSelect={onRound}
-        />
-      </header>
-
-      <section className="monster-field" aria-label="Agent battle field">
-        <BattleTerrain />
-        <div className="monster-objective">
-          <strong>{roundLabel(selectedRound)}</strong>
-          <span>{stage}</span>
-          <em>{selectedRound === "live" ? "LIVE TURN" : "RECORDED TURN"}</em>
-        </div>
-
+    <main className="retro-tactics">
+      <header className="tactics-matchup">
         {(["a", "b"] as const).map((id) => (
           <button
-            className={`monster-fighter monster-fighter-${id}`}
+            className={`tactics-status tactics-status-${id}`}
             type="button"
             key={id}
-            aria-label={`Inspect ${title(contestants[id].provider)}`}
             onClick={() => onFighter(id)}
           >
-            <span className="monster-status-plate">
-              <span className="monster-status-heading">
-                <strong>{title(contestants[id].provider)}</strong>
-                <b>{contestants[id].health} HP</b>
-              </span>
+            <ProviderDisc fighter={contestants[id]} id={id} />
+            <span className="tactics-identity">
+              <strong>{title(contestants[id].provider)}</strong>
               <small>{contestants[id].model ?? "Default model"}</small>
-              <span className="monster-health" aria-hidden="true">
-                <i
+            </span>
+            <span className="tactics-hp">
+              <b>{contestants[id].health}</b>
+              <small>HP</small>
+              <i aria-hidden="true">
+                <span
                   style={{
                     transform: `scaleX(${String(contestants[id].health / 100)})`,
                   }}
                 />
-              </span>
-              <span className="monster-status-meta">
-                <span>{contestants[id].activity.replaceAll("_", " ")}</span>
-                <span>
-                  {checks(id)}/{contestants[id].checks.length} checks
-                </span>
-              </span>
+              </i>
             </span>
-            <span className="monster-summon" aria-hidden="true">
-              <span className="monster-aura" />
-              <ProviderDisc fighter={contestants[id]} id={id} />
+            <span className="tactics-checks">
+              <b>
+                {checks(id)}/{contestants[id].checks.length}
+              </b>
+              <small>checks</small>
             </span>
           </button>
         ))}
+        <span className="tactics-versus" aria-hidden="true">
+          VS
+        </span>
+      </header>
 
-        <div className="monster-battle-dock">
-          <article className="monster-dialogue" aria-live="polite">
-            <strong>{turnMessage}</strong>
-            <p>
-              {latest
-                ? `${latest.attacker?.toUpperCase() ?? "House"} → ${latest.target?.toUpperCase() ?? "both"}${latest.damage ? ` · ${String(latest.damage)} HP` : ""}`
-                : (active.summaries.at(-1)?.text ??
-                  "The next authoritative move will appear here.")}
-            </p>
-            <span aria-hidden="true" />
-          </article>
-          <nav className="monster-commands" aria-label="Inspect contestants">
-            {(["a", "b"] as const).map((id) => (
-              <button type="button" key={id} onClick={() => onFighter(id)}>
-                <ProviderDisc fighter={contestants[id]} id={id} />
-                <span>
-                  <strong>Inspect {title(contestants[id].provider)}</strong>
-                  <small>Full output and evidence</small>
-                </span>
+      <nav className="tactics-mobile-inspect" aria-label="Inspect contestants">
+        {(["a", "b"] as const).map((id) => (
+          <button type="button" key={id} onClick={() => onFighter(id)}>
+            <ProviderDisc fighter={contestants[id]} id={id} />
+            <span>Inspect {title(contestants[id].provider)}</span>
+          </button>
+        ))}
+      </nav>
+
+      <section className="tactics-console">
+        <aside className="tactics-rounds">
+          <strong>ROUND</strong>
+          <CompactRoundNav
+            state={state}
+            rounds={rounds}
+            selected={selectedRound}
+            onSelect={onRound}
+          />
+          <dl>
+            <div>
+              <dt>Phase</dt>
+              <dd>{stage}</dd>
+            </div>
+            <div>
+              <dt>Round</dt>
+              <dd>{activeRound}</dd>
+            </div>
+          </dl>
+        </aside>
+
+        <section className="tactics-map" aria-label="Tactical battle map">
+          <header>
+            <div>
+              <strong>{roundLabel(selectedRound)}</strong>
+              <span>{stage}</span>
+            </div>
+            <em>{selectedRound === "live" ? "LIVE MAP" : "RECORDED MAP"}</em>
+          </header>
+          <div className="tactics-legend" aria-label="Route legend">
+            <span>
+              <i className="is-a" />
+              Codex
+            </span>
+            <span>
+              <i className="is-b" />
+              Claude
+            </span>
+            <span>
+              <i className="is-repair" />
+              Repair
+            </span>
+            <span>
+              <i className="is-verify" />
+              Verify
+            </span>
+          </div>
+          <svg
+            className="tactics-paths"
+            viewBox="0 0 1000 520"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <defs>
+              <marker
+                id="tactics-arrow-a"
+                viewBox="0 0 10 10"
+                refX="8"
+                refY="5"
+                markerWidth="4"
+                markerHeight="4"
+                orient="auto-start-reverse"
+              >
+                <path d="M0 0 10 5 0 10z" />
+              </marker>
+              <marker
+                id="tactics-arrow-b"
+                viewBox="0 0 10 10"
+                refX="8"
+                refY="5"
+                markerWidth="4"
+                markerHeight="4"
+                orient="auto-start-reverse"
+              >
+                <path d="M0 0 10 5 0 10z" />
+              </marker>
+              <marker
+                id="tactics-arrow-neutral"
+                viewBox="0 0 10 10"
+                refX="8"
+                refY="5"
+                markerWidth="4"
+                markerHeight="4"
+                orient="auto-start-reverse"
+              >
+                <path d="M0 0 10 5 0 10z" />
+              </marker>
+            </defs>
+            <path
+              className="route route-attack route-a"
+              d="M135 285 310 170 500 260"
+            />
+            <path
+              className="route route-attack route-b"
+              d="M865 285 690 170 500 260"
+            />
+            <path className="route route-neutral" d="M500 260 500 88" />
+            {latestRepair ? (
+              <path
+                className={`route route-repair route-${latestRepair.id}`}
+                d={
+                  latestRepair.id === "b"
+                    ? "M500 260 690 170 865 285"
+                    : "M500 260 310 170 135 285"
+                }
+              />
+            ) : null}
+            {latest ? (
+              <path
+                className={`route route-attack route-latest route-${latest.attacker === "b" ? "b" : "a"}`}
+                d={
+                  latest.attacker === "b"
+                    ? "M865 285 690 170 500 260 310 170"
+                    : "M135 285 310 170 500 260 690 170"
+                }
+              />
+            ) : null}
+          </svg>
+          <div className="tactics-terrain" aria-hidden="true">
+            {Array.from({ length: 96 }, (_, index) => (
+              <i key={index} />
+            ))}
+          </div>
+          <div className="tactics-nodes">
+            {mapNodes.map((node) => (
+              <button
+                className={`tactics-node tactics-node-${node.id} is-${node.owner}`}
+                type="button"
+                key={node.id}
+                disabled={node.owner === "neutral"}
+                onClick={() => {
+                  if (node.owner !== "neutral") onFighter(node.owner);
+                }}
+              >
+                <span aria-hidden="true" />
+                <strong>{node.label}</strong>
+                <small>{node.meta}</small>
               </button>
             ))}
-          </nav>
-        </div>
+          </div>
+          <footer aria-live="polite">
+            <strong>
+              {latest ? attackDisplayLabel(latest) : "Awaiting verified move"}
+            </strong>
+            <span>
+              {latest
+                ? `${latest.phase} · ${latest.attacker?.toUpperCase() ?? "House"} → ${latest.target?.toUpperCase() ?? "both"}${latest.damage ? ` · ${String(latest.damage)} HP` : ""}`
+                : "Recorded attacks and repairs will illuminate this route."}
+            </span>
+          </footer>
+        </section>
+
+        <aside className="tactics-activity">
+          <header>
+            <strong>ACTIVITY / EVIDENCE</strong>
+            <span>{attacks.length}</span>
+          </header>
+          {attacks.length ? (
+            attacks
+              .slice(-7)
+              .reverse()
+              .map((attack, index) => (
+                <article key={`${attack.id}-${attack.phase}-${String(index)}`}>
+                  <i className={`is-${attack.attacker ?? "neutral"}`} />
+                  <div>
+                    <strong>{attackDisplayLabel(attack)}</strong>
+                    <p>
+                      {attack.phase} ·{" "}
+                      {attack.attacker?.toUpperCase() ?? "House"} →{" "}
+                      {attack.target?.toUpperCase() ?? "both"}
+                    </p>
+                  </div>
+                  <b>{attack.damage ? `−${String(attack.damage)}` : "··"}</b>
+                </article>
+              ))
+          ) : (
+            <p className="tactics-empty">No verified attack activity yet.</p>
+          )}
+        </aside>
       </section>
 
-      <aside className="monster-evidence" aria-label="Recent battle evidence">
-        <strong>Battle log</strong>
-        {attacks.length ? (
-          attacks.slice(-4).map((attack, index) => (
-            <span key={`${attack.id}-${attack.phase}-${String(index)}`}>
-              <b>{attackDisplayLabel(attack)}</b>
-              <small>
-                {attack.phase} · {attack.attacker?.toUpperCase() ?? "House"} →{" "}
-                {attack.target?.toUpperCase() ?? "both"}
-              </small>
-            </span>
-          ))
-        ) : (
+      <footer className="tactics-commands">
+        <div>
+          <strong>{state.task}</strong>
           <span>
-            <b>Waiting for evidence</b>
-            <small>Verified attacks and repairs will appear here.</small>
+            {selectedRound === "live"
+              ? "Live execution"
+              : "Read-only recorded state"}
           </span>
-        )}
-      </aside>
+        </div>
+        <nav aria-label="Inspect contestants">
+          {(["a", "b"] as const).map((id) => (
+            <button type="button" key={id} onClick={() => onFighter(id)}>
+              <ProviderDisc fighter={contestants[id]} id={id} />
+              <span>
+                <strong>Inspect {title(contestants[id].provider)}</strong>
+                <small>Full output and evidence</small>
+              </span>
+            </button>
+          ))}
+        </nav>
+      </footer>
     </main>
   );
 }
 
 const DESIGN_CONTRACT = {
   thesis:
-    "Turn recorded engineering evidence into an original creature battle without changing a product fact.",
+    "Turn recorded engineering evidence into a live 16-bit tactics console without changing a product fact.",
   ownWorld:
-    "Sky blue, cobalt, coral, health green, cream plates, navy contours, elemental sigils, and cel-shaded terrain.",
+    "Midnight violet chassis, purple and orange territories, aqua verification, pixel tile terrain, angular panels, and bitmap-scale rules.",
   story:
     "Track the fight, inspect either contestant, review recorded rounds, understand attacks and repairs, then finish the authoritative result.",
   firstViewport:
-    "An asymmetric arena dominates while agent status, turn dialogue, inspection, rounds, evidence, and cancellation remain reachable.",
-  form: "User-pinned pocket-monster battle direction; top-ranked grounded candidate.",
-  seed: "beaf8282",
+    "A top matchup bar leads a round rail, central tactical node map, right evidence channel, and bottom inspection commands.",
+  form: "User-approved 16-bit Tactics Board, operator-console composition B.",
+  seed: "71186a7d",
 } as const;
 
 export function App() {
@@ -1305,8 +1446,8 @@ export function App() {
           onRound={selectRound}
           onFighter={setSelectedFighter}
         />
-      ) : !showResults && !selectedFighter && theme === "monster-battle" ? (
-        <MonsterBattleArena
+      ) : !showResults && !selectedFighter && theme === "retro-tactics" ? (
+        <RetroTacticsArena
           state={state}
           rounds={rounds}
           selectedRound={selectedRound}

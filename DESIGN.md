@@ -1,64 +1,93 @@
 ---
 name: Agent Arena Desktop Observatory
-description: Five physical competition views presenting one authoritative engineering record.
+description: Five physical operator views presenting one authoritative engineering record.
 colors:
-  pocket-ink: "#173039"
+  classic-ink: "#173039"
   classic-paper: "#ecf6d7"
   classic-coral: "#ef5d58"
   classic-yellow: "#ffe86a"
   classic-mint: "#70d8c2"
-  sticker-paper: "#fffaf0"
-  sticker-yellow: "#f7d96f"
-  sticker-mint: "#72d5c3"
+  developer-canvas: "#0d1117"
+  developer-panel: "#161b22"
+  developer-blue: "#4493f8"
+  developer-green: "#3fb950"
+  developer-red: "#f85149"
   night-field: "#191838"
-  night-hardware: "#372764"
   night-violet: "#8f6de8"
   night-mint: "#75efd0"
   night-cream: "#f1eddd"
   broadcast-ink: "#161a1c"
   broadcast-paper: "#f3f0e7"
   broadcast-field: "#285c69"
-  broadcast-field-deep: "#173945"
   broadcast-live: "#f04d45"
   broadcast-score: "#ffdd52"
-  monster-navy: "#071a3c"
-  monster-blue: "#2369d8"
-  monster-blue-deep: "#12449d"
-  monster-sky: "#65c9f3"
-  monster-sky-light: "#dff6ff"
-  monster-cream: "#fff9e9"
-  monster-cream-deep: "#efe3c3"
-  monster-red: "#d8463d"
-  monster-yellow: "#f3c83b"
-  monster-green: "#4aaf55"
-  monster-green-deep: "#21753a"
-  monster-grass: "#79bd58"
-  monster-grass-deep: "#3d823f"
-  monster-mountain: "#6ba69a"
-  monster-mountain-far: "#a9d4c4"
-  monster-coral: "#ee7359"
-  monster-header-muted: "#dcecff"
-  monster-text-muted: "#40556a"
-  monster-sand: "#dcbf86"
-  monster-sand-deep: "#cfae70"
-  monster-rule-soft: "#b4ab92"
-  monster-command-blue: "#dbeaff"
-  monster-command-red: "#ffe3dc"
-  monster-panel: "#eaf8ff"
-  monster-working-ink: "#0b4660"
-  monster-working-surface: "#cceef5"
-  monster-success-surface: "#dff0d8"
-  monster-shadow: "rgb(7 26 60 / 28%)"
+  tactics-ground: "#080815"
+  tactics-chassis: "#171329"
+  tactics-purple: "#7949ba"
+  tactics-orange: "#f08a22"
+  tactics-aqua: "#43d5d1"
+  tactics-grass: "#396f38"
+  tactics-water: "#176287"
+  tactics-text: "#f2ebdf"
 typography:
-  pocket-display:
-    fontFamily: "Arena Fredoka, ui-rounded, sans-serif"
-    fontWeight: 700
-  operational-body:
-    fontFamily: "Arena Space, sans-serif"
-    fontWeight: 400
-  broadcast-headline:
+  display:
     fontFamily: "Arena Barlow, sans-serif"
+    fontSize: "clamp(38px, 5vw, 72px)"
     fontWeight: 900
+    lineHeight: 0.85
+  headline:
+    fontFamily: "Arena Fredoka, ui-rounded, sans-serif"
+    fontSize: "clamp(28px, 3vw, 42px)"
+    fontWeight: 700
+  body:
+    fontFamily: "Arena Space, sans-serif"
+    fontSize: "14px"
+    fontWeight: 400
+    lineHeight: 1.5
+  label:
+    fontFamily: "Arena Silkscreen, ui-monospace, monospace"
+    fontSize: "10px"
+    fontWeight: 400
+    lineHeight: 1.35
+  terminal:
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace"
+    fontSize: "13px"
+    fontWeight: 400
+    lineHeight: 1.6
+rounded:
+  pixel: "1px"
+  dashboard-card: "6px"
+  control: "8px"
+  classic-card: "20px"
+  hardware-shell: "44px"
+spacing:
+  xs: "6px"
+  sm: "8px"
+  md: "12px"
+  lg: "18px"
+  xl: "24px"
+  xxl: "28px"
+components:
+  theme-option:
+    backgroundColor: "{colors.developer-panel}"
+    rounded: "{rounded.control}"
+    size: "28px"
+  developer-card:
+    backgroundColor: "{colors.developer-panel}"
+    textColor: "{colors.tactics-text}"
+    rounded: "{rounded.dashboard-card}"
+    padding: "18px"
+  classic-card:
+    backgroundColor: "#ffffff"
+    textColor: "{colors.classic-ink}"
+    rounded: "{rounded.classic-card}"
+    padding: "18px"
+  tactics-command:
+    backgroundColor: "{colors.tactics-ground}"
+    textColor: "{colors.tactics-text}"
+    typography: "{typography.label}"
+    rounded: "{rounded.pixel}"
+    padding: "8px 11px"
 ---
 
 # Design System: Agent Arena Desktop Observatory
@@ -67,304 +96,314 @@ typography:
 
 **Creative North Star: "Five physical views, one recorded truth"**
 
-Agent Arena is an Operate-mode Electron observatory. It turns recorded
-engineering evidence into five materially distinct competition views without
-changing a product fact. The active renderer's central metaphor dominates the
-first viewport while status, round navigation, theme selection, and cancellation
-remain reachable.
+Agent Arena is an Operate-mode desktop observatory for an adversarial coding
+run. Five shipped renderers—Classic Shell, Developer Dashboard, Night Edition,
+Live Arena Broadcast, and 16-Bit Tactics—present the same normalized dashboard
+state through materially different operator worlds. Theme choice changes
+composition and atmosphere, never the underlying engineering record.
 
-The five worlds are Pocket Classic, Sticker League, Night Edition, Live Arena
-Broadcast, and Monster Battle. Their shared story is: track the fight, inspect
-either contestant, review immutable recorded rounds, understand attacks and
-repairs, then review and finish the authoritative result. The approved direction
-seed is `beaf8282`.
+The current signature direction is the original 16-Bit Tactics operator
+console: a midnight-violet cartridge chassis surrounding a tactical terrain
+field where authoritative attacks, repairs, and verification are visible as
+routes and nodes. Its approved direction seed is `71186a7d`. This is still an
+engineering tool: playful competition language may frame the evidence, but
+provider identity, HP, checks, coverage, failures, warnings, and result
+authority stay explicit.
 
 **Key Characteristics:**
 
-- Five materially different renderer compositions over one normalized
-  `DashboardState`.
-- Physical, high-contrast framing with provider identity and engineering facts
-  kept primary.
-- Persistent access to live status, rounds, theme selection, and cancellation.
-- Playful competition language constrained by authoritative evidence.
+- Five distinct physical compositions over one `DashboardState` projection.
+- Persistent live status, round navigation, theme choice, and cancellation.
+- Overview screens summarize; contestant detail preserves full terminal-order
+  output and the complete evidence ledger.
+- Responsive layouts retain actionable inspection and textual state cues.
+- Locally bundled type and original generated bitmaps keep the application
+  self-contained.
 
-**The Recorded Truth Rule.** A theme may change composition and language, but it
-must never invent a fighter, check, attack, repair, failure, terminal outcome,
-coverage result, or recommendation.
+**The Recorded Truth Rule.** A renderer may change composition and language,
+but it must never invent a contestant, round, check, attack, repair, failure,
+coverage result, terminal outcome, or recommendation.
+
+**The Summary-to-Source Rule.** Arena overviews use normalized summaries and
+recent evidence. The Inspect action is the path to the untruncated, redacted
+output stream in recorded terminal order; do not turn an overview into a second
+terminal or trim the detail source.
 
 ## Colors
 
-Each family has its own material palette; semantic red, green, and focus colors
-remain legible within that world rather than being forced into a universal skin.
+Each renderer owns a coherent material palette while shared semantic aliases
+keep focus, success, warning, danger, replay, detail, and result states legible.
+The normative core colors are in frontmatter; additional tonal and semantic
+roles remain in `styles.css`.
 
 ### Primary
 
-- **Pocket Ink:** the shared outline, text, and hardware-detail color for the
-  three Pocket themes.
-- **Broadcast Field:** the live-feed plane, split with its deeper companion to
-  separate the two contestants.
-- **Monster Sky and Grass:** the cel-shaded outdoor battle field behind the
-  provider summons and status plates.
+- **Classic Pocket Family:** dark blue-green ink on pale paper, with coral as
+  the hardware shell and mint/yellow for tactile controls and contestant wells.
+- **Developer Dashboard Family:** near-black canvas and charcoal panels with
+  blue interaction, green success, and red failure signals.
+- **Night Console Family:** midnight field and violet hardware surrounding warm
+  cream cards; mint carries selection and focus.
+- **Broadcast Family:** dark editorial ink and warm paper around a split teal
+  live field; live red and score yellow carry urgency and comparison.
+- **Tactics Family:** black-violet ground and chassis, purple/orange contestant
+  territories, aqua verification, and grass/water terrain.
 
 ### Secondary
 
-- **Classic Coral, Yellow, and Mint:** hardware shell, tactile controls, and
-  contestant emphasis.
-- **Pocket Operational Teal and Danger Red:** high-contrast stream annotations,
-  errors, and damage labels on light card stock.
-- **Sticker Yellow and Mint:** the sticker rail, selected controls, and playful
-  layered accents.
-- **Night Violet and Mint:** translucent hardware and luminous selection/focus
-  cues against the dark field.
-- **Broadcast Live and Score:** urgent evidence signals and the central versus
-  marker; neither is decorative filler.
-- **Monster Blue, Coral, Yellow, Red, and Green:** opposing summons, focus and
-  selection, objective urgency, and authoritative HP/success states.
+- Shared operational aliases map each theme to readable focus, success,
+  warning, danger, replay, detail, and terminal-result roles.
+- 16-Bit Tactics uses green only for repair routes, aqua for neutral verification,
+  and purple/orange for contestant ownership. Those meanings must survive even
+  when motion is reduced.
+- Broadcast reserves live red for the live badge and scorebug emphasis; score
+  yellow is a comparison accent rather than ambient decoration.
 
 ### Neutral
 
-- **Classic and Sticker Paper:** light arena and card stocks for the Pocket
-  hierarchy.
-- **Night Field, Hardware, and Cream:** the dark console body and readable battle
-  cards.
-- **Broadcast Ink and Paper:** the network chrome and editorial Battle Desk.
-- **Monster Navy and Cream:** the `3–5px` framing and readable status/dialogue
-  stock; sky-light, sand, and mountain tones build the field depth.
+- Classic and Night use warm paper/cream stocks inside their hardware shells.
+- Developer Dashboard uses tonal layering from canvas to panel to raised panel.
+- Broadcast uses ink rules against warm editorial stock.
+- Tactics uses the ground/chassis/panel sequence for readable cartridge depth,
+  with warm off-white operational text.
 
-**The Family Integrity Rule.** Do not recolor one renderer into another theme.
-Pocket, Broadcast, and Monster Battle use different compositions as well as
-different palettes.
+**The Family Integrity Rule.** Do not recolor one renderer into another. Classic
+and Night are rounded hardware, Developer Dashboard is a conventional dense
+tool, Broadcast is an editorial live feed, and Tactics is an angular cartridge
+console with a map-first topology.
 
-**The Result Contrast Rule.** Terminal views use the per-family semantic
-`--result-*` tokens for surface, foreground, muted text, link, card, winner
-card, border, stat, and focus colors. Every normal-text token pair must remain
-at or above 4.5:1 on both standard and winner card surfaces. Winner emphasis
-comes from the surface and border; it must not make authoritative values harder
-to read. Family-specific tonal ramps may vary, but result components must not
-introduce literal foreground colors outside these tokens.
+**The Semantic Route Rule.** In 16-Bit Tactics, attack, repair, and verify are
+not decorative line colors. The legend, route class, latest-state treatment,
+and textual footer must agree with recorded state.
 
-### Token architecture
-
-`styles.css` has three deliberate color layers:
-
-- Shared operational tokens (`--app-*`, `--fighter-*`, `--replay-*`, and
-  `--result-*`) own chrome, text hierarchy, controls, warnings, evidence states,
-  focus, and terminal semantics.
-- Family palette tokens (`--pocket-*`, `--sticker-*`, `--night-*`,
-  `--broadcast-*`, and `--monster-*`) own the physical materials and tonal ramps
-  unique to each renderer.
-- The small compatibility aliases (`--surface`, `--line`, `--muted`, `--cyan`,
-  `--green`, `--amber`, and `--red`) let the shared behavioral components
-  inherit the active family's semantics without branching their markup.
-
-Component rules consume tokens rather than literal colors. A new literal is
-appropriate only when introducing a documented primitive to one of these
-layers; repeated component-level literals are design-system drift. Shadows use
-the shared `--shadow-*` ramp, while Pocket hardware retains its family-specific
-inset band and Sticker retains its warm paper shadow.
+**The Result Contrast Rule.** Results and fighter detail consume each family's
+semantic `--result-*` and `--detail-*` tokens. Winner emphasis comes from
+surface and border changes without reducing the readability of authoritative
+values.
 
 ## Typography
 
-**Display Font:** Arena Fredoka (with `ui-rounded, sans-serif` fallback)
-**Body Font:** Arena Space (with `sans-serif` fallback)
-**Broadcast Headline Font:** Arena Barlow (with `sans-serif` fallback)
+**Display Font:** Arena Barlow (with `sans-serif` fallback)
 
-Fredoka supplies the friendly, tactile voice for Pocket hardware and Monster
-Battle labels. Space Grotesk carries operational copy in Broadcast and Monster
-Battle.
-Barlow Condensed Black is reserved for broadcast headlines, provider names,
-score data, and other network-scale moments; it is not general body copy.
+**Friendly Headline Font:** Arena Fredoka (with `ui-rounded, sans-serif` fallback)
 
-The font files are bundled locally and use `font-display: swap`. Their SIL Open
-Font License remains at `src/web/client/fonts/OFL.txt`.
+**Operational Body Font:** Arena Space (with `sans-serif` fallback)
 
-**The Broadcast Compression Rule.** Use the condensed face only where the
-broadcast renderer needs headline force or dense score data.
+**Bitmap Label Font:** Arena Silkscreen (with `ui-monospace, monospace` fallback)
+
+**Terminal Font:** system monospace stack
+
+**Character:** The typography changes with the material world while preserving
+a clear split between spectacle, operational reading, and raw evidence. All
+four named faces are bundled locally with `font-display: swap`; their license
+is shipped alongside the font files.
+
+### Hierarchy
+
+- **Display:** Barlow Condensed Black is reserved for Broadcast provider names,
+  score data, the Battle Desk, and terminal verdict moments.
+- **Headline:** Fredoka supplies the friendly, tactile scale of Classic and
+  Night hardware.
+- **Body:** Space Grotesk carries conventional dashboard and editorial
+  operational copy.
+- **Label:** Silkscreen is the bitmap-scale voice of 16-Bit Tactics status,
+  navigation, map nodes, commands, detail, and result chrome.
+- **Terminal:** the full output surface uses a minimum `13px/1.6` system
+  monospace treatment with preserved whitespace and wrapping for long content.
+
+**The Role Separation Rule.** Do not use the broadcast face for body copy or
+Silkscreen for long terminal output. Display faces provide identity; operational
+and terminal faces carry evidence.
 
 ## Layout
 
-The top bar is shared across every theme and keeps the brand, task, theme
-picker, connection state, links, results return, and cancel action in one stable
-place. Theme changes do not replace or reconnect this shell.
+The shared shell keeps brand, task, theme picker, connection state, links,
+results return, and cancellation in a stable top bar. Theme changes preserve
+the selected fighter, round, replay/results mode, live stream, and projected
+battle state.
 
-- **Pocket:** the desktop grid is a round rail (`176px`), a flexible arena
-  (`minmax(600px, 1fr)`), and a `310px` evidence rail. The arena places equal
-  fighter cards around a compact versus divider.
-- **Broadcast:** the feed dominates a flexible left column while a `340px`
-  Battle Desk carries counts and play-by-play.
-- **Monster Battle:** an asymmetric, full-width original creature-battle field
-  layers inline SVG clouds and mountains with CSS grass and oval battle rings.
-  Opposing status plates and provider-logo summons frame the objective badge;
-  turn dialogue, exactly two real Inspect commands, and a recent-evidence ticker
-  complete the operator dock.
-- **Results and detail:** all renderer families return to the same semantic
-  result and fighter-detail structures, inheriting the active theme's material,
-  type, focus, and colors.
+- **Classic Shell and Night Edition:** shared three-column topology: `176px`
+  round rail, flexible arena (`minmax(600px, 1fr)`), and `310px` evidence rail.
+  Equal fighter cards flank a narrow versus divider.
+- **Developer Dashboard:** the same semantic three-column topology rendered as
+  a conventional dense dark tool with flat panels, compact radii, and minimal
+  ornament. Redundant kickers are hidden so engineering facts lead.
+- **Live Arena Broadcast:** a flexible live feed plus a `340px` Battle Desk.
+  The feed contains a split field, opposing provider discs, versus marker, and
+  scorebug; the desk holds round totals and play-by-play.
+- **16-Bit Tactics:** the map-first operator-console topology is a top matchup
+  bar, a `126px` round rail, a flexible tactical map, a `300px` activity/evidence
+  rail, and bottom inspection commands. The terrain fills most of the central
+  pane while all operational state remains semantic HTML/SVG above it.
+- **Results and contestant detail:** all five families reuse the same semantic
+  structures. The overview remains compact; detail exposes full output,
+  invocations, checks, health changes, and attack involvement.
 
-At `1180px`, the Pocket evidence rail moves below the arena. At `980px`, the
-physical outer frames flatten, Broadcast stacks the Battle Desk below the feed,
-and the Monster Battle dock stacks dialogue above its commands. At `760px`,
-Pocket uses a horizontal round strip and stacked fighters. At `700px`, compact
-controls wrap, Broadcast retains two opposing fighters in a reduced stage, and
-the Monster field compacts and repositions both fighters while its two Inspect
-commands remain side by side. Theme-picker targets remain `44px`; the document
-minimum is `320px`.
+At `1180px`, shared detail collapses to one column and the shared evidence rail
+moves below the arena. At `980px`, hardware frames flatten, Broadcast stacks
+its Battle Desk, and the Tactics evidence rail becomes a two-column band below
+the map. At `760px`, shared arenas switch to a horizontal round strip and
+stacked fighters. At `700px`, Tactics compresses matchup bars, turns the round
+rail into a horizontal strip, and installs a fixed two-command inspect dock at
+the bottom edge. Those compact Inspect controls remain visible while the map
+scrolls and open the same full-detail view as the desktop command strip.
 
-**The Metaphor-First Rule.** The renderer's fight, feed, or played cards must
-remain the first-viewport anchor; operational controls stay visible without
+**The Metaphor-First Rule.** The renderer's cards, feed, or tactical map remain
+the first-viewport anchor; operator controls stay immediately reachable without
 becoming the visual subject.
+
+**The Compact Inspect Rule.** On narrow Tactics screens, never hide inspection
+behind map nodes or a menu. Keep the two explicit provider-labeled Inspect
+commands in the fixed dock.
 
 ## Elevation & Depth
 
-Depth is structural and physical. Pocket cards use dark ink borders plus short,
-soft shadows; Classic and Night add inset shell bands to read as hardware.
-Sticker League adds restrained rotations to the rail, fighters, and battle call.
-Broadcast is mostly flat and editorial, using the provider-disc shadow to lift
-the contestants from the feed. Monster Battle uses navy contour framing and
-short structural shadows to separate cream plates, diamond summons, dialogue,
-and objective badge from the cel-shaded field.
+Depth is structural. Classic uses thick ink borders and soft card lift inside
+an inset hardware shell. Night repeats the hardware silhouette with cream cards
+and a short hard drop. Developer Dashboard is flat by default and separates
+canvas, panel, and raised-panel tones with one-pixel rules. Broadcast is mostly
+flat editorial stock; the large provider discs carry the strongest lift.
+Tactics uses doubled chassis rules, inset pixel bevels, short map-node shadows,
+and cartridge ornaments. It never uses glass or blur.
 
-Damage uses a brief `220ms` pop/hit response. All animation and transition
-durations collapse to `0.01ms` under `prefers-reduced-motion: reduce`; the
-numeric HP change remains the durable cue.
+The latest Tactics route animates in `900ms` stepped increments; HP/damage state
+changes use `220ms` responses. Under `prefers-reduced-motion: reduce`, all
+durations collapse to `0.01ms`; numbers, labels, selection, and route classes
+remain the durable evidence.
 
-**The Material Depth Rule.** Shadows and rotations explain physical layering;
-they must not decorate arbitrary operational text or evidence.
+**The Structural Depth Rule.** A shadow or bevel must explain a card, chassis,
+provider disc, node, or operator control. Do not apply depth to arbitrary prose.
 
 ## Shapes
 
-Pocket uses chunky rounded shells, thick ink outlines, circular provider wells,
-pill health tracks, and a circular versus control. Classic's outer shell is
-strongly rounded (`44px`); internal production cards use approximately
-`20–28px` corners. Sticker League keeps those forms but offsets them like placed
-paper decals. Night Edition repeats the hardware silhouette in violet with cream
-cards.
+Classic and Night use chunky rounded hardware (`44px` outer shell), thick
+outlines, circular provider wells, pill health tracks, and `20–24px` production
+cards. Developer Dashboard uses compact `4–8px` corners and one-pixel rules.
+Broadcast uses squared editorial panels, a diagonal field split, circles for
+provider portraits, and a hard rectangular scorebug.
 
-Broadcast uses squared editorial panels, a diagonal field split, circular
-provider portraits, and a hard rectangular scorebug. Monster Battle uses
-`3–5px` navy framing, cream status plates, diamond provider summons, and oval
-battle rings.
+16-Bit Tactics uses `0–2px` corners, `3–6px` single or doubled rules,
+clip-path-cut panel corners, square-ended dashed paths, and inset pixel bevels.
+Generated bezel sprites add rivets, seams, and corner ornaments around the
+semantic cartridge structure without replacing its borders or focus states.
 
-**The Silhouette Rule.** Preserve the family's geometry with its palette:
-Pocket is rounded hardware, Broadcast is hard editorial framing, and Monster
-Battle is a cel-shaded creature-battle field.
+**The Silhouette Rule.** Preserve geometry with palette: rounded Pocket
+hardware, compact Developer panels, hard Broadcast editorial framing, and
+angular pixel-cartridge Tactics.
 
 ## Components
 
 ### Theme picker
 
-The five swatches live in a labeled fieldset and use `aria-pressed` for the
-selected state. Each swatch previews its family's material rather than showing
-an abstract color. The picker remains reachable in arena, replay, fighter
-detail, and results views. A change preserves the selected fighter, selected
-round, replay/results mode, event stream, and all projected battle state.
+The five `28px` swatches live in a labeled fieldset, use `aria-pressed`, and
+preview their renderer's material. The selected swatch has a visible two-pixel
+outline. At compact width the targets expand to `44px`.
 
-`ArenaTheme` is display-only Electron state. The sandboxed preload exposes only
-`getTheme()` and `setTheme(theme)`. Electron reads the preference before React
-mounts and atomically replaces `arena-theme.json` under
-`app.getPath("userData")`; the file is private (`0600`). Missing, corrupt, or
-unknown values resolve to `classic-shell`. A failed save keeps the in-memory
-selection active and raises a non-blocking status warning. The preference never
-enters battle events, runtime schemas, run artifacts, project configuration, or
-recovery digests; terminal and plain displays do not consume it.
+`ArenaTheme` is display-only Electron state. The sandboxed bridge exposes only
+`getTheme()` and `setTheme(theme)`. Preferences are stored privately and
+atomically; missing or invalid values resolve to Classic Shell. Theme state
+never enters scoring, run artifacts, recovery digests, or dashboard authority.
 
 ### Fighters and detail
 
-Both fighter surfaces are always actionable and open the same workstream detail
-view. Provider imagery comes from the provider registry; provider names remain
-primary. Overview surfaces show normalized summaries and current state rather
-than raw output. Detail uses a separate data path that preserves and renders the
-full redacted stream in terminal order without trimming whitespace, truncating
-content, or adding presentation timestamps. Returning to the arena preserves
-the selected recorded round.
-
-Operational text in the detail view uses theme-local semantic colors. Transcript,
-empty, error, steering, and ledger text must retain at least WCAG AA 4.5:1
-contrast against their actual surface in every renderer family; the full stream
-uses a minimum 13px monospace treatment so terminal output remains legible.
+Fighter cards, status bars, provider discs, and Tactics-owned map nodes open the
+same contestant detail view. Overview cards render the ten most recent work
+summaries; the detail `<pre>` renders every provided redacted output chunk in
+order without presentation timestamps or truncation. It also keeps the full
+invocation, check, health, and attack ledgers adjacent to the workstream.
 
 ### Round navigation and replay
 
-Live is the current event-stream projection. Available rounds use actual
-buttons, disabled upcoming rounds stay unavailable, and the selected item uses
-`aria-current="page"` in both full and compact navigators. A shared availability
-predicate enables a round as soon as authoritative attacks or invocations have
-been recorded for it, even while a later round is live. Recorded rounds are
-read-only; selecting one never pauses, rewinds, reruns, or mutates execution.
-Replay copy must say this plainly.
+Live and recorded rounds are native buttons. Selected items expose
+`aria-current="page"`; unavailable future rounds are disabled. Recorded views
+are explicitly read-only and never pause, rewind, rerun, or mutate execution.
 
-### Steering, status, and cancellation
+### Developer Dashboard
 
-Steering is available only while connected, live, and running. Empty notes are
-disabled. Connection state is always written as Live, Reconnecting, or Complete
-beside its indicator. Cancellation remains reachable while running or
-cancelling and changes its label to “Cancelling…” while disabled.
+Developer Dashboard intentionally reuses the shared round/fighter/evidence
+topology. Its visual grammar is conventional: flat near-black canvas, charcoal
+sidebars and cards, `6px` card corners, compact provider wells, blue focus,
+green success, red failure, and no ornamental kicker text. It is the quiet,
+high-density option for developers who want the evidence model with minimal
+metaphor.
 
-### Results
+### Live Arena Broadcast
 
-A terminal result opens results automatically. The view includes champion,
-recommendation, coverage confidence, run integrity, completed rounds, both
-fighter outcomes, defects, verified repairs, terminal outcome, artifact links,
-round review, fighter inspection, and Finish Session. Provisional coverage must
-withhold champion and recommendation language.
+Broadcast owns a network header, split live field, large circular provider
+portraits, an authoritative scorebug, and a Battle Desk with recent play-by-play.
+On smaller screens the desk stacks below the feed; two opposing contestants
+remain visible in the stage.
 
-Results and fighter detail reuse the shared semantic structures while inheriting
-Monster Battle's cream, navy, sky, green, yellow, and contour materials.
+### 16-Bit Tactics arena
 
-### Monster Battle arena
+The matchup header exposes provider, model, HP bar, and check totals for both
+contestants. The left rail exposes actual round availability and phase. The map
+contains five semantic nodes—two bases, two current-work nodes, and a neutral
+verification node—with SVG attack, repair, and verify routes. The right rail
+shows recent authoritative activity; the footer restates the current route in
+text. The bottom command strip contains exactly two provider-labeled Inspect
+actions and the current task/read-only state.
 
-`MonsterBattleArena` owns the original asymmetric field composition and
-`BattleTerrain` owns its inline SVG clouds, mountains, and rings. CSS supplies
-the grass, sand field, navy framing, responsive positioning, and motion. The
-arena must keep opposing cream status plates with HP, diamond provider-logo
-summons, the objective badge, turn dialogue, exactly two working Inspect
-commands, and the recent evidence ticker visible as one battle system.
+The map's generated bitmap assets are presentation layers only:
 
-This family borrows only the readable battle grammar of creature-battle games.
-It must not ship third-party Pokémon characters, logos, sprites, game assets, or
-a generated raster composition; all production visuals remain original and
-code-native.
+- `terrain-background.png` supplies original cover-sized grass, water, stone,
+  vegetation, and path terrain beneath semantic state.
+- `tactical-sprites.png` supplies original bases, objectives, ruins,
+  vegetation, and markers clipped from a sprite sheet.
+- `cartridge-bezel-atlas.png` supplies original corner, edge, rivet, and seam
+  ornaments for cartridge framing.
 
-### Approved reference mapping
+Each bitmap ships with an adjacent `.png.json` provenance sidecar recording the
+OpenAI image generator, approved-comp reference role, original prompt,
+post-processing, dimensions, and intended use. The bitmaps may never bake in
+labels, routes, selection, HP, or other operational truth; those remain in
+accessible HTML/SVG/CSS.
 
-| Approved reference                                | Production mapping                                                                                                                                      |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `08-pocket-rivals-classic.html`                   | Shared top bar, `RoundNavigator`, Pocket fighter cards, battle call, evidence stream, themed results and detail.                                        |
-| `09-pocket-rivals-sticker-league.html`            | Pocket renderer plus sticker rail, rotated navigation/fighters, and yellow stage material.                                                              |
-| `12-pocket-rivals-night-edition.html`             | Pocket renderer plus violet console shell, cream cards, and mint focus/control treatment.                                                               |
-| `13-live-arena-broadcast.html`                    | `BroadcastArena`: network header, live field, provider discs, scorebug, Battle Desk, and play-by-play.                                                  |
-| `.impeccable/mocks/monster-battle-b-approved.png` | `MonsterBattleArena` plus `BattleTerrain`: asymmetric original field, terrain, status plates, summons, dialogue, Inspect commands, and evidence ticker. |
+### Steering, status, cancellation, and results
+
+Steering is available only while connected, live, and running; empty notes are
+disabled. Connection state is always written as Live, Reconnecting, or Complete.
+Cancellation remains reachable while running/cancelling. Results automatically
+open on terminal state and must distinguish a coverage-qualified champion from
+a provisional leader whose recommendation remains withheld.
 
 ### Accessibility contract
 
-Keyboard focus uses a visible `2px` theme focus outline with `2px` offset.
-Buttons, links, and inputs retain native keyboard operation. Icon-only theme
-controls and fighter hit areas have accessible names; decorative provider discs
-and icons are hidden from assistive technology. Results and persistence warnings
-announce through polite status regions. Reduced motion preserves all numeric and
-textual state cues.
+Buttons, links, and inputs retain native keyboard operation. Focus uses a
+visible two-pixel theme-colored outline with offset. Icon-only controls and
+fighter hit areas have accessible names; decorative bitmap/SVG layers are
+hidden from assistive technology. State is written in text as well as color,
+and reduced motion never removes the only durable cue.
 
 ## Do's and Don'ts
 
 ### Do
 
-- **Do** derive every label and quantity from normalized dashboard state.
-- **Do** keep theme selection and cancellation available in the first viewport.
-- **Do** preserve view selection and the live connection when themes change.
-- **Do** expose status, HP, evidence phase, and replay state in text as well as
-  color.
-- **Do** let each renderer collapse according to its own responsive composition.
+- **Do** derive every label, quantity, route, node state, and result from
+  normalized dashboard state.
+- **Do** keep theme selection, connection, round context, and cancellation
+  reachable in the first viewport.
+- **Do** use the 16-Bit Tactics legend and textual route footer alongside color
+  and stepped motion.
+- **Do** preserve overview summaries and route Inspect to full terminal-order
+  output and complete ledgers.
+- **Do** keep generated asset provenance sidecars adjacent to every shipping
+  tactics bitmap.
+- **Do** let each renderer collapse according to its own composition, including
+  the fixed compact Tactics inspect dock.
 
 ### Don't
 
-- **Don't** turn Broadcast or Monster Battle into palette variants of Pocket.
-- **Don't** copy third-party Pokémon characters, logos, sprites, or game assets,
-  or ship the approved raster reference as production UI.
+- **Don't** reduce Developer Dashboard, Broadcast, or Tactics to palette swaps
+  of Classic Shell.
+- **Don't** copy third-party game characters, sprites, logos, maps, or UI, and
+  don't use the approved comp itself as shipping production UI.
+- **Don't** bake operational state into terrain, sprite, or bezel bitmaps.
 - **Don't** imply that replay controls execution or that recorded rounds can be
   rewound, paused, or rerun.
-- **Don't** allow display preferences to affect scoring, artifacts, recovery, or
-  any other battle authority.
-- **Don't** hide provider identity, engineering checks, failures, warnings, or
-  coverage confidence behind game language.
-- **Don't** animate away the only evidence of damage, repair, selection, or
-  connection state.
+- **Don't** let display preferences affect scoring, artifacts, recovery, or any
+  other source of battle authority.
+- **Don't** hide provider identity, checks, failures, warnings, or coverage
+  confidence behind competition language.
+- **Don't** animate away the only evidence of damage, repair, verification,
+  selection, or connection state.

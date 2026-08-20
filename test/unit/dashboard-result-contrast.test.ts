@@ -7,17 +7,18 @@ const stylesheet = readFileSync(
 );
 
 const themes = [
+  "developer-dashboard",
   "night-edition",
   "live-arena-broadcast",
-  "monster-battle",
+  "retro-tactics",
 ] as const;
 
 const operationalThemes = [
   "classic-shell",
-  "sticker-league",
+  "developer-dashboard",
   "night-edition",
   "live-arena-broadcast",
-  "monster-battle",
+  "retro-tactics",
 ] as const;
 
 const operationalTextPairs = [
@@ -172,9 +173,9 @@ describe("fighter detail theme contrast", () => {
   }
 });
 
-describe("monster battle header contrast", () => {
-  it("keeps connection status readable on the navy top bar", () => {
-    const tokens = operationalThemeTokens("monster-battle");
+describe("retro tactics header contrast", () => {
+  it("keeps connection status readable on the tactics top bar", () => {
+    const tokens = operationalThemeTokens("retro-tactics");
     const foreground = tokens.get("--header-status-fg");
     const background = tokens.get("--header-surface");
 

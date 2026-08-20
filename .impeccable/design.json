@@ -1,0 +1,627 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-20T05:15:25.962Z",
+  "title": "Design System: Agent Arena Desktop Observatory",
+  "extensions": {
+    "colorMeta": {
+      "classic-ink": {
+        "role": "primary",
+        "displayName": "Classic Ink",
+        "canonical": "#173039",
+        "tonalRamp": [
+          "color-mix(in oklch, #173039 36%, black)",
+          "color-mix(in oklch, #173039 52%, black)",
+          "color-mix(in oklch, #173039 68%, black)",
+          "color-mix(in oklch, #173039 84%, black)",
+          "#173039",
+          "color-mix(in oklch, #173039 82%, white)",
+          "color-mix(in oklch, #173039 55%, white)",
+          "color-mix(in oklch, #173039 28%, white)"
+        ]
+      },
+      "classic-paper": {
+        "role": "neutral",
+        "displayName": "Classic Paper",
+        "canonical": "#ecf6d7",
+        "tonalRamp": [
+          "color-mix(in oklch, #ecf6d7 36%, black)",
+          "color-mix(in oklch, #ecf6d7 52%, black)",
+          "color-mix(in oklch, #ecf6d7 68%, black)",
+          "color-mix(in oklch, #ecf6d7 84%, black)",
+          "#ecf6d7",
+          "color-mix(in oklch, #ecf6d7 82%, white)",
+          "color-mix(in oklch, #ecf6d7 55%, white)",
+          "color-mix(in oklch, #ecf6d7 28%, white)"
+        ]
+      },
+      "classic-coral": {
+        "role": "secondary",
+        "displayName": "Classic Coral",
+        "canonical": "#ef5d58",
+        "tonalRamp": [
+          "color-mix(in oklch, #ef5d58 36%, black)",
+          "color-mix(in oklch, #ef5d58 52%, black)",
+          "color-mix(in oklch, #ef5d58 68%, black)",
+          "color-mix(in oklch, #ef5d58 84%, black)",
+          "#ef5d58",
+          "color-mix(in oklch, #ef5d58 82%, white)",
+          "color-mix(in oklch, #ef5d58 55%, white)",
+          "color-mix(in oklch, #ef5d58 28%, white)"
+        ]
+      },
+      "classic-yellow": {
+        "role": "secondary",
+        "displayName": "Classic Yellow",
+        "canonical": "#ffe86a",
+        "tonalRamp": [
+          "color-mix(in oklch, #ffe86a 36%, black)",
+          "color-mix(in oklch, #ffe86a 52%, black)",
+          "color-mix(in oklch, #ffe86a 68%, black)",
+          "color-mix(in oklch, #ffe86a 84%, black)",
+          "#ffe86a",
+          "color-mix(in oklch, #ffe86a 82%, white)",
+          "color-mix(in oklch, #ffe86a 55%, white)",
+          "color-mix(in oklch, #ffe86a 28%, white)"
+        ]
+      },
+      "classic-mint": {
+        "role": "secondary",
+        "displayName": "Classic Mint",
+        "canonical": "#70d8c2",
+        "tonalRamp": [
+          "color-mix(in oklch, #70d8c2 36%, black)",
+          "color-mix(in oklch, #70d8c2 52%, black)",
+          "color-mix(in oklch, #70d8c2 68%, black)",
+          "color-mix(in oklch, #70d8c2 84%, black)",
+          "#70d8c2",
+          "color-mix(in oklch, #70d8c2 82%, white)",
+          "color-mix(in oklch, #70d8c2 55%, white)",
+          "color-mix(in oklch, #70d8c2 28%, white)"
+        ]
+      },
+      "developer-canvas": {
+        "role": "neutral",
+        "displayName": "Developer Canvas",
+        "canonical": "#0d1117",
+        "tonalRamp": [
+          "color-mix(in oklch, #0d1117 36%, black)",
+          "color-mix(in oklch, #0d1117 52%, black)",
+          "color-mix(in oklch, #0d1117 68%, black)",
+          "color-mix(in oklch, #0d1117 84%, black)",
+          "#0d1117",
+          "color-mix(in oklch, #0d1117 82%, white)",
+          "color-mix(in oklch, #0d1117 55%, white)",
+          "color-mix(in oklch, #0d1117 28%, white)"
+        ]
+      },
+      "developer-panel": {
+        "role": "neutral",
+        "displayName": "Developer Panel",
+        "canonical": "#161b22",
+        "tonalRamp": [
+          "color-mix(in oklch, #161b22 36%, black)",
+          "color-mix(in oklch, #161b22 52%, black)",
+          "color-mix(in oklch, #161b22 68%, black)",
+          "color-mix(in oklch, #161b22 84%, black)",
+          "#161b22",
+          "color-mix(in oklch, #161b22 82%, white)",
+          "color-mix(in oklch, #161b22 55%, white)",
+          "color-mix(in oklch, #161b22 28%, white)"
+        ]
+      },
+      "developer-blue": {
+        "role": "primary",
+        "displayName": "Developer Blue",
+        "canonical": "#4493f8",
+        "tonalRamp": [
+          "color-mix(in oklch, #4493f8 36%, black)",
+          "color-mix(in oklch, #4493f8 52%, black)",
+          "color-mix(in oklch, #4493f8 68%, black)",
+          "color-mix(in oklch, #4493f8 84%, black)",
+          "#4493f8",
+          "color-mix(in oklch, #4493f8 82%, white)",
+          "color-mix(in oklch, #4493f8 55%, white)",
+          "color-mix(in oklch, #4493f8 28%, white)"
+        ]
+      },
+      "developer-green": {
+        "role": "secondary",
+        "displayName": "Developer Green",
+        "canonical": "#3fb950",
+        "tonalRamp": [
+          "color-mix(in oklch, #3fb950 36%, black)",
+          "color-mix(in oklch, #3fb950 52%, black)",
+          "color-mix(in oklch, #3fb950 68%, black)",
+          "color-mix(in oklch, #3fb950 84%, black)",
+          "#3fb950",
+          "color-mix(in oklch, #3fb950 82%, white)",
+          "color-mix(in oklch, #3fb950 55%, white)",
+          "color-mix(in oklch, #3fb950 28%, white)"
+        ]
+      },
+      "developer-red": {
+        "role": "secondary",
+        "displayName": "Developer Red",
+        "canonical": "#f85149",
+        "tonalRamp": [
+          "color-mix(in oklch, #f85149 36%, black)",
+          "color-mix(in oklch, #f85149 52%, black)",
+          "color-mix(in oklch, #f85149 68%, black)",
+          "color-mix(in oklch, #f85149 84%, black)",
+          "#f85149",
+          "color-mix(in oklch, #f85149 82%, white)",
+          "color-mix(in oklch, #f85149 55%, white)",
+          "color-mix(in oklch, #f85149 28%, white)"
+        ]
+      },
+      "night-field": {
+        "role": "neutral",
+        "displayName": "Night Field",
+        "canonical": "#191838",
+        "tonalRamp": [
+          "color-mix(in oklch, #191838 36%, black)",
+          "color-mix(in oklch, #191838 52%, black)",
+          "color-mix(in oklch, #191838 68%, black)",
+          "color-mix(in oklch, #191838 84%, black)",
+          "#191838",
+          "color-mix(in oklch, #191838 82%, white)",
+          "color-mix(in oklch, #191838 55%, white)",
+          "color-mix(in oklch, #191838 28%, white)"
+        ]
+      },
+      "night-violet": {
+        "role": "primary",
+        "displayName": "Night Violet",
+        "canonical": "#8f6de8",
+        "tonalRamp": [
+          "color-mix(in oklch, #8f6de8 36%, black)",
+          "color-mix(in oklch, #8f6de8 52%, black)",
+          "color-mix(in oklch, #8f6de8 68%, black)",
+          "color-mix(in oklch, #8f6de8 84%, black)",
+          "#8f6de8",
+          "color-mix(in oklch, #8f6de8 82%, white)",
+          "color-mix(in oklch, #8f6de8 55%, white)",
+          "color-mix(in oklch, #8f6de8 28%, white)"
+        ]
+      },
+      "night-mint": {
+        "role": "secondary",
+        "displayName": "Night Mint",
+        "canonical": "#75efd0",
+        "tonalRamp": [
+          "color-mix(in oklch, #75efd0 36%, black)",
+          "color-mix(in oklch, #75efd0 52%, black)",
+          "color-mix(in oklch, #75efd0 68%, black)",
+          "color-mix(in oklch, #75efd0 84%, black)",
+          "#75efd0",
+          "color-mix(in oklch, #75efd0 82%, white)",
+          "color-mix(in oklch, #75efd0 55%, white)",
+          "color-mix(in oklch, #75efd0 28%, white)"
+        ]
+      },
+      "night-cream": {
+        "role": "neutral",
+        "displayName": "Night Cream",
+        "canonical": "#f1eddd",
+        "tonalRamp": [
+          "color-mix(in oklch, #f1eddd 36%, black)",
+          "color-mix(in oklch, #f1eddd 52%, black)",
+          "color-mix(in oklch, #f1eddd 68%, black)",
+          "color-mix(in oklch, #f1eddd 84%, black)",
+          "#f1eddd",
+          "color-mix(in oklch, #f1eddd 82%, white)",
+          "color-mix(in oklch, #f1eddd 55%, white)",
+          "color-mix(in oklch, #f1eddd 28%, white)"
+        ]
+      },
+      "broadcast-ink": {
+        "role": "neutral",
+        "displayName": "Broadcast Ink",
+        "canonical": "#161a1c",
+        "tonalRamp": [
+          "color-mix(in oklch, #161a1c 36%, black)",
+          "color-mix(in oklch, #161a1c 52%, black)",
+          "color-mix(in oklch, #161a1c 68%, black)",
+          "color-mix(in oklch, #161a1c 84%, black)",
+          "#161a1c",
+          "color-mix(in oklch, #161a1c 82%, white)",
+          "color-mix(in oklch, #161a1c 55%, white)",
+          "color-mix(in oklch, #161a1c 28%, white)"
+        ]
+      },
+      "broadcast-paper": {
+        "role": "neutral",
+        "displayName": "Broadcast Paper",
+        "canonical": "#f3f0e7",
+        "tonalRamp": [
+          "color-mix(in oklch, #f3f0e7 36%, black)",
+          "color-mix(in oklch, #f3f0e7 52%, black)",
+          "color-mix(in oklch, #f3f0e7 68%, black)",
+          "color-mix(in oklch, #f3f0e7 84%, black)",
+          "#f3f0e7",
+          "color-mix(in oklch, #f3f0e7 82%, white)",
+          "color-mix(in oklch, #f3f0e7 55%, white)",
+          "color-mix(in oklch, #f3f0e7 28%, white)"
+        ]
+      },
+      "broadcast-field": {
+        "role": "primary",
+        "displayName": "Broadcast Field",
+        "canonical": "#285c69",
+        "tonalRamp": [
+          "color-mix(in oklch, #285c69 36%, black)",
+          "color-mix(in oklch, #285c69 52%, black)",
+          "color-mix(in oklch, #285c69 68%, black)",
+          "color-mix(in oklch, #285c69 84%, black)",
+          "#285c69",
+          "color-mix(in oklch, #285c69 82%, white)",
+          "color-mix(in oklch, #285c69 55%, white)",
+          "color-mix(in oklch, #285c69 28%, white)"
+        ]
+      },
+      "broadcast-live": {
+        "role": "secondary",
+        "displayName": "Broadcast Live",
+        "canonical": "#f04d45",
+        "tonalRamp": [
+          "color-mix(in oklch, #f04d45 36%, black)",
+          "color-mix(in oklch, #f04d45 52%, black)",
+          "color-mix(in oklch, #f04d45 68%, black)",
+          "color-mix(in oklch, #f04d45 84%, black)",
+          "#f04d45",
+          "color-mix(in oklch, #f04d45 82%, white)",
+          "color-mix(in oklch, #f04d45 55%, white)",
+          "color-mix(in oklch, #f04d45 28%, white)"
+        ]
+      },
+      "broadcast-score": {
+        "role": "secondary",
+        "displayName": "Broadcast Score",
+        "canonical": "#ffdd52",
+        "tonalRamp": [
+          "color-mix(in oklch, #ffdd52 36%, black)",
+          "color-mix(in oklch, #ffdd52 52%, black)",
+          "color-mix(in oklch, #ffdd52 68%, black)",
+          "color-mix(in oklch, #ffdd52 84%, black)",
+          "#ffdd52",
+          "color-mix(in oklch, #ffdd52 82%, white)",
+          "color-mix(in oklch, #ffdd52 55%, white)",
+          "color-mix(in oklch, #ffdd52 28%, white)"
+        ]
+      },
+      "tactics-ground": {
+        "role": "neutral",
+        "displayName": "Tactics Ground",
+        "canonical": "#080815",
+        "tonalRamp": [
+          "color-mix(in oklch, #080815 36%, black)",
+          "color-mix(in oklch, #080815 52%, black)",
+          "color-mix(in oklch, #080815 68%, black)",
+          "color-mix(in oklch, #080815 84%, black)",
+          "#080815",
+          "color-mix(in oklch, #080815 82%, white)",
+          "color-mix(in oklch, #080815 55%, white)",
+          "color-mix(in oklch, #080815 28%, white)"
+        ]
+      },
+      "tactics-chassis": {
+        "role": "neutral",
+        "displayName": "Tactics Chassis",
+        "canonical": "#171329",
+        "tonalRamp": [
+          "color-mix(in oklch, #171329 36%, black)",
+          "color-mix(in oklch, #171329 52%, black)",
+          "color-mix(in oklch, #171329 68%, black)",
+          "color-mix(in oklch, #171329 84%, black)",
+          "#171329",
+          "color-mix(in oklch, #171329 82%, white)",
+          "color-mix(in oklch, #171329 55%, white)",
+          "color-mix(in oklch, #171329 28%, white)"
+        ]
+      },
+      "tactics-purple": {
+        "role": "primary",
+        "displayName": "Tactics Purple",
+        "canonical": "#7949ba",
+        "tonalRamp": [
+          "color-mix(in oklch, #7949ba 36%, black)",
+          "color-mix(in oklch, #7949ba 52%, black)",
+          "color-mix(in oklch, #7949ba 68%, black)",
+          "color-mix(in oklch, #7949ba 84%, black)",
+          "#7949ba",
+          "color-mix(in oklch, #7949ba 82%, white)",
+          "color-mix(in oklch, #7949ba 55%, white)",
+          "color-mix(in oklch, #7949ba 28%, white)"
+        ]
+      },
+      "tactics-orange": {
+        "role": "secondary",
+        "displayName": "Tactics Orange",
+        "canonical": "#f08a22",
+        "tonalRamp": [
+          "color-mix(in oklch, #f08a22 36%, black)",
+          "color-mix(in oklch, #f08a22 52%, black)",
+          "color-mix(in oklch, #f08a22 68%, black)",
+          "color-mix(in oklch, #f08a22 84%, black)",
+          "#f08a22",
+          "color-mix(in oklch, #f08a22 82%, white)",
+          "color-mix(in oklch, #f08a22 55%, white)",
+          "color-mix(in oklch, #f08a22 28%, white)"
+        ]
+      },
+      "tactics-aqua": {
+        "role": "tertiary",
+        "displayName": "Tactics Aqua",
+        "canonical": "#43d5d1",
+        "tonalRamp": [
+          "color-mix(in oklch, #43d5d1 36%, black)",
+          "color-mix(in oklch, #43d5d1 52%, black)",
+          "color-mix(in oklch, #43d5d1 68%, black)",
+          "color-mix(in oklch, #43d5d1 84%, black)",
+          "#43d5d1",
+          "color-mix(in oklch, #43d5d1 82%, white)",
+          "color-mix(in oklch, #43d5d1 55%, white)",
+          "color-mix(in oklch, #43d5d1 28%, white)"
+        ]
+      },
+      "tactics-grass": {
+        "role": "tertiary",
+        "displayName": "Tactics Grass",
+        "canonical": "#396f38",
+        "tonalRamp": [
+          "color-mix(in oklch, #396f38 36%, black)",
+          "color-mix(in oklch, #396f38 52%, black)",
+          "color-mix(in oklch, #396f38 68%, black)",
+          "color-mix(in oklch, #396f38 84%, black)",
+          "#396f38",
+          "color-mix(in oklch, #396f38 82%, white)",
+          "color-mix(in oklch, #396f38 55%, white)",
+          "color-mix(in oklch, #396f38 28%, white)"
+        ]
+      },
+      "tactics-water": {
+        "role": "tertiary",
+        "displayName": "Tactics Water",
+        "canonical": "#176287",
+        "tonalRamp": [
+          "color-mix(in oklch, #176287 36%, black)",
+          "color-mix(in oklch, #176287 52%, black)",
+          "color-mix(in oklch, #176287 68%, black)",
+          "color-mix(in oklch, #176287 84%, black)",
+          "#176287",
+          "color-mix(in oklch, #176287 82%, white)",
+          "color-mix(in oklch, #176287 55%, white)",
+          "color-mix(in oklch, #176287 28%, white)"
+        ]
+      },
+      "tactics-text": {
+        "role": "neutral",
+        "displayName": "Tactics Text",
+        "canonical": "#f2ebdf",
+        "tonalRamp": [
+          "color-mix(in oklch, #f2ebdf 36%, black)",
+          "color-mix(in oklch, #f2ebdf 52%, black)",
+          "color-mix(in oklch, #f2ebdf 68%, black)",
+          "color-mix(in oklch, #f2ebdf 84%, black)",
+          "#f2ebdf",
+          "color-mix(in oklch, #f2ebdf 82%, white)",
+          "color-mix(in oklch, #f2ebdf 55%, white)",
+          "color-mix(in oklch, #f2ebdf 28%, white)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Broadcast Display",
+        "purpose": "Provider names, score data, Battle Desk, and terminal verdict moments."
+      },
+      "headline": {
+        "displayName": "Friendly Hardware Headline",
+        "purpose": "Classic and Night arena headlines."
+      },
+      "body": {
+        "displayName": "Operational Body",
+        "purpose": "Developer Dashboard and Broadcast operational copy."
+      },
+      "label": {
+        "displayName": "Bitmap Label",
+        "purpose": "16-Bit Tactics chrome, nodes, commands, detail, and results."
+      },
+      "terminal": {
+        "displayName": "Terminal Output",
+        "purpose": "Full redacted output in recorded terminal order."
+      }
+    },
+    "shadows": [
+      {
+        "name": "classic-card-lift",
+        "value": "0 9px 18px rgb(23 48 57 / 14%)",
+        "purpose": "Lift Classic cards from the paper field."
+      },
+      {
+        "name": "night-hardware-drop",
+        "value": "0 12px 0 rgb(0 0 0 / 26%)",
+        "purpose": "Give Night cream cards a tactile hardware edge."
+      },
+      {
+        "name": "broadcast-provider-lift",
+        "value": "0 22px 45px rgb(0 0 0 / 28%)",
+        "purpose": "Separate provider portraits from the live field."
+      },
+      {
+        "name": "tactics-node-lift",
+        "value": "inset -5px -5px 0 #080611, 0 6px 14px rgb(2 2 10 / 58%)",
+        "purpose": "Create a short pixel bevel and structural node lift."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state-change",
+        "value": "220ms cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "HP width changes and damage response."
+      },
+      {
+        "name": "tactics-route",
+        "value": "900ms steps(3, end) infinite",
+        "purpose": "Animate only the latest authoritative route."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0.01ms",
+        "purpose": "Collapse animation and transitions while retaining textual and numeric cues."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "shared-detail-stack",
+        "value": "1180px"
+      },
+      {
+        "name": "alternate-renderer-stack",
+        "value": "980px"
+      },
+      {
+        "name": "shared-mobile",
+        "value": "760px"
+      },
+      {
+        "name": "compact-tactics-dock",
+        "value": "700px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Theme Option",
+      "kind": "button",
+      "refersTo": "theme-option",
+      "description": "A compact material preview with explicit selected and keyboard-focus states.",
+      "html": "<button class=\"ds-theme-option\" type=\"button\" aria-label=\"16-Bit Tactics\" aria-pressed=\"true\"><span></span></button>",
+      "css": ".ds-theme-option { display:grid; place-items:center; width:28px; height:28px; padding:0; border:1px solid #b8aecb; border-radius:8px; color:#f2ebdf; background:transparent; cursor:pointer; } .ds-theme-option span { width:13px; height:13px; border:2px solid #43d5d1; border-radius:1px; background:linear-gradient(135deg,#7949ba 0 44%,#396f38 44% 58%,#f08a22 58%); } .ds-theme-option[aria-pressed=\"true\"] { outline:2px solid currentColor; outline-offset:2px; } .ds-theme-option:hover { background:#211a38; } .ds-theme-option:focus-visible { outline:2px solid #43d5d1; outline-offset:2px; }"
+    },
+    {
+      "name": "Developer Card",
+      "kind": "card",
+      "refersTo": "developer-card",
+      "description": "A quiet dense dashboard panel for normalized contestant facts.",
+      "html": "<article class=\"ds-developer-card\"><strong>Codex</strong><span>87 HP · 12/12 checks</span></article>",
+      "css": ".ds-developer-card { display:grid; gap:6px; padding:18px; border:1px solid #30363d; border-radius:6px; color:#f0f3f6; background:#161b22; font:400 14px/1.5 \"Arena Space\",sans-serif; } .ds-developer-card span { color:#9da7b3; } .ds-developer-card:hover { background:#1c232d; } .ds-developer-card:focus-within { outline:2px solid #4493f8; outline-offset:2px; }"
+    },
+    {
+      "name": "Classic Action",
+      "kind": "button",
+      "description": "A tactile yellow hardware control with strong Pocket ink framing.",
+      "html": "<button class=\"ds-classic-action\" type=\"button\">Send</button>",
+      "css": ".ds-classic-action { border:3px solid #173039; border-radius:8px; padding:8px 11px; color:#173039; background:#ffe86a; font:700 11px \"Arena Fredoka\",ui-rounded,sans-serif; cursor:pointer; } .ds-classic-action:hover { background:#f9ffe8; } .ds-classic-action:active { transform:translateY(1px); } .ds-classic-action:focus-visible { outline:2px solid #168894; outline-offset:2px; }"
+    },
+    {
+      "name": "Broadcast Scorebug",
+      "kind": "custom",
+      "description": "A hard editorial comparison bar with a live central call.",
+      "html": "<div class=\"ds-scorebug\"><div><b>CODEX · 87</b><span>12 checks passing</span></div><strong>−15 HP</strong><div><b>CLAUDE · 72</b><span>11 checks passing</span></div></div>",
+      "css": ".ds-scorebug { display:grid; grid-template-columns:1fr auto 1fr; border:4px solid #fff; color:#fff; background:#161a1c; font-family:\"Arena Space\",sans-serif; } .ds-scorebug div { padding:14px 18px; } .ds-scorebug div:last-child { text-align:right; } .ds-scorebug b { font:900 26px \"Arena Barlow\",sans-serif; } .ds-scorebug span { display:block; color:#bfc8ca; font-size:10px; text-transform:uppercase; } .ds-scorebug > strong { display:grid; place-items:center; padding:0 20px; background:#f04d45; text-transform:uppercase; }"
+    },
+    {
+      "name": "Tactics Inspect Command",
+      "kind": "button",
+      "refersTo": "tactics-command",
+      "description": "An angular cartridge command opening full output and evidence.",
+      "html": "<button class=\"ds-tactics-command\" type=\"button\"><span class=\"ds-command-mark\">AA</span><span><strong>Inspect Codex</strong><small>Full output and evidence</small></span></button>",
+      "css": ".ds-tactics-command { display:grid; grid-template-columns:42px minmax(0,1fr); gap:10px; align-items:center; border:4px double #7949ba; border-radius:1px; padding:8px 11px; color:#f2ebdf; background:#080815; box-shadow:0 4px 10px rgb(2 2 10 / 46%); font:400 10px/1.35 \"Arena Silkscreen\",ui-monospace,monospace; text-align:left; text-transform:uppercase; clip-path:polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px); cursor:pointer; } .ds-command-mark { display:grid; place-items:center; width:40px; height:40px; background:#211a38; } .ds-tactics-command span:last-child { display:grid; min-width:0; } .ds-tactics-command small { color:#b8aecb; font-size:8px; } .ds-tactics-command:hover { background:#211a38; } .ds-tactics-command:focus-visible { outline:2px solid #43d5d1; outline-offset:2px; }"
+    },
+    {
+      "name": "Tactics Verification Node",
+      "kind": "custom",
+      "description": "A semantic neutral node for the current verification phase.",
+      "html": "<button class=\"ds-tactics-node\" type=\"button\" disabled><span aria-hidden=\"true\">◆</span><strong>VERIFY</strong><small>ROUND 2</small></button>",
+      "css": ".ds-tactics-node { display:grid; justify-items:center; width:136px; border:4px solid #43d5d1; border-radius:1px; padding:9px 8px 8px; color:#f2ebdf; background:#080815; box-shadow:inset -5px -5px 0 #080611,0 6px 14px rgb(2 2 10 / 58%); font:400 10px/1.35 \"Arena Silkscreen\",ui-monospace,monospace; text-transform:uppercase; clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px); opacity:1; } .ds-tactics-node > span { color:#43d5d1; font-size:42px; } .ds-tactics-node small { color:#b8aecb; font-size:8px; }"
+    },
+    {
+      "name": "Full Terminal Output",
+      "kind": "custom",
+      "description": "The untruncated terminal-order source reached from Inspect.",
+      "html": "<pre class=\"ds-terminal\"><span>› running focused tests\\n</span><span class=\"ds-stderr\">failure: expected sealed envelope\\n</span></pre>",
+      "css": ".ds-terminal { min-height:180px; max-height:360px; overflow:auto; margin:0; border:1px solid #40335f; border-radius:0; padding:16px; color:#f2ebdf; background:#080815; font:400 13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap:anywhere; tab-size:2; white-space:pre-wrap; word-break:break-word; } .ds-terminal .ds-stderr { color:#ff8b90; } .ds-terminal:focus-visible { outline:2px solid #43d5d1; outline-offset:2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Five physical views, one recorded truth",
+    "overview": "Agent Arena is an Operate-mode desktop observatory for an adversarial coding run. Five shipped renderers—Classic Shell, Developer Dashboard, Night Edition, Live Arena Broadcast, and 16-Bit Tactics—present the same normalized dashboard state through materially different operator worlds. Theme choice changes composition and atmosphere, never the underlying engineering record.\n\nThe current signature direction is the original 16-Bit Tactics operator console: a midnight-violet cartridge chassis surrounding a tactical terrain field where authoritative attacks, repairs, and verification are visible as routes and nodes. Its approved direction seed is `71186a7d`. This is still an engineering tool: playful competition language may frame the evidence, but provider identity, HP, checks, coverage, failures, warnings, and result authority stay explicit.",
+    "keyCharacteristics": [
+      "Five distinct physical compositions over one `DashboardState` projection.",
+      "Persistent live status, round navigation, theme choice, and cancellation.",
+      "Overview screens summarize; contestant detail preserves full terminal-order output and the complete evidence ledger.",
+      "Responsive layouts retain actionable inspection and textual state cues.",
+      "Locally bundled type and original generated bitmaps keep the application self-contained."
+    ],
+    "rules": [
+      {
+        "name": "Recorded Truth",
+        "body": "A renderer may change composition and language, but it must never invent a contestant, round, check, attack, repair, failure, coverage result, terminal outcome, or recommendation.",
+        "section": "overview"
+      },
+      {
+        "name": "Summary-to-Source",
+        "body": "Arena overviews use normalized summaries and recent evidence. The Inspect action is the path to the untruncated, redacted output stream in recorded terminal order; do not turn an overview into a second terminal or trim the detail source.",
+        "section": "overview"
+      },
+      {
+        "name": "Family Integrity",
+        "body": "Do not recolor one renderer into another. Classic and Night are rounded hardware, Developer Dashboard is a conventional dense tool, Broadcast is an editorial live feed, and Tactics is an angular cartridge console with a map-first topology.",
+        "section": "colors"
+      },
+      {
+        "name": "Semantic Route",
+        "body": "In 16-Bit Tactics, attack, repair, and verify are not decorative line colors. The legend, route class, latest-state treatment, and textual footer must agree with recorded state.",
+        "section": "colors"
+      },
+      {
+        "name": "Result Contrast",
+        "body": "Results and fighter detail consume each family's semantic `--result-*` and `--detail-*` tokens. Winner emphasis comes from surface and border changes without reducing the readability of authoritative values.",
+        "section": "colors"
+      },
+      {
+        "name": "Role Separation",
+        "body": "Do not use the broadcast face for body copy or Silkscreen for long terminal output. Display faces provide identity; operational and terminal faces carry evidence.",
+        "section": "typography"
+      },
+      {
+        "name": "Metaphor-First",
+        "body": "The renderer's cards, feed, or tactical map remain the first-viewport anchor; operator controls stay immediately reachable without becoming the visual subject.",
+        "section": "layout"
+      },
+      {
+        "name": "Compact Inspect",
+        "body": "On narrow Tactics screens, never hide inspection behind map nodes or a menu. Keep the two explicit provider-labeled Inspect commands in the fixed dock.",
+        "section": "layout"
+      },
+      {
+        "name": "Structural Depth",
+        "body": "A shadow or bevel must explain a card, chassis, provider disc, node, or operator control. Do not apply depth to arbitrary prose.",
+        "section": "elevation"
+      },
+      {
+        "name": "Silhouette",
+        "body": "Preserve geometry with palette: rounded Pocket hardware, compact Developer panels, hard Broadcast editorial framing, and angular pixel-cartridge Tactics.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do derive every label, quantity, route, node state, and result from normalized dashboard state.",
+      "Do keep theme selection, connection, round context, and cancellation reachable in the first viewport.",
+      "Do use the 16-Bit Tactics legend and textual route footer alongside color and stepped motion.",
+      "Do preserve overview summaries and route Inspect to full terminal-order output and complete ledgers.",
+      "Do keep generated asset provenance sidecars adjacent to every shipping tactics bitmap.",
+      "Do let each renderer collapse according to its own composition, including the fixed compact Tactics inspect dock."
+    ],
+    "donts": [
+      "Don't reduce Developer Dashboard, Broadcast, or Tactics to palette swaps of Classic Shell.",
+      "Don't copy third-party game characters, sprites, logos, maps, or UI, and don't use the approved comp itself as shipping production UI.",
+      "Don't bake operational state into terrain, sprite, or bezel bitmaps.",
+      "Don't imply that replay controls execution or that recorded rounds can be rewound, paused, or rerun.",
+      "Don't let display preferences affect scoring, artifacts, recovery, or any other source of battle authority.",
+      "Don't hide provider identity, checks, failures, warnings, or coverage confidence behind competition language.",
+      "Don't animate away the only evidence of damage, repair, verification, selection, or connection state."
+    ]
+  }
+}

@@ -2,24 +2,28 @@ import { contextBridge, ipcRenderer } from "electron";
 
 type ArenaTheme =
   | "classic-shell"
-  | "sticker-league"
+  | "developer-dashboard"
   | "night-edition"
   | "live-arena-broadcast"
-  | "monster-battle";
+  | "retro-tactics";
 
 const themes = new Set<ArenaTheme>([
   "classic-shell",
-  "sticker-league",
+  "developer-dashboard",
   "night-edition",
   "live-arena-broadcast",
-  "monster-battle",
+  "retro-tactics",
 ]);
 const initialArgument = process.argv.find((entry) =>
   entry.startsWith("--agent-arena-theme="),
 );
 const initialValue = initialArgument?.split("=")[1];
 const initialTheme =
-  initialValue === "evidence-deck" ? "monster-battle" : initialValue;
+  initialValue === "sticker-league"
+    ? "developer-dashboard"
+    : initialValue === "evidence-deck" || initialValue === "monster-battle"
+      ? "retro-tactics"
+      : initialValue;
 let currentTheme: ArenaTheme = themes.has(initialTheme as ArenaTheme)
   ? (initialTheme as ArenaTheme)
   : "classic-shell";

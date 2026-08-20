@@ -52,27 +52,37 @@ describe("arena themes", () => {
 
   it("persists atomically without leaving temporary files", async () => {
     const directory = await tempDirectory();
-    await writeThemePreference(directory, "monster-battle");
-    expect(await readThemePreference(directory)).toBe("monster-battle");
+    await writeThemePreference(directory, "retro-tactics");
+    expect(await readThemePreference(directory)).toBe("retro-tactics");
     expect(await readdir(directory)).toEqual(["arena-theme.json"]);
   });
 
-  it("migrates the retired evidence deck preference", async () => {
+  it("migrates retired visual theme preferences", async () => {
     const directory = await tempDirectory();
     await writeFile(
       themePreferencePath(directory),
       JSON.stringify({ theme: "evidence-deck" }),
     );
-    expect(await readThemePreference(directory)).toBe("monster-battle");
+    expect(await readThemePreference(directory)).toBe("retro-tactics");
+    await writeFile(
+      themePreferencePath(directory),
+      JSON.stringify({ theme: "monster-battle" }),
+    );
+    expect(await readThemePreference(directory)).toBe("retro-tactics");
+    await writeFile(
+      themePreferencePath(directory),
+      JSON.stringify({ theme: "sticker-league" }),
+    );
+    expect(await readThemePreference(directory)).toBe("developer-dashboard");
   });
 
   it("exposes only getTheme and setTheme and keeps a failed save in session", async () => {
     const persist = vi.fn().mockRejectedValue(new Error("disk full"));
     const bridge = createArenaThemeBridge("night-edition", persist);
     expect(Object.keys(bridge).sort()).toEqual(["getTheme", "setTheme"]);
-    await expect(bridge.setTheme("sticker-league")).rejects.toThrow(
+    await expect(bridge.setTheme("developer-dashboard")).rejects.toThrow(
       "disk full",
     );
-    expect(bridge.getTheme()).toBe("sticker-league");
+    expect(bridge.getTheme()).toBe("developer-dashboard");
   });
 });

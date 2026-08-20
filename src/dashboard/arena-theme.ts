@@ -1,9 +1,9 @@
 export const ARENA_THEMES = [
   "classic-shell",
-  "sticker-league",
+  "developer-dashboard",
   "night-edition",
   "live-arena-broadcast",
-  "monster-battle",
+  "retro-tactics",
 ] as const;
 
 export type ArenaTheme = (typeof ARENA_THEMES)[number];
@@ -18,7 +18,10 @@ export function isArenaTheme(value: unknown): value is ArenaTheme {
 }
 
 export function normalizeArenaTheme(value: unknown): ArenaTheme {
-  if (value === "evidence-deck") return "monster-battle";
+  if (value === "sticker-league") return "developer-dashboard";
+  if (value === "evidence-deck" || value === "monster-battle") {
+    return "retro-tactics";
+  }
   return isArenaTheme(value) ? value : DEFAULT_ARENA_THEME;
 }
 

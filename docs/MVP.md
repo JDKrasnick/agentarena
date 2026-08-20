@@ -405,8 +405,8 @@ health and checks, coverage, run integrity, completed rounds, landed defects,
 verified repairs, terminal outcome, evidence links, and controls to review the
 recorded battle or finish the session.
 
-The window includes Classic Shell, Sticker League, Night Edition, Live Arena
-Broadcast, and Monster Battle themes. Classic Shell is used until a valid local
+The window includes Classic Shell, Developer Dashboard, Night Edition, Live
+Arena Broadcast, and 16-Bit Tactics themes. Classic Shell is used until a valid local
 selection exists. The always-available swatch picker changes renderer families
 without reconnecting the event stream or resetting fighter, replay, or result
 navigation. Electron loads the preference before React mounts and stores it
@@ -416,10 +416,13 @@ shows a non-blocking warning. This preference is excluded from runtime schemas,
 battle records, artifacts, scoring, project configuration, and recovery hashes.
 Ink and plain CLI behavior is unchanged.
 
-Monster Battle uses original code-native terrain, elemental provider summons,
-status plates, turn dialogue, inspect controls, and an evidence ticker. It does
-not bundle third-party game characters, logos, sprites, or screenshots. Stored
-`evidence-deck` preferences migrate to `monster-battle`.
+Developer Dashboard is a conventional dark observability renderer with the
+shared semantic three-column structure. 16-Bit Tactics uses a code-native tile
+field, tactical nodes, authoritative attack and repair routes, opposing status
+bars, inspection commands, and an evidence channel. It does not bundle
+third-party game characters, logos, sprites, or screenshots. Stored
+`sticker-league` preferences migrate to `developer-dashboard`; `evidence-deck`
+and `monster-battle` preferences migrate to `retro-tactics`.
 
 ### Permission and authentication plan
 

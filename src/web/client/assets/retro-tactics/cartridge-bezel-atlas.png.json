@@ -1,0 +1,31 @@
+{
+  "asset": "cartridge-bezel-atlas.png",
+  "status": "shipping",
+  "provenance": {
+    "generator": "OpenAI built-in image generation tool",
+    "mode": "generate from visual reference with local chroma-key removal",
+    "generated_at": "2026-08-20",
+    "reference": ".impeccable/mocks/retro-tactics-b-operator-console.png",
+    "reference_role": "visual material and palette reference only; no UI composition, logo, character, or exact ornament copied",
+    "originality": "AI-generated original cartridge framing ornaments; no third-party game or franchise assets"
+  },
+  "prompt": "Use case: stylized-concept. Asset type: compact shipping 16-bit cartridge bezel ornament atlas for an Electron dashboard. Input image: approved Agent Arena operator-console comp, visual reference only for its original late-16-bit pixel-metal material language and violet, aqua, orange, slate palette; do not reproduce its UI, text, logos, characters, or exact composition. Create a precise square sprite atlas on a perfectly flat solid #00ff00 chroma-key background for background removal. The background must be one uniform color with no shadows, gradients, texture, reflections, floor plane, or lighting variation. Arrange fully separated opaque framing ornaments in a strict 4-column by 4-row grid with generous transparent-safe padding: four 90-degree segmented metal corner pieces (violet, aqua, orange, neutral slate); four short straight edge segments matching those colors with tiny pixel seams; four individual rivets/bolt caps in varied square and round profiles; four small weathered pixel-panel seam or notch ornaments. Consistent thickness and orthographic front-facing projection, crisp integer-pixel steps, hard 1–3 pixel midnight-violet shadows contained inside each sprite, subtle chipped metal and weathered cartridge-panel texture. Every element must work as a repeatable CSS border/corner ornament for matchup bars, round rails, and command framing at small UI sizes. No letters, numbers, text, provider marks, logos, people, creatures, weapons, game franchise imagery, large panels, glow, blur, gradients, antialiased vector styling, cast shadows, contact shadows, watermark, or #00ff00 inside the sprites. Original assets only.",
+  "postprocessing": [
+    "Removed flat #00ff00 chroma background with the imagegen skill helper",
+    "Soft matte thresholds: transparent 45, opaque 75; edge despill enabled"
+  ],
+  "dimensions": {
+    "width": 1254,
+    "height": 1254,
+    "alpha": true
+  },
+  "layout": {
+    "columns": 4,
+    "rows": 4,
+    "row_1": "violet, aqua, orange, and neutral slate 90-degree corner ornaments",
+    "row_2": "matching short horizontal edge segments",
+    "row_3": "square and round rivet or bolt-cap ornaments",
+    "row_4": "weathered seam, notch, and panel-junction ornaments"
+  },
+  "intended_usage": "Clip individual atlas regions into decorative pseudo-elements around matchup bars, round rails, and command frames. Rotate corner and seam sprites where needed; repeat or stretch only the straight middle edge interiors. Keep controls, labels, borders, focus rings, and state semantic in HTML/CSS. Apply image-rendering: pixelated."
+}
