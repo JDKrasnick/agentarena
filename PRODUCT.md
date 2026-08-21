@@ -684,6 +684,12 @@ container with production credentials absent. Issue #68 owns a strict execution
 backend that can make filesystem, network, credential, process, and resource
 decisions technically enforceable.
 
+Native provider and repository execution is a required high-risk advisory
+capability. The consolidated plan names its ambient filesystem, process
+environment, network, credential, and configured-integration exposure. `--yes`
+displays the same plan and warning before recording non-interactive approval; it
+does not turn acknowledgement into confinement.
+
 An agent may declare extra capabilities for an integration attack. A newly
 denied optional request becomes `capability_denied` and causes no damage or
 recoil. Provisioning failure after approval is `infrastructure_error`. Reusing a

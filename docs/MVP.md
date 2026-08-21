@@ -503,6 +503,12 @@ must display this distinction and cannot claim that an advisory denial is
 enforced. Users handling sensitive repositories should run Agent Arena from a
 sanitized account or external container and keep production credentials absent.
 
+Native provider and repository execution is represented as a required,
+high-risk advisory capability whose scope names the ambient filesystem, process
+environment, network, and configured provider integrations. `--yes` displays
+the same consolidated plan and native-runtime warning before it records
+non-interactive approval.
+
 Both contestants receive the same post-approval capability manifest. An attack
 may request an additional optional capability, but it is paused until a policy
 decision is available:

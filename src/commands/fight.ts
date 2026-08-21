@@ -33,8 +33,7 @@ import {
 async function approvePermissionPlan(
   config: Awaited<ReturnType<typeof loadFightConfig>>,
 ) {
-  if (config.permissionMode !== "confirm" || config.nonInteractiveApproval)
-    return config;
+  if (config.permissionMode !== "confirm") return config;
   stdout.write("Agent Arena permission plan\n");
   for (const request of discoverCapabilities(config)) {
     stdout.write(
@@ -42,8 +41,12 @@ async function approvePermissionPlan(
     );
   }
   stdout.write(
-    "\nAdvisory restrictions are not OS-enforced. Use a sanitized account when the host has sensitive credentials.\n",
+    "\nNative subprocesses are not OS-confined. They may inherit access to the current account's filesystem, environment, network, credentials, and configured provider integrations, including MCP. Use a sanitized account or external container when the host has sensitive authority.\n",
   );
+  if (config.nonInteractiveApproval) {
+    stdout.write("Permission plan approved noninteractively via --yes.\n");
+    return config;
+  }
   const readline = createInterface({ input: stdin, output: stdout });
   try {
     const answer = await readline.question(

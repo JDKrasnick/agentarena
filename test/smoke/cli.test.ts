@@ -39,7 +39,7 @@ describe("built CLI smoke flow", () => {
     expect(help.stdout).toContain("review");
     expect(help.stdout).toContain("defend");
     expect(help.stdout).toContain("resume");
-    await execa(
+    const fight = await execa(
       process.execPath,
       [
         cli,
@@ -54,6 +54,16 @@ describe("built CLI smoke flow", () => {
         "--yes",
       ],
       { cwd: repositoryRoot, env, timeout: 60_000 },
+    );
+    expect(fight.stdout).toContain("Agent Arena permission plan");
+    expect(fight.stdout).toContain(
+      "native_subprocess_execution: required, high risk, both, advisory",
+    );
+    expect(fight.stdout).toContain(
+      "configured provider integrations, including MCP",
+    );
+    expect(fight.stdout).toContain(
+      "Permission plan approved noninteractively via --yes.",
     );
     const runsRoot = path.join(repositoryRoot, ".agent-arena", "runs");
     const [runId] = await readdir(runsRoot);
