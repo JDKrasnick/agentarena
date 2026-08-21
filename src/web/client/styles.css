@@ -5088,6 +5088,7 @@ main {
 }
 .lab-workspace {
   display: grid;
+  min-width: 0;
   grid-template-columns: minmax(210px, 0.75fr) minmax(390px, 1.5fr) minmax(
       210px,
       0.75fr
@@ -5459,6 +5460,24 @@ main {
   background: #075f5d;
 }
 
+@media (max-width: 1340px) {
+  .test-lab {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+  .lab-samples {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    border-top: 1px solid var(--lab-rule);
+    border-left: 0;
+  }
+  .lab-samples header,
+  .lab-samples > p {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (max-width: 1200px) {
   .night-transit {
     grid-template-columns: 180px minmax(0, 1fr);
@@ -5476,23 +5495,6 @@ main {
   .transit-activity header,
   .transit-activity > p,
   .transit-activity footer {
-    grid-column: 1 / -1;
-  }
-  .test-lab {
-    grid-template-columns: 220px minmax(0, 1fr);
-  }
-  .lab-samples {
-    grid-column: 1 / -1;
-    border-top: 1px solid var(--lab-rule);
-    border-left: 0;
-  }
-  .lab-samples {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-  }
-  .lab-samples header,
-  .lab-samples > p {
     grid-column: 1 / -1;
   }
   .developer-console {
