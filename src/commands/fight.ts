@@ -18,11 +18,30 @@ import {
 } from "../core/types.js";
 import type { RunState } from "../core/types.js";
 import { discoverCapabilities } from "../permissions/policy.js";
+import { ArenaBattleControl } from "../observability/control.js";
+import type { ArenaObserver } from "../observability/events.js";
+import type { WebDashboard } from "../dashboard/web-server.js";
+import type { DesktopDashboardWindow } from "../dashboard/desktop-window.js";
 import {
   probeProviderConnectivity,
   TransportRecoverySchema,
   withReplacementRunId,
 } from "../recovery/transport.js";
+
+export type DisplayMode =
+  "auto" | "window" | "dashboard" | "terminal" | "plain";
+
+export type ActiveDisplayMode = "window" | "terminal" | "plain";
+
+export function resolveDisplayMode(
+  display: DisplayMode,
+  launchWindow: boolean,
+  interactive: boolean,
+): ActiveDisplayMode {
+  if (display === "terminal" || display === "plain") return display;
+  if (launchWindow) return "window";
+  return interactive ? "terminal" : "plain";
+}
 
 async function approvePermissionPlan(
   config: Awaited<ReturnType<typeof loadFightConfig>>,
@@ -53,6 +72,10 @@ async function approvePermissionPlan(
 
 function createArena(
   config: Awaited<ReturnType<typeof loadFightConfig>>,
+  observability?: {
+    observer?: ArenaObserver;
+    battleControl?: ArenaBattleControl;
+  },
 ): Arena {
   const adapters = Object.fromEntries(
     config.contestants.map((contestant) => [
@@ -60,12 +83,19 @@ function createArena(
       createProviderAdapter(contestant.provider, contestant.model),
     ]),
   );
+  const observer = observability?.observer;
   return new Arena({
     adapters,
     adapterFactory: (contestant) =>
       createProviderAdapter(contestant.provider, contestant.model),
     verifier: new CommandAttackVerifier(config.judge),
-    onProgress: (message) => stdout.write(`${message}\n`),
+    onProgress: observer
+      ? () => undefined
+      : (message) => stdout.write(`${message}\n`),
+    ...(observer ? { observer } : {}),
+    ...(observability?.battleControl
+      ? { battleControl: observability.battleControl }
+      : {}),
   });
 }
 
@@ -85,11 +115,62 @@ export function exitCodeForStatus(status: RunState["status"]): number {
 
 export async function runFight(
   overrides: CliConfigOverrides,
+  display: DisplayMode = "auto",
+  launchWindow = true,
 ): Promise<RunCommandResult> {
   const config = await approvePermissionPlan(await loadFightConfig(overrides));
-  const arena = createArena(config);
+  const interactive = Boolean(stdout.isTTY && stdin.isTTY);
+  const activeDisplay = resolveDisplayMode(display, launchWindow, interactive);
+  const useDesktopDashboard = activeDisplay === "window";
+  const useTerminalDashboard = activeDisplay === "terminal";
+  if (useTerminalDashboard && !interactive) {
+    throw new Error(
+      "--display terminal requires an interactive TTY; use --display plain for redirected output or CI",
+    );
+  }
   const controller = new AbortController();
-  const cancel = (): void => controller.abort(new Error("Interrupted"));
+  const control = new ArenaBattleControl(controller);
+  let dashboard: { unmount(): void } | undefined;
+  let webDashboard: WebDashboard | undefined;
+  let desktopWindow: DesktopDashboardWindow | undefined;
+  let observer: ArenaObserver | undefined;
+  if (useDesktopDashboard) {
+    const [{ startWebDashboard }, { startDesktopDashboardWindow }] =
+      await Promise.all([
+        import("../dashboard/web-server.js"),
+        import("../dashboard/desktop-window.js"),
+      ]);
+    webDashboard = await startWebDashboard(control);
+    try {
+      desktopWindow = startDesktopDashboardWindow(webDashboard.url, {
+        onUserClose: () => {
+          control.cancel(new Error("Agent Arena window closed"));
+          void webDashboard?.close();
+        },
+      });
+    } catch (error) {
+      await webDashboard.close();
+      throw error;
+    }
+    observer = webDashboard.observer;
+    stdout.write("Agent Arena window opened.\n");
+  } else if (useTerminalDashboard) {
+    const [{ DashboardObserver }, { startDashboard }] = await Promise.all([
+      import("../dashboard/state.js"),
+      import("../dashboard/app.js"),
+    ]);
+    const dashboardObserver = new DashboardObserver();
+    observer = dashboardObserver;
+    dashboard = startDashboard(dashboardObserver, control);
+  }
+  const arena = createArena(config, {
+    ...(observer ? { observer } : {}),
+    battleControl: control,
+  });
+  const cancel = (): void => {
+    control.cancel(new Error("Interrupted"));
+    void webDashboard?.close();
+  };
   process.once("SIGINT", cancel);
   process.once("SIGTERM", cancel);
   try {
@@ -161,7 +242,10 @@ export async function runFight(
       );
       if (!frozenRunSpec || !permissions)
         throw new Error("Transport recovery is missing frozen run inputs");
-      const replacementArena = createArena(parent.state.config);
+      const replacementArena = createArena(parent.state.config, {
+        ...(observer ? { observer } : {}),
+        battleControl: control,
+      });
       outcome = await replacementArena.fightReplacement(
         parent.state.config,
         {
@@ -182,6 +266,12 @@ export async function runFight(
         TransportRecoverySchema.parse(recovery),
       );
     }
+    if (webDashboard) {
+      stdout.write(
+        "Battle complete. Review the dashboard, then choose Finish session.\n",
+      );
+      await webDashboard.waitUntilClosed();
+    }
     return {
       runId: outcome.state.runId,
       status: recoveryCancelled ? "cancelled" : outcome.state.status,
@@ -191,6 +281,9 @@ export async function runFight(
   } finally {
     process.removeListener("SIGINT", cancel);
     process.removeListener("SIGTERM", cancel);
+    dashboard?.unmount();
+    await webDashboard?.close();
+    await desktopWindow?.close();
   }
 }
 

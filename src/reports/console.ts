@@ -81,6 +81,9 @@ export function renderConsoleSummary(
   return [
     style("Agent Arena — evidence-backed final result", ANSI.bold, color),
     `Mode: ${state.config.mode}`,
+    ...(state.integrity === "assisted"
+      ? ["Assisted — not competitively comparable"]
+      : []),
     ...(state.pullRequestFixture
       ? [
           `Frozen PR: ${state.pullRequestFixture.repository}#${String(state.pullRequestFixture.number)}`,
@@ -118,7 +121,13 @@ export function renderConsoleSummary(
       return `${contestantLabel(state.config.contestants, contestant.id).padEnd(12)} ${requiredDisplay.padEnd(14 + (color ? ANSI.green.length + ANSI.reset.length : 0))} ${String(contestant.finalHealth).padStart(3)} HP  ${String(outcome?.activeDefectDamage ?? 0).padStart(3)} HP  ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil).padStart(3)} HP`;
     }),
     "",
-    style(champion, ANSI.bold, color),
+    style(
+      state.integrity === "assisted"
+        ? champion.replace(/^Arena champion:/, "Assisted leader:")
+        : champion,
+      ANSI.bold,
+      color,
+    ),
     state.config.mode === "siege"
       ? "Production artifact: defender final patch only"
       : `Recommended patch: ${recommendation}`,

@@ -1,0 +1,8 @@
+{
+  "prompt": "Use case: ui-mockup. Exact 1600×1020 desktop composition for Agent Arena Test Lab: a slim application bar, real invocation timeline, opposing contestant benches, central experiment sheet for the current attack lifecycle, health-history charts, check grids, recent invocation output, live-only steering, Inspect actions, and a right recent-test tray. Warm lab paper, graphite, oxidized teal, safety orange, cobalt, fine ruled evidence tables. Use only claims, timestamps, durations, checks, health changes, severity, damage, and adjudication outcomes; no invented lab metrics or execution controls.",
+  "approved": true,
+  "direction": "test-lab",
+  "selected_at": "2026-08-20",
+  "role": "Binding desktop composition reference; synthetic labels are replaced by recorded dashboard facts.",
+  "generator": "OpenAI built-in image generation"
+}

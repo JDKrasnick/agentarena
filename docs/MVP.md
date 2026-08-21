@@ -435,6 +435,65 @@ Both agents start from the exact same commit and receive the same RunSpec,
 test command, repository instructions, time limit, and available context. They
 cannot read the opponent worktree during implementation.
 
+### Live observability surface
+
+Fights default to the dedicated React desktop window. The window loads only
+Agent Arena assets and a randomly assigned `127.0.0.1` event stream, keeps Node
+integration disabled, and does not launch a browser tab. `--no-window` opts out,
+using Ink in an interactive TTY and plain output otherwise. Explicit
+`--display window|terminal|plain` modes remain available, while `--display
+dashboard` remains a compatibility alias for the desktop window. Closing the
+window cancels an active battle; after completion, **Finish session** closes the
+window and its local server.
+
+Fighter cards open a full-page drill-down within the desktop window. The detail
+view exposes recorded invocations, output, checks, health changes, attack
+involvement, and live steering, with a persistent route back to the arena. The
+round rail can select completed rounds and reconstruct their recorded fighter
+and evidence state. This replay is read-only: the MVP has no pause, arbitrary
+retry, or execution rewind control. Durable resume continues from a sealed
+boundary rather than rolling a completed round backward.
+
+The desktop window uses a larger live-battle size so each fighter card retains
+and exposes more output. Once a terminal result is projected, the window
+contracts to a results-first layout showing the recommendation, final fighter
+health and checks, coverage, run integrity, completed rounds, landed defects,
+verified repairs, terminal outcome, evidence links, and controls to review the
+recorded battle or finish the session.
+
+The window includes Classic Shell, Developer Dashboard, Night Transit, Test Lab,
+Live Arena Broadcast, and 16-Bit Tactics themes. Classic Shell is used until a valid local
+selection exists. The always-available swatch picker changes renderer families
+without reconnecting the event stream or resetting fighter, replay, or result
+navigation. Electron loads the preference before React mounts and stores it
+atomically below the user's application-data directory. Corrupt or unknown
+preferences fall back to Classic; a failed write keeps the session choice and
+shows a non-blocking warning. This preference is excluded from runtime schemas,
+battle records, artifacts, scoring, project configuration, and recovery hashes.
+Ink and plain CLI behavior is unchanged.
+
+Developer Dashboard is a conventional dark observability renderer with the
+dashboard-native three-column structure: round timeline, paired contestant
+workspaces, and chronological activity. Each contestant workspace exposes
+health, checks, normalized work summaries, steering, and full-detail inspection;
+a bottom status bar keeps the run identity and state visible. Night Transit
+projects append-only battle telemetry into two contestant lines, real round
+stations, a verification interchange, and a consolidated arrivals board. Test
+Lab uses opposing benches, a central experiment sheet, invocation timestamps
+and durations, health-history charts, check grids, and a recent-test tray. Both
+renderers use only recorded dashboard facts, retain live Inspect and cancellation
+actions, move side rails below the workspace at narrow widths, and make replay
+explicitly read-only. 16-Bit Tactics
+uses a code-native tile field, tactical nodes, authoritative attack and repair
+routes, opposing status bars, inspection commands, an evidence channel, and a
+structured in-map readout for the latest recorded event. It
+keeps the complete cartridge HUD visible at desktop widths and derives compact
+work nodes from recorded contestant invocations rather than invented game
+state. It does not bundle third-party game characters, logos, sprites, or
+screenshots. Stored `night-edition` preferences migrate to `night-transit`;
+`sticker-league` preferences migrate to `developer-dashboard`; `evidence-deck`
+and `monster-battle` preferences migrate to `retro-tactics`.
+
 ### Permission and authentication plan
 
 Before agents run, repository reconnaissance produces a capability plan covering

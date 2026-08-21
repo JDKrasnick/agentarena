@@ -56,6 +56,88 @@ The user receives:
   scoring, and handoff.
 * A command to apply the winning solution.
 
+Fights automatically launch the React battle observatory in a dedicated
+Electron window. `--no-window` opts out, selecting Ink in an interactive TTY
+and line-oriented output when redirected or running in CI. Explicit
+`--display window|terminal|plain` modes remain available, and the legacy
+`dashboard` value aliases `window` without opening a browser. Both rich displays
+support cancellation and one-time queued contestant steering, but not pause,
+stage skipping, or arbitrary retries.
+
+Attack telemetry distinguishes mounting, landed, and evidence-revision events.
+The observatory shows their live counts and timeline, and uses a brief red
+health-card pulse when damage lands. Reduced-motion terminals receive the same
+numeric damage cue without animated frames.
+The overview uses a game-like battle presentation—opposing fighter cards, HP
+bars, a VS divider, and move narration—without hiding provider identity,
+checks, current work, or the underlying engineering event log.
+The arena uses a restrained game-battle structure: opposing provider identities,
+separate status/HP regions, a VS divider, live agent output, and an evidence
+rail. The terminal represents Claude with a yellow-orange Spark sigil and keeps
+provider names primary. The desktop observatory uses the orange Claude product
+mark and native PNG rendering. Its React assets and event stream are served only
+on a random loopback port inside a sandboxed window; Agent Arena never opens the
+observatory in the user's browser.
+The registry covers the supported providers plus widely used providers and
+coding-agent products for future adapters. No third-party game characters or
+sprite assets are used.
+Persistent wayfinding shows the numbered round (or opening, recovery, and final
+phase), a plain-language stage name and objective, and the active step within
+the round attack loop. Attack events retain their originating round.
+The desktop observatory makes fighter cards navigable. A fighter detail view
+shows its current or recorded workstream, invocation status and duration, full
+output, checks, health changes, attack involvement, and live steering when the
+active view is selected. The round rail provides read-only replay of recorded
+round state and a direct return to the live arena. It does not claim to rewind,
+rerun, pause, or mutate live execution; durable resume remains the recovery
+mechanism for sealed runs.
+Completion automatically opens an evidence-backed success screen with both
+final fighter states, the arena champion and recommended patch, landed defects,
+verified health-restoring improvements, and the next human-review command. Its
+product-value statement is derived from recorded attack and repair evidence,
+not unverified agent narration.
+The desktop window opens in a spacious live-battle layout with taller retained
+fighter output. When a terminal result arrives, it automatically contracts into
+a focused results view; users can still inspect either fighter or return to the
+recorded round timeline before finishing the session.
+The desktop observatory ships six supported visual themes: Classic Shell,
+Developer Dashboard, Night Transit, Test Lab, Live Arena Broadcast, and 16-Bit Tactics.
+Classic Shell is the first-run fallback. A persistent swatch picker remains available in
+the arena, replay, fighter detail, and results views; changing it preserves the
+current view and live connection. The last valid selection is stored atomically
+as an app-wide local Electron preference. Save failures keep the current
+selection and surface a non-blocking warning. Theme choice is display-only and
+never enters battle events, artifacts, scoring, configuration, or recovery
+hashes. Terminal and plain displays remain unchanged.
+
+Developer Dashboard replaces the redundant second Pocket-family variant with a
+conventional dark observability workspace: a round timeline, paired contestant
+check and summary-log panels, a chronological activity rail, steering controls,
+and a compact run-status bar. Night Transit is a subway-wayfinding renderer:
+two contestant lines expose real round stations on a printed map field, recorded attack and
+repair routes converge on a verification interchange, and an arrivals board
+consolidates each attack lifecycle. Test Lab is a warm experiment workspace:
+opposing benches flank a central attack sheet built from invocation timing,
+checks, health history, adjudication, damage, and repair facts. Both keep
+historical rounds read-only and omit unavailable routes or measurements rather
+than inventing them. 16-Bit Tactics is an original retro strategy
+renderer: opposing status bars, a data-driven tactical node map, recorded attack
+and repair routes, an evidence channel, a structured in-map latest-evidence
+readout, and inspect commands. At desktop widths
+its cartridge chassis fits the available window rather than turning the terrain
+into a separately scrolling poster; compact work nodes are derived from recorded
+contestant invocations. It ships no third-party characters, logos, sprites, or
+game assets. Existing
+`night-edition` preferences migrate to `night-transit`; `sticker-league`
+preferences migrate to `developer-dashboard`; `evidence-deck`
+and `monster-battle` preferences migrate to `retro-tactics`.
+
+Applying an operator steering note changes run integrity from `competitive` to
+`assisted`. The health ledger and review recommendation remain available, but
+reports describe only an assisted leader and prominently state “Assisted — not
+competitively comparable.” Empty notes are rejected and notes with no future
+eligible invocation expire unapplied.
+
 The project is intended to be both useful and entertaining. The adversarial testing provides engineering value, while the competition format creates a memorable and shareable GitHub project.
 
 ### Execution architecture

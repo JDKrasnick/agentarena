@@ -1,0 +1,8 @@
+{
+  "prompt": "Use case: ui-mockup. Exact 1600×1020 desktop composition for Agent Arena Night Transit: a slim application bar, compact round-station rail, two recorded contestant route lines converging on a central verification interchange, authoritative arrivals board, paired contestant status and Inspect actions, right activity/evidence rail, and live-only one-time operator steering. Ink navy, matte enamel signage, cyan and coral routes, signal amber, crisp transport wayfinding. No invented metrics, geography, audience, or execution controls; no shipping decorative imagery.",
+  "approved": true,
+  "direction": "night-transit",
+  "selected_at": "2026-08-20",
+  "role": "Binding desktop composition reference; synthetic labels are replaced by recorded dashboard facts.",
+  "generator": "OpenAI built-in image generation"
+}

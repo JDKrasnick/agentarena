@@ -52,6 +52,7 @@ describe("built CLI smoke flow", () => {
         "--models",
         "codex-test-model,claude-test-model",
         "--yes",
+        "--no-window",
       ],
       { cwd: repositoryRoot, env, timeout: 60_000 },
     );
@@ -241,6 +242,7 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
         "--agents",
         "codex,claude",
         "--yes",
+        "--no-window",
       ],
       {
         cwd: repositoryRoot,

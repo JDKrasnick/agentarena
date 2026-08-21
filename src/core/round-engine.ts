@@ -1,6 +1,7 @@
 import { access, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type {
   AgentAdapter,
   AttackVerifier,
@@ -177,6 +178,17 @@ import {
   assessBattleCoverage,
   assertTargetedRetryAllowed,
 } from "../confidence/assessment.js";
+import {
+  ArenaEventBus,
+  EventJournal,
+  type ArenaEventInput,
+  type ArenaEventSink,
+  type ArenaObserver,
+} from "../observability/events.js";
+import {
+  ArenaBattleControl,
+  appendSteering,
+} from "../observability/control.js";
 
 export interface ArenaDependencies {
   adapters: Partial<Record<AgentId, AgentAdapter>>;
@@ -196,6 +208,9 @@ export interface ArenaDependencies {
   now?: () => Date;
   onProgress?: (message: string) => void;
   consoleOptions?: ConsoleRenderOptions;
+  /** Optional best-effort live display sink. Persistence remains authoritative. */
+  observer?: ArenaEventSink;
+  battleControl?: ArenaBattleControl;
   /** Transactional executor hook used by isolated RoundEngine tests/adapters. */
   executeRound?: (snapshot: RoundSnapshot) => Promise<RoundResult>;
 }
@@ -236,6 +251,10 @@ interface ArenaContext {
   permissions: PermissionPolicy;
   state: RunState;
   controller: AbortController;
+  observer: ArenaObserver;
+  journal: EventJournal;
+  control: ArenaBattleControl;
+  emittedEvents: Set<string>;
   roundInvocations: RecordedRoundInvocation[];
   priorEnvelopeHash: string | null;
   appliedEnvelopes: AppliedEnvelope[];
@@ -250,6 +269,41 @@ interface RecordedRoundInvocation {
   startedAt: string;
   finishedAt: string;
   artifactPaths: string[];
+}
+
+type DashboardLink = NonNullable<
+  Extract<ArenaEventInput, { type: "battle_started" }>["links"]
+>[number];
+
+function dashboardLinks(
+  runSpec: RunSpec,
+  store: ArtifactStore,
+): DashboardLink[] {
+  const links: DashboardLink[] = [];
+  for (const source of runSpec.task.sources) {
+    if (source.github?.url) {
+      links.push({
+        kind: source.kind === "pull_request" ? "pull_request" : "issue",
+        label: `${source.kind === "pull_request" ? "PR" : "Issue"} ${source.github.repository}#${String(source.github.number)}`,
+        url: source.github.url,
+      });
+    } else if (source.kind === "repo_spec") {
+      links.push({
+        kind: "spec",
+        label: `Spec ${path.basename(source.origin)}`,
+        url: pathToFileURL(source.snapshotPath).href,
+      });
+    }
+  }
+  links.push({
+    kind: "artifacts",
+    label: "Run artifacts",
+    url: pathToFileURL(store.runDirectory).href,
+  });
+  return links.filter(
+    (link, index) =>
+      links.findIndex((candidate) => candidate.url === link.url) === index,
+  );
 }
 
 interface RoundExecutionRuntime {
@@ -531,6 +585,15 @@ export class RoundEngine {
     const controller = new AbortController();
     const abort = (): void => controller.abort(externalSignal?.reason);
     externalSignal?.addEventListener("abort", abort, { once: true });
+    const journal = new EventJournal(store.resolve("events.ndjson"), this.now);
+    const observer = new ArenaEventBus(
+      journal,
+      this.dependencies.observer ? [this.dependencies.observer] : [],
+      this.now,
+    );
+    const control =
+      this.dependencies.battleControl ??
+      new ArenaBattleControl(controller, this.now);
 
     let context: ArenaContext | undefined;
     try {
@@ -616,6 +679,8 @@ export class RoundEngine {
         submissionArtifacts: [],
         repairJudgments: [],
         failureRecords: [],
+        integrity: "competitive",
+        operatorInterventions: [],
         patchQualityFacts: {},
         ...(targetResolution.target
           ? { deliveryTarget: targetResolution.target }
@@ -628,6 +693,10 @@ export class RoundEngine {
           battle: store.resolve("BATTLE.md"),
           battleHtml: store.resolve("BATTLE.html"),
           battleVisual: store.resolve("BATTLE.svg"),
+          events: store.resolve("events.ndjson"),
+          operatorInterventions: store.resolve(
+            "operations/operator-interventions.json",
+          ),
         },
         warnings: [
           "Worktrees isolate accidental changes; they are not a hostile-code security sandbox.",
@@ -644,10 +713,39 @@ export class RoundEngine {
         permissions,
         state,
         controller,
+        observer,
+        journal,
+        control,
+        emittedEvents: new Set(),
         roundInvocations: [],
         priorEnvelopeHash: null,
         appliedEnvelopes: [],
       };
+      control.onQueue((note) => {
+        void observer.publish({
+          type: "steering_queued",
+          interventionId: note.id,
+          contestantId: note.contestantId,
+        });
+      });
+      control.onCancel((reason) => {
+        controller.abort(reason);
+        void observer.publish({
+          type: "cancellation_requested",
+          reason: reason instanceof Error ? reason.message : String(reason),
+        });
+      });
+      await observer.publish({
+        type: "battle_started",
+        runId,
+        task: config.task,
+        contestants: config.contestants.map((contestant) => ({
+          id: contestant.id,
+          provider: contestant.provider,
+          ...(contestant.model ? { model: contestant.model } : {}),
+        })),
+        links: dashboardLinks(runSpec, store),
+      });
       await this.persist(context);
       if (replacement) {
         const summary = await store.readSummary();
@@ -726,6 +824,8 @@ export class RoundEngine {
       context.state.status = "complete";
       context.state.completedAt = this.now().toISOString();
       await this.transition(context, "complete");
+      await this.expireSteering(context);
+      await this.emitBattleCompleted(context, "complete");
       return {
         state: context.state,
         summary: renderConsoleSummary(
@@ -752,12 +852,22 @@ export class RoundEngine {
         await context.store
           .writeText("BATTLE.svg", renderBattleVisual(context.state))
           .catch(() => undefined);
+        await this.emitNewStateEvents(context).catch(() => undefined);
+        if (cancelled)
+          await this.emit(context, { type: "cancellation_completed" }).catch(
+            () => undefined,
+          );
+        await this.emitBattleCompleted(
+          context,
+          cancelled ? "cancelled" : "inconclusive",
+        ).catch(() => undefined);
       }
       throw error;
     } finally {
       externalSignal?.removeEventListener("abort", abort);
       if (!config.keepWorktrees)
         await worktrees.cleanup().catch(() => undefined);
+      await journal.flush().catch(() => undefined);
     }
   }
 
@@ -1059,6 +1169,20 @@ export class RoundEngine {
     const controller = new AbortController();
     const abort = (): void => controller.abort(externalSignal?.reason);
     externalSignal?.addEventListener("abort", abort, { once: true });
+    const journal = new EventJournal(store.resolve("events.ndjson"), this.now);
+    const observer = new ArenaEventBus(
+      journal,
+      this.dependencies.observer ? [this.dependencies.observer] : [],
+      this.now,
+    );
+    const control =
+      this.dependencies.battleControl ??
+      new ArenaBattleControl(
+        controller,
+        this.now,
+        undefined,
+        state.operatorInterventions,
+      );
     const context: ArenaContext = {
       config,
       store,
@@ -1067,10 +1191,28 @@ export class RoundEngine {
       permissions,
       state,
       controller,
+      observer,
+      journal,
+      control,
+      emittedEvents: this.projectedStateEventKeys(state),
       roundInvocations: [],
       priorEnvelopeHash: envelopes.at(-1)?.envelopeHash ?? null,
       appliedEnvelopes: ledger,
     };
+    control.onQueue((note) => {
+      void observer.publish({
+        type: "steering_queued",
+        interventionId: note.id,
+        contestantId: note.contestantId,
+      });
+    });
+    control.onCancel((reason) => {
+      controller.abort(reason);
+      void observer.publish({
+        type: "cancellation_requested",
+        reason: reason instanceof Error ? reason.message : String(reason),
+      });
+    });
     try {
       let priorReplayHash = envelopes.at(-1)?.replayHash ?? null;
       for (const round of [1, 2, 3] as const) {
@@ -1126,6 +1268,8 @@ export class RoundEngine {
       context.state.status = "complete";
       context.state.completedAt = this.now().toISOString();
       await this.transition(context, "complete");
+      await this.expireSteering(context);
+      await this.emitBattleCompleted(context, "complete");
       await appendRecoveryEvent({
         store,
         type: "resume_continued",
@@ -1146,6 +1290,7 @@ export class RoundEngine {
       externalSignal?.removeEventListener("abort", abort);
       if (!config.keepWorktrees)
         await worktrees.cleanup().catch(() => undefined);
+      await journal.flush().catch(() => undefined);
     }
   }
 
@@ -2462,7 +2607,8 @@ export class RoundEngine {
       context.state.warnings.push(
         ...result.diagnostics.map((entry) => entry.message),
       );
-    await context.store.writeState(context.state, context.appliedEnvelopes);
+    await this.expireSteering(context);
+    await this.persist(context);
     await context.store.writeText(
       "BATTLE.md",
       renderBattleReport(context.state),
@@ -2475,6 +2621,9 @@ export class RoundEngine {
       "BATTLE.svg",
       renderBattleVisual(context.state),
     );
+    if (context.state.status === "cancelled")
+      await this.emit(context, { type: "cancellation_completed" });
+    await this.emitBattleCompleted(context, context.state.status);
     return {
       state: context.state,
       summary: renderConsoleSummary(
@@ -2486,8 +2635,252 @@ export class RoundEngine {
 
   private async persist(context: ArenaContext): Promise<void> {
     context.state.updatedAt = this.now().toISOString();
+    this.syncSteeringLedger(context);
+    await this.emitNewStateEvents(context);
+    await context.store.writeJson("operations/operator-interventions.json", {
+      version: 1,
+      runId: context.state.runId,
+      interventions: context.state.operatorInterventions,
+    });
     if (this.runtime) return;
     await context.store.writeState(context.state, context.appliedEnvelopes);
+  }
+
+  private syncSteeringLedger(context: ArenaContext): void {
+    context.state.operatorInterventions = structuredClone([
+      ...context.control.all(),
+    ]);
+    if (
+      context.state.operatorInterventions.some(
+        (intervention) => intervention.status === "applied",
+      )
+    )
+      context.state.integrity = "assisted";
+  }
+
+  private emit(context: ArenaContext, event: ArenaEventInput): Promise<void> {
+    return Promise.resolve(context.observer.publish(event));
+  }
+
+  private projectedStateEventKeys(state: RunState): Set<string> {
+    const keys = new Set<string>();
+    state.warnings.forEach((_warning, index) =>
+      keys.add(`warning:${String(index)}`),
+    );
+    for (const contestant of Object.values(state.contestants)) {
+      contestant.checks.forEach((check) =>
+        keys.add(`check:${contestant.id}:${check.id}:${check.status}`),
+      );
+      contestant.healthEvents.forEach((_event, index) =>
+        keys.add(`health:${contestant.id}:${String(index)}`),
+      );
+    }
+    for (const attack of state.attacks) {
+      keys.add(`attack:${attack.id}:${attack.status}`);
+      if (attack.evidenceRevision) keys.add(`attack:${attack.id}:revision`);
+    }
+    for (const failure of state.failureRecords)
+      keys.add(
+        `failure:${failure.failureId}:${String(failure.attempts.length)}:${failure.terminalDisposition ?? "retrying"}`,
+      );
+    return keys;
+  }
+
+  /** Project only authoritative persisted state changes into live telemetry. */
+  private async emitNewStateEvents(context: ArenaContext): Promise<void> {
+    const emitted = context.emittedEvents;
+    for (const [index, message] of context.state.warnings.entries()) {
+      const key = `warning:${String(index)}`;
+      if (emitted.has(key)) continue;
+      emitted.add(key);
+      await this.emit(context, { type: "warning", message });
+    }
+    for (const contestant of Object.values(context.state.contestants)) {
+      for (const check of contestant.checks) {
+        const key = `check:${contestant.id}:${check.id}:${check.status}`;
+        if (emitted.has(key)) continue;
+        emitted.add(key);
+        await this.emit(context, {
+          type: "check_completed",
+          checkId: check.id,
+          status: check.status,
+          contestantId: contestant.id,
+        });
+      }
+      let health = 100;
+      for (const [index, healthEvent] of contestant.healthEvents.entries()) {
+        health = Math.max(0, Math.min(100, health + healthEvent.amount));
+        const key = `health:${contestant.id}:${String(index)}`;
+        if (emitted.has(key)) continue;
+        emitted.add(key);
+        await this.emit(context, {
+          type: "health_changed",
+          contestantId: contestant.id,
+          health,
+          amount: healthEvent.amount,
+          reason: healthEvent.reason,
+          round: healthEvent.round,
+          ...(healthEvent.attackId ? { attackId: healthEvent.attackId } : {}),
+        });
+      }
+    }
+    for (const attack of context.state.attacks) {
+      const participants = {
+        ...(attack.origin.kind === "contestant"
+          ? { attackerId: attack.origin.contestant }
+          : {}),
+        ...(attack.targets[0] ? { targetId: attack.targets[0] } : {}),
+      };
+      const key = `attack:${attack.id}:${attack.status}`;
+      if (!emitted.has(key)) {
+        emitted.add(key);
+        await this.emit(
+          context,
+          attack.status === "submitted"
+            ? {
+                type: "attack_mounted",
+                attackId: attack.id,
+                round: attack.round,
+                claim: attack.claim,
+                ...participants,
+              }
+            : {
+                type: "attack_resolved",
+                attackId: attack.id,
+                round: attack.round,
+                status: attack.status,
+                ...participants,
+                ...(attack.severity ? { severity: attack.severity } : {}),
+                ...(attack.damage === undefined
+                  ? {}
+                  : { damage: attack.damage }),
+              },
+        );
+      }
+      const revisionKey = `attack:${attack.id}:revision`;
+      if (attack.evidenceRevision && !emitted.has(revisionKey)) {
+        emitted.add(revisionKey);
+        await this.emit(context, {
+          type: "attack_revised",
+          attackId: attack.id,
+          round: attack.round,
+          explanation: attack.evidenceRevision.explanation,
+          ...participants,
+        });
+      }
+    }
+    for (const failure of context.state.failureRecords) {
+      const attempt = failure.attempts.at(-1)!;
+      const key = `failure:${failure.failureId}:${String(failure.attempts.length)}:${failure.terminalDisposition ?? "retrying"}`;
+      if (emitted.has(key)) continue;
+      emitted.add(key);
+      await this.emit(context, {
+        type: "failure_updated",
+        failureId: failure.failureId,
+        stage: failure.stage,
+        subject: failure.subject,
+        attempt: attempt.attempt,
+        attemptStatus: attempt.status,
+        state:
+          failure.terminalDisposition === "recovered"
+            ? "recovered"
+            : failure.terminalDisposition
+              ? "resolved"
+              : "retrying",
+        ...(failure.terminalDisposition
+          ? { terminalDisposition: failure.terminalDisposition }
+          : {}),
+        ...(failure.contestantId ? { contestantId: failure.contestantId } : {}),
+        ...(failure.laneId ? { laneId: failure.laneId } : {}),
+        ...(failure.attackId ? { attackId: failure.attackId } : {}),
+        diagnosticArtifactRefs: [...attempt.diagnosticArtifactRefs],
+      });
+    }
+  }
+
+  private applyQueuedSteering(
+    context: ArenaContext,
+    contestantId: ContestantId,
+    stage: Stage,
+    prompt: string,
+    round?: RoundId,
+  ): string {
+    const intervention = context.control.consume(contestantId);
+    if (!intervention) return prompt;
+    const steeredPrompt = appendSteering(prompt, intervention.note);
+    intervention.status = "applied";
+    intervention.appliedStage = stage;
+    if (round !== undefined) intervention.appliedRound = round;
+    intervention.promptHash = sha256(steeredPrompt);
+    void this.emit(context, {
+      type: "steering_applied",
+      interventionId: intervention.id,
+      contestantId,
+      stage,
+      ...(round === undefined ? {} : { round }),
+      promptHash: intervention.promptHash,
+    });
+    return steeredPrompt;
+  }
+
+  private async expireSteering(context: ArenaContext): Promise<void> {
+    for (const intervention of context.control.all()) {
+      if (intervention.status !== "queued") continue;
+      intervention.status = "expired";
+      await this.emit(context, {
+        type: "steering_expired",
+        interventionId: intervention.id,
+        contestantId: intervention.contestantId,
+      });
+    }
+    await this.persist(context);
+  }
+
+  private async emitBattleCompleted(
+    context: ArenaContext,
+    status: "complete" | "inconclusive" | "failed" | "cancelled",
+  ): Promise<void> {
+    await this.emit(context, {
+      type: "battle_completed",
+      status,
+      roundsCompleted: Math.max(
+        0,
+        ...Object.values(context.state.contestants).flatMap((contestant) =>
+          contestant.rounds
+            .filter((round) => typeof round.round === "number")
+            .map((round) => Number(round.round)),
+        ),
+      ),
+      ...(context.state.arenaOutcome?.championId
+        ? { championId: context.state.arenaOutcome.championId }
+        : {}),
+      ...(context.state.patchRecommendation?.contestantId
+        ? { recommendedId: context.state.patchRecommendation.contestantId }
+        : {}),
+      ...(context.state.patchRecommendation?.rationale.length
+        ? {
+            recommendationReason:
+              context.state.patchRecommendation.rationale.join(" "),
+          }
+        : {}),
+      ...(context.state.coverageAssessment
+        ? { coverageConfidence: context.state.coverageAssessment.confidence }
+        : {}),
+      ...(context.state.terminalOutcome
+        ? { terminalOutcome: context.state.terminalOutcome }
+        : {}),
+      contestants: Object.values(context.state.contestants).map(
+        (contestant) => ({
+          id: contestant.id,
+          health: contestant.finalHealth,
+          status: contestant.status,
+          checksPassed: contestant.checks.filter(
+            (check) => check.status === "passed",
+          ).length,
+          checksTotal: contestant.checks.length,
+        }),
+      ),
+    });
   }
 
   private adapterFor(
@@ -2536,6 +2929,13 @@ export class RoundEngine {
     this.progress(
       `${round === undefined ? "" : `Round ${String(round)} — `}${stage}`,
     );
+    await this.emit(context, {
+      type: "stage_changed",
+      stage,
+      ...(round === undefined ? {} : { round }),
+    });
+    if (round !== undefined && stage === "review_attacks")
+      await this.emit(context, { type: "round_started", round });
     await this.persist(context);
   }
 
@@ -2690,17 +3090,23 @@ export class RoundEngine {
           const worktree = worktrees.get(agent);
           if (!worktree)
             throw new Error(`Missing implementation worktree for ${agent}`);
-          const prompt = composePrompt({
+          const prompt = this.applyQueuedSteering(
+            context,
             agent,
-            stage: "implement",
-            runSpec: context.runSpec,
-            config: context.config,
-            permissions: context.permissions,
-          });
+            "implement",
+            composePrompt({
+              agent,
+              stage: "implement",
+              runSpec: context.runSpec,
+              config: context.config,
+              permissions: context.permissions,
+            }),
+          );
           const promptPath = await context.store.writeText(
             `prompts/implementation-${agent}.md`,
             prompt,
           );
+          await this.persist(context);
           const contestant = getContestant(context.state, agent);
           let invocation!: AgentInvocation;
           let implementationFailure: FailureRecord | undefined;
@@ -2717,6 +3123,7 @@ export class RoundEngine {
               transcriptPrefix,
               timeoutMs: context.config.limits.implementationMs,
               signal: phaseController.signal,
+              observer: context.observer,
             });
             const finishedAt = this.now().toISOString();
             invocation.contestantId = agent;
@@ -3050,6 +3457,7 @@ export class RoundEngine {
             signal: context.controller.signal,
             round,
             opponent: target,
+            observer: context.observer,
           });
           const attemptFinishedAt = this.now().toISOString();
           finalAttemptStartedAt = attemptStartedAt;
@@ -3317,7 +3725,10 @@ export class RoundEngine {
           String(context.roundInvocations.length),
         );
         try {
-          const verdict = await verifier.assess(input);
+          const verdict = await verifier.assess({
+            ...input,
+            observer: context.observer,
+          });
           context.roundInvocations.push({
             id,
             kind: "verification",
@@ -3356,7 +3767,10 @@ export class RoundEngine {
                 String(context.roundInvocations.length),
               );
               try {
-                const verdict = await verifier.adjudicate!(input);
+                const verdict = await verifier.adjudicate!({
+                  ...input,
+                  observer: context.observer,
+                });
                 context.roundInvocations.push({
                   id,
                   kind: "verification",
@@ -3397,7 +3811,10 @@ export class RoundEngine {
                 String(context.roundInvocations.length),
               );
               try {
-                const verdict = await verifier.assessRepair!(input);
+                const verdict = await verifier.assessRepair!({
+                  ...input,
+                  observer: context.observer,
+                });
                 context.roundInvocations.push({
                   id,
                   kind: "verification",
@@ -3729,6 +4146,7 @@ export class RoundEngine {
             signal: context.controller.signal,
             round,
             opponent: target,
+            observer: context.observer,
           });
           if (invocation.status !== "succeeded")
             throw new Error(`Correction invocation ${invocation.status}`);
@@ -4021,6 +4439,7 @@ export class RoundEngine {
           worktrees: context.worktrees,
           logRoot: context.store.resolve("logs/integration"),
           signal: context.controller.signal,
+          observer: context.observer,
           now: this.now,
           persistFailureRecord: (record) =>
             this.persistFailureRecord(context, record),
@@ -4168,26 +4587,33 @@ export class RoundEngine {
           round,
           "attack",
         );
-        const prompt = composePrompt({
+        const prompt = this.applyQueuedSteering(
+          context,
           agent,
-          target,
-          stage: "attack",
+          "collect_attacks",
+          composePrompt({
+            agent,
+            target,
+            stage: "attack",
+            round,
+            runSpec: context.runSpec,
+            config: context.config,
+            permissions: context.permissions,
+            methodSelection: selection,
+            opponentPatch,
+            ...(reviewPackets.get(agent)
+              ? { reviewPacket: reviewPackets.get(agent)! }
+              : {}),
+            currentHealth: contestant.finalHealth,
+            contestantFeedback,
+          }),
           round,
-          runSpec: context.runSpec,
-          config: context.config,
-          permissions: context.permissions,
-          methodSelection: selection,
-          opponentPatch,
-          ...(reviewPackets.get(agent)
-            ? { reviewPacket: reviewPackets.get(agent)! }
-            : {}),
-          currentHealth: contestant.finalHealth,
-          contestantFeedback,
-        });
+        );
         const promptPath = await context.store.writeText(
           `prompts/round-${String(round)}-${agent}.md`,
           prompt,
         );
+        await this.persist(context);
         let invocation!: AgentInvocation;
         let submissionFailure: FailureRecord | undefined;
         let finalAttemptStartedAt = this.now().toISOString();
@@ -5032,7 +5458,7 @@ export class RoundEngine {
           });
           if (remainingAttacks.length === 0 && latestRequiredPass(contestant))
             break;
-          const attemptPrompt = [
+          let attemptPrompt = [
             prompt,
             "",
             "# Remaining failures for this attempt",
@@ -5048,10 +5474,18 @@ export class RoundEngine {
             ),
             "Fix only the remaining failures above. Previously healed defects are regression checks, not permission to rewrite their evidence.",
           ].join("\n");
+          attemptPrompt = this.applyQueuedSteering(
+            context,
+            agent,
+            "repair",
+            attemptPrompt,
+            round,
+          );
           const attemptPromptPath = await context.store.writeText(
             `prompts/round-${String(round)}-repair-${agent}-attempt-${String(attemptNumber)}.md`,
             attemptPrompt,
           );
+          await this.persist(context);
           const attemptId = stableId(
             "repair-attempt",
             context.state.runId,
@@ -5075,6 +5509,7 @@ export class RoundEngine {
               signal: context.controller.signal,
               round,
               activeAttacks: remainingAttacks,
+              observer: context.observer,
             });
             attempts.push(invocation);
             const finishedAt = this.now().toISOString();
