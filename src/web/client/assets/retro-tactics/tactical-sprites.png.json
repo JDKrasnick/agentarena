@@ -12,11 +12,12 @@
   "prompt": "Use case: stylized-concept. Asset type: shipping 16-bit tactical sprite sheet for an Electron dashboard. Input image: approved Agent Arena operator-console comp, visual reference only for its original late-16-bit pixel-art materials and palette; do not copy its exact objects, emblems, UI, composition, characters, or any franchise imagery. Create a neatly spaced orthographic top-down sprite sheet on a perfectly flat solid #ff00ff chroma-key background for background removal. Background must be exactly uniform #ff00ff with no grid, shadows, gradients, texture, reflections, floor plane, or lighting variation. Arrange opaque, fully separated original sprites with generous padding in a strict 4-column by 3-row sheet: two distinct fortified technological bases (one violet/slate, one burnt-orange/slate); two objective crystals (aqua and amber); three modular ruined-stone clusters; two evergreen vegetation clusters; and three small tactical markers (neutral beacon, repair beacon, contested marker). Crisp chunky integer-pixel edges, hard pixel shadows contained entirely within each sprite, readable at small UI sizes, consistent top-down projection, midnight-violet outlines, slate stone, grass green, parchment gray, aqua and burnt-orange accents. No letters, numbers, text, labels, provider logos, weapons, people, creatures, faces, routes, UI panels, copied game sprites, watermark, blur, glow, or antialiased vector styling. Do not use #ff00ff anywhere inside any sprite.",
   "postprocessing": [
     "Removed flat #ff00ff chroma background with the imagegen skill helper",
-    "Soft matte thresholds: transparent 45, opaque 75; edge despill enabled"
+    "Soft matte thresholds: transparent 45, opaque 75; edge despill enabled",
+    "Downsampled to a 627x627 shipping atlas after UI QA; alpha and CSS sprite regions were preserved"
   ],
   "dimensions": {
-    "width": 1254,
-    "height": 1254,
+    "width": 627,
+    "height": 627,
     "alpha": true
   },
   "contents": [

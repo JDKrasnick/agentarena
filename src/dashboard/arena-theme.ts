@@ -1,7 +1,8 @@
 export const ARENA_THEMES = [
   "classic-shell",
   "developer-dashboard",
-  "night-edition",
+  "night-transit",
+  "test-lab",
   "live-arena-broadcast",
   "retro-tactics",
 ] as const;
@@ -18,6 +19,7 @@ export function isArenaTheme(value: unknown): value is ArenaTheme {
 }
 
 export function normalizeArenaTheme(value: unknown): ArenaTheme {
+  if (value === "night-edition") return "night-transit";
   if (value === "sticker-league") return "developer-dashboard";
   if (value === "evidence-deck" || value === "monster-battle") {
     return "retro-tactics";

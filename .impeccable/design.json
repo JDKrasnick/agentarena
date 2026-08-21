@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-20T14:32:27.000Z",
+  "generatedAt": "2026-08-20T17:48:47.000Z",
   "title": "Design System: Agent Arena Desktop Observatory",
   "extensions": {
     "colorMeta": {
@@ -214,64 +214,334 @@
           "color-mix(in oklch, #f85149 28%, white)"
         ]
       },
-      "night-field": {
+      "transit-ground": {
         "role": "neutral",
-        "displayName": "Night Field",
-        "canonical": "#191838",
+        "displayName": "Mounted Map Ground",
+        "canonical": "#e8e6dc",
         "tonalRamp": [
-          "color-mix(in oklch, #191838 36%, black)",
-          "color-mix(in oklch, #191838 52%, black)",
-          "color-mix(in oklch, #191838 68%, black)",
-          "color-mix(in oklch, #191838 84%, black)",
-          "#191838",
-          "color-mix(in oklch, #191838 82%, white)",
-          "color-mix(in oklch, #191838 55%, white)",
-          "color-mix(in oklch, #191838 28%, white)"
+          "color-mix(in oklch, #e8e6dc 36%, black)",
+          "color-mix(in oklch, #e8e6dc 52%, black)",
+          "color-mix(in oklch, #e8e6dc 68%, black)",
+          "color-mix(in oklch, #e8e6dc 84%, black)",
+          "#e8e6dc",
+          "color-mix(in oklch, #e8e6dc 82%, white)",
+          "color-mix(in oklch, #e8e6dc 55%, white)",
+          "color-mix(in oklch, #e8e6dc 28%, white)"
         ]
       },
-      "night-violet": {
+      "transit-panel": {
+        "role": "neutral",
+        "displayName": "Timetable Panel",
+        "canonical": "#fffdf7",
+        "tonalRamp": [
+          "color-mix(in oklch, #fffdf7 36%, black)",
+          "color-mix(in oklch, #fffdf7 52%, black)",
+          "color-mix(in oklch, #fffdf7 68%, black)",
+          "color-mix(in oklch, #fffdf7 84%, black)",
+          "#fffdf7",
+          "color-mix(in oklch, #fffdf7 82%, white)",
+          "color-mix(in oklch, #fffdf7 55%, white)",
+          "color-mix(in oklch, #fffdf7 28%, white)"
+        ]
+      },
+      "transit-rule": {
+        "role": "neutral",
+        "displayName": "Transit Rule",
+        "canonical": "#768184",
+        "tonalRamp": [
+          "color-mix(in oklch, #768184 36%, black)",
+          "color-mix(in oklch, #768184 52%, black)",
+          "color-mix(in oklch, #768184 68%, black)",
+          "color-mix(in oklch, #768184 84%, black)",
+          "#768184",
+          "color-mix(in oklch, #768184 82%, white)",
+          "color-mix(in oklch, #768184 55%, white)",
+          "color-mix(in oklch, #768184 28%, white)"
+        ]
+      },
+      "transit-foreground": {
+        "role": "neutral",
+        "displayName": "Transit Foreground",
+        "canonical": "#17232b",
+        "tonalRamp": [
+          "color-mix(in oklch, #17232b 36%, black)",
+          "color-mix(in oklch, #17232b 52%, black)",
+          "color-mix(in oklch, #17232b 68%, black)",
+          "color-mix(in oklch, #17232b 84%, black)",
+          "#17232b",
+          "color-mix(in oklch, #17232b 82%, white)",
+          "color-mix(in oklch, #17232b 55%, white)",
+          "color-mix(in oklch, #17232b 28%, white)"
+        ]
+      },
+      "transit-muted": {
+        "role": "neutral",
+        "displayName": "Transit Muted",
+        "canonical": "#5d696d",
+        "tonalRamp": [
+          "color-mix(in oklch, #5d696d 36%, black)",
+          "color-mix(in oklch, #5d696d 52%, black)",
+          "color-mix(in oklch, #5d696d 68%, black)",
+          "color-mix(in oklch, #5d696d 84%, black)",
+          "#5d696d",
+          "color-mix(in oklch, #5d696d 82%, white)",
+          "color-mix(in oklch, #5d696d 55%, white)",
+          "color-mix(in oklch, #5d696d 28%, white)"
+        ]
+      },
+      "transit-line-a": {
         "role": "primary",
-        "displayName": "Night Violet",
-        "canonical": "#8f6de8",
+        "displayName": "Line A Transit Blue",
+        "canonical": "#0072bc",
         "tonalRamp": [
-          "color-mix(in oklch, #8f6de8 36%, black)",
-          "color-mix(in oklch, #8f6de8 52%, black)",
-          "color-mix(in oklch, #8f6de8 68%, black)",
-          "color-mix(in oklch, #8f6de8 84%, black)",
-          "#8f6de8",
-          "color-mix(in oklch, #8f6de8 82%, white)",
-          "color-mix(in oklch, #8f6de8 55%, white)",
-          "color-mix(in oklch, #8f6de8 28%, white)"
+          "color-mix(in oklch, #0072bc 36%, black)",
+          "color-mix(in oklch, #0072bc 52%, black)",
+          "color-mix(in oklch, #0072bc 68%, black)",
+          "color-mix(in oklch, #0072bc 84%, black)",
+          "#0072bc",
+          "color-mix(in oklch, #0072bc 82%, white)",
+          "color-mix(in oklch, #0072bc 55%, white)",
+          "color-mix(in oklch, #0072bc 28%, white)"
         ]
       },
-      "night-mint": {
+      "transit-line-b": {
         "role": "secondary",
-        "displayName": "Night Mint",
-        "canonical": "#75efd0",
+        "displayName": "Line B Transit Orange",
+        "canonical": "#e86a10",
         "tonalRamp": [
-          "color-mix(in oklch, #75efd0 36%, black)",
-          "color-mix(in oklch, #75efd0 52%, black)",
-          "color-mix(in oklch, #75efd0 68%, black)",
-          "color-mix(in oklch, #75efd0 84%, black)",
-          "#75efd0",
-          "color-mix(in oklch, #75efd0 82%, white)",
-          "color-mix(in oklch, #75efd0 55%, white)",
-          "color-mix(in oklch, #75efd0 28%, white)"
+          "color-mix(in oklch, #e86a10 36%, black)",
+          "color-mix(in oklch, #e86a10 52%, black)",
+          "color-mix(in oklch, #e86a10 68%, black)",
+          "color-mix(in oklch, #e86a10 84%, black)",
+          "#e86a10",
+          "color-mix(in oklch, #e86a10 82%, white)",
+          "color-mix(in oklch, #e86a10 55%, white)",
+          "color-mix(in oklch, #e86a10 28%, white)"
         ]
       },
-      "night-cream": {
-        "role": "neutral",
-        "displayName": "Night Cream",
-        "canonical": "#f1eddd",
+      "transit-verification": {
+        "role": "secondary",
+        "displayName": "Verification Green",
+        "canonical": "#00843d",
         "tonalRamp": [
-          "color-mix(in oklch, #f1eddd 36%, black)",
-          "color-mix(in oklch, #f1eddd 52%, black)",
-          "color-mix(in oklch, #f1eddd 68%, black)",
-          "color-mix(in oklch, #f1eddd 84%, black)",
-          "#f1eddd",
-          "color-mix(in oklch, #f1eddd 82%, white)",
-          "color-mix(in oklch, #f1eddd 55%, white)",
-          "color-mix(in oklch, #f1eddd 28%, white)"
+          "color-mix(in oklch, #00843d 36%, black)",
+          "color-mix(in oklch, #00843d 52%, black)",
+          "color-mix(in oklch, #00843d 68%, black)",
+          "color-mix(in oklch, #00843d 84%, black)",
+          "#00843d",
+          "color-mix(in oklch, #00843d 82%, white)",
+          "color-mix(in oklch, #00843d 55%, white)",
+          "color-mix(in oklch, #00843d 28%, white)"
+        ]
+      },
+      "transit-current": {
+        "role": "secondary",
+        "displayName": "Current Service Yellow",
+        "canonical": "#ffd200",
+        "tonalRamp": [
+          "color-mix(in oklch, #ffd200 36%, black)",
+          "color-mix(in oklch, #ffd200 52%, black)",
+          "color-mix(in oklch, #ffd200 68%, black)",
+          "color-mix(in oklch, #ffd200 84%, black)",
+          "#ffd200",
+          "color-mix(in oklch, #ffd200 82%, white)",
+          "color-mix(in oklch, #ffd200 55%, white)",
+          "color-mix(in oklch, #ffd200 28%, white)"
+        ]
+      },
+      "lab-paper": {
+        "role": "neutral",
+        "displayName": "Lab Paper",
+        "canonical": "#f3efe4",
+        "tonalRamp": [
+          "color-mix(in oklch, #f3efe4 36%, black)",
+          "color-mix(in oklch, #f3efe4 52%, black)",
+          "color-mix(in oklch, #f3efe4 68%, black)",
+          "color-mix(in oklch, #f3efe4 84%, black)",
+          "#f3efe4",
+          "color-mix(in oklch, #f3efe4 82%, white)",
+          "color-mix(in oklch, #f3efe4 55%, white)",
+          "color-mix(in oklch, #f3efe4 28%, white)"
+        ]
+      },
+      "lab-panel": {
+        "role": "neutral",
+        "displayName": "Lab Sheet",
+        "canonical": "#fffdf7",
+        "tonalRamp": [
+          "color-mix(in oklch, #fffdf7 36%, black)",
+          "color-mix(in oklch, #fffdf7 52%, black)",
+          "color-mix(in oklch, #fffdf7 68%, black)",
+          "color-mix(in oklch, #fffdf7 84%, black)",
+          "#fffdf7",
+          "color-mix(in oklch, #fffdf7 82%, white)",
+          "color-mix(in oklch, #fffdf7 55%, white)",
+          "color-mix(in oklch, #fffdf7 28%, white)"
+        ]
+      },
+      "lab-ink": {
+        "role": "neutral",
+        "displayName": "Lab Graphite",
+        "canonical": "#172328",
+        "tonalRamp": [
+          "color-mix(in oklch, #172328 36%, black)",
+          "color-mix(in oklch, #172328 52%, black)",
+          "color-mix(in oklch, #172328 68%, black)",
+          "color-mix(in oklch, #172328 84%, black)",
+          "#172328",
+          "color-mix(in oklch, #172328 82%, white)",
+          "color-mix(in oklch, #172328 55%, white)",
+          "color-mix(in oklch, #172328 28%, white)"
+        ]
+      },
+      "lab-muted": {
+        "role": "neutral",
+        "displayName": "Lab Muted Ink",
+        "canonical": "#526267",
+        "tonalRamp": [
+          "color-mix(in oklch, #526267 36%, black)",
+          "color-mix(in oklch, #526267 52%, black)",
+          "color-mix(in oklch, #526267 68%, black)",
+          "color-mix(in oklch, #526267 84%, black)",
+          "#526267",
+          "color-mix(in oklch, #526267 82%, white)",
+          "color-mix(in oklch, #526267 55%, white)",
+          "color-mix(in oklch, #526267 28%, white)"
+        ]
+      },
+      "lab-rule": {
+        "role": "neutral",
+        "displayName": "Lab Rule",
+        "canonical": "#aab8b3",
+        "tonalRamp": [
+          "color-mix(in oklch, #aab8b3 36%, black)",
+          "color-mix(in oklch, #aab8b3 52%, black)",
+          "color-mix(in oklch, #aab8b3 68%, black)",
+          "color-mix(in oklch, #aab8b3 84%, black)",
+          "#aab8b3",
+          "color-mix(in oklch, #aab8b3 82%, white)",
+          "color-mix(in oklch, #aab8b3 55%, white)",
+          "color-mix(in oklch, #aab8b3 28%, white)"
+        ]
+      },
+      "lab-teal": {
+        "role": "primary",
+        "displayName": "Accessible Lab Teal",
+        "canonical": "#14736f",
+        "tonalRamp": [
+          "color-mix(in oklch, #14736f 36%, black)",
+          "color-mix(in oklch, #14736f 52%, black)",
+          "color-mix(in oklch, #14736f 68%, black)",
+          "color-mix(in oklch, #14736f 84%, black)",
+          "#14736f",
+          "color-mix(in oklch, #14736f 82%, white)",
+          "color-mix(in oklch, #14736f 55%, white)",
+          "color-mix(in oklch, #14736f 28%, white)"
+        ]
+      },
+      "lab-orange": {
+        "role": "secondary",
+        "displayName": "Contestant B Orange",
+        "canonical": "#c04322",
+        "tonalRamp": [
+          "color-mix(in oklch, #c04322 36%, black)",
+          "color-mix(in oklch, #c04322 52%, black)",
+          "color-mix(in oklch, #c04322 68%, black)",
+          "color-mix(in oklch, #c04322 84%, black)",
+          "#c04322",
+          "color-mix(in oklch, #c04322 82%, white)",
+          "color-mix(in oklch, #c04322 55%, white)",
+          "color-mix(in oklch, #c04322 28%, white)"
+        ]
+      },
+      "lab-blue": {
+        "role": "secondary",
+        "displayName": "Contestant A Blue",
+        "canonical": "#285e9c",
+        "tonalRamp": [
+          "color-mix(in oklch, #285e9c 36%, black)",
+          "color-mix(in oklch, #285e9c 52%, black)",
+          "color-mix(in oklch, #285e9c 68%, black)",
+          "color-mix(in oklch, #285e9c 84%, black)",
+          "#285e9c",
+          "color-mix(in oklch, #285e9c 82%, white)",
+          "color-mix(in oklch, #285e9c 55%, white)",
+          "color-mix(in oklch, #285e9c 28%, white)"
+        ]
+      },
+      "lab-header-yellow": {
+        "role": "secondary",
+        "displayName": "Notebook Header Yellow",
+        "canonical": "#fff0b8",
+        "tonalRamp": [
+          "color-mix(in oklch, #fff0b8 36%, black)",
+          "color-mix(in oklch, #fff0b8 52%, black)",
+          "color-mix(in oklch, #fff0b8 68%, black)",
+          "color-mix(in oklch, #fff0b8 84%, black)",
+          "#fff0b8",
+          "color-mix(in oklch, #fff0b8 82%, white)",
+          "color-mix(in oklch, #fff0b8 55%, white)",
+          "color-mix(in oklch, #fff0b8 28%, white)"
+        ]
+      },
+      "lab-claim-yellow": {
+        "role": "secondary",
+        "displayName": "Original Claim Yellow",
+        "canonical": "#fff8d9",
+        "tonalRamp": [
+          "color-mix(in oklch, #fff8d9 36%, black)",
+          "color-mix(in oklch, #fff8d9 52%, black)",
+          "color-mix(in oklch, #fff8d9 68%, black)",
+          "color-mix(in oklch, #fff8d9 84%, black)",
+          "#fff8d9",
+          "color-mix(in oklch, #fff8d9 82%, white)",
+          "color-mix(in oklch, #fff8d9 55%, white)",
+          "color-mix(in oklch, #fff8d9 28%, white)"
+        ]
+      },
+      "lab-violet": {
+        "role": "secondary",
+        "displayName": "Integrity Violet",
+        "canonical": "#73549b",
+        "tonalRamp": [
+          "color-mix(in oklch, #73549b 36%, black)",
+          "color-mix(in oklch, #73549b 52%, black)",
+          "color-mix(in oklch, #73549b 68%, black)",
+          "color-mix(in oklch, #73549b 84%, black)",
+          "#73549b",
+          "color-mix(in oklch, #73549b 82%, white)",
+          "color-mix(in oklch, #73549b 55%, white)",
+          "color-mix(in oklch, #73549b 28%, white)"
+        ]
+      },
+      "lab-red": {
+        "role": "secondary",
+        "displayName": "Damage Red",
+        "canonical": "#a8321b",
+        "tonalRamp": [
+          "color-mix(in oklch, #a8321b 36%, black)",
+          "color-mix(in oklch, #a8321b 52%, black)",
+          "color-mix(in oklch, #a8321b 68%, black)",
+          "color-mix(in oklch, #a8321b 84%, black)",
+          "#a8321b",
+          "color-mix(in oklch, #a8321b 82%, white)",
+          "color-mix(in oklch, #a8321b 55%, white)",
+          "color-mix(in oklch, #a8321b 28%, white)"
+        ]
+      },
+      "lab-green": {
+        "role": "secondary",
+        "displayName": "Repair Green",
+        "canonical": "#256b40",
+        "tonalRamp": [
+          "color-mix(in oklch, #256b40 36%, black)",
+          "color-mix(in oklch, #256b40 52%, black)",
+          "color-mix(in oklch, #256b40 68%, black)",
+          "color-mix(in oklch, #256b40 84%, black)",
+          "#256b40",
+          "color-mix(in oklch, #256b40 82%, white)",
+          "color-mix(in oklch, #256b40 55%, white)",
+          "color-mix(in oklch, #256b40 28%, white)"
         ]
       },
       "broadcast-ink": {
@@ -477,11 +747,11 @@
       },
       "headline": {
         "displayName": "Friendly Hardware Headline",
-        "purpose": "Classic and Night arena headlines."
+        "purpose": "Classic hardware headlines."
       },
       "body": {
         "displayName": "Operational Body",
-        "purpose": "Developer Dashboard and Broadcast operational copy."
+        "purpose": "Preloaded 136,676-byte Space Grotesk for Developer Dashboard, Night Transit, Test Lab, and Broadcast operational copy; preload prevents theme-switch font delay."
       },
       "label": {
         "displayName": "Bitmap Label",
@@ -499,9 +769,9 @@
         "purpose": "Lift Classic cards from the paper field."
       },
       {
-        "name": "night-hardware-drop",
-        "value": "0 12px 0 rgb(0 0 0 / 26%)",
-        "purpose": "Give Night cream cards a tactile hardware edge."
+        "name": "lab-experiment-sheet",
+        "value": "0 5px 18px rgb(34 47 43 / 18%)",
+        "purpose": "Lift the central ruled experiment sheet above the flat benches."
       },
       {
         "name": "broadcast-provider-lift",
@@ -533,7 +803,7 @@
     ],
     "breakpoints": [
       {
-        "name": "developer-activity-stack",
+        "name": "alternate-side-rails-stack",
         "value": "1200px"
       },
       {
@@ -541,7 +811,7 @@
         "value": "1180px"
       },
       {
-        "name": "alternate-renderer-stack",
+        "name": "alternate-renderer-natural-flow",
         "value": "980px"
       },
       {
@@ -549,7 +819,7 @@
         "value": "760px"
       },
       {
-        "name": "developer-mobile-and-compact-tactics",
+        "name": "compact-alternate-renderers",
         "value": "700px"
       }
     ]
@@ -577,6 +847,22 @@
       "description": "A dedicated vertical live-and-recorded round selector that becomes horizontal below 700px.",
       "html": "<nav class=\"ds-developer-timeline\" aria-label=\"Round timeline\"><button type=\"button\"><i></i><span><strong>Live arena</strong><small>Attack validation</small></span></button><button class=\"is-selected\" type=\"button\" aria-current=\"page\"><i>2</i><span><strong>Round 2</strong><small>3 recorded moves</small></span></button></nav>",
       "css": ".ds-developer-timeline { position:relative; display:grid; gap:2px; width:232px; padding:12px 14px; color:#9da7b3; background:#11161d; font-family:\"Arena Space\",sans-serif; } .ds-developer-timeline::before { position:absolute; top:34px; bottom:34px; left:31px; width:1px; background:#596575; content:\"\"; } .ds-developer-timeline button { position:relative; display:grid; grid-template-columns:34px minmax(0,1fr); gap:10px; align-items:center; border:0; border-radius:6px; padding:11px 8px 11px 0; color:inherit; background:transparent; text-align:left; cursor:pointer; } .ds-developer-timeline i { z-index:1; display:grid; place-items:center; width:26px; height:26px; margin-left:4px; border:1px solid #596575; border-radius:50%; background:#11161d; font:normal 11px ui-monospace,monospace; } .ds-developer-timeline span { display:grid; gap:2px; } .ds-developer-timeline strong { color:#f0f3f6; font-size:13px; } .ds-developer-timeline small { font-size:10px; } .ds-developer-timeline button:hover,.ds-developer-timeline .is-selected { color:#f0f3f6; background:#1c232d; } .ds-developer-timeline .is-selected i { border-color:#4493f8; color:#fff; background:#1f6feb; } .ds-developer-timeline button:focus-visible { outline:2px solid #58a6ff; outline-offset:2px; }"
+    },
+    {
+      "name": "Night Transit Route Field and Arrivals",
+      "kind": "custom",
+      "refersTo": "transit-arrivals",
+      "description": "A warm mounted-map surface aligning two white contestant service panels to a printed subway map with black signage, blue/orange lines, a green Verify transfer, standardized transit pictograms, totals, and arrivals.",
+      "html": "<section class=\"ds-transit-module\"><div class=\"ds-network\"><div class=\"ds-contestants\"><article class=\"ds-contestant ds-contestant-a\"><b style=\"background:#0072bc\">A</b><strong>Codex · 87 HP</strong><span>12 checks</span></article><article class=\"ds-contestant ds-contestant-b\"><b style=\"background:#e86a10\">B</b><strong>Claude · 72 HP</strong><span>11 checks</span></article></div><div class=\"ds-map\"><svg viewBox=\"0 0 900 360\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><path class=\"ds-bed\" d=\"M35 82H310L380 145H520L590 82H865\"/><path class=\"ds-bed\" d=\"M35 278H310L380 215H520L590 278H865\"/><path class=\"ds-bed ds-verify-bed\" d=\"M450 145V215\"/><path class=\"ds-service ds-service-a\" d=\"M35 82H310L380 145H520L590 82H865\"/><path class=\"ds-highlight\" d=\"M35 82H310L380 145H520L590 82H865\"/><path class=\"ds-verify-branch\" d=\"M450 145V215\"/></svg><span class=\"ds-badge ds-badge-a\">A</span><span class=\"ds-badge ds-badge-b\">B</span><div class=\"ds-stations ds-stations-a\"><i>R1</i><i>R2</i><i class=\"is-current\">R3</i></div><div class=\"ds-stations ds-stations-b\"><i>R1</i><i>R2</i><i class=\"is-current\">R3</i></div><div class=\"ds-verify\"><b>✓</b><strong>Verify</strong></div><div class=\"ds-status\"><span>Network status</span><strong>Services recorded</strong></div></div></div><dl class=\"ds-transit-totals\"><div><dt>Attack routes</dt><dd>1</dd></div><div><dt>Verified</dt><dd>1</dd></div><div><dt>Repaired</dt><dd>0</dd></div></dl><section class=\"ds-transit-arrivals\"><header><h2>Arrivals</h2><span>1 attack lifecycle</span></header><p>attack-17 · Line A → Line B · landed</p></section></section>",
+      "css": ".ds-transit-module { color:#17232b; background:#e8e6dc; font-family:\"Arena Space\",sans-serif; } .ds-network { display:grid; grid-template-columns:230px minmax(0,1fr); min-height:360px; border:1px solid #768184; background:#f1efe5; } .ds-contestants { display:grid; grid-template-rows:1fr 1fr; } .ds-contestant { display:grid; grid-template-columns:auto 1fr; gap:8px; align-content:center; border-left:8px solid; padding:14px; background:#fffdf7; } .ds-contestant-a { border-color:#0072bc; border-bottom:1px solid #768184; } .ds-contestant-b { border-color:#e86a10; } .ds-contestant b { display:grid; width:25px; height:25px; place-items:center; border-radius:50%; color:#111a20; background:currentColor; } .ds-contestant strong { font-size:13px; } .ds-contestant span { grid-column:2; color:#5d696d; font-size:10px; } .ds-map { position:relative; min-height:360px; overflow:hidden; border-left:1px solid #768184; background:#f1efe5; } .ds-map svg { position:absolute; inset:0; width:100%; height:100%; } .ds-bed,.ds-service,.ds-highlight,.ds-verify-branch { fill:none; vector-effect:non-scaling-stroke; } .ds-bed { stroke:#a8cde5; stroke-width:18; stroke-linecap:round; stroke-linejoin:round; } .ds-verify-bed { stroke:#a9cfb8; stroke-width:10; } .ds-service { stroke-width:11; stroke-linecap:round; stroke-linejoin:round; } .ds-service-a { stroke:#0072bc; } .ds-service-b { stroke:#e86a10; } .ds-highlight { stroke:rgb(255 255 255 / 58%); stroke-width:1; } .ds-verify-branch { stroke:#00843d; stroke-width:7; stroke-dasharray:3 8; } .ds-badge { position:absolute; left:2.5%; display:grid; width:25px; height:25px; place-items:center; border-radius:50%; color:#111a20; font-weight:800; } .ds-badge-a { top:9.5%; background:#0072bc; } .ds-badge-b { bottom:9.5%; background:#e86a10; } .ds-stations { position:absolute; right:19%; left:19%; display:flex; justify-content:space-between; } .ds-stations-a { top:18%; } .ds-stations-b { top:73%; } .ds-stations i { display:grid; width:22px; height:22px; place-items:center; border:4px solid #17232b; border-radius:50%; color:#17232b; background:#f1efe5; font:normal 8px ui-monospace,monospace; } .ds-stations i.is-current { border-color:#ffd200; color:#111a20; background:#ffd200; } .ds-verify { position:absolute; top:50%; left:50%; display:grid; width:86px; height:86px; place-items:center; border:10px double #17232b; border-radius:50%; background:#f1efe5; transform:translate(-50%,-50%); } .ds-verify b { color:#00843d; font-size:28px; } .ds-verify strong { margin-top:-22px; color:#00843d; font-size:10px; text-transform:uppercase; } .ds-status { position:absolute; top:18px; right:18px; display:grid; border:1px solid #768184; padding:7px 9px; background:#fffdf7; text-align:right; text-transform:uppercase; } .ds-status span { color:#5d696d; font-size:8px; } .ds-status strong { color:#00843d; font-size:10px; } .ds-transit-totals { display:grid; grid-template-columns:repeat(3,1fr); margin:0; border:1px solid #768184; border-top:0; background:#101820; } .ds-transit-totals div { display:flex; justify-content:space-between; gap:12px; padding:9px 12px; } .ds-transit-totals div+div { border-left:1px solid #768184; } .ds-transit-totals dt { color:#5d696d; font-size:10px; text-transform:uppercase; } .ds-transit-totals dd { margin:0; color:#0072bc; font-size:14px; font-weight:800; } .ds-transit-arrivals { margin-top:10px; border:1px solid #768184; background:#fffdf7; } .ds-transit-arrivals header { display:flex; justify-content:space-between; padding:9px 12px; border-bottom:1px solid #768184; } .ds-transit-arrivals h2 { margin:0; color:#0072bc; font-size:13px; text-transform:uppercase; } .ds-transit-arrivals header span,.ds-transit-arrivals p { color:#5d696d; font-size:10px; } .ds-transit-arrivals p { margin:0; padding:14px; } @media(max-width:980px){.ds-network{grid-template-columns:210px minmax(0,1fr)}} @media(max-width:700px){.ds-network{display:block}.ds-contestants{grid-template-columns:1fr 1fr;grid-template-rows:none}.ds-map{min-height:330px;border-top:1px solid #768184;border-left:0}}"
+    },
+    {
+      "name": "Test Lab Experiment Sheet",
+      "kind": "card",
+      "refersTo": "lab-experiment-sheet",
+      "description": "A ruled attack sheet that exposes only recorded claim, lifecycle, adjudication, damage, repair, and check facts.",
+      "html": "<article class=\"ds-lab-sheet\"><header><span>Round 2</span><h2>Experiment sheet</h2></header><dl><div class=\"ds-claim\"><dt>Original attack claim</dt><dd>Focused regression fails on retry.</dd></div><div class=\"ds-source\"><dt>Source</dt><dd>Bench A</dd></div><div class=\"ds-target\"><dt>Target</dt><dd>Bench B</dd></div><div class=\"ds-damage\"><dt>Damage</dt><dd>15 HP</dd></div><div class=\"ds-repair\"><dt>Repair</dt><dd>Bench B +15 HP</dd></div></dl><footer>Competitive experiment</footer></article>",
+      "css": ".ds-lab-sheet { border:1px solid #aab8b3; border-radius:1px; padding:18px 24px; color:#172328; background-color:#fffdf7; background-image:repeating-linear-gradient(to bottom,transparent 0 27px,rgb(170 184 179 / 18%) 27px 28px); box-shadow:0 5px 18px rgb(34 47 43 / 18%); font:400 10px/1.5 \"Arena Space\",sans-serif; } .ds-lab-sheet header { margin:-18px -24px 0; border-bottom:2px solid #14736f; padding:14px 24px 10px; background:#fff0b8; text-align:center; } .ds-lab-sheet header span { color:#14736f; font-size:11px; font-weight:700; text-transform:uppercase; } .ds-lab-sheet h2 { margin:5px 0 8px; font-size:24px; text-transform:uppercase; } .ds-lab-sheet dl { margin:8px 0; } .ds-lab-sheet dl div { display:grid; grid-template-columns:125px 1fr; min-height:34px; border-bottom:1px solid #aab8b3; background:#fffdf7; } .ds-lab-sheet .ds-claim { background:#fff8d9; } .ds-lab-sheet .ds-source dt { color:#285e9c; } .ds-lab-sheet .ds-target dt { color:#c04322; } .ds-lab-sheet .ds-damage dt,.ds-lab-sheet .ds-damage dd { color:#a8321b; font-weight:700; } .ds-lab-sheet .ds-repair dt,.ds-lab-sheet .ds-repair dd { color:#256b40; font-weight:700; } .ds-lab-sheet dt { padding:9px 8px 8px; color:#526267; font-size:10px; font-weight:700; text-transform:uppercase; } .ds-lab-sheet dd { margin:0; border-left:1px solid #aab8b3; padding:8px 0 8px 12px; font:400 11px/1.5 ui-monospace,monospace; } .ds-lab-sheet footer { border-top:2px solid #73549b; padding-top:10px; color:#73549b; font-size:10px; text-align:center; text-transform:uppercase; } .ds-lab-sheet:focus-within { outline:2px solid #14736f; outline-offset:2px; }"
     },
     {
       "name": "Classic Action",
@@ -610,16 +896,16 @@
     {
       "name": "Full Terminal Output",
       "kind": "custom",
-      "description": "The untruncated terminal-order source reached from Inspect.",
+      "description": "The untruncated terminal-order source reached from Inspect, inheriting the active theme's shared detail surfaces and text.",
       "html": "<pre class=\"ds-terminal\"><span>› running focused tests\\n</span><span class=\"ds-stderr\">failure: expected sealed envelope\\n</span></pre>",
-      "css": ".ds-terminal { min-height:180px; max-height:360px; overflow:auto; margin:0; border:1px solid #40335f; border-radius:0; padding:16px; color:#f2ebdf; background:#080815; font:400 13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap:anywhere; tab-size:2; white-space:pre-wrap; word-break:break-word; } .ds-terminal .ds-stderr { color:#ff8b90; } .ds-terminal:focus-visible { outline:2px solid #43d5d1; outline-offset:2px; }"
+      "css": ".ds-terminal { min-height:180px; max-height:360px; overflow:auto; margin:0; border:1px solid var(--result-border,#40335f); border-radius:0; padding:16px; color:var(--detail-output-fg,#f2ebdf); background:var(--detail-output-surface,#080815); font:400 13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap:anywhere; tab-size:2; white-space:pre-wrap; word-break:break-word; } .ds-terminal .ds-stderr { color:var(--detail-output-danger,#ff8b90); } .ds-terminal:focus-visible { outline:2px solid var(--detail-accent,#43d5d1); outline-offset:2px; }"
     }
   ],
   "narrative": {
-    "northStar": "Five physical views, one recorded truth",
-    "overview": "Agent Arena is an Operate-mode desktop observatory for an adversarial coding run. Five shipped renderers—Classic Shell, Developer Dashboard, Night Edition, Live Arena Broadcast, and 16-Bit Tactics—present the same normalized dashboard state through materially different operator worlds. Theme choice changes composition and atmosphere, never the underlying engineering record.\n\nThe current signature direction is the original 16-Bit Tactics operator console: a midnight-violet cartridge chassis surrounding a tactical terrain field where authoritative attacks, repairs, and verification are visible as routes and nodes. Its approved direction seed is `71186a7d`. This is still an engineering tool: playful competition language may frame the evidence, but provider identity, HP, checks, coverage, failures, warnings, and result authority stay explicit.",
+    "northStar": "Six physical views, one recorded truth",
+    "overview": "Agent Arena is an Operate-mode desktop observatory for an adversarial coding run. Six shipped renderers—Classic Shell, Developer Dashboard, Night Transit, Test Lab, Live Arena Broadcast, and 16-Bit Tactics—present the same normalized dashboard state through materially different operator worlds. Theme choice changes composition and atmosphere, never the underlying engineering record.\n\nNight Transit replaces Night Edition with a real-wayfinding metropolitan board: a warm mounted-map field is framed by black enamel signage, white service panels, transit-blue Line A, orange Line B, green verification, yellow current-service markers, standardized train/roundel/evidence pictograms, repeated round stations, and authoritative arrivals. Its shipped visual record is `.impeccable/review/subway-paper-desktop.png`, `.impeccable/review/subway-paper-compact.png`, and `.impeccable/review/subway-paper-results.png`. The visual-world inspiration is a `.context` attachment only; it is not a shipping asset or runtime dependency.\n\nTest Lab uses warm paper, opposing instrument benches, a central experiment sheet, recorded invocation timing, check grids, and health-history plots. Its approved composition reference remains `.impeccable/mocks/decision/test-lab.png` and its shipped reproduction remains `.impeccable/review/test-lab-hero-repro.png`. Approved references establish composition and density, not fabricated operational content or production art.\n\nThe current signature direction is the user-selected modern pixel observatory refinement of the original 16-Bit Tactics operator console: a midnight-violet cartridge chassis surrounding a lush tactical terrain field where authoritative attacks, repairs, and verification are visible as routes and nodes, with the latest evidence structured directly inside the map. Its approved direction seed is `71186a7d`, and the selected refinement reference is `.impeccable/mocks/decision/retro-tactics-modern-pixel-observatory.png`. This is still an engineering tool: playful competition language may frame the evidence, but provider identity, HP, checks, coverage, failures, warnings, and result authority stay explicit.",
     "keyCharacteristics": [
-      "Five distinct physical compositions over one `DashboardState` projection.",
+      "Six distinct physical compositions over one `DashboardState` projection.",
       "Persistent live status, round navigation, theme choice, and cancellation.",
       "Overview screens summarize; contestant detail preserves full terminal-order output and the complete evidence ledger.",
       "Responsive layouts retain actionable inspection and textual state cues.",
@@ -637,13 +923,18 @@
         "section": "overview"
       },
       {
+        "name": "Lifecycle Projection",
+        "body": "Consolidate append-only attack telemetry by attack ID. Preserve the first recorded mounting claim, show the latest recorded phase, status, detail, severity, and damage, and derive repair ownership and HP restoration only from positive health-ledger entries carrying that attack ID. Unavailable measurements stay unavailable; visual metaphors never fill gaps.",
+        "section": "overview"
+      },
+      {
         "name": "Family Integrity",
-        "body": "Do not recolor one renderer into another. Classic and Night are rounded hardware, Developer Dashboard is a conventional dense tool, Broadcast is an editorial live feed, and Tactics is an angular cartridge console with a map-first topology.",
+        "body": "Do not recolor one renderer into another. Classic is rounded Pocket hardware, Developer Dashboard is a conventional dense tool, Night Transit is a route-and-arrivals control room, Test Lab is an experiment sheet between opposing benches, Broadcast is an editorial live feed, and Tactics is an angular cartridge console with a map-first topology.",
         "section": "colors"
       },
       {
         "name": "Semantic Route",
-        "body": "In 16-Bit Tactics, attack, repair, and verify are not decorative line colors. A route exists only when its corresponding battle event or verification evidence is recorded; the legend, route class, latest-state treatment, and textual footer must agree with that state.",
+        "body": "In 16-Bit Tactics, attack, repair, and verify are not decorative line colors. The legend, route class, latest-state treatment, and textual footer must agree with recorded state.",
         "section": "colors"
       },
       {
@@ -652,8 +943,28 @@
         "section": "colors"
       },
       {
+        "name": "Track Bed Truth",
+        "body": "Night Transit's lightly route-colored track bed communicates available network topology and perceived readiness only. Saturated blue, orange, or green service overlays appear only when the projected dashboard lifecycle records the corresponding route or verification evidence. Blue and orange always name contestant ownership, green names verified or repaired outcomes, and service yellow is reserved for the current station and wayfinding notices. Every color state retains a nearby text label.",
+        "section": "colors"
+      },
+      {
+        "name": "Notebook Semantics",
+        "body": "Test Lab color is restrained and intentional. Paper and table rows stay neutral by default; yellow is reserved for the original claim and header, blue/orange identifies contestant ownership only at headers, labels, and markers, red/green identifies damage and repair, teal structures evidence, and violet marks the footer and run-integrity state.",
+        "section": "colors"
+      },
+      {
         "name": "Role Separation",
         "body": "Do not use the broadcast face for body copy or Silkscreen for long terminal output. Display faces provide identity; operational and terminal faces carry evidence.",
+        "section": "typography"
+      },
+      {
+        "name": "Operational Legibility",
+        "body": "Night Transit and Test Lab operational copy never drops below `10px`; compact data values use `11px` where the current tables, contestant facts, experiment facts, and sample identifiers require stronger scanning weight.",
+        "section": "typography"
+      },
+      {
+        "name": "Theme-Switch Readiness",
+        "body": "Preload Space Grotesk before React mounts; Night Transit must not look typographically unfinished while its `137 KB` body face begins loading after a theme change.",
         "section": "typography"
       },
       {
@@ -668,7 +979,12 @@
       },
       {
         "name": "Full Chassis",
-        "body": "At desktop widths, fit the complete Tactics console inside the application viewport, with overflow inside the round and activity rails. Below the alternate-renderer breakpoint, return to natural page scrolling and hide nonessential bezel ornaments before they can cover status values.",
+        "body": "At desktop widths, fit the complete Tactics console inside the application viewport. Do not make the terrain a separately cropped or page-scrolling poster; overflow belongs inside the round and activity rails.",
+        "section": "layout"
+      },
+      {
+        "name": "Results Entry and Overflow",
+        "body": "Every transition into Results resets document scroll to the top and keeps it there through Electron's automatic results-window resize, so the full topbar, verdict, and actions start visible. Result summary and evidence-grid children are shrink-safe (`min-width: 0`); long labels wrap, and metadata/counts remain fixed-size so no text is clipped. Content continuing below the viewport fold is normal document scrolling; horizontal overflow, clipped text, or hidden leading chrome is not.",
         "section": "layout"
       },
       {
@@ -678,13 +994,19 @@
       },
       {
         "name": "Silhouette",
-        "body": "Preserve geometry with palette: rounded Pocket hardware, compact Developer panels, hard Broadcast editorial framing, and angular pixel-cartridge Tactics.",
+        "body": "Preserve geometry with palette: rounded Pocket hardware, compact Developer panels, squared Transit signage and stations, ruled Lab paper and instrument benches, hard Broadcast editorial framing, and angular pixel-cartridge Tactics.",
         "section": "shapes"
       }
     ],
     "dos": [
       "Do derive every label, quantity, route, node state, and result from normalized dashboard state.",
+      "Do project attack lifecycles by stable attack ID, retaining the original mounting claim while later events update only the facts they actually carry.",
+      "Do use the final desktop, compact, and Results Night Transit captures and the approved Test Lab comp/reproduction as their respective composition and density evidence.",
+      "Do keep the Night Transit contestant board physically aligned to its network, paint the lightly route-colored track bed immediately, and reserve saturated service overlays for recorded lifecycles.",
+      "Do pair sparse Transit rounds with the network-status sign and attack/verified/repaired totals.",
+      "Do keep Test Lab paper and rows neutral, reserving its accents for the documented claim, ownership, structure, integrity, damage, and repair roles.",
       "Do keep theme selection, connection, round context, and cancellation reachable in the first viewport.",
+      "Do invert Night Transit Inspect buttons into their blue/orange ownership color on hover and keyboard focus while retaining a visible focus outline.",
       "Do use the 16-Bit Tactics legend and textual route footer alongside color and route motion.",
       "Do derive compact Tactics work nodes from recorded invocations and render routes only when their corresponding battle events exist.",
       "Do keep the complete Tactics chassis visible at desktop widths and switch to natural page scrolling for compact layouts.",
@@ -693,7 +1015,13 @@
       "Do let each renderer collapse according to its own composition, including the fixed compact Tactics inspect dock."
     ],
     "donts": [
-      "Don't reduce Developer Dashboard, Broadcast, or Tactics to palette swaps of Classic Shell.",
+      "Don't reduce Developer Dashboard, Night Transit, Test Lab, Broadcast, or Tactics to palette swaps of Classic Shell.",
+      "Don't render a transit route, experiment metric, verdict, or duration without corresponding recorded dashboard state.",
+      "Don't restore Night Edition as a selectable family or reuse its rounded Pocket-shell grammar for Night Transit.",
+      "Don't collapse a sparse Transit network into vague loading space or remove its status sign or zero-value totals.",
+      "Don't treat the always-visible Transit track bed as evidence that a route has been recorded; only lifecycle overlays carry that meaning.",
+      "Don't swap Test Lab ownership and outcome colors for arbitrary variety.",
+      "Don't tint every Test Lab fact or table row.",
       "Don't copy third-party game characters, sprites, logos, maps, or UI, and don't use the approved comp itself as shipping production UI.",
       "Don't bake operational state into terrain, sprite, or bezel bitmaps.",
       "Don't darken Tactics terrain until paths, node silhouettes, or map detail become difficult to read, or let decorative bezel pieces overlap status data.",

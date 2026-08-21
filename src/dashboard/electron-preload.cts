@@ -3,14 +3,16 @@ import { contextBridge, ipcRenderer } from "electron";
 type ArenaTheme =
   | "classic-shell"
   | "developer-dashboard"
-  | "night-edition"
+  | "night-transit"
+  | "test-lab"
   | "live-arena-broadcast"
   | "retro-tactics";
 
 const themes = new Set<ArenaTheme>([
   "classic-shell",
   "developer-dashboard",
-  "night-edition",
+  "night-transit",
+  "test-lab",
   "live-arena-broadcast",
   "retro-tactics",
 ]);
@@ -19,11 +21,13 @@ const initialArgument = process.argv.find((entry) =>
 );
 const initialValue = initialArgument?.split("=")[1];
 const initialTheme =
-  initialValue === "sticker-league"
-    ? "developer-dashboard"
-    : initialValue === "evidence-deck" || initialValue === "monster-battle"
-      ? "retro-tactics"
-      : initialValue;
+  initialValue === "night-edition"
+    ? "night-transit"
+    : initialValue === "sticker-league"
+      ? "developer-dashboard"
+      : initialValue === "evidence-deck" || initialValue === "monster-battle"
+        ? "retro-tactics"
+        : initialValue;
 let currentTheme: ArenaTheme = themes.has(initialTheme as ArenaTheme)
   ? (initialTheme as ArenaTheme)
   : "classic-shell";

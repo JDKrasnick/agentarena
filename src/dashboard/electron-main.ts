@@ -158,6 +158,8 @@ function createWindow(): void {
         if (metadataPath) {
           const metadata = (await window.webContents.executeJavaScript(`({
             viewportWidth: document.documentElement.clientWidth,
+            viewportHeight: document.documentElement.clientHeight,
+            scrollY: window.scrollY,
             documentScrollWidth: document.documentElement.scrollWidth,
             bodyScrollWidth: document.body.scrollWidth,
             selectedCompactRound: document.querySelector('.compact-rounds [aria-current="page"]')?.textContent?.trim() ?? null,

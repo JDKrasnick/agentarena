@@ -100,8 +100,8 @@ The desktop window opens in a spacious live-battle layout with taller retained
 fighter output. When a terminal result arrives, it automatically contracts into
 a focused results view; users can still inspect either fighter or return to the
 recorded round timeline before finishing the session.
-The desktop observatory ships five supported visual themes: Classic Shell,
-Developer Dashboard, Night Edition, Live Arena Broadcast, and 16-Bit Tactics.
+The desktop observatory ships six supported visual themes: Classic Shell,
+Developer Dashboard, Night Transit, Test Lab, Live Arena Broadcast, and 16-Bit Tactics.
 Classic Shell is the first-run fallback. A persistent swatch picker remains available in
 the arena, replay, fighter detail, and results views; changing it preserves the
 current view and live connection. The last valid selection is stored atomically
@@ -113,14 +113,23 @@ hashes. Terminal and plain displays remain unchanged.
 Developer Dashboard replaces the redundant second Pocket-family variant with a
 conventional dark observability workspace: a round timeline, paired contestant
 check and summary-log panels, a chronological activity rail, steering controls,
-and a compact run-status bar. 16-Bit Tactics is an original retro strategy
+and a compact run-status bar. Night Transit is a subway-wayfinding renderer:
+two contestant lines expose real round stations on a printed map field, recorded attack and
+repair routes converge on a verification interchange, and an arrivals board
+consolidates each attack lifecycle. Test Lab is a warm experiment workspace:
+opposing benches flank a central attack sheet built from invocation timing,
+checks, health history, adjudication, damage, and repair facts. Both keep
+historical rounds read-only and omit unavailable routes or measurements rather
+than inventing them. 16-Bit Tactics is an original retro strategy
 renderer: opposing status bars, a data-driven tactical node map, recorded attack
-and repair routes, an evidence channel, and inspect commands. At desktop widths
+and repair routes, an evidence channel, a structured in-map latest-evidence
+readout, and inspect commands. At desktop widths
 its cartridge chassis fits the available window rather than turning the terrain
 into a separately scrolling poster; compact work nodes are derived from recorded
 contestant invocations. It ships no third-party characters, logos, sprites, or
 game assets. Existing
-`sticker-league` preferences migrate to `developer-dashboard`; `evidence-deck`
+`night-edition` preferences migrate to `night-transit`; `sticker-league`
+preferences migrate to `developer-dashboard`; `evidence-deck`
 and `monster-battle` preferences migrate to `retro-tactics`.
 
 Applying an operator steering note changes run integrity from `competitive` to

@@ -131,8 +131,13 @@ arena champion and recommended patch, coverage, run integrity, completed rounds,
 final fighter scores, defects, verified repairs, outcome, and evidence links.
 
 Use the top-bar swatches to switch among **Classic Shell** (the first-run
-default), **Sticker League**, **Night Edition**, **Live Arena Broadcast**, and
-**Evidence Deck**. The selected theme persists locally across battles. Switching
+default), **Developer Dashboard**, **Night Transit**, **Test Lab**, **Live Arena
+Broadcast**, and **16-Bit Tactics**. Night Transit turns recorded attack and
+repair lifecycles into contestant lines, verification routes, and an arrivals
+board. Test Lab presents the same truth as opposing benches, an experiment
+sheet, invocation timing, checks, and health history. The selected theme
+persists locally across battles. Legacy `night-edition` selections migrate to
+Night Transit. Switching
 themes does not reset the current fighter, recorded round, result review, or
 live connection. If the preference cannot be saved, the current window keeps
 the selection and reports a non-blocking warning. Theme selection affects only

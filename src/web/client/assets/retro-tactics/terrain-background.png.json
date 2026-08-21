@@ -11,11 +11,12 @@
   },
   "prompt": "Use case: stylized-concept. Asset type: shipping seamless tactical terrain background texture for an Electron dashboard. Input image: approved Agent Arena operator-console comp, visual reference only for the late-16-bit pixel-art material language and palette; do not reproduce its UI, labels, paths, nodes, characters, logos, or composition. Create an original, top-down orthographic 16-bit tactical terrain map texture at a wide 16:10 composition. Dense crisp integer-pixel aesthetic with midnight violet shadows, slate-blue water, deep grass greens, parchment-gray stone, muted aqua depth accents, and sparse burnt-orange highlights. Include organically distributed grass tiles, branching water channels, stone bridges and retaining walls, vegetation clusters, small ruined masonry, worn paths, and dithered depth. Keep the center and multiple corridors readable enough to support live HTML/SVG nodes and routes overlaid above it. Edge treatment should visually tile/crop cleanly, with no prominent focal object touching the canvas boundary. No text, labels, UI panels, status bars, provider marks, characters, agents, arrows, routes, node icons, logos, franchise imagery, gradients, blur, antialias-smoothed vector styling, or watermark. Original assets only.",
   "postprocessing": [
-    "Centered crop from generated 1586x992 source to exact 1536x960 (16:10) shipping frame"
+    "Centered crop from generated 1586x992 source to exact 1536x960 (16:10) shipping frame",
+    "Downsampled to a 1024x640 shipping texture after UI QA; CSS preserves the same cover composition and pixelated rendering"
   ],
   "dimensions": {
-    "width": 1536,
-    "height": 960
+    "width": 1024,
+    "height": 640
   },
   "intended_usage": "Use as a single cover-sized arena background layer beneath semantic HTML controls and SVG node, route, attack, and repair overlays; do not bake operational state into this bitmap. Prefer image-rendering: pixelated and avoid repeated tiling where edge continuity is authoritative."
 }

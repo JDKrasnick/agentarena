@@ -32,6 +32,7 @@ import {
   attackDisplayLabel,
   createArenaPresentation,
   isRoundAvailable,
+  projectAttackLifecycles,
   recordedRoundMoveCount,
   roundLabel,
   stageLabel,
@@ -52,7 +53,8 @@ declare global {
 const themeNames: Record<ArenaTheme, string> = {
   "classic-shell": "Classic Shell",
   "developer-dashboard": "Developer Dashboard",
-  "night-edition": "Night Edition",
+  "night-transit": "Night Transit",
+  "test-lab": "Test Lab",
   "live-arena-broadcast": "Live Broadcast",
   "retro-tactics": "16-Bit Tactics",
 };
@@ -121,6 +123,17 @@ function providerLogo(provider: string) {
 function title(provider: string) {
   if (provider === "unknown") return "Waiting";
   return provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
+function participantName(
+  participant: string | undefined,
+  contestants: { a: DashboardContestant; b: DashboardContestant },
+  fallback: string,
+) {
+  if (participant === "a" || participant === "b") {
+    return title(contestants[participant].provider);
+  }
+  return participant ? title(participant) : fallback;
 }
 
 function BackIcon() {
@@ -717,7 +730,8 @@ function ResultScreen({
                 <li key={`${id}-${String(change.sequence)}`}>
                   <strong>{change.reason}</strong>
                   <span>
-                    Fighter {id.toUpperCase()} · +{change.amount} HP
+                    {title(state.contestants[id].provider)} · +{change.amount}{" "}
+                    HP
                   </span>
                 </li>
               ))}
@@ -990,7 +1004,7 @@ function DeveloperAgentPanel({
   );
 }
 
-function DeveloperDashboardArena({
+export function DeveloperDashboardArena({
   state,
   rounds,
   selectedRound,
@@ -1018,6 +1032,7 @@ function DeveloperDashboardArena({
           <button
             type="button"
             className={selectedRound === "live" ? "is-selected" : ""}
+            aria-current={selectedRound === "live" ? "page" : undefined}
             onClick={() => onRound("live")}
           >
             <i />
@@ -1033,6 +1048,7 @@ function DeveloperDashboardArena({
               <button
                 type="button"
                 className={selectedRound === round ? "is-selected" : ""}
+                aria-current={selectedRound === round ? "page" : undefined}
                 disabled={!available}
                 key={round}
                 onClick={() => onRound(round)}
@@ -1136,6 +1152,767 @@ function DeveloperDashboardArena({
         <span>{state.status.replaceAll("_", " ")}</span>
         <span>{attacks.length} evidence events</span>
       </footer>
+    </main>
+  );
+}
+
+function OperatorNote({
+  id,
+  fighter,
+  canSteer,
+  isHistorical,
+  unavailable,
+  onSteer,
+}: {
+  id: ContestantId;
+  fighter: DashboardContestant;
+  canSteer: boolean;
+  isHistorical: boolean;
+  unavailable: string;
+  onSteer: (id: ContestantId, note: string) => Promise<void>;
+}) {
+  const [note, setNote] = useState("");
+  if (isHistorical) return <span>Read-only recorded state</span>;
+  if (!canSteer) return <span>{unavailable}</span>;
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!note.trim()) return;
+        void onSteer(id, note).then(() => setNote(""));
+      }}
+    >
+      <input
+        aria-label={`Steer ${title(fighter.provider)}`}
+        value={note}
+        onChange={(event) => setNote(event.target.value)}
+        placeholder={`One-time note for ${title(fighter.provider)}…`}
+      />
+      <button type="submit" disabled={!note.trim()}>
+        Queue
+      </button>
+    </form>
+  );
+}
+
+function HealthHistory({
+  fighter,
+  label,
+}: {
+  fighter: DashboardContestant;
+  label: string;
+}) {
+  const values = [100, ...fighter.healthChanges.map((change) => change.health)];
+  const visibleValues = values.slice(-10);
+  const points = visibleValues
+    .map((value, index, entries) => {
+      const x = entries.length === 1 ? 0 : (index / (entries.length - 1)) * 100;
+      const normalizedHealth = Math.max(0, Math.min(100, value));
+      const y = 4 + ((100 - normalizedHealth) / 100) * 28;
+      return `${String(x)},${String(y)}`;
+    })
+    .join(" ");
+  const current = visibleValues.at(-1) ?? 100;
+  const minimum = Math.min(...visibleValues);
+  const accessibleLabel = `${label}: 100 to ${current} HP; low ${minimum} HP across ${visibleValues.length} observations.`;
+  return (
+    <svg
+      className="lab-health-chart"
+      viewBox="0 0 100 36"
+      role="img"
+      aria-label={accessibleLabel}
+    >
+      <title>{accessibleLabel}</title>
+      <path d="M0 12H100M0 24H100" />
+      <polyline points={points || "0,0"} />
+    </svg>
+  );
+}
+
+function NightTransitStatus({
+  id,
+  fighter,
+  onFighter,
+}: {
+  id: ContestantId;
+  fighter: DashboardContestant;
+  onFighter: (id: ContestantId) => void;
+}) {
+  const passed = fighter.checks.filter(
+    (check) => check.status === "passed",
+  ).length;
+  return (
+    <article className={`transit-contestant transit-contestant-${id}`}>
+      <ProviderDisc fighter={fighter} id={id} />
+      <div>
+        <strong>{title(fighter.provider)} line</strong>
+        <span>{fighter.model ?? "Default model"}</span>
+      </div>
+      <dl>
+        <div>
+          <dt>Health</dt>
+          <dd>{fighter.health} HP</dd>
+        </div>
+        <div>
+          <dt>Checks</dt>
+          <dd>
+            {passed}/{fighter.checks.length}
+          </dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd>{fighter.status.replaceAll("_", " ")}</dd>
+        </div>
+      </dl>
+      <button type="button" onClick={() => onFighter(id)}>
+        Inspect {title(fighter.provider)}
+      </button>
+    </article>
+  );
+}
+
+function TransitPath({
+  active,
+  className,
+  d,
+}: {
+  active: boolean;
+  className: "a" | "b" | "verify";
+  d: string;
+}) {
+  return (
+    <>
+      <path className={`transit-track track-${className}`} d={d} />
+      {active ? (
+        <>
+          <path className={`transit-route route-${className}`} d={d} />
+          <path
+            className={`transit-route-highlight route-${className}`}
+            d={d}
+          />
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function TransitTrainIcon() {
+  return (
+    <svg className="transit-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6.5 4.5h11v11h-11z" />
+      <path d="M8.5 7.5h7M8 18.5l2-3M16 18.5l-2-3" />
+      <circle cx="9" cy="12.5" r="1" />
+      <circle cx="15" cy="12.5" r="1" />
+    </svg>
+  );
+}
+
+function TransitRoundelIcon() {
+  return (
+    <svg className="transit-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8" />
+      <path d="M3 10h18v4H3z" />
+    </svg>
+  );
+}
+
+function TransitEvidenceIcon() {
+  return (
+    <svg className="transit-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 3.5h9l3 3v14H6z" />
+      <path d="M15 3.5v4h4M9 11h6M9 15h6" />
+    </svg>
+  );
+}
+
+export function NightTransitArena({
+  state,
+  rounds,
+  selectedRound,
+  contestants,
+  attacks,
+  stage,
+  onRound,
+  onFighter,
+  onSteer,
+  canSteer,
+  steeringUnavailable,
+}: DeveloperDashboardProps) {
+  const lifecycles = projectAttackLifecycles(state, attacks);
+  const isHistorical = selectedRound !== "live";
+  const hasRoute = (id: ContestantId) =>
+    lifecycles.some(
+      (attack) => attack.attacker === id || attack.repairedBy === id,
+    );
+  const hasVerification = lifecycles.some((attack) =>
+    ["landed", "revised", "resolved"].includes(attack.phase),
+  );
+  const verifiedRoutes = lifecycles.filter((attack) =>
+    ["landed", "resolved"].includes(attack.phase),
+  ).length;
+  const repairedRoutes = lifecycles.filter(
+    (attack) => attack.repairedBy !== undefined,
+  ).length;
+  const arrivals = lifecycles.slice(-5).reverse();
+  return (
+    <main className="night-transit">
+      <aside className="transit-rounds">
+        <header>
+          <strong>
+            <TransitRoundelIcon />
+            {roundLabel(selectedRound)}
+          </strong>
+          <span>{isHistorical ? "Read-only" : "Live service"}</span>
+        </header>
+        <CompactRoundNav
+          state={state}
+          rounds={rounds}
+          selected={selectedRound}
+          onSelect={onRound}
+        />
+        <ol>
+          {rounds.map((round) => (
+            <li
+              key={round}
+              className={state.round === round ? "is-current" : ""}
+            >
+              <i />
+              <span>
+                <strong>{roundLabel(round)}</strong>
+                <small>
+                  {isRoundAvailable(state, round)
+                    ? `${recordedRoundMoveCount(state, round)} recorded moves`
+                    : "Upcoming"}
+                </small>
+              </span>
+            </li>
+          ))}
+        </ol>
+        <p>
+          {isHistorical
+            ? "Recorded view. Live execution is unchanged."
+            : state.task}
+        </p>
+      </aside>
+      <section className="transit-workspace">
+        <header>
+          <div>
+            <h1>
+              <TransitTrainIcon />
+              Verification interchange
+            </h1>
+            <p>{stage}</p>
+          </div>
+          <span>
+            {isHistorical
+              ? "Recorded service"
+              : state.assisted
+                ? "Assisted service"
+                : "Competitive service"}
+          </span>
+        </header>
+        <div className="transit-network">
+          <div className="transit-contestants">
+            {(["a", "b"] as const).map((id) => (
+              <NightTransitStatus
+                id={id}
+                fighter={contestants[id]}
+                onFighter={onFighter}
+                key={id}
+              />
+            ))}
+          </div>
+          <section
+            className="transit-map"
+            aria-label="Attack and verification route map"
+          >
+            <svg
+              viewBox="0 0 900 360"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <TransitPath
+                active={hasRoute("a")}
+                className="a"
+                d="M35 82H310L380 145H520L590 82H865"
+              />
+              <TransitPath
+                active={hasRoute("b")}
+                className="b"
+                d="M35 278H310L380 215H520L590 278H865"
+              />
+              <TransitPath
+                active={hasVerification}
+                className="verify"
+                d="M450 145V215"
+              />
+            </svg>
+            <div className="transit-line-label line-a">
+              <b>A</b>
+              <span>Line A · contestant service</span>
+            </div>
+            <div className="transit-line-label line-b">
+              <b>B</b>
+              <span>Line B · contestant service</span>
+            </div>
+            {(["a", "b"] as const).flatMap((id) =>
+              rounds.slice(0, 3).map((round, index) => (
+                <span
+                  className={`transit-station transit-station-${id} station-${String(index + 1)} ${state.round === round ? "is-current" : ""}`}
+                  key={`${id}-${String(round)}`}
+                >
+                  <i />
+                  <strong>R{round}</strong>
+                  <small>
+                    {state.round === round
+                      ? isRoundAvailable(state, round)
+                        ? `Current · ${recordedRoundMoveCount(state, round)} moves`
+                        : "Current · upcoming"
+                      : isRoundAvailable(state, round)
+                        ? `${recordedRoundMoveCount(state, round)} moves`
+                        : "Upcoming"}
+                  </small>
+                </span>
+              )),
+            )}
+            <div className="transit-interchange">
+              <i>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m6.5 12.5 3.5 3.5 7.5-8" />
+                </svg>
+                <strong>Verify</strong>
+              </i>
+              <span>
+                {hasVerification ? "Evidence accepted" : "Awaiting evidence"}
+              </span>
+            </div>
+            <div className="transit-map-status">
+              <span>
+                {lifecycles.length ? "Network status" : "No recorded services"}
+              </span>
+              <strong>
+                {lifecycles.length
+                  ? "Services recorded"
+                  : "The network is ready"}
+              </strong>
+            </div>
+          </section>
+        </div>
+        <dl
+          className="transit-route-summary"
+          aria-label="Recorded route totals"
+        >
+          <div>
+            <dt>Attack routes</dt>
+            <dd>{lifecycles.length}</dd>
+          </div>
+          <div>
+            <dt>Verified</dt>
+            <dd>{verifiedRoutes}</dd>
+          </div>
+          <div>
+            <dt>Repaired</dt>
+            <dd>{repairedRoutes}</dd>
+          </div>
+        </dl>
+        <section className="transit-arrivals">
+          <header>
+            <h2>
+              <TransitTrainIcon />
+              Arrivals
+            </h2>
+            <span>{arrivals.length} attack lifecycles</span>
+          </header>
+          {arrivals.length ? (
+            <table>
+              <thead>
+                <tr>
+                  <th>Service</th>
+                  <th>From → target</th>
+                  <th>Status</th>
+                  <th>Evidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                {arrivals.map((attack) => (
+                  <tr key={attack.id}>
+                    <td>{attack.id}</td>
+                    <td>
+                      {participantName(attack.attacker, contestants, "House")} →{" "}
+                      {participantName(attack.target, contestants, "Both")}
+                    </td>
+                    <td>
+                      {attack.repairedBy
+                        ? `repaired by ${participantName(attack.repairedBy, contestants, "Unknown")}`
+                        : attack.status.replaceAll("_", " ")}
+                    </td>
+                    <td>
+                      {attack.originalClaim ??
+                        attack.latestDetail ??
+                        "No claim text recorded"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p>
+              No authoritative arrivals yet. Routes appear only after recorded
+              battle activity.
+            </p>
+          )}
+        </section>
+        <footer className="transit-steering">
+          {(["a", "b"] as const).map((id) => (
+            <div key={id}>
+              <strong>{title(contestants[id].provider)} operator note</strong>
+              <OperatorNote
+                id={id}
+                fighter={contestants[id]}
+                canSteer={canSteer}
+                isHistorical={isHistorical}
+                unavailable={steeringUnavailable}
+                onSteer={onSteer}
+              />
+            </div>
+          ))}
+        </footer>
+      </section>
+      <aside className="transit-activity">
+        <header>
+          <strong>
+            <TransitEvidenceIcon />
+            Activity / evidence
+          </strong>
+          <span>{attacks.length}</span>
+        </header>
+        {attacks.length ? (
+          attacks
+            .slice(-9)
+            .reverse()
+            .map((attack, index) => (
+              <article key={`${attack.id}-${attack.phase}-${index}`}>
+                <i className={`is-${attack.attacker ?? "verify"}`} />
+                <div>
+                  <strong>{attackDisplayLabel(attack)}</strong>
+                  <span>
+                    {participantName(attack.attacker, contestants, "House")} →{" "}
+                    {participantName(attack.target, contestants, "Both")} ·{" "}
+                    {attack.phase} · {attack.round ? `R${attack.round}` : "—"}
+                  </span>
+                </div>
+                {attack.damage ? <b>−{attack.damage}</b> : null}
+              </article>
+            ))
+        ) : (
+          <p>No attack evidence recorded yet.</p>
+        )}
+        {isHistorical ? (
+          <footer>Historical events are read-only.</footer>
+        ) : null}
+      </aside>
+    </main>
+  );
+}
+
+function LabBench({
+  id,
+  fighter,
+  onFighter,
+  onSteer,
+  canSteer,
+  isHistorical,
+  steeringUnavailable,
+}: {
+  id: ContestantId;
+  fighter: DashboardContestant;
+  onFighter: (id: ContestantId) => void;
+  onSteer: (id: ContestantId, note: string) => Promise<void>;
+  canSteer: boolean;
+  isHistorical: boolean;
+  steeringUnavailable: string;
+}) {
+  const recent = fighter.invocations.at(-1);
+  return (
+    <article className={`lab-bench lab-bench-${id}`}>
+      <header>
+        <ProviderDisc fighter={fighter} id={id} />
+        <div>
+          <strong>{title(fighter.provider)}</strong>
+          <span>{fighter.model ?? "Default model"}</span>
+        </div>
+        <b>Bench {id.toUpperCase()}</b>
+      </header>
+      <dl>
+        <div>
+          <dt>Health</dt>
+          <dd>{fighter.health} HP</dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd>{fighter.status.replaceAll("_", " ")}</dd>
+        </div>
+        <div>
+          <dt>Current work</dt>
+          <dd>{fighter.activity.replaceAll("_", " ")}</dd>
+        </div>
+      </dl>
+      <section>
+        <h3>Health history</h3>
+        <HealthHistory
+          fighter={fighter}
+          label={`${title(fighter.provider)} recorded health history`}
+        />
+      </section>
+      <section>
+        <h3>Check grid</h3>
+        <div className="lab-check-grid">
+          {fighter.checks.length ? (
+            fighter.checks.slice(-12).map((check, index) => (
+              <span
+                className={`is-${check.status}`}
+                title={`${check.id}: ${check.status}`}
+                aria-label={`${check.id}: ${check.status}`}
+                key={`${check.id}-${index}`}
+              >
+                {check.status.charAt(0).toUpperCase() || "—"}
+              </span>
+            ))
+          ) : (
+            <p>No checks recorded.</p>
+          )}
+        </div>
+        {fighter.checks.length ? (
+          <p className="lab-check-legend">
+            P passed · F failed · first letter otherwise
+          </p>
+        ) : null}
+      </section>
+      <section className="lab-output">
+        <h3>Recent invocation</h3>
+        {recent ? (
+          <>
+            <strong>{recent.stage.replaceAll("_", " ")}</strong>
+            <span>
+              {recent.startedAt.slice(11, 19)} ·{" "}
+              {recent.durationMs === undefined
+                ? recent.status
+                : `${(recent.durationMs / 1000).toFixed(1)}s · ${recent.status}`}
+            </span>
+            <p>{fighter.summaries.at(-1)?.text ?? "No summary recorded."}</p>
+          </>
+        ) : (
+          <p>No invocation recorded.</p>
+        )}
+      </section>
+      <footer>
+        <OperatorNote
+          id={id}
+          fighter={fighter}
+          canSteer={canSteer}
+          isHistorical={isHistorical}
+          unavailable={steeringUnavailable}
+          onSteer={onSteer}
+        />
+        <button type="button" onClick={() => onFighter(id)}>
+          Inspect {title(fighter.provider)}
+        </button>
+      </footer>
+    </article>
+  );
+}
+
+export function TestLabArena({
+  state,
+  rounds,
+  selectedRound,
+  contestants,
+  attacks,
+  stage,
+  onRound,
+  onFighter,
+  onSteer,
+  canSteer,
+  steeringUnavailable,
+}: DeveloperDashboardProps) {
+  const isHistorical = selectedRound !== "live";
+  const lifecycles = projectAttackLifecycles(state, attacks);
+  const sample = lifecycles.at(-1);
+  const invocations = (["a", "b"] as const)
+    .flatMap((id) =>
+      contestants[id].invocations.map((invocation) => ({ id, invocation })),
+    )
+    .toSorted((left, right) =>
+      left.invocation.startedAt.localeCompare(right.invocation.startedAt),
+    );
+  const recordedChecks = (["a", "b"] as const)
+    .flatMap((id) => contestants[id].checks.map((check) => ({ id, check })))
+    .slice(-10)
+    .reverse();
+  return (
+    <main className="test-lab">
+      <aside className="lab-timeline">
+        <header>
+          <strong>Invocation timeline</strong>
+          <span>{isHistorical ? "Read-only" : "Live record"}</span>
+        </header>
+        <CompactRoundNav
+          state={state}
+          rounds={rounds}
+          selected={selectedRound}
+          onSelect={onRound}
+        />
+        {invocations.length ? (
+          <ol>
+            {invocations.slice(-10).map(({ id, invocation }) => (
+              <li className={`lab-invocation-${id}`} key={invocation.id}>
+                <i className={`is-${invocation.status}`} />
+                <time>{invocation.startedAt.slice(11, 19)}</time>
+                <strong>
+                  {title(contestants[id].provider)} ·{" "}
+                  {invocation.stage.replaceAll("_", " ")}
+                </strong>
+                <span>
+                  {invocation.durationMs === undefined
+                    ? invocation.status
+                    : `${(invocation.durationMs / 1000).toFixed(1)}s · ${invocation.status}`}
+                </span>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p>No invocations recorded yet.</p>
+        )}
+      </aside>
+      <section className="lab-workspace">
+        <LabBench
+          id="a"
+          fighter={contestants.a}
+          onFighter={onFighter}
+          onSteer={onSteer}
+          canSteer={canSteer}
+          isHistorical={isHistorical}
+          steeringUnavailable={steeringUnavailable}
+        />
+        <article className="experiment-sheet">
+          <header>
+            <span>{roundLabel(selectedRound)}</span>
+            <h1>Experiment sheet</h1>
+            <p>{stage}</p>
+          </header>
+          <dl className="experiment-facts">
+            <div className="lab-fact-claim">
+              <dt>Original attack claim</dt>
+              <dd>{sample?.originalClaim ?? "No attack claim recorded."}</dd>
+            </div>
+            <div className="lab-fact-source">
+              <dt>Source</dt>
+              <dd>{participantName(sample?.attacker, contestants, "—")}</dd>
+            </div>
+            <div className="lab-fact-target">
+              <dt>Target</dt>
+              <dd>{participantName(sample?.target, contestants, "—")}</dd>
+            </div>
+            <div className="lab-fact-severity">
+              <dt>Severity</dt>
+              <dd>{sample?.severity ?? "Not recorded"}</dd>
+            </div>
+            <div className="lab-fact-lifecycle">
+              <dt>Lifecycle status</dt>
+              <dd>
+                {sample ? sample.phase.replaceAll("_", " ") : "Awaiting sample"}
+              </dd>
+            </div>
+            <div className="lab-fact-adjudication">
+              <dt>Adjudication outcome</dt>
+              <dd>{sample?.status.replaceAll("_", " ") ?? "Not available"}</dd>
+            </div>
+            <div className="lab-fact-damage">
+              <dt>Damage</dt>
+              <dd>
+                {sample?.damage === undefined ? "—" : `${sample.damage} HP`}
+              </dd>
+            </div>
+            <div className="lab-fact-repair">
+              <dt>Repair</dt>
+              <dd>
+                {sample?.repairedBy
+                  ? `${participantName(sample.repairedBy, contestants, "Unknown")} +${sample.repairAmount ?? 0} HP`
+                  : "None recorded"}
+              </dd>
+            </div>
+          </dl>
+          <section className="experiment-checks">
+            <h2>Evidence / checks</h2>
+            {recordedChecks.length ? (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Bench</th>
+                    <th>Check</th>
+                    <th>Round</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recordedChecks.map(({ id, check }, index) => (
+                    <tr
+                      className={`lab-check-${id}`}
+                      key={`${id}-${check.id}-${index}`}
+                    >
+                      <td>{id.toUpperCase()}</td>
+                      <td>{check.id}</td>
+                      <td>{check.round ? `R${check.round}` : "—"}</td>
+                      <td>{check.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p>No checks recorded for this experiment.</p>
+            )}
+          </section>
+          <footer>
+            {isHistorical
+              ? "Recorded experiment — read-only"
+              : state.assisted
+                ? "Assisted experiment"
+                : "Competitive experiment"}
+          </footer>
+        </article>
+        <LabBench
+          id="b"
+          fighter={contestants.b}
+          onFighter={onFighter}
+          onSteer={onSteer}
+          canSteer={canSteer}
+          isHistorical={isHistorical}
+          steeringUnavailable={steeringUnavailable}
+        />
+      </section>
+      <aside className="lab-samples">
+        <header>
+          <strong>Check samples</strong>
+          <span>{recordedChecks.length}</span>
+        </header>
+        {recordedChecks.length ? (
+          recordedChecks.map(({ id, check }, index) => (
+            <article
+              className={`lab-sample-${id}`}
+              key={`${id}-${check.id}-${index}`}
+            >
+              <strong>{check.id}</strong>
+              <span>
+                Bench {id.toUpperCase()} ·{" "}
+                {check.round ? `R${check.round}` : "unassigned"}
+              </span>
+              <b className={`is-${check.status}`}>{check.status}</b>
+            </article>
+          ))
+        ) : (
+          <p>No test samples recorded yet.</p>
+        )}
+      </aside>
     </main>
   );
 }
@@ -1248,7 +2025,7 @@ function BroadcastArena({
   );
 }
 
-function RetroTacticsArena({
+export function RetroTacticsArena({
   state,
   rounds,
   selectedRound,
@@ -1267,7 +2044,9 @@ function RetroTacticsArena({
       .filter((change) => change.amount > 0)
       .map((change) => ({ id, change })),
   );
-  const latestRepair = repairs.at(-1);
+  const latestRepair = repairs
+    .toSorted((left, right) => left.change.sequence - right.change.sequence)
+    .at(-1);
   const hasAttack = (id: ContestantId) =>
     attacks.some((attack) => attack.attacker === id);
   const hasVerification =
@@ -1321,6 +2100,12 @@ function RetroTacticsArena({
       kind: "base" as const,
     },
   ];
+  const participantLabel = (id: string | undefined, fallback: string) => {
+    if (id === "a" || id === "b") return title(contestants[id].provider);
+    return id ? title(id) : fallback;
+  };
+  const latestHasContestantRoute =
+    latest?.attacker === "a" || latest?.attacker === "b";
 
   return (
     <main className="retro-tactics">
@@ -1402,11 +2187,11 @@ function RetroTacticsArena({
           <div className="tactics-legend" aria-label="Route legend">
             <span>
               <i className="is-a" />
-              Codex
+              {title(contestants.a.provider)}
             </span>
             <span>
               <i className="is-b" />
-              Claude
+              {title(contestants.b.provider)}
             </span>
             <span>
               <i className="is-repair" />
@@ -1498,9 +2283,9 @@ function RetroTacticsArena({
                 }
               />
             ) : null}
-            {latest ? (
+            {latest && latestHasContestantRoute ? (
               <path
-                className={`route route-attack route-latest route-${latest.attacker === "b" ? "b" : "a"}`}
+                className={`route route-attack route-latest route-${latest.attacker}`}
                 d={
                   latest.attacker === "b"
                     ? "M865 285 C780 285 758 175 690 170 S570 225 500 260 S380 170 310 170"
@@ -1531,15 +2316,37 @@ function RetroTacticsArena({
               </button>
             ))}
           </div>
-          <footer aria-live="polite">
-            <strong>
-              {latest ? attackDisplayLabel(latest) : "Awaiting verified move"}
-            </strong>
-            <span>
-              {latest
-                ? `${latest.phase} · ${latest.attacker?.toUpperCase() ?? "House"} → ${latest.target?.toUpperCase() ?? "both"}${latest.damage ? ` · ${String(latest.damage)} HP` : ""}`
-                : "Recorded attacks and repairs will illuminate this route."}
-            </span>
+          <footer aria-live="polite" aria-label="Latest battle evidence">
+            <div className="tactics-evidence-summary">
+              <small>Latest evidence</small>
+              <strong>
+                {latest ? attackDisplayLabel(latest) : "Awaiting verified move"}
+              </strong>
+              <span>
+                {latest?.detail ??
+                  "Recorded attacks and repairs will illuminate this route."}
+              </span>
+            </div>
+            {latest ? (
+              <dl className="tactics-evidence-facts">
+                <div>
+                  <dt>Source</dt>
+                  <dd>{participantLabel(latest.attacker, "House")}</dd>
+                </div>
+                <div>
+                  <dt>Target</dt>
+                  <dd>{participantLabel(latest.target, "Both")}</dd>
+                </div>
+                <div>
+                  <dt>Outcome</dt>
+                  <dd>{latest.phase.replaceAll("_", " ")}</dd>
+                </div>
+                <div className="is-damage">
+                  <dt>Damage</dt>
+                  <dd>{latest.damage ? `${String(latest.damage)} HP` : "—"}</dd>
+                </div>
+              </dl>
+            ) : null}
           </footer>
         </section>
 
@@ -1597,18 +2404,85 @@ function RetroTacticsArena({
   );
 }
 
-const DESIGN_CONTRACT = {
-  thesis:
-    "Turn recorded engineering evidence into a live 16-bit tactics console without changing a product fact.",
-  ownWorld:
-    "Midnight violet chassis, purple and orange territories, aqua verification, pixel tile terrain, angular panels, and bitmap-scale rules.",
-  story:
-    "Track the fight, inspect either contestant, review recorded rounds, understand attacks and repairs, then finish the authoritative result.",
-  firstViewport:
-    "A top matchup bar leads a round rail, central tactical node map, right evidence channel, and bottom inspection commands.",
-  form: "User-approved 16-bit Tactics Board, operator-console composition B.",
-  seed: "71186a7d",
-} as const;
+const DESIGN_CONTRACTS: Record<
+  ArenaTheme,
+  {
+    thesis: string;
+    ownWorld: string;
+    story: string;
+    firstViewport: string;
+    form: string;
+    seed: string;
+  }
+> = {
+  "classic-shell": {
+    thesis:
+      "Keep live engineering evidence immediately legible in a restrained battle shell.",
+    ownWorld: "Warm shell surfaces, clear fighter cards, and direct controls.",
+    story: "Track, inspect, replay, and review.",
+    firstViewport:
+      "Round rail, opposing fighters, narration, and evidence activity.",
+    form: "Classic Shell.",
+    seed: "classic",
+  },
+  "developer-dashboard": {
+    thesis: "Operate the arena as a conventional observability workspace.",
+    ownWorld:
+      "Dark developer console with dense tables, logs, and status rules.",
+    story: "Scan checks and activity, inspect agents, then review results.",
+    firstViewport:
+      "Round timeline, paired workspaces, activity rail, and run status.",
+    form: "Developer Dashboard.",
+    seed: "developer",
+  },
+  "night-transit": {
+    thesis:
+      "Turn attack lifecycles into an authoritative late-night transit control map.",
+    ownWorld:
+      "Ink enamel signage, cyan and coral contestant lines, amber verification, and arrivals typography.",
+    story:
+      "Follow real routes into verification, inspect either line, and read authoritative arrivals.",
+    firstViewport:
+      "Round stations, central verification interchange, arrivals board, contestant panels, and activity rail.",
+    form: "Approved Night Transit composition.",
+    seed: "night-transit",
+  },
+  "test-lab": {
+    thesis:
+      "Make each attack lifecycle readable as a reproducible software experiment.",
+    ownWorld:
+      "Warm lab paper, graphite instruments, ruled evidence sheets, teal and safety-orange benches.",
+    story:
+      "Trace invocations, compare benches, inspect the experiment sheet, and review recent tests.",
+    firstViewport:
+      "Invocation timeline, opposing benches, central experiment sheet, and recent-test tray.",
+    form: "Approved Test Lab composition.",
+    seed: "test-lab",
+  },
+  "live-arena-broadcast": {
+    thesis:
+      "Present recorded engineering evidence with the immediacy of a live broadcast.",
+    ownWorld:
+      "Broadcast field, scorebug, battle desk, and factual play-by-play.",
+    story:
+      "Watch the live matchup, follow evidence, inspect contestants, then review results.",
+    firstViewport: "Live feed beside an authoritative battle desk.",
+    form: "Live Arena Broadcast.",
+    seed: "broadcast",
+  },
+  "retro-tactics": {
+    thesis:
+      "Turn recorded engineering evidence into a live 16-bit tactics console without changing a product fact.",
+    ownWorld:
+      "Midnight violet chassis, purple and orange territories, aqua verification, pixel tile terrain, angular panels, and bitmap-scale rules.",
+    story:
+      "Track the fight, inspect either contestant, review recorded rounds, understand attacks and repairs, then finish the authoritative result.",
+    firstViewport:
+      "A top matchup bar leads a round rail, central tactical node map, right evidence channel, and bottom inspection commands.",
+    form: "User-approved 16-bit Tactics Board, operator-console composition B.",
+    seed: "71186a7d",
+  },
+};
 
 export function App() {
   const [theme, setThemeState] = useState<ArenaTheme>(
@@ -1622,6 +2496,7 @@ export function App() {
     null,
   );
   const [reviewingResults, setReviewingResults] = useState(false);
+  const designContract = DESIGN_CONTRACTS[theme];
 
   useEffect(() => {
     void fetch("/api/state").then(async (response) =>
@@ -1636,6 +2511,11 @@ export function App() {
   }, []);
 
   const hasResult = Boolean(state.result);
+  const showResults =
+    hasResult &&
+    !reviewingResults &&
+    selectedRound === "live" &&
+    !selectedFighter;
   useEffect(() => {
     document.title = hasResult
       ? "Agent Arena · Results"
@@ -1645,7 +2525,28 @@ export function App() {
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-  }, [selectedFighter, selectedRound, theme]);
+  }, [selectedFighter, selectedRound, showResults, theme]);
+
+  useEffect(() => {
+    if (!showResults) return;
+
+    let frame = 0;
+    const keepResultsAtTop = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      });
+    };
+
+    keepResultsAtTop();
+    window.addEventListener("resize", keepResultsAtTop);
+    window.visualViewport?.addEventListener("resize", keepResultsAtTop);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", keepResultsAtTop);
+      window.visualViewport?.removeEventListener("resize", keepResultsAtTop);
+    };
+  }, [showResults]);
 
   const presentation = useMemo(
     () => createArenaPresentation(state, selectedRound, connected),
@@ -1659,11 +2560,6 @@ export function App() {
     stage,
     canSteer,
   } = presentation;
-  const showResults =
-    hasResult &&
-    !reviewingResults &&
-    selectedRound === "live" &&
-    !selectedFighter;
   const latestAttack = viewAttacks.at(-1);
   const steeringUnavailable = steeringUnavailableMessage(
     connected,
@@ -1710,12 +2606,12 @@ export function App() {
     <div
       className={`app-shell theme-${theme}`}
       data-theme={theme}
-      data-design-thesis={DESIGN_CONTRACT.thesis}
-      data-design-own-world={DESIGN_CONTRACT.ownWorld}
-      data-design-story={DESIGN_CONTRACT.story}
-      data-design-first-viewport={DESIGN_CONTRACT.firstViewport}
-      data-design-form={DESIGN_CONTRACT.form}
-      data-design-seed={DESIGN_CONTRACT.seed}
+      data-design-thesis={designContract.thesis}
+      data-design-own-world={designContract.ownWorld}
+      data-design-story={designContract.story}
+      data-design-first-viewport={designContract.firstViewport}
+      data-design-form={designContract.form}
+      data-design-seed={designContract.seed}
     >
       <header className="topbar">
         <button
@@ -1782,6 +2678,34 @@ export function App() {
 
       {!showResults && !selectedFighter && theme === "developer-dashboard" ? (
         <DeveloperDashboardArena
+          state={state}
+          rounds={rounds}
+          selectedRound={selectedRound}
+          contestants={viewContestants}
+          attacks={viewAttacks}
+          stage={stage}
+          onRound={selectRound}
+          onFighter={setSelectedFighter}
+          onSteer={steer}
+          canSteer={canSteer}
+          steeringUnavailable={steeringUnavailable}
+        />
+      ) : !showResults && !selectedFighter && theme === "night-transit" ? (
+        <NightTransitArena
+          state={state}
+          rounds={rounds}
+          selectedRound={selectedRound}
+          contestants={viewContestants}
+          attacks={viewAttacks}
+          stage={stage}
+          onRound={selectRound}
+          onFighter={setSelectedFighter}
+          onSteer={steer}
+          canSteer={canSteer}
+          steeringUnavailable={steeringUnavailable}
+        />
+      ) : !showResults && !selectedFighter && theme === "test-lab" ? (
+        <TestLabArena
           state={state}
           rounds={rounds}
           selectedRound={selectedRound}
@@ -1958,8 +2882,17 @@ export function App() {
                       <div>
                         <strong>{attackDisplayLabel(attack)}</strong>
                         <p>
-                          {attack.attacker?.toUpperCase() ?? "House"} →{" "}
-                          {attack.target?.toUpperCase() ?? "both"}
+                          {participantName(
+                            attack.attacker,
+                            viewContestants,
+                            "House",
+                          )}{" "}
+                          →{" "}
+                          {participantName(
+                            attack.target,
+                            viewContestants,
+                            "Both",
+                          )}
                           {attack.damage
                             ? ` · ${String(attack.damage)} damage`
                             : ""}

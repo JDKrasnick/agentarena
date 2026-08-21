@@ -8,7 +8,8 @@ const stylesheet = readFileSync(
 
 const themes = [
   "developer-dashboard",
-  "night-edition",
+  "night-transit",
+  "test-lab",
   "live-arena-broadcast",
   "retro-tactics",
 ] as const;
@@ -16,7 +17,8 @@ const themes = [
 const operationalThemes = [
   "classic-shell",
   "developer-dashboard",
-  "night-edition",
+  "night-transit",
+  "test-lab",
   "live-arena-broadcast",
   "retro-tactics",
 ] as const;

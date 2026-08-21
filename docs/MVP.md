@@ -405,8 +405,8 @@ health and checks, coverage, run integrity, completed rounds, landed defects,
 verified repairs, terminal outcome, evidence links, and controls to review the
 recorded battle or finish the session.
 
-The window includes Classic Shell, Developer Dashboard, Night Edition, Live
-Arena Broadcast, and 16-Bit Tactics themes. Classic Shell is used until a valid local
+The window includes Classic Shell, Developer Dashboard, Night Transit, Test Lab,
+Live Arena Broadcast, and 16-Bit Tactics themes. Classic Shell is used until a valid local
 selection exists. The always-available swatch picker changes renderer families
 without reconnecting the event stream or resetting fighter, replay, or result
 navigation. Electron loads the preference before React mounts and stores it
@@ -420,13 +420,21 @@ Developer Dashboard is a conventional dark observability renderer with the
 dashboard-native three-column structure: round timeline, paired contestant
 workspaces, and chronological activity. Each contestant workspace exposes
 health, checks, normalized work summaries, steering, and full-detail inspection;
-a bottom status bar keeps the run identity and state visible. 16-Bit Tactics
+a bottom status bar keeps the run identity and state visible. Night Transit
+projects append-only battle telemetry into two contestant lines, real round
+stations, a verification interchange, and a consolidated arrivals board. Test
+Lab uses opposing benches, a central experiment sheet, invocation timestamps
+and durations, health-history charts, check grids, and a recent-test tray. Both
+renderers use only recorded dashboard facts, retain live Inspect and cancellation
+actions, move side rails below the workspace at narrow widths, and make replay
+explicitly read-only. 16-Bit Tactics
 uses a code-native tile field, tactical nodes, authoritative attack and repair
-routes, opposing status bars, inspection commands, and an evidence channel. It
+routes, opposing status bars, inspection commands, an evidence channel, and a
+structured in-map readout for the latest recorded event. It
 keeps the complete cartridge HUD visible at desktop widths and derives compact
 work nodes from recorded contestant invocations rather than invented game
 state. It does not bundle third-party game characters, logos, sprites, or
-screenshots. Stored
+screenshots. Stored `night-edition` preferences migrate to `night-transit`;
 `sticker-league` preferences migrate to `developer-dashboard`; `evidence-deck`
 and `monster-battle` preferences migrate to `retro-tactics`.
 

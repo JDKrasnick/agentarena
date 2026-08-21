@@ -8,6 +8,7 @@ import {
   createArenaPresentation,
   invocationStatusSentence,
   isRoundAvailable,
+  projectAttackLifecycles,
   recordedRoundMoveCount,
   steeringUnavailableMessage,
 } from "../../src/web/client/presentation.js";
@@ -162,6 +163,93 @@ describe("dashboard presentation model", () => {
     ]);
     expect(fighter.output.map((entry) => entry.text)).toEqual([
       "$ npm test\n✓ 253 tests passed\n",
+    ]);
+  });
+
+  it("consolidates attack revision, resolution, and repair without changing source state", () => {
+    const state = initialDashboardState();
+    state.attacks.push(
+      {
+        id: "race",
+        round: 2,
+        phase: "mounting",
+        status: "mounting",
+        attacker: "a",
+        target: "b",
+        detail: "Original concurrency claim",
+      },
+      {
+        id: "race",
+        round: 2,
+        phase: "revised",
+        status: "revised",
+        attacker: "a",
+        target: "b",
+        detail: "Narrowed to duplicate commit",
+      },
+      {
+        id: "race",
+        round: 2,
+        phase: "landed",
+        status: "landed",
+        attacker: "a",
+        target: "b",
+        severity: "high",
+        damage: 30,
+      },
+    );
+    state.contestants.b.healthChanges.push({
+      sequence: 7,
+      amount: 30,
+      health: 100,
+      reason: "Repair verified",
+      round: 2,
+      attackId: "race",
+    });
+
+    expect(projectAttackLifecycles(state)).toEqual([
+      expect.objectContaining({
+        id: "race",
+        phase: "landed",
+        originalClaim: "Original concurrency claim",
+        latestDetail: "Narrowed to duplicate commit",
+        attacker: "a",
+        target: "b",
+        severity: "high",
+        damage: 30,
+        repairedBy: "b",
+        repairAmount: 30,
+      }),
+    ]);
+    expect(state.attacks).toHaveLength(3);
+  });
+
+  it("orders lifecycles by their latest recorded attack event", () => {
+    const state = initialDashboardState();
+    state.attacks.push(
+      {
+        id: "first",
+        phase: "mounting",
+        status: "mounting",
+        detail: "First claim",
+      },
+      {
+        id: "second",
+        phase: "mounting",
+        status: "mounting",
+        detail: "Second claim",
+      },
+      {
+        id: "first",
+        phase: "landed",
+        status: "landed",
+        damage: 10,
+      },
+    );
+
+    expect(projectAttackLifecycles(state).map((attack) => attack.id)).toEqual([
+      "second",
+      "first",
     ]);
   });
 });

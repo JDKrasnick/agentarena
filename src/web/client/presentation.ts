@@ -6,6 +6,64 @@ import type {
 export type ContestantId = "a" | "b";
 export type RoundSelection = NonNullable<DashboardState["round"]> | "live";
 
+export interface AttackLifecycle {
+  id: string;
+  round?: NonNullable<DashboardState["round"]>;
+  phase: DashboardState["attacks"][number]["phase"];
+  status: string;
+  attacker?: string;
+  target?: string;
+  severity?: string;
+  damage?: number;
+  originalClaim?: string;
+  latestDetail?: string;
+  repairedBy?: ContestantId;
+  repairAmount?: number;
+  events: DashboardState["attacks"];
+}
+
+/** Presentation-only consolidation of append-only attack telemetry. */
+export function projectAttackLifecycles(
+  state: DashboardState,
+  attacks: DashboardState["attacks"] = state.attacks,
+): AttackLifecycle[] {
+  const byId = new Map<string, AttackLifecycle>();
+  for (const event of attacks) {
+    const current = byId.get(event.id) ?? {
+      id: event.id,
+      phase: event.phase,
+      status: event.status,
+      events: [],
+    };
+    current.events.push(event);
+    current.phase = event.phase;
+    current.status = event.status;
+    if (event.round !== undefined) current.round = event.round;
+    if (event.attacker !== undefined) current.attacker = event.attacker;
+    if (event.target !== undefined) current.target = event.target;
+    if (event.severity !== undefined) current.severity = event.severity;
+    if (event.damage !== undefined) current.damage = event.damage;
+    if (event.phase === "mounting" && event.detail?.trim()) {
+      current.originalClaim ??= event.detail.trim();
+    }
+    if (event.detail?.trim()) current.latestDetail = event.detail.trim();
+    // Keep lifecycle order aligned with the append-only attack stream. Updating
+    // an existing Map value does not move it, so reinsert it after every event.
+    byId.delete(event.id);
+    byId.set(event.id, current);
+  }
+  for (const id of ["a", "b"] as const) {
+    for (const change of state.contestants[id].healthChanges) {
+      if (!change.attackId || change.amount <= 0) continue;
+      const lifecycle = byId.get(change.attackId);
+      if (!lifecycle) continue;
+      lifecycle.repairedBy = id;
+      lifecycle.repairAmount = (lifecycle.repairAmount ?? 0) + change.amount;
+    }
+  }
+  return [...byId.values()];
+}
+
 export function attackDisplayLabel(
   attack: DashboardState["attacks"][number] | undefined,
 ): string | undefined {

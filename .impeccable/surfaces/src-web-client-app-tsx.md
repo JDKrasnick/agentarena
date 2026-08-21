@@ -5,12 +5,14 @@ primary_target: "src/web/client/App.tsx"
 related_targets: ["src/web/client/styles.css", "src/web/client/index.html"]
 ---
 
-# Retro Tactics renderer brief
+# Desktop observatory renderer brief
 
-- Scope: replace Monster Battle across live arena, replay, fighter detail, and results; replace Sticker League with a conventional developer-dashboard theme using its own operations-console layout.
+- Scope: six production renderers across live arena, replay, fighter detail, and results, including Night Transit and Test Lab as replacements for Night Edition.
 - Mode: Operate. Developers must read health, checks, current work, rounds, evidence, and actions at a glance.
 - Direction: an original late-16-bit tactical strategy console for coding agents. No copied game characters, sprites, logos, or proprietary UI.
 - Approved composition: `.impeccable/mocks/retro-tactics-b-operator-console.png`.
+- Night Transit composition: `.impeccable/mocks/decision/night-transit.png`.
+- Test Lab composition: `.impeccable/mocks/decision/test-lab.png`.
 - Memorable moment: verified attacks and repairs illuminate opposing paths across a real battle-state node map while the evidence rail advances.
 - Constraints: overview stays summarized; fighter detail preserves full terminal-order output; controls are real; selected/history state is textual; reduced motion retains every durable cue.
 
@@ -26,6 +28,8 @@ related_targets: ["src/web/client/styles.css", "src/web/client/index.html"]
 | Activity rail       | Recent attacks/evidence, phase and directional ownership                                  | Semantic aside and real recorded text                            |
 | Command strip       | Inspect Codex and Inspect Claude as prominent angular controls                            | Native buttons opening full-output detail                        |
 | Developer dashboard | Round timeline, paired check/log workspaces, chronological activity, and run status bar   | Dedicated semantic React renderer with neutral dashboard tokens  |
+| Night Transit       | Contestant routes, round stations, verification interchange, arrivals, and operator strip | Semantic React, CSS, and authoritative lifecycle projection      |
+| Test Lab            | Opposing benches, experiment sheet, invocation timeline, checks, health, and sample tray  | Semantic React, CSS, SVG charts, and recorded dashboard facts    |
 | Results/detail      | Shared structures in tactical violet/orange/aqua materials; full output remains unbounded | Existing React structures plus theme CSS                         |
 
 ## Component grammar
