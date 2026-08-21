@@ -171,6 +171,40 @@ describe("arena observability", () => {
     expect(state.assisted).toBe(true);
   });
 
+  it("replaces stale dashboard state when a recovery run starts", () => {
+    const state = initialDashboardState();
+    state.runId = "parent";
+    state.status = "inconclusive";
+    state.warnings.push("parent warning");
+    state.contestants.a.output.push({
+      stream: "stdout",
+      text: "parent output",
+      invocationId: "parent-invocation",
+      timestamp: new Date().toISOString(),
+    });
+
+    projectEvent(state, {
+      version: 1,
+      sequence: 1,
+      timestamp: new Date().toISOString(),
+      type: "battle_started",
+      runId: "replacement",
+      task: "Retry after transport recovery",
+      contestants: [
+        { id: "a", provider: "codex" },
+        { id: "b", provider: "claude" },
+      ],
+    });
+
+    expect(state).toMatchObject({
+      runId: "replacement",
+      status: "running",
+      stage: "preflight",
+      warnings: [],
+    });
+    expect(state.contestants.a.output).toEqual([]);
+  });
+
   it("keeps invocation, output, and checks scoped to their round", () => {
     const state = initialDashboardState();
     const timestamp = new Date().toISOString();

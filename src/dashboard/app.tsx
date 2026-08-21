@@ -803,8 +803,8 @@ export function Dashboard({
           )}
         </Box>
       )}
-      {state.warnings.slice(-3).map((warning) => (
-        <Text key={warning} color="yellow">
+      {state.warnings.slice(-3).map((warning, index) => (
+        <Text key={`${String(index)}-${warning}`} color="yellow">
           Warning: {warning}
         </Text>
       ))}

@@ -93,6 +93,31 @@ function attackNarrative(attack: Attack): string {
 
 /** A deterministic, self-contained, clickable battle dossier for local review. */
 export function renderBattleHtml(state: RunState): string {
+  if (state.terminalOutcome) {
+    const terminal = state.terminalOutcome;
+    const recommended =
+      terminal.kind === "forfeit" && terminal.eligibleContestantIds[0]
+        ? contestantLabel(
+            state.config.contestants,
+            terminal.eligibleContestantIds[0],
+          )
+        : "none";
+    const rows =
+      terminal.version === 2
+        ? terminal.contestants
+            .map(
+              (entry) =>
+                `<tr><td>${escapeHtml(contestantLabel(state.config.contestants, entry.contestantId))}</td><td>${entry.eligible ? "eligible" : "ineligible"}</td><td>${escapeHtml(entry.reasonCode ?? "eligible_patch")}</td></tr>`,
+            )
+            .join("")
+        : terminal.affectedContestantIds
+            .map(
+              (id) =>
+                `<tr><td>${escapeHtml(contestantLabel(state.config.contestants, id))}</td><td>ineligible</td><td>${escapeHtml(terminal.reasonCode)}</td></tr>`,
+            )
+            .join("");
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Arena — pre-review result</title><style>:root{color-scheme:dark}body{margin:0;background:#0b1017;color:#edf3f8;font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}main{max-width:980px;margin:auto;padding:48px}.panel{background:#121b26;border:1px solid #36526b;border-radius:14px;padding:24px;margin-top:24px}h1{margin:0}p{color:#d7e0ea}table{border-collapse:collapse;width:100%;margin-top:20px}th,td{text-align:left;padding:12px;border-bottom:1px solid #36526b}</style></head><body><main><h1>Agent Arena — pre-review result</h1><div class="panel"><strong>${escapeHtml(terminal.kind.toUpperCase())} · ${escapeHtml(terminal.reasonCode)}</strong><p>${escapeHtml(terminal.reason)}</p><p>Recommended production patch: ${escapeHtml(recommended)}.</p><p>No review, attack, repair, quality comparison, or coverage stage ran.</p><table><thead><tr><th>Contestant</th><th>Eligibility</th><th>Cause</th></tr></thead><tbody>${rows}</tbody></table></div></main></body></html>`;
+  }
   const contestants = reportContestants(state);
   const outcome = reportOutcome(state);
   const winnerId = outcome.kind === "winner" ? outcome.winner : undefined;
@@ -268,9 +293,7 @@ export function renderBattleHtml(state: RunState): string {
         state.patchRecommendation.contestantId,
       )
     : "No patch recommendation";
-  const terminalNotice = state.terminalOutcome
-    ? `<section class="section"><div class="callout"><strong>Pre-review ${escapeHtml(state.terminalOutcome.kind)} · ${escapeHtml(state.terminalOutcome.reasonCode)}</strong><p>${escapeHtml(state.terminalOutcome.reason)}</p><p class="note">No review, attack, repair, quality, or coverage work was run.</p></div></section>`
-    : "";
+  const terminalNotice = "";
   const submissionArtifacts = state.submissionArtifacts
     .map(
       (record) =>

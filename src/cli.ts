@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { applyAcceptedPatch } from "./commands/apply.js";
 import { runAcceptCommand } from "./commands/accept.js";
 import { runDeliverCommand } from "./commands/deliver.js";
-import { runFight, runResume } from "./commands/fight.js";
+import { exitCodeForStatus, runFight, runResume } from "./commands/fight.js";
 import { runInspectCommand, runReviewCommand } from "./commands/review.js";
 import { resolveCoverage } from "./commands/resolve-coverage.js";
 import { ContestantIdSchema } from "./core/types.js";
@@ -76,15 +76,15 @@ program
         approveDrift?: string;
       },
     ) => {
-      process.stdout.write(
-        `${await runResume({
-          runId,
-          display: options.display,
-          ...(options.approveDrift
-            ? { approveDriftHash: options.approveDrift }
-            : {}),
-        })}\n`,
-      );
+      const result = await runResume({
+        runId,
+        display: options.display,
+        ...(options.approveDrift
+          ? { approveDriftHash: options.approveDrift }
+          : {}),
+      });
+      process.stdout.write(`${result.summary}\n`);
+      process.exitCode = exitCodeForStatus(result.status);
     },
   );
 
@@ -172,7 +172,7 @@ program
       if (options.rounds !== "3") {
         throw new Error("The MVP requires exactly three attack–repair rounds");
       }
-      const summary = await runFight(
+      const result = await runFight(
         {
           task,
           configPath: options.config,
@@ -205,7 +205,8 @@ program
         options.display,
         options.window,
       );
-      process.stdout.write(`${summary}\n`);
+      process.stdout.write(`${result.summary}\n`);
+      process.exitCode = exitCodeForStatus(result.status);
     },
   );
 
@@ -275,7 +276,7 @@ program
       display: "auto" | "window" | "dashboard" | "terminal" | "plain";
       window: boolean;
     }) => {
-      const summary = await runFight(
+      const result = await runFight(
         {
           task: `Defend pull request #${options.pr}`,
           configPath: options.config,
@@ -304,7 +305,8 @@ program
         options.display,
         options.window,
       );
-      process.stdout.write(`${summary}\n`);
+      process.stdout.write(`${result.summary}\n`);
+      process.exitCode = exitCodeForStatus(result.status);
     },
   );
 

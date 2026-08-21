@@ -2913,8 +2913,8 @@ export function App() {
             {state.warnings.length ? (
               <div className="warnings">
                 <strong>Needs attention</strong>
-                {state.warnings.slice(-3).map((warning) => (
-                  <p key={warning}>{warning}</p>
+                {state.warnings.slice(-3).map((warning, index) => (
+                  <p key={`${String(index)}-${warning}`}>{warning}</p>
                 ))}
               </div>
             ) : null}

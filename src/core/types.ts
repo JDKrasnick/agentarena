@@ -388,6 +388,30 @@ export const AgentInvocationSchema = z.object({
 });
 export type AgentInvocation = z.infer<typeof AgentInvocationSchema>;
 
+/** A backend-authenticating provider health check. Executable availability is separate. */
+export const ConnectivityProbeResultSchema = z.object({
+  version: z.literal(1),
+  provider: AgentIdSchema,
+  healthy: z.boolean(),
+  startedAt: z.string().datetime(),
+  finishedAt: z.string().datetime(),
+  durationMs: z.number().int().nonnegative(),
+  reason: z.string().min(1),
+  transportFailures: z
+    .array(
+      z.object({
+        kind: z.enum(["mcp_auth", "reconnect", "transport"]),
+        detail: z.string().min(1),
+      }),
+    )
+    .default([]),
+  artifactPaths: z.array(z.string().min(1)),
+  command: CommandResultSchema,
+});
+export type ConnectivityProbeResult = z.infer<
+  typeof ConnectivityProbeResultSchema
+>;
+
 export const AttackInvocationRecordSchema = z.object({
   round: RoundIdSchema,
   attacker: ContestantIdSchema,
@@ -1114,6 +1138,7 @@ export const PatchRecommendationSchema = z.object({
     "patch_size",
     "implementation_quality",
     "arena_fallback",
+    "forfeit",
     "draw",
     "inconclusive",
   ]),
@@ -1250,27 +1275,61 @@ export const CoverageDecisionSchema = z.object({
 });
 export type CoverageDecision = z.infer<typeof CoverageDecisionSchema>;
 
-/** A disposition reached before attack/review work is eligible to begin. */
-export const TerminalOutcomeSchema = z.object({
+const PreReviewReasonCodeSchema = z.enum([
+  "implementation_timeout",
+  "implementation_failed",
+  "implementation_empty_patch",
+  "implementation_unapplicable_patch",
+  "initial_validation_failed",
+  "frozen_incumbent_invalid",
+  "provider_transport_failure",
+  "harness_infrastructure_failure",
+  "external_cancellation",
+]);
+
+/** Legacy records remain readable and are never rewritten in place. */
+export const TerminalOutcomeV1Schema = z.object({
   version: z.literal(1),
   phase: z.literal("pre_review"),
   kind: z.enum(["forfeit", "inconclusive", "cancelled"]),
-  reasonCode: z.enum([
-    "implementation_timeout",
-    "implementation_failed",
-    "implementation_empty_patch",
-    "implementation_unapplicable_patch",
-    "initial_validation_failed",
-    "frozen_incumbent_invalid",
-    "provider_transport_failure",
-    "harness_infrastructure_failure",
-    "external_cancellation",
-  ]),
+  reasonCode: PreReviewReasonCodeSchema,
   affectedContestantIds: z.array(ContestantIdSchema),
   eligibleContestantIds: z.array(ContestantIdSchema),
   artifactPaths: z.array(z.string().min(1)),
   reason: z.string().min(1),
 });
+
+export const TerminalContestantDispositionSchema = z.object({
+  contestantId: ContestantIdSchema,
+  eligible: z.boolean(),
+  reasonCode: z
+    .union([
+      PreReviewReasonCodeSchema,
+      z.literal("peer_cancelled_due_to_transport"),
+      z.literal("test_only_role"),
+    ])
+    .optional(),
+  artifactPaths: z.array(z.string().min(1)),
+});
+
+/** A disposition reached before attack/review work is eligible to begin. */
+export const TerminalOutcomeV2Schema = z.object({
+  version: z.literal(2),
+  phase: z.literal("pre_review"),
+  kind: z.enum(["forfeit", "inconclusive", "cancelled"]),
+  status: z.enum(["completed", "inconclusive", "cancelled"]),
+  reasonCode: PreReviewReasonCodeSchema,
+  affectedContestantIds: z.array(ContestantIdSchema),
+  eligibleContestantIds: z.array(ContestantIdSchema),
+  artifactPaths: z.array(z.string().min(1)),
+  contestants: z.array(TerminalContestantDispositionSchema),
+  reason: z.string().min(1),
+});
+
+export const TerminalOutcomeSchema = z.discriminatedUnion("version", [
+  TerminalOutcomeV1Schema,
+  TerminalOutcomeV2Schema,
+]);
 export type TerminalOutcome = z.infer<typeof TerminalOutcomeSchema>;
 
 export const DeliveryTargetSchema = z.object({

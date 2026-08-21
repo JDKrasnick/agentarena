@@ -212,12 +212,44 @@ The same evidence and health system supports three topologies:
   Only the defender's final patch is reviewable or deliverable.
 
 Before any review or attack work, implementation eligibility is sealed as
-schema-v7 terminal metadata. In a duel, exactly one production patch that
+versioned terminal metadata with one eligibility disposition and diagnostic
+trail per contestant. Legacy v1 records remain readable; new runs write v2.
+In a duel, exactly one production patch that
 applies and passes required validation wins by forfeit and is the only
 reviewable recommendation; no eligible patch is inconclusive. Provider,
 transport, authentication, reconnect, and harness failures are inconclusive,
 not forfeits. A failed frozen incumbent in catch-up ends inconclusively before
 the challenger is invoked, and siege never recommends its test-only attacker.
+
+Pre-review classification is deterministic: external cancellation outranks
+harness infrastructure, which outranks provider transport/authentication/MCP
+evidence, which outranks contestant timeout or invocation failure, which
+outranks patch applicability and required validation. Transport evidence
+overrides a timeout or nonzero exit only when the invocation produced no usable
+result. A transport failure cancels the peer implementation through a
+phase-local controller; the peer's diagnostics are retained and the peer is
+labeled as cancelled by the transport event rather than blamed for a failure.
+
+Implementation transport failures have one bounded automatic recovery path.
+The failed run remains independently reportable while Agent Arena starts up to
+three fresh provider processes, each with a deterministic backend-authenticating
+sentinel prompt, within a shared 30-second window. If connectivity returns, a
+new run copies the exact frozen sources, base commit, topology, permissions,
+budgets, and configuration from its parent rather than resolving live issue or
+pull-request text again. At most two replacement runs may be created. Each
+parent stores a typed `transport-recovery.json`, and result provenance links
+the replacement to its parent. A transport failure in the third total run is
+final and does not trigger more probes.
+
+Pre-review terminal reports use outcome-specific JSON, Markdown, HTML, SVG,
+and console language. A duel forfeit creates only the eligible patch digest,
+deterministic recommendation, and human-review handoff; review, attack, repair,
+quality-comparison, and coverage stages and artifacts are absent. Resume shows
+the stored terminal result and never runs a skipped stage. CLI exit status is
+`0` for a completed battle, draw, or valid duel forfeit; `2` for a persisted
+inconclusive run; `130` for user cancellation; and `1` for persisted internal
+failure, configuration failure, or an uncaught command error. Automatic
+recovery returns the replacement run's status and prints the full run-ID chain.
 
 Pull-request authorship is provenance metadata, not proof of who wrote the
 code. Explicit bot, co-author, generator, title, or branch signals may select a
@@ -340,9 +372,15 @@ The MVP runs three review–attack–repair rounds after the initial implementat
 In each round, the harness first freezes both current implementation patches.
 Each eligible reviewer then gets a dedicated read-only budget, configured by
 `review_minutes` separately from the focused test-generation budget. The review
-produces a compact target-specific packet whose findings name the invariant or
-requirement, relevant code location, trigger sequence, expected behavior,
-confidence, and suggested minimal regression test.
+produces a v2 trusted evidence-handoff packet under
+[`docs/TRUSTED_EVIDENCE_HANDOFF_RFC.md`](docs/TRUSTED_EVIDENCE_HANDOFF_RFC.md).
+The packet contains harness-attested target and permission fingerprints plus at
+most 12 ordered reviewer hypotheses naming the invariant, observations and
+provenance, code locations, trigger sequence, oracle rationale, expected
+behavior, confidence, required capabilities, and focused regression plan. Exact
+duplicates are rejected by stable finding ID while semantic defect identity
+remains the judge's responsibility. Deterministic tail compaction enforces a 16
+KiB canonical UTF-8 ceiling and records every omission.
 
 The review prompt also describes the arena execution architecture, the
 reviewer's place in the freeze–review–test–verify–repair sequence, the assigned
@@ -352,14 +390,25 @@ scope, execution role, and `enforced`, `brokered`, or `advisory` semantics.
 Agents may use only approved `agent` or `both` capabilities directly;
 `harness_only` checks remain mediated by the harness.
 
-The same contestant then receives that packet alongside the standardized public
-context and frozen target patch. It may submit zero to three sparse, uniquely
-ranked `AttackSubmissionV2` entries. Each entry declares oracle metadata, a
-focused command, required capabilities, and disjoint test/fixture paths. Shared
-support paths may be declared once and are copied into every independently
-replayable target-relative overlay. A malformed rank does not suppress valid
-siblings; invalid shared support rejects only dependent attacks. `attacks: []`
-is explicit successful lane completion.
+Immediately before attack invocation, the harness recomputes both fingerprints.
+A stale or malformed packet skips invocation and receives one targeted review
+refresh; persistent failure is coverage loss. Repair, target mutation,
+permission change, and round transition invalidate the packet immediately, so
+only adjudicated lane-safe feedback carries forward. The same contestant then
+receives the canonical packet immediately before attack instructions and
+inspects the frozen target through its assigned worktree; the raw patch is not
+embedded in the prompt.
+
+The attacker may submit zero to three sparse, uniquely ranked
+`AttackSubmissionV2` entries. Each entry declares oracle metadata, a focused
+command, required capabilities, and disjoint test/fixture paths. Shared support
+paths may be declared once and are copied into every independently replayable
+target-relative overlay. A malformed rank does not suppress valid siblings;
+invalid shared support rejects only dependent attacks. `attacks: []` is explicit
+successful lane completion. A mutually exclusive typed `handoff_blocker` may
+identify affected finding IDs and missing permission or context; it receives one
+targeted refresh, after which persistence is coverage loss without a score
+effect.
 
 Each round has its own symmetric, versioned prompt and investigation brief:
 
@@ -376,10 +425,15 @@ first time integrations are exercised and it never grants production access.
 
 The read-only findings packet is engineering evidence rather than hidden
 chain-of-thought. It excludes private implementation-generation transcripts and
-provider identity. Raw findings are available to the same contestant's focused
-failure-description phase, but implementation owners receive only
-verifier-confirmed regression tests during repair. Only the zero to three
-committed attacks can land or recoil.
+provider identity, credentials, and all private reasoning. Its observations are
+explicitly reviewer hypotheses, never harness facts or canonical defects. Raw
+findings are available only to the same contestant's focused
+failure-description phase, while implementation owners receive only
+verifier-confirmed regression tests during repair. Cited files, nearby tests,
+and direct dependencies remain inspectable. Broad rediscovery is allowed,
+warned about when visible, and recorded as `targeted`, `broad`, or `unknown`;
+telemetry never affects validity, retries, coverage, health, scoring, or
+selection. Only the zero to three committed attacks can land or recoil.
 
 The shared taxonomy covers contract and logic, inputs and errors, state and
 lifecycle, data integrity, concurrency and time, integration and configuration,

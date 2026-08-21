@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, readdir, rm } from "node:fs/promises";
 import { execa } from "execa";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -242,10 +242,20 @@ describe("fake-adapter fight on a mocked real issue", () => {
 
     expect(outcome.state.status).toBe("complete");
     expect(outcome.state.terminalOutcome).toMatchObject({
+      version: 2,
       phase: "pre_review",
       kind: "forfeit",
+      status: "completed",
       reasonCode: "implementation_empty_patch",
       eligibleContestantIds: ["b"],
+      contestants: [
+        expect.objectContaining({
+          contestantId: "a",
+          eligible: false,
+          reasonCode: "implementation_empty_patch",
+        }),
+        expect.objectContaining({ contestantId: "b", eligible: true }),
+      ],
     });
     expect(outcome.state.contestants.a).toMatchObject({
       status: "failed",
@@ -266,6 +276,22 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(outcome.state.reviewPrompt?.choices).toEqual([
       expect.objectContaining({ contestantId: "b", eligible: true }),
     ]);
+    const terminalReport = await readFile(
+      outcome.state.artifacts.battle!,
+      "utf8",
+    );
+    expect(terminalReport).toContain("Pre-Review Result");
+    expect(terminalReport).not.toMatch(/\bDraw\b|Arena champion|Attack-lane/);
+    expect(
+      await readdir(
+        path.join(outcome.state.artifacts.runDirectory!, "quality"),
+      ),
+    ).toEqual([]);
+    expect(
+      await readdir(
+        path.join(outcome.state.artifacts.runDirectory!, "coverage"),
+      ),
+    ).toEqual([]);
 
     const resumed = await arena.resume({
       runId: outcome.state.runId,
@@ -454,7 +480,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(outcome.state.terminalOutcome).toMatchObject({
       phase: "pre_review",
       kind: "inconclusive",
-      reasonCode: "provider_transport_failure",
+      reasonCode: "harness_infrastructure_failure",
       eligibleContestantIds: [],
     });
     expect(run).toHaveBeenCalledOnce();
