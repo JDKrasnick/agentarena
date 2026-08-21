@@ -389,8 +389,9 @@ unscored report finding.
 - Unreviewed package installation or production service provisioning.
 - Multiple integration profiles, unrestricted browser tests, or production
   integrations.
-- Arena-generated container environments, network sandboxes, GPU workloads,
-  and mobile builds. Running a user-supplied Compose profile is allowed.
+- Arena-generated container environments, network sandboxes, hard confinement
+  of agent or test subprocesses, GPU workloads, and mobile builds. Running a
+  user-supplied Compose profile is allowed.
 - Production credentials or enterprise-grade secret management.
 - Deployment, package release, or GitHub writes without a separately
   authenticated, patch-bound delivery decision.
@@ -452,7 +453,7 @@ Both agents start from the exact same commit and receive the same RunSpec,
 test command, repository instructions, time limit, and available context. They
 cannot read the opponent worktree during implementation.
 
-### Permission and authentication plan
+### Permission discovery, approval, and audit
 
 Before agents run, repository reconnaissance produces a capability plan covering
 tools, services, network destinations, filesystem paths, credentials, and
@@ -465,6 +466,12 @@ execution roles. Each capability has:
 - An execution role: `agent`, `harness_only`, or `both`.
 - An enforcement level: `enforced`, `brokered`, or `advisory`.
 - An authentication state and run-scoped expiration.
+
+The plan discovers requested authority, obtains a user decision, gates whether
+required run stages may start, and creates an immutable audit record. Approval
+does not restrict the ambient filesystem, network, credential, or process
+authority of a native agent or test subprocess. Hard confinement requires the
+separate strict-worker execution backend tracked in #68.
 
 The user can choose one overall mode:
 
@@ -488,7 +495,7 @@ or reports. When an integration needs a secret, a harness-only runner or
 credential broker injects it into the validation subprocess and returns only
 redacted results to agents.
 
-The MVP does not provide a complete hostile-code sandbox. `brokered` means the
+The MVP permission system is not a hostile-code sandbox. `brokered` means the
 harness withholds and injects a capability, but may not prevent an agent process
 from using other authority already available to the current OS user.
 `advisory` means the restriction exists only in policy and prompts. Preflight
