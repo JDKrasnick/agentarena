@@ -31,6 +31,15 @@ points to the defect. Partial-judge damage is Critical 17.5, High 10.5, Medium
 5.25, or Low 1.75 HP; health uses quarter-point precision and repairs heal the
 exact currently applied amount.
 
+Attack submissions may identify a prior adjudication as a challenge. Matching
+assertion fingerprints and normalized browser family, profile, target, and
+non-assert action sequences also supply likely prior decisions to the same
+judge call, bounded to six same-target records. The judge returns an
+independent, affirm, overturn, or unresolved relationship with its rationale.
+Affirmations never score twice; overturns append recoil refunds or defect-damage
+corrections and mark withdrawn defects superseded; unresolved challenges keep
+the prior score temporarily but prevent full-confidence completion.
+
 Unresolved required coverage preserves the health-ledger leader as provisional
 but publishes no champion or recommended patch. `agent-arena
 resolve-coverage` requires the current assessment digest: `accept-reduced`

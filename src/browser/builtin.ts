@@ -424,9 +424,7 @@ class BuiltInBrowserSession implements BrowserSession {
     // the probe phase.
     const readinessMs = Math.max(
       MIN_READINESS_MS,
-      Math.floor(
-        (this.input.deadlineAt - Date.now()) * READINESS_BUDGET_SHARE,
-      ),
+      Math.floor((this.input.deadlineAt - Date.now()) * READINESS_BUDGET_SHARE),
     );
     const deadline = Math.min(Date.now() + readinessMs, this.input.deadlineAt);
     while (Date.now() < deadline) {

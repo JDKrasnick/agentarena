@@ -11,9 +11,18 @@ function applyJudgeVerdictInternal(
   attack: Attack,
   verdict: JudgeAttackVerdict,
 ): Attack {
+  const relationship = {
+    ...(verdict.relationship
+      ? { challengeRelationship: verdict.relationship }
+      : {}),
+    ...(verdict.priorAdjudicationId
+      ? { relatedAdjudicationId: verdict.priorAdjudicationId }
+      : {}),
+  };
   if (verdict.decision === "unable") {
     return {
       ...attack,
+      ...relationship,
       status: "judge_unable",
       outcomeReason: verdict.rationale,
     };
@@ -21,6 +30,7 @@ function applyJudgeVerdictInternal(
   if (verdict.decision === "rejected" || !verdict.relevant) {
     return {
       ...attack,
+      ...relationship,
       status: "judge_rejected",
       outcomeReason: verdict.rationale,
     };
@@ -28,6 +38,7 @@ function applyJudgeVerdictInternal(
   if (!verdict.rootDefectId || !verdict.severity) {
     return {
       ...attack,
+      ...relationship,
       status: "judge_unable",
       outcomeReason: "Judge verdict omitted a root defect or severity",
     };
@@ -40,6 +51,7 @@ function applyJudgeVerdictInternal(
     ) {
       return {
         ...attack,
+        ...relationship,
         status: "judge_unable",
         outcomeReason:
           "35% partial-judge damage requires clear task support and evidence pointing to the defect",
@@ -47,6 +59,7 @@ function applyJudgeVerdictInternal(
     }
     return {
       ...attack,
+      ...relationship,
       status: "landed",
       rootDefectId: verdict.rootDefectId,
       severity: verdict.severity,
@@ -59,6 +72,7 @@ function applyJudgeVerdictInternal(
   }
   return {
     ...attack,
+    ...relationship,
     status: "landed",
     rootDefectId: verdict.rootDefectId,
     severity: verdict.severity,

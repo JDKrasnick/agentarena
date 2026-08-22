@@ -609,6 +609,13 @@ export const AdjudicationRecordSchema = z
       .union([z.literal(5), z.literal(10), z.literal(15)])
       .optional(),
     upgradesAdjudicationId: z.string().min(1).optional(),
+    relationship: z
+      .enum(["independent", "affirm", "overturn", "unresolved"])
+      .default("independent"),
+    priorAdjudicationId: z.string().min(1).optional(),
+    supersedesAdjudicationId: z.string().min(1).optional(),
+    evidenceFingerprint: z.string().length(64).optional(),
+    targetPatchDigest: z.string().length(64).optional(),
   })
   .strict()
   .readonly();
@@ -644,6 +651,13 @@ export const AttackSchema = z.object({
   impact: z.string(),
   oracle: OracleCitationSchema,
   assertionFingerprint: z.string(),
+  challengeAdjudicationId: z.string().min(1).optional(),
+  challengeRelationship: z
+    .enum(["independent", "affirm", "overturn", "unresolved"])
+    .optional(),
+  relatedAdjudicationId: z.string().min(1).optional(),
+  evidenceFingerprint: z.string().length(64).optional(),
+  targetPatchDigest: z.string().length(64).optional(),
   requiredCapabilities: z.array(z.string()),
   patchPath: z.string(),
   focusedCommand: z.string(),
@@ -682,6 +696,7 @@ export const HealthEventSchema = z.object({
     "recoil",
     "heal",
     "elimination",
+    "score_correction",
   ]),
   amount: z.number().multipleOf(0.25),
   reason: z.string(),
@@ -716,7 +731,8 @@ export const HealthLedgerSchema = z.object({
             rationale: z.string(),
           }),
         ),
-        status: z.enum(["active", "healed"]),
+        status: z.enum(["active", "healed", "superseded"]),
+        supersededByAdjudicationId: z.string().min(1).optional(),
         repairAllowance: z.number().int().positive().optional(),
         repairAttemptsUsed: z.number().int().nonnegative().default(0),
         repairAttemptIds: z.array(z.string()).default([]),
@@ -1579,6 +1595,7 @@ const AttackSubmissionEntryBaseSchema = z.object({
   paths: z.array(z.string().min(1)).default([]),
   requiredCapabilities: z.array(z.string()).default([]),
   browserProbe: BrowserProbeRequestSchema.optional(),
+  challengeAdjudicationId: z.string().min(1).optional(),
 });
 
 export const AttackSubmissionEntrySchema =

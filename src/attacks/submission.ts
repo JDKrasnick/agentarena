@@ -84,6 +84,9 @@ export async function materializeAttack(
       submission.oracle.expectedBehavior,
       submission.claim,
     ),
+    ...(submission.challengeAdjudicationId
+      ? { challengeAdjudicationId: submission.challengeAdjudicationId }
+      : {}),
     requiredCapabilities: submission.requiredCapabilities,
     patchPath: options.patchPath,
     focusedCommand:

@@ -144,7 +144,10 @@ describe("browser-only attacks", () => {
       ],
     }).attacks[0]!;
     probePatch = path.join(temporaryRoot, "probe.diff");
-    await writeFile(probePatch, browserProbeEvidencePatch(evidenceEntry, 1, "a"));
+    await writeFile(
+      probePatch,
+      browserProbeEvidencePatch(evidenceEntry, 1, "a"),
+    );
 
     config = FightConfigSchema.parse({
       task: "Fix the dialog",

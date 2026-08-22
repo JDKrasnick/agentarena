@@ -122,6 +122,7 @@ function compact(feedback: ContestantFeedback): ContestantFeedback {
     ...feedback,
     acceptedIncomingAttacks: incoming,
     ownAttackOutcomes: own,
+    priorAdjudications: [...feedback.priorAdjudications],
   };
   let verboseFieldsCondensed = false;
   while (bytes(candidate) > FEEDBACK_TARGET_BYTES) {
@@ -341,6 +342,30 @@ export function projectContestantFeedback(options: {
     },
     acceptedIncomingAttacks: incoming,
     ownAttackOutcomes: own,
+    priorAdjudications: history
+      .filter(
+        (attack) =>
+          attack.origin.kind === "contestant" &&
+          attack.origin.contestant === options.contestantId &&
+          attack.adjudication,
+      )
+      .toSorted(
+        (left, right) =>
+          roundOrder(right.round) - roundOrder(left.round) ||
+          left.id.localeCompare(right.id),
+      )
+      .slice(0, 6)
+      .map((attack) => ({
+        adjudicationId: attack.adjudication!.id,
+        attackId: attack.id,
+        target: attack.targets[0]!,
+        verdict: attack.adjudication!.verdict,
+        relationship: attack.adjudication!.relationship,
+        claim: attack.claim.slice(0, 512),
+        expectedBehavior: attack.oracle.expectedBehavior.slice(0, 512),
+        publicRationale: attack.adjudication!.rationale.slice(0, 512),
+        scoreEffect: attack.adjudication!.scoreEffect,
+      })),
     healedDefectIds: healed.sort(),
     unresolvedDefectIds: [...new Set(unresolved)].sort(),
     capabilityRestrictions: options.permissions.capabilities

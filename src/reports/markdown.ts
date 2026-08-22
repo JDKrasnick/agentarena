@@ -211,7 +211,12 @@ function roundReplay(state: RunState): string[] {
         ? round.attacks.map((attack) => {
             const observed =
               attack.outcomeReason ?? "No adjudication detail was recorded.";
-            return `- **${tableCell(attack.claim)}** — ${attack.status.toUpperCase()}. Observed result: ${tableCell(observed)} Expected: ${tableCell(attack.oracle.expectedBehavior)} Why it matters: ${tableCell(attack.impact)} Evidence: ${attackEvidenceLinks(state, attack)}.`;
+            const relationship =
+              attack.adjudication?.relationship ?? "independent";
+            const chain = attack.adjudication?.priorAdjudicationId
+              ? ` Decision chain: ${attack.adjudication.priorAdjudicationId} → ${attack.adjudication.id} (${relationship}, ${attack.adjudication.scoreEffect} ${String(attack.adjudication.exactAmount)} HP).`
+              : "";
+            return `- **${tableCell(attack.claim)}** — ${attack.status.toUpperCase()}. Observed result: ${tableCell(observed)} Expected: ${tableCell(attack.oracle.expectedBehavior)} Why it matters: ${tableCell(attack.impact)}${chain} Evidence: ${attackEvidenceLinks(state, attack)}.`;
           })
         : ["- No attacks were submitted."]),
       "",
