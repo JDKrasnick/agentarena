@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyChallengeCorrections,
   healDefect,
   normalizeAttackAdjudication,
   PARTIAL_DAMAGE_BY_SEVERITY,
@@ -79,6 +80,135 @@ function attacks(): Attack[] {
 }
 
 describe("ledger scoring", () => {
+  it("refunds recoil and applies replacement damage for an overturned rejection", () => {
+    const rejected = {
+      ...attacks()[1]!,
+      id: "prior-rejection",
+      origin: {
+        kind: "contestant" as const,
+        contestant: "a" as const,
+        provider: "codex" as const,
+      },
+      rank: 1 as const,
+      targets: ["b" as const],
+    };
+    rejected.adjudication = normalizeAttackAdjudication(rejected);
+    const afterPrior = resolveRound(
+      { a: contestant("a"), b: contestant("b") },
+      [rejected],
+      1,
+    ).contestants;
+    const challenge = {
+      ...attacks()[0]!,
+      id: "overturn-rejection",
+      round: 2 as const,
+    };
+    challenge.adjudication = {
+      ...normalizeAttackAdjudication(challenge),
+      relationship: "overturn" as const,
+      priorAdjudicationId: rejected.adjudication.id,
+      supersedesAdjudicationId: rejected.adjudication.id,
+    };
+    const corrected = applyChallengeCorrections(
+      afterPrior,
+      [rejected],
+      [challenge],
+      2,
+    );
+    const final = resolveRound(corrected, [challenge], 2).contestants;
+    expect(final.a?.healthLedger.permanentRecoil).toBe(0);
+    expect(final.a?.healthEvents.at(-1)).toMatchObject({
+      type: "score_correction",
+      amount: 5,
+    });
+    expect(final.b?.finalHealth).toBe(70);
+  });
+
+  it("withdraws active damage when a valid verdict is overturned to unable", () => {
+    const prior = attacks()[0]!;
+    prior.adjudication = normalizeAttackAdjudication(prior);
+    const afterPrior = resolveRound(
+      { a: contestant("a"), b: contestant("b") },
+      [prior],
+      1,
+    ).contestants;
+    const challenge: Attack = {
+      ...attacks()[1]!,
+      id: "overturn-valid",
+      round: 2,
+      status: "judge_unable",
+      adjudication: {
+        ...normalizeAttackAdjudication({
+          ...attacks()[1]!,
+          id: "overturn-valid",
+          round: 2,
+          status: "judge_unable",
+        }),
+        relationship: "overturn",
+        priorAdjudicationId: prior.adjudication.id,
+        supersedesAdjudicationId: prior.adjudication.id,
+      },
+    };
+    const corrected = applyChallengeCorrections(
+      afterPrior,
+      [prior],
+      [challenge],
+      2,
+    );
+    expect(corrected.b?.finalHealth).toBe(100);
+    expect(corrected.b?.healthLedger.activeDefects).toEqual([]);
+    expect(corrected.b?.healthLedger.canonicalDefects?.[0]).toMatchObject({
+      status: "superseded",
+      supersededByAdjudicationId: challenge.adjudication?.id,
+    });
+  });
+
+  it("applies only the damage delta for a severity overturn", () => {
+    const prior = attacks()[0]!;
+    prior.adjudication = normalizeAttackAdjudication(prior);
+    const afterPrior = resolveRound(
+      { a: contestant("a"), b: contestant("b") },
+      [prior],
+      1,
+    ).contestants;
+    const challenge: Attack = {
+      ...prior,
+      id: "severity-overturn",
+      round: 2,
+      severity: "medium",
+      adjudication: {
+        ...normalizeAttackAdjudication({
+          ...prior,
+          id: "severity-overturn",
+          round: 2,
+          severity: "medium",
+          adjudication: undefined,
+        }),
+        severity: "medium",
+        exactAmount: 0,
+        scoreEffect: "none",
+        relationship: "overturn",
+        priorAdjudicationId: prior.adjudication.id,
+        supersedesAdjudicationId: prior.adjudication.id,
+      },
+    };
+    const corrected = applyChallengeCorrections(
+      afterPrior,
+      [prior],
+      [challenge],
+      2,
+    );
+    expect(corrected.b?.finalHealth).toBe(85);
+    expect(corrected.b?.healthEvents.at(-1)).toMatchObject({
+      type: "score_correction",
+      amount: 15,
+    });
+    expect(corrected.b?.healthLedger.activeDefects[0]).toMatchObject({
+      severity: "medium",
+      damage: 15,
+    });
+  });
+
   it("resolves damage and recoil independently of attack processing order", () => {
     const contestants = {
       a: contestant("a"),

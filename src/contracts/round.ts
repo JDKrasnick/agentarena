@@ -490,7 +490,14 @@ const ReplayRepairSchema = z
 const ReplayScoreEventSchema = z
   .object({
     contestantId: ContestantIdSchema,
-    type: z.enum(["damage", "damage_upgrade", "recoil", "heal", "elimination"]),
+    type: z.enum([
+      "damage",
+      "damage_upgrade",
+      "recoil",
+      "heal",
+      "elimination",
+      "score_correction",
+    ]),
     amount: z.number().multipleOf(0.25),
     healthAfter: PointValueSchema,
     defectId: IdentifierSchema.optional(),
@@ -773,6 +780,29 @@ export const ContestantFeedbackSchema = z
       .strict(),
     acceptedIncomingAttacks: z.array(IncomingAttackFeedbackSchema),
     ownAttackOutcomes: z.array(OwnAttackOutcomeSchema),
+    priorAdjudications: z
+      .array(
+        z
+          .object({
+            adjudicationId: IdentifierSchema,
+            attackId: IdentifierSchema,
+            target: ContestantIdSchema,
+            verdict: z.enum(["valid", "rejected", "unable"]),
+            relationship: z.enum([
+              "independent",
+              "affirm",
+              "overturn",
+              "unresolved",
+            ]),
+            claim: z.string().min(1),
+            expectedBehavior: z.string().min(1),
+            publicRationale: z.string().min(1),
+            scoreEffect: z.enum(["damage", "damage_upgrade", "recoil", "none"]),
+          })
+          .strict(),
+      )
+      .max(6)
+      .default([]),
     healedDefectIds: z.array(IdentifierSchema),
     unresolvedDefectIds: z.array(IdentifierSchema),
     capabilityRestrictions: z.array(

@@ -25,6 +25,7 @@ import { changedPathsFromPatch, isAllowedAttackPath } from "../repo/git.js";
 import type { WorktreeManager } from "../repo/git.js";
 import { runShellCommand } from "../runner/process-runner.js";
 import { applyJudgeVerdict, suppressKnownJudgeDefect } from "./adjudicate.js";
+import type { PriorAdjudicationContext } from "./challenges.js";
 
 interface ValidateAttackOptions {
   attack: Attack;
@@ -39,6 +40,7 @@ interface ValidateAttackOptions {
   signal: AbortSignal;
   knownRootDefects: ReadonlySet<string>;
   priorCanonicalDefects?: JudgeAdjudicationInput["priorCanonicalDefects"];
+  priorAdjudications?: readonly PriorAdjudicationContext[];
   persistFailureRecord?: (record: FailureRecord) => Promise<void>;
   validateBrowser?: (
     worktree: string,
@@ -428,6 +430,10 @@ async function judgeFallback(
           targetPatchPath,
           mechanicalDiagnosticArtifactRefs,
           priorCanonicalDefects: options.priorCanonicalDefects ?? [],
+          priorAdjudications: options.priorAdjudications ?? [],
+          ...(attack.targetPatchDigest
+            ? { targetPatchDigest: attack.targetPatchDigest }
+            : {}),
           worktree: fallbackWorktree,
           promptPath,
           transcriptPrefix: attemptTranscriptPrefix,
@@ -435,6 +441,29 @@ async function judgeFallback(
           signal: options.signal,
           ...(retryReason ? { retryReason } : {}),
         });
+        if (attack.challengeAdjudicationId) {
+          const validPrior = (options.priorAdjudications ?? []).some(
+            (entry) => entry.adjudicationId === attack.challengeAdjudicationId,
+          );
+          const validRelationship =
+            verdict.relationship !== undefined &&
+            verdict.relationship !== "independent" &&
+            verdict.priorAdjudicationId === attack.challengeAdjudicationId;
+          if (!validPrior || !validRelationship) {
+            lastFailure = !validPrior
+              ? `Explicit challenge references unavailable adjudication ${attack.challengeAdjudicationId}`
+              : "Explicit challenge verdict omitted a valid related relationship";
+            retryReason = lastFailure;
+            if (attempt === 1) continue;
+            return {
+              ...attack,
+              status: "judge_unable",
+              challengeRelationship: "unresolved",
+              relatedAdjudicationId: attack.challengeAdjudicationId,
+              outcomeReason: lastFailure,
+            };
+          }
+        }
         const adjudicated = suppressKnownJudgeDefect(
           applyJudgeVerdict(attack, verdict),
           options.knownRootDefects,
@@ -538,8 +567,36 @@ async function assessWithRetry(
         transcriptPrefix,
         timeoutMs: options.config.limits.verifierMs,
         signal: options.signal,
+        priorAdjudications: options.priorAdjudications ?? [],
+        ...(attack.targetPatchDigest
+          ? { targetPatchDigest: attack.targetPatchDigest }
+          : {}),
         ...(retryReason ? { retryReason } : {}),
       });
+      if (attack.challengeAdjudicationId) {
+        const validPrior = (options.priorAdjudications ?? []).some(
+          (entry) => entry.adjudicationId === attack.challengeAdjudicationId,
+        );
+        const validRelationship =
+          verdict.relationship !== undefined &&
+          verdict.relationship !== "independent" &&
+          verdict.priorAdjudicationId === attack.challengeAdjudicationId;
+        if (!validPrior || !validRelationship) {
+          const reason = !validPrior
+            ? `Explicit challenge references unavailable adjudication ${attack.challengeAdjudicationId}`
+            : "Explicit challenge verdict omitted a valid related relationship";
+          if (attempt === 1) {
+            lastError = new Error(reason);
+            retryReason = reason;
+            continue;
+          }
+          return {
+            ...verdict,
+            relationship: "unresolved",
+            priorAdjudicationId: attack.challengeAdjudicationId,
+          };
+        }
+      }
       if (record) {
         record = FailureRecordSchema.parse({
           ...record,
@@ -606,6 +663,9 @@ export async function validateAttack(
   options: ValidateAttackOptions,
 ): Promise<Attack> {
   const attack = structuredClone(options.attack);
+  attack.targetPatchDigest = createHash("sha256")
+    .update(await readFile(options.targetPatch))
+    .digest("hex");
   const patch = await readFile(attack.patchPath, "utf8");
   if (patch.trim().length === 0)
     return withOutcome(attack, "invalid", "Attack patch is empty");
@@ -951,6 +1011,10 @@ export async function validateAttack(
     }
 
     const verdict = await assessWithRetry(options, attack, target);
+    if (verdict.relationship)
+      attack.challengeRelationship = verdict.relationship;
+    if (verdict.priorAdjudicationId)
+      attack.relatedAdjudicationId = verdict.priorAdjudicationId;
     if (!verdict.oracleSupported) {
       return withOutcome(attack, "unproven", verdict.oracleRationale);
     }

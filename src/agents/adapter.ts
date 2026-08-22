@@ -23,6 +23,7 @@ import {
 import { calculateCanonicalHash, type RunSpec } from "../contracts/round.js";
 import { sha256 } from "../core/ids.js";
 import { buildJudgePacket } from "../judge/packets.js";
+import type { PriorAdjudicationContext } from "../attacks/challenges.js";
 import { runProcess, type ProcessRequest } from "../runner/process-runner.js";
 import { z } from "zod";
 
@@ -73,6 +74,8 @@ export interface AttackVerdict {
   rootDefectId: string;
   severity: Severity;
   rationale: string;
+  relationship?: "independent" | "affirm" | "overturn" | "unresolved";
+  priorAdjudicationId?: string;
 }
 
 export type AnonymizedAttack = Pick<
@@ -109,6 +112,8 @@ export interface AnonymizedAttackInput {
   timeoutMs: number;
   signal: AbortSignal;
   retryReason?: string;
+  priorAdjudications?: readonly PriorAdjudicationContext[];
+  targetPatchDigest?: string;
 }
 
 export interface AttackVerifier {
@@ -146,6 +151,8 @@ export interface JudgeAttackVerdict {
   rootDefectId?: string;
   severity?: Severity;
   rationale: string;
+  relationship?: "independent" | "affirm" | "overturn" | "unresolved";
+  priorAdjudicationId?: string;
 }
 
 export interface JudgeRepairInput {
@@ -507,6 +514,10 @@ const AttackVerdictSchema = z.object({
   rootDefectId: z.string().min(1),
   severity: SeveritySchema,
   rationale: z.string().min(1),
+  relationship: z
+    .enum(["independent", "affirm", "overturn", "unresolved"])
+    .optional(),
+  priorAdjudicationId: z.string().min(1).optional(),
 });
 
 const JudgeAttackVerdictSchema = z.object({
@@ -517,6 +528,10 @@ const JudgeAttackVerdictSchema = z.object({
   rootDefectId: z.string().min(1).optional(),
   severity: SeveritySchema.optional(),
   rationale: z.string().min(1),
+  relationship: z
+    .enum(["independent", "affirm", "overturn", "unresolved"])
+    .optional(),
+  priorAdjudicationId: z.string().min(1).optional(),
 });
 
 async function stageJudgeSources(
@@ -577,7 +592,14 @@ export class CommandAttackVerifier implements AttackVerifier {
       },
       claim: input.attack.claim,
       oracle: JSON.stringify(input.attack.oracle),
-      diagnostics: `authorPassed=${String(input.authorPassed)} targetFailed=${String(input.targetFailed)} impact=${input.attack.impact} assertionFingerprint=${input.attack.assertionFingerprint}`,
+      diagnostics: JSON.stringify({
+        authorPassed: input.authorPassed,
+        targetFailed: input.targetFailed,
+        impact: input.attack.impact,
+        assertionFingerprint: input.attack.assertionFingerprint,
+        targetPatchDigest: input.targetPatchDigest,
+        priorAdjudications: input.priorAdjudications ?? [],
+      }),
       artifactPointers: [
         ...sourcePointers,
         {
@@ -597,7 +619,8 @@ export class CommandAttackVerifier implements AttackVerifier {
       JSON.stringify(packet, null, 2),
       "Read any packet artifact path only as immutable evidence. Do not edit it or execute commands.",
       "",
-      `Write only valid JSON to ${outputPath} with keys relevant, oracleSupported, oracleRationale, rootDefectId, severity, and rationale.`,
+      "When prior adjudications are supplied, classify the claim as independent, affirm, overturn, or unresolved and name the related adjudication. Overturn requires material contradictory evidence.",
+      `Write only valid JSON to ${outputPath} with keys relevant, oracleSupported, oracleRationale, rootDefectId, severity, rationale, optional relationship, and optional priorAdjudicationId.`,
       ...(input.retryReason
         ? [
             "",
@@ -620,10 +643,22 @@ export class CommandAttackVerifier implements AttackVerifier {
     if (result.failureClass === "arena_infrastructure")
       throw new Error("Verifier provider infrastructure failed");
     try {
-      return parseModelSubmission(
+      const verdict = parseModelSubmission(
         AttackVerdictSchema,
         await readFile(outputPath, "utf8"),
       );
+      return {
+        relevant: verdict.relevant,
+        oracleSupported: verdict.oracleSupported,
+        oracleRationale: verdict.oracleRationale,
+        rootDefectId: verdict.rootDefectId,
+        severity: verdict.severity,
+        rationale: verdict.rationale,
+        ...(verdict.relationship ? { relationship: verdict.relationship } : {}),
+        ...(verdict.priorAdjudicationId
+          ? { priorAdjudicationId: verdict.priorAdjudicationId }
+          : {}),
+      };
     } catch (error) {
       throw new Error(
         `Verifier output was invalid: ${error instanceof Error ? error.message : String(error)}`,
@@ -702,6 +737,8 @@ export class CommandAttackVerifier implements AttackVerifier {
         impact: input.attack.impact,
         assertionFingerprint: input.attack.assertionFingerprint,
         priorCanonicalDefects: input.priorCanonicalDefects,
+        targetPatchDigest: input.targetPatchDigest,
+        priorAdjudications: input.priorAdjudications ?? [],
       }),
       artifactPointers: [
         ...sourcePointers,
@@ -716,7 +753,8 @@ export class CommandAttackVerifier implements AttackVerifier {
       "Use confirmed only for definitive semantic evidence, supported_untestable only when the task clearly supports the oracle and evidence points to the defect, rejected when unsupported, and unable when evidence is insufficient.",
       JSON.stringify(packet, null, 2),
       "Read the digest-linked target patch, attack overlay, and diagnostics from the packet artifact paths before deciding.",
-      `Write only valid JSON to ${outputPath} with keys decision, relevant, expectedBehaviorClearlySupported, evidencePointsToDefect, optional rootDefectId, optional severity, and rationale.`,
+      "When prior adjudications are supplied, classify the claim as independent, affirm, overturn, or unresolved and name the related adjudication. A pass on a changed target patch is repair evidence, not an overturn.",
+      `Write only valid JSON to ${outputPath} with keys decision, relevant, expectedBehaviorClearlySupported, evidencePointsToDefect, optional rootDefectId, optional severity, rationale, optional relationship, and optional priorAdjudicationId.`,
       ...(input.retryReason
         ? [
             "The prior bounded attempt failed.",
@@ -751,6 +789,10 @@ export class CommandAttackVerifier implements AttackVerifier {
         rationale: verdict.rationale,
         ...(verdict.rootDefectId ? { rootDefectId: verdict.rootDefectId } : {}),
         ...(verdict.severity ? { severity: verdict.severity } : {}),
+        ...(verdict.relationship ? { relationship: verdict.relationship } : {}),
+        ...(verdict.priorAdjudicationId
+          ? { priorAdjudicationId: verdict.priorAdjudicationId }
+          : {}),
       };
     } catch (error) {
       throw new Error(
