@@ -1021,13 +1021,24 @@ const FightConfigBaseSchema = z
 export const FightConfigSchema = z.preprocess(
   normalizeBattleConfigInput,
   FightConfigBaseSchema.transform((config) => {
+    const normalized = config.baseFromPullRequest
+      ? {
+          ...config,
+          pullRequestReferences: [
+            ...new Set([
+              ...config.pullRequestReferences,
+              config.baseFromPullRequest,
+            ]),
+          ],
+        }
+      : config;
     // This compatibility alias is deliberately non-enumerable, so v3 run
     // artifacts persist only the normalized contestant model.
-    Object.defineProperty(config, "agents", {
-      value: config.contestants.map(({ id }) => id),
+    Object.defineProperty(normalized, "agents", {
+      value: normalized.contestants.map(({ id }) => id),
       enumerable: false,
     });
-    return config;
+    return normalized;
   }),
 );
 export type FightConfig = z.infer<typeof FightConfigSchema>;

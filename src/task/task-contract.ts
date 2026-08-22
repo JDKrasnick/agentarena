@@ -1,4 +1,13 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream, realpathSync } from "node:fs";
+import {
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
 import { sha256, stableId } from "../core/ids.js";
@@ -81,11 +90,45 @@ export class FileLocalSpecResolver implements LocalSpecResolver {
     reference: string,
     repositoryRoot: string,
   ): Promise<ResolvedLocalSpec> {
+    const root = await realpath(repositoryRoot);
+    const resolved = path.resolve(root, reference);
+    const relative = path.relative(root, resolved);
+    if (
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    )
+      throw new Error(
+        `Specification path escapes the repository: ${reference}`,
+      );
+    const canonical = await realpath(resolved);
+    const canonicalRelative = path.relative(root, canonical);
+    if (
+      canonicalRelative === ".." ||
+      canonicalRelative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(canonicalRelative)
+    )
+      throw new Error(
+        `Specification path escapes the repository through a symbolic link: ${reference}`,
+      );
     return {
       origin: reference,
-      content: await readFile(path.resolve(repositoryRoot, reference), "utf8"),
+      content: await readBoundedTextFile(
+        canonical,
+        `specification ${reference}`,
+      ),
     };
   }
+}
+
+const GH_READ_OPERATIONS = new Set(["issue view", "pr view", "repo view"]);
+
+async function runGhRead(args: string[], repositoryRoot: string) {
+  if (!GH_READ_OPERATIONS.has(args.slice(0, 2).join(" ")))
+    throw new Error(
+      `Pre-permission gh operation is not read-only: ${args.join(" ")}`,
+    );
+  return execa("gh", args, { cwd: repositoryRoot, reject: false });
 }
 
 export class GitHubIssueResolver implements IssueResolver {
@@ -93,10 +136,9 @@ export class GitHubIssueResolver implements IssueResolver {
     reference: string,
     repositoryRoot: string,
   ): Promise<ResolvedIssue> {
-    const result = await execa(
-      "gh",
+    const result = await runGhRead(
       ["issue", "view", reference, "--json", "title,body,comments,url"],
-      { cwd: repositoryRoot, reject: false },
+      repositoryRoot,
     );
     if (result.exitCode !== 0) {
       throw new Error(
@@ -112,10 +154,9 @@ export class GitHubIssueResolver implements IssueResolver {
     const identity = githubIdentity(value.url);
     let baseBranch: string | undefined;
     if (identity.repository) {
-      const repository = await execa(
-        "gh",
+      const repository = await runGhRead(
         ["repo", "view", identity.repository, "--json", "defaultBranchRef"],
-        { cwd: repositoryRoot, reject: false },
+        repositoryRoot,
       );
       if (repository.exitCode === 0) {
         const metadata = JSON.parse(repository.stdout) as {
@@ -144,8 +185,7 @@ export class GitHubPullRequestResolver implements PullRequestResolver {
     reference: string,
     repositoryRoot: string,
   ): Promise<ResolvedPullRequest> {
-    const result = await execa(
-      "gh",
+    const result = await runGhRead(
       [
         "pr",
         "view",
@@ -153,7 +193,7 @@ export class GitHubPullRequestResolver implements PullRequestResolver {
         "--json",
         "title,body,comments,url,number,author,baseRefName,baseRefOid,headRefName,headRepository,headRefOid,commits,closingIssuesReferences",
       ],
-      { cwd: repositoryRoot, reject: false },
+      repositoryRoot,
     );
     if (result.exitCode !== 0) {
       throw new Error(
@@ -243,55 +283,363 @@ interface BuildTaskContractOptions {
   localSpecResolver?: LocalSpecResolver;
   now?: Date;
   warnings?: string[];
+  reconnaissance?: ReconnaissanceSnapshot;
 }
 
-async function snapshotSource(
-  sourceDirectory: string,
-  source: Omit<TaskSource, "contentHash" | "snapshotPath">,
-  content: string,
-): Promise<TaskSource> {
-  const hash = sha256(content);
-  const snapshotPath = path.join(sourceDirectory, `${source.id}.md`);
-  await writeFile(snapshotPath, content, "utf8");
-  return { ...source, contentHash: hash, snapshotPath };
+export interface ReconnaissanceSource extends Omit<TaskSource, "snapshotPath"> {
+  content: string;
 }
 
-export async function buildTaskContract(
-  options: BuildTaskContractOptions,
-): Promise<TaskContract> {
-  const now = (options.now ?? new Date()).toISOString();
+export interface RepositoryEvidence {
+  path: string;
+  content: string;
+  contentHash: string;
+  byteLength: number;
+  contentOmitted?: "lockfile_hash_only";
+}
+
+export interface ReconnaissanceRequest {
+  repositoryRoot: string;
+  specPaths: string[];
+  issueReferences: string[];
+  pullRequestReferences: string[];
+  taskReferences: TaskReference[];
+}
+
+export interface ReconnaissanceSnapshot {
+  version: 1;
+  task: string;
+  acceptanceCriteria: string[];
+  request: ReconnaissanceRequest;
+  capturedAt: string;
+  sources: ReconnaissanceSource[];
+  repositoryEvidence: RepositoryEvidence[];
+  resolvedPullRequests: Record<string, ResolvedPullRequest>;
+  inputHash: string;
+}
+
+export function validateReconnaissance(
+  snapshot: ReconnaissanceSnapshot,
+  config?: Pick<
+    FightConfig,
+    | "task"
+    | "acceptanceCriteria"
+    | "repositoryRoot"
+    | "specPaths"
+    | "issueReferences"
+    | "pullRequestReferences"
+    | "taskReferences"
+  >,
+): ReconnaissanceSnapshot {
+  const { inputHash, ...input } = snapshot;
+  if (sha256(canonicalJson(input)) !== inputHash)
+    throw new Error("Reconnaissance input hash does not match its contents");
+  if (config) {
+    const expectedRequest = reconnaissanceRequest(config);
+    if (
+      snapshot.task !== config.task ||
+      canonicalJson(snapshot.acceptanceCriteria) !==
+        canonicalJson(config.acceptanceCriteria) ||
+      canonicalJson(snapshot.request) !== canonicalJson(expectedRequest)
+    )
+      throw new Error("Reconnaissance does not match the approved fight task");
+  }
+  const budget = new ReconnaissanceTextBudget();
+  for (const [index, criterion] of snapshot.acceptanceCriteria.entries())
+    budget.include(`acceptance criterion ${String(index + 1)}`, criterion);
+  for (const source of snapshot.sources) {
+    if (sha256(source.content) !== source.contentHash)
+      throw new Error(`Reconnaissance source hash drifted: ${source.origin}`);
+    budget.include(source.origin, source.content);
+  }
+  for (const pullRequest of Object.values(snapshot.resolvedPullRequests))
+    budget.includeSerialized(pullRequest);
+  for (const evidence of snapshot.repositoryEvidence) {
+    if (
+      evidence.contentOmitted === "lockfile_hash_only" &&
+      evidence.content !== ""
+    )
+      throw new Error(
+        `Reconnaissance lockfile unexpectedly retained content: ${evidence.path}`,
+      );
+    if (
+      evidence.contentOmitted !== "lockfile_hash_only" &&
+      sha256(evidence.content) !== evidence.contentHash
+    )
+      throw new Error(`Reconnaissance evidence hash drifted: ${evidence.path}`);
+    if (evidence.contentOmitted !== "lockfile_hash_only") {
+      const byteLength = budget.include(evidence.path, evidence.content);
+      if (byteLength !== evidence.byteLength)
+        throw new Error(
+          `Reconnaissance evidence byte length drifted: ${evidence.path}`,
+        );
+    }
+  }
+  return snapshot;
+}
+
+export type CollectReconnaissanceOptions = Omit<
+  BuildTaskContractOptions,
+  "sourceDirectory" | "reconnaissance"
+>;
+
+export async function collectFightReconnaissance(
+  configValue: FightConfig,
+  options: Pick<
+    CollectReconnaissanceOptions,
+    "issueResolver" | "pullRequestResolver" | "localSpecResolver" | "now"
+  > = {},
+): Promise<ReconnaissanceSnapshot> {
+  const config = FightConfigSchema.parse(configValue);
+  return collectReconnaissance({
+    task: config.task,
+    acceptanceCriteria: config.acceptanceCriteria,
+    specPaths: config.specPaths,
+    issueReferences: config.issueReferences,
+    pullRequestReferences: config.pullRequestReferences,
+    taskReferences: config.taskReferences,
+    repositoryRoot: config.repositoryRoot,
+    ...options,
+  });
+}
+
+const RECONNAISSANCE_PATHS = [
+  "package.json",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
+  "yarn.lock",
+  "bun.lock",
+  "bun.lockb",
+  "deno.json",
+  "deno.jsonc",
+  "pyproject.toml",
+  "requirements.txt",
+  "requirements-dev.txt",
+  "setup.py",
+  "setup.cfg",
+  "Pipfile",
+  "Pipfile.lock",
+  "poetry.lock",
+  "uv.lock",
+  "pdm.lock",
+  "tox.ini",
+  "pytest.ini",
+  "playwright.config.ts",
+  "playwright.config.js",
+  "playwright.config.mjs",
+  "playwright.config.cjs",
+  "cypress.config.ts",
+  "cypress.config.js",
+  "vite.config.ts",
+  "vite.config.js",
+  "next.config.ts",
+  "next.config.js",
+  "next.config.mjs",
+  "angular.json",
+  "src/routes.ts",
+  "src/router.ts",
+  "app/routes.ts",
+] as const;
+
+const LOCKFILE_PATHS = new Set([
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "bun.lock",
+  "bun.lockb",
+  "Pipfile.lock",
+  "poetry.lock",
+  "uv.lock",
+  "pdm.lock",
+]);
+const MAX_RECONNAISSANCE_FILE_BYTES = 256 * 1024;
+const MAX_RECONNAISSANCE_TEXT_BYTES = 2 * 1024 * 1024;
+
+async function readBoundedTextFile(
+  filePath: string,
+  label: string,
+): Promise<string> {
+  const handle = await open(filePath, "r");
+  try {
+    const file = await handle.stat();
+    if (!file.isFile())
+      throw new Error(`Reconnaissance path is not a regular file: ${label}`);
+    if (file.size > MAX_RECONNAISSANCE_FILE_BYTES)
+      throw new Error(
+        `Reconnaissance text ${label} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
+      );
+
+    const chunks: Buffer[] = [];
+    let byteLength = 0;
+    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+      const bytes = Buffer.from(chunk as Uint8Array);
+      byteLength += bytes.length;
+      if (byteLength > MAX_RECONNAISSANCE_FILE_BYTES)
+        throw new Error(
+          `Reconnaissance text ${label} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
+        );
+      chunks.push(bytes);
+    }
+    return Buffer.concat(chunks, byteLength).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+function reconnaissanceRequest(
+  value: Pick<
+    CollectReconnaissanceOptions,
+    | "repositoryRoot"
+    | "specPaths"
+    | "issueReferences"
+    | "pullRequestReferences"
+    | "taskReferences"
+  >,
+): ReconnaissanceRequest {
+  return {
+    repositoryRoot: realpathSync(value.repositoryRoot),
+    specPaths: [...value.specPaths],
+    issueReferences: [...value.issueReferences],
+    pullRequestReferences: [...(value.pullRequestReferences ?? [])],
+    taskReferences: [...(value.taskReferences ?? [])],
+  };
+}
+
+class ReconnaissanceTextBudget {
+  private totalBytes = 0;
+
+  include(label: string, content: string): number {
+    const byteLength = Buffer.byteLength(content);
+    if (byteLength > MAX_RECONNAISSANCE_FILE_BYTES)
+      throw new Error(
+        `Repository reconnaissance source ${label} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
+      );
+    this.retainBytes(byteLength);
+    return byteLength;
+  }
+
+  includeSerialized(value: unknown): number {
+    const byteLength = Buffer.byteLength(canonicalJson(value));
+    this.retainBytes(byteLength);
+    return byteLength;
+  }
+
+  private retainBytes(byteLength: number): void {
+    this.totalBytes += byteLength;
+    if (this.totalBytes > MAX_RECONNAISSANCE_TEXT_BYTES)
+      throw new Error(
+        `Repository reconnaissance exceeds ${String(MAX_RECONNAISSANCE_TEXT_BYTES)} bytes`,
+      );
+  }
+}
+
+function assertContainedPath(
+  canonicalRoot: string,
+  canonicalPath: string,
+  displayPath: string,
+): void {
+  const relative = path.relative(canonicalRoot, canonicalPath);
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  )
+    throw new Error(
+      `Repository reconnaissance path escapes the repository through a symbolic link: ${displayPath}`,
+    );
+}
+
+async function hashFile(filePath: string): Promise<string> {
+  const digest = createHash("sha256");
+  for await (const chunk of createReadStream(filePath))
+    digest.update(chunk as Buffer);
+  return digest.digest("hex");
+}
+
+async function collectRepositoryEvidence(
+  repositoryRoot: string,
+  budget: ReconnaissanceTextBudget,
+): Promise<RepositoryEvidence[]> {
+  const evidence: RepositoryEvidence[] = [];
+  const canonicalRoot = await realpath(repositoryRoot);
+  for (const relativePath of RECONNAISSANCE_PATHS) {
+    try {
+      const evidencePath = path.join(repositoryRoot, relativePath);
+      const canonicalPath = await realpath(evidencePath);
+      assertContainedPath(canonicalRoot, canonicalPath, relativePath);
+      const file = await stat(canonicalPath);
+      if (!file.isFile())
+        throw new Error(
+          `Repository reconnaissance path is not a regular file: ${relativePath}`,
+        );
+      if (LOCKFILE_PATHS.has(relativePath)) {
+        evidence.push({
+          path: relativePath,
+          content: "",
+          contentHash: await hashFile(canonicalPath),
+          byteLength: file.size,
+          contentOmitted: "lockfile_hash_only",
+        });
+        continue;
+      }
+      if (file.size > MAX_RECONNAISSANCE_FILE_BYTES)
+        throw new Error(
+          `Repository reconnaissance file ${relativePath} exceeds ${String(MAX_RECONNAISSANCE_FILE_BYTES)} bytes`,
+        );
+      const content = await readFile(canonicalPath, "utf8");
+      const byteLength = budget.include(relativePath, content);
+      evidence.push({
+        path: relativePath,
+        content,
+        contentHash: sha256(content),
+        byteLength,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  return evidence;
+}
+
+export async function collectReconnaissance(
+  options: CollectReconnaissanceOptions,
+): Promise<ReconnaissanceSnapshot> {
+  const capturedAt = (options.now ?? new Date()).toISOString();
+  const budget = new ReconnaissanceTextBudget();
   const issueResolver = options.issueResolver ?? new GitHubIssueResolver();
   const pullRequestResolver =
     options.pullRequestResolver ?? new GitHubPullRequestResolver();
   const localSpecResolver =
     options.localSpecResolver ?? new FileLocalSpecResolver();
-  await mkdir(options.sourceDirectory, { recursive: true });
-  const sources: TaskSource[] = [];
-  const criteria = [...options.acceptanceCriteria];
-
-  sources.push(
-    await snapshotSource(
-      options.sourceDirectory,
-      {
-        id: "task-user",
-        kind: "user_task",
-        origin: "command-line task",
-        retrievedAt: now,
-        visibility: "shared",
-      },
-      `${options.task}\n`,
-    ),
-  );
+  const taskContent = `${options.task}\n`;
+  budget.include("command-line task", taskContent);
+  for (const [index, criterion] of options.acceptanceCriteria.entries())
+    budget.include(`acceptance criterion ${String(index + 1)}`, criterion);
+  const sources: ReconnaissanceSource[] = [
+    {
+      id: "task-user",
+      kind: "user_task",
+      origin: "command-line task",
+      retrievedAt: capturedAt,
+      visibility: "shared",
+      content: taskContent,
+      contentHash: sha256(taskContent),
+    },
+  ];
+  const resolvedPullRequests: Record<string, ResolvedPullRequest> = {};
 
   for (const reference of options.issueReferences) {
     let issue: ResolvedIssue;
     try {
       issue = await issueResolver.resolve(reference, options.repositoryRoot);
     } catch (error) {
-      options.warnings?.push(
-        `Official issue ${reference} could not be retrieved and was not included in the contract: ${error instanceof Error ? error.message : String(error)}`,
+      throw new Error(
+        `Explicit issue ${reference} could not be retrieved: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
       );
-      continue;
     }
     const content = [
       `# ${issue.title}`,
@@ -305,36 +653,33 @@ export async function buildTaskContract(
       ]),
       "",
     ].join("\n");
-    sources.push(
-      await snapshotSource(
-        options.sourceDirectory,
-        {
-          id: stableId("issue", issue.origin),
-          kind: "issue",
-          origin: issue.origin,
-          retrievedAt: now,
-          visibility: "shared",
-          ...(options.taskReferences?.find(
-            (candidate) =>
-              candidate.kind === "github_issue" &&
-              candidate.reference === reference,
-          )?.primary
-            ? { primary: true }
-            : {}),
-          ...(issue.repository && issue.number && issue.url
-            ? {
-                github: {
-                  repository: issue.repository,
-                  number: issue.number,
-                  url: issue.url,
-                  ...(issue.baseBranch ? { baseBranch: issue.baseBranch } : {}),
-                },
-              }
-            : {}),
-        },
-        content,
-      ),
-    );
+    budget.include(`issue ${reference}`, content);
+    sources.push({
+      id: stableId("issue", issue.origin),
+      kind: "issue",
+      origin: issue.origin,
+      retrievedAt: capturedAt,
+      visibility: "shared",
+      content,
+      contentHash: sha256(content),
+      ...(options.taskReferences?.find(
+        (candidate) =>
+          candidate.kind === "github_issue" &&
+          candidate.reference === reference,
+      )?.primary
+        ? { primary: true }
+        : {}),
+      ...(issue.repository && issue.number && issue.url
+        ? {
+            github: {
+              repository: issue.repository,
+              number: issue.number,
+              url: issue.url,
+              ...(issue.baseBranch ? { baseBranch: issue.baseBranch } : {}),
+            },
+          }
+        : {}),
+    });
   }
 
   for (const reference of options.pullRequestReferences ?? []) {
@@ -345,10 +690,10 @@ export async function buildTaskContract(
         options.repositoryRoot,
       );
     } catch (error) {
-      options.warnings?.push(
-        `Official pull request ${reference} could not be retrieved and was not included in the contract: ${error instanceof Error ? error.message : String(error)}`,
+      throw new Error(
+        `Explicit pull request ${reference} could not be retrieved: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
       );
-      continue;
     }
     const content = [
       `# ${pullRequest.title}`,
@@ -370,89 +715,148 @@ export async function buildTaskContract(
       ]),
       "",
     ].join("\n");
-    sources.push(
-      await snapshotSource(
-        options.sourceDirectory,
-        {
-          id: stableId("pull-request", pullRequest.origin),
-          kind: "pull_request",
-          origin: pullRequest.origin,
-          retrievedAt: now,
-          visibility: "shared",
-          ...(options.taskReferences?.find(
-            (candidate) =>
-              candidate.kind === "github_pull_request" &&
-              candidate.reference === reference,
-          )?.primary
-            ? { primary: true }
-            : {}),
-          github: {
-            repository: pullRequest.repository,
-            number: pullRequest.number,
-            url: pullRequest.url,
-            baseBranch: pullRequest.baseBranch,
-            headBranch: pullRequest.headBranch,
-            headRepository: pullRequest.headRepository,
-            headCommit: pullRequest.headCommit,
-          },
-        },
-        content,
-      ),
-    );
+    budget.include(`pull request ${reference}`, content);
+    budget.includeSerialized(pullRequest);
+    resolvedPullRequests[reference] = pullRequest;
+    sources.push({
+      id: stableId("pull-request", pullRequest.origin),
+      kind: "pull_request",
+      origin: pullRequest.origin,
+      retrievedAt: capturedAt,
+      visibility: "shared",
+      content,
+      contentHash: sha256(content),
+      ...(options.taskReferences?.find(
+        (candidate) =>
+          candidate.kind === "github_pull_request" &&
+          candidate.reference === reference,
+      )?.primary
+        ? { primary: true }
+        : {}),
+      github: {
+        repository: pullRequest.repository,
+        number: pullRequest.number,
+        url: pullRequest.url,
+        baseBranch: pullRequest.baseBranch,
+        headBranch: pullRequest.headBranch,
+        headRepository: pullRequest.headRepository,
+        headCommit: pullRequest.headCommit,
+      },
+    });
   }
 
   for (const configuredPath of options.specPaths) {
-    const resolvedSpec = await localSpecResolver.resolve(
-      configuredPath,
-      options.repositoryRoot,
-    );
-    const content = resolvedSpec.content;
-    sources.push(
-      await snapshotSource(
-        options.sourceDirectory,
-        {
-          id: stableId("spec", configuredPath),
-          kind: "repo_spec",
-          origin: resolvedSpec.origin,
-          retrievedAt: now,
-          visibility: "shared",
-          ...(options.taskReferences?.find(
-            (candidate) =>
-              candidate.kind === "repo_spec" &&
-              candidate.path === configuredPath,
-          )?.primary
-            ? { primary: true }
-            : {}),
-        },
-        content,
-      ),
-    );
+    let resolvedSpec: ResolvedLocalSpec;
+    try {
+      resolvedSpec = await localSpecResolver.resolve(
+        configuredPath,
+        options.repositoryRoot,
+      );
+    } catch (error) {
+      throw new Error(
+        `Explicit specification ${configuredPath} could not be retrieved: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    budget.include(`specification ${configuredPath}`, resolvedSpec.content);
+    sources.push({
+      id: stableId("spec", configuredPath),
+      kind: "repo_spec",
+      origin: resolvedSpec.origin,
+      retrievedAt: capturedAt,
+      visibility: "shared",
+      content: resolvedSpec.content,
+      contentHash: sha256(resolvedSpec.content),
+      ...(options.taskReferences?.find(
+        (candidate) =>
+          candidate.kind === "repo_spec" && candidate.path === configuredPath,
+      )?.primary
+        ? { primary: true }
+        : {}),
+    });
   }
 
   for (const instruction of await discoverInstructions(
     options.repositoryRoot,
   )) {
-    sources.push(
-      await snapshotSource(
-        options.sourceDirectory,
-        {
-          id: stableId("instructions", instruction.path),
-          kind: "repo_spec",
-          origin: instruction.path,
-          retrievedAt: now,
-          visibility: "shared",
-        },
-        instruction.content,
-      ),
+    budget.include(`instruction ${instruction.path}`, instruction.content);
+    sources.push({
+      id: stableId("instructions", instruction.path),
+      kind: "repo_spec",
+      origin: instruction.path,
+      retrievedAt: capturedAt,
+      visibility: "shared",
+      content: instruction.content,
+      contentHash: sha256(instruction.content),
+    });
+  }
+
+  const repositoryEvidence = await collectRepositoryEvidence(
+    options.repositoryRoot,
+    budget,
+  );
+  const input = {
+    version: 1 as const,
+    task: options.task,
+    acceptanceCriteria: [...options.acceptanceCriteria],
+    request: reconnaissanceRequest(options),
+    capturedAt,
+    sources,
+    repositoryEvidence,
+    resolvedPullRequests,
+  };
+  return validateReconnaissance({
+    ...input,
+    inputHash: sha256(canonicalJson(input)),
+  });
+}
+
+async function snapshotSource(
+  sourceDirectory: string,
+  source: Omit<TaskSource, "contentHash" | "snapshotPath">,
+  content: string,
+): Promise<TaskSource> {
+  const hash = sha256(content);
+  const snapshotPath = path.join(sourceDirectory, `${source.id}.md`);
+  await writeFile(snapshotPath, content, "utf8");
+  return { ...source, contentHash: hash, snapshotPath };
+}
+
+export async function buildTaskContract(
+  options: BuildTaskContractOptions,
+): Promise<TaskContract> {
+  const reconnaissance = validateReconnaissance(
+    options.reconnaissance ?? (await collectReconnaissance(options)),
+    {
+      task: options.task,
+      acceptanceCriteria: options.acceptanceCriteria,
+      repositoryRoot: options.repositoryRoot,
+      specPaths: options.specPaths,
+      issueReferences: options.issueReferences,
+      pullRequestReferences: options.pullRequestReferences ?? [],
+      taskReferences: options.taskReferences ?? [],
+    },
+  );
+  await mkdir(options.sourceDirectory, { recursive: true });
+  const sources: TaskSource[] = [];
+  for (const source of reconnaissance.sources) {
+    const { content, contentHash: expectedHash, ...metadata } = source;
+    const persisted = await snapshotSource(
+      options.sourceDirectory,
+      metadata,
+      content,
     );
+    if (persisted.contentHash !== expectedHash)
+      throw new Error(`Reconnaissance source drifted: ${source.origin}`);
+    sources.push(persisted);
   }
 
   const base = {
     version: 1 as const,
-    task: options.task,
-    acceptanceCriteria: criteria,
+    task: reconnaissance.task,
+    acceptanceCriteria: reconnaissance.acceptanceCriteria,
     sources,
-    createdAt: now,
+    createdAt: reconnaissance.capturedAt,
   };
   const contractHash = sha256(JSON.stringify(base));
   return TaskContractSchema.parse({ ...base, contractHash });

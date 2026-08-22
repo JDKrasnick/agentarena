@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline/promises";
+import { readFile } from "node:fs/promises";
 import { stdin, stdout } from "node:process";
 import {
   CommandAttackVerifier,
@@ -23,6 +24,11 @@ import type { ArenaObserver } from "../observability/events.js";
 import type { WebDashboard } from "../dashboard/web-server.js";
 import type { DesktopDashboardWindow } from "../dashboard/desktop-window.js";
 import {
+  collectFightReconnaissance,
+  type ReconnaissanceSnapshot,
+  validateReconnaissance,
+} from "../task/task-contract.js";
+import {
   probeProviderConnectivity,
   TransportRecoverySchema,
   withReplacementRunId,
@@ -46,8 +52,7 @@ export function resolveDisplayMode(
 async function approvePermissionPlan(
   config: Awaited<ReturnType<typeof loadFightConfig>>,
 ) {
-  if (config.permissionMode !== "confirm" || config.nonInteractiveApproval)
-    return config;
+  if (config.permissionMode !== "confirm") return config;
   stdout.write("Agent Arena permission plan\n");
   for (const request of discoverCapabilities(config)) {
     stdout.write(
@@ -55,8 +60,12 @@ async function approvePermissionPlan(
     );
   }
   stdout.write(
-    "\nAdvisory restrictions are not OS-enforced. Use a sanitized account when the host has sensitive credentials.\n",
+    "\nNative subprocesses are not OS-confined. They may inherit access to the current account's filesystem, environment, network, credentials, and configured provider integrations, including MCP. Use a sanitized account or external container when the host has sensitive authority.\n",
   );
+  if (config.nonInteractiveApproval) {
+    stdout.write("Permission plan approved noninteractively via --yes.\n");
+    return config;
+  }
   const readline = createInterface({ input: stdin, output: stdout });
   try {
     const answer = await readline.question(
@@ -118,7 +127,9 @@ export async function runFight(
   display: DisplayMode = "auto",
   launchWindow = true,
 ): Promise<RunCommandResult> {
-  const config = await approvePermissionPlan(await loadFightConfig(overrides));
+  const loadedConfig = await loadFightConfig(overrides);
+  const reconnaissance = await collectFightReconnaissance(loadedConfig);
+  const config = await approvePermissionPlan(loadedConfig);
   const interactive = Boolean(stdout.isTTY && stdin.isTTY);
   const activeDisplay = resolveDisplayMode(display, launchWindow, interactive);
   const useDesktopDashboard = activeDisplay === "window";
@@ -174,7 +185,7 @@ export async function runFight(
   process.once("SIGINT", cancel);
   process.once("SIGTERM", cancel);
   try {
-    let outcome = await arena.fight(config, controller.signal);
+    let outcome = await arena.fight(config, controller.signal, reconnaissance);
     const runIds = [outcome.state.runId];
     let recoveryCancelled = false;
     while (
@@ -242,6 +253,12 @@ export async function runFight(
       );
       if (!frozenRunSpec || !permissions)
         throw new Error("Transport recovery is missing frozen run inputs");
+      const reconnaissance = validateReconnaissance(
+        JSON.parse(
+          await readFile(parentStore.resolve("reconnaissance.json"), "utf8"),
+        ) as ReconnaissanceSnapshot,
+        parent.state.config,
+      );
       const replacementArena = createArena(parent.state.config, {
         ...(observer ? { observer } : {}),
         battleControl: control,
@@ -253,6 +270,7 @@ export async function runFight(
           restartOrdinal: restartOrdinal as 1 | 2,
           runSpec: frozenRunSpec,
           permissions,
+          reconnaissance,
           ...(parent.state.pullRequestFixture
             ? { pullRequestFixture: parent.state.pullRequestFixture }
             : {}),

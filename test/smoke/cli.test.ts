@@ -39,7 +39,7 @@ describe("built CLI smoke flow", () => {
     expect(help.stdout).toContain("review");
     expect(help.stdout).toContain("defend");
     expect(help.stdout).toContain("resume");
-    await execa(
+    const fight = await execa(
       process.execPath,
       [
         cli,
@@ -55,6 +55,16 @@ describe("built CLI smoke flow", () => {
         "--no-window",
       ],
       { cwd: repositoryRoot, env, timeout: 60_000 },
+    );
+    expect(fight.stdout).toContain("Agent Arena permission plan");
+    expect(fight.stdout).toContain(
+      "native_subprocess_execution: required, high risk, both, advisory",
+    );
+    expect(fight.stdout).toContain(
+      "configured provider integrations, including MCP",
+    );
+    expect(fight.stdout).toContain(
+      "Permission plan approved noninteractively via --yes.",
     );
     const runsRoot = path.join(repositoryRoot, ".agent-arena", "runs");
     const [runId] = await readdir(runsRoot);
@@ -322,5 +332,20 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
     expect(childSpec.task.sources.map((source) => source.contentHash)).toEqual(
       parentSpec.task.sources.map((source) => source.contentHash),
     );
+    const reconnaissance = await Promise.all(
+      [parentId!, child!.runId].map(
+        async (runId) =>
+          JSON.parse(
+            await readFile(
+              path.join(runsRoot, runId, "reconnaissance.json"),
+              "utf8",
+            ),
+          ) as {
+            inputHash: string;
+            sources: Array<{ contentHash: string }>;
+          },
+      ),
+    );
+    expect(reconnaissance[1]).toEqual(reconnaissance[0]);
   }, 120_000);
 });

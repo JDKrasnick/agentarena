@@ -10,11 +10,11 @@ The central idea is:
 
 New MVP runs use exactly three model roles: two contestant adapters and one
 fresh, identity-blind judge adapter. The harness owns execution, retries,
-capability enforcement, and deterministic selection; the judge owns semantic
-validity, canonical defect identity, frozen severity, fallback adjudication,
-and repair judgments when mechanics remain unavailable. House scouting,
-case-building, quality comparison, held-out sibling generation, and harness
-maintenance are legacy-only extensions and are not invoked by new runs.
+permission planning and stage gating, and deterministic selection; the judge
+owns semantic validity, canonical defect identity, frozen severity, fallback
+adjudication, and repair judgments when mechanics remain unavailable. House
+scouting, case-building, quality comparison, held-out sibling generation, and
+harness maintenance are legacy-only extensions and are not invoked by new runs.
 
 Champion and patch-recommendation language is conditional on coverage. Duel
 and catch-up require both attack directions in each of the three rounds; siege
@@ -262,7 +262,29 @@ attribution never changes scoring.
 
 ### 1. Repository reconnaissance
 
-Before the agents begin, Agent Arena inspects the repository and creates a shared execution contract.
+Before permission resolution, Agent Arena performs bounded, read-only
+reconnaissance and creates the proposed shared execution contract in memory.
+It may read only the exact user-supplied task and references, known manifests
+and lockfiles, browser-test configuration, literal package scripts, framework
+route metadata, and repository instruction files. The harness hashes these
+inputs and stops when an explicit task source cannot be retrieved. Text evidence
+is capped at 256 KiB per file and 2 MiB in aggregate; lockfiles are stream-hashed
+without retaining their contents. Local specification paths are canonicalized
+so symbolic links cannot escape the repository. GitHub retrieval is limited to
+fixed `gh issue view`, `gh pr view`, and `gh repo view` reads.
+
+This phase does not create run artifacts or worktrees, inspect Git state,
+resolve or fetch commits, execute repository commands or project code, start
+agents, launch browsers or servers, or install packages. Those actions begin
+only after one consolidated capability plan is approved. After approval, the
+harness persists the frozen task sources, reconnaissance evidence, and resolved
+permission policy before continuing with repository and Git preflight.
+
+This boundary discovers requested authority, records the user's decisions, and
+gates whether a run may start. It does not confine an approved agent or test
+subprocess to those declared capabilities. Native execution remains advisory;
+hard filesystem, network, credential, process, and resource isolation belongs
+to the separate strict-worker work tracked in #68.
 
 It also creates an immutable `RunSpec` from the user's exact prompt, explicitly
 supplied acceptance criteria, and frozen source text. When a task points to an
@@ -713,8 +735,9 @@ The harness may approve the capability, deny it, or provide a fallback.
 Permissions and authentication must be resolved explicitly before the fight.
 Reconnaissance should generate one consolidated plan covering tools, services,
 network destinations, filesystem paths, credential scopes, risk, requirement
-level, execution role, and whether enforcement is OS-enforced, harness-brokered,
-or advisory. The user can choose:
+level, execution role, and whether the available boundary is OS-enforced,
+harness-brokered, or advisory. The plan authorizes and gates run stages; it is
+not itself a sandbox. The user can choose:
 
 * **Auto:** approve only enforced or brokered capabilities matching a
   preconfigured safe allowlist.
@@ -733,12 +756,21 @@ Secrets belong to a run-scoped credential broker and harness-only validation
 processes, never to agent prompts, worktrees, transcripts, or reports. Both
 contestants must be evaluated with identical capabilities and scopes.
 
-The MVP is not a complete hostile-code sandbox. A brokered denial means the
-harness will not provide a credential or service, but it may not prevent an
+The MVP permission system provides discovery, approval, stage gating, and an
+immutable audit record, not hostile-code confinement. A brokered denial means
+the harness will not provide a credential or service, but it may not prevent an
 agent from using authority already available to the current OS account.
 Advisory restrictions exist only in policy and prompts. Preflight must label
 these honestly; sensitive runs should use a sanitized account or external
-container with production credentials absent.
+container with production credentials absent. Issue #68 owns a strict execution
+backend that can make filesystem, network, credential, process, and resource
+decisions technically enforceable.
+
+Native provider and repository execution is a required high-risk advisory
+capability. The consolidated plan names its ambient filesystem, process
+environment, network, credential, and configured-integration exposure. `--yes`
+displays the same plan and warning before recording non-interactive approval; it
+does not turn acknowledgement into confinement.
 
 An agent may declare extra capabilities for an integration attack. A newly
 denied optional request becomes `capability_denied` and causes no damage or

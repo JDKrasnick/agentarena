@@ -147,12 +147,13 @@ agent-arena fight "fix the refresh-token race condition" \
 
 Agent Arena then:
 
-1. Freezes the exact task, explicitly supplied acceptance criteria, referenced
-   issue/PR/specification text, repository instructions, and reproducibility
-   metadata into an immutable RunSpec.
-2. Discovers required capabilities and presents a permission and authentication
-   plan for the user to approve, modify, or deny.
-3. Checks the repository, Git state, required executables, and test command.
+1. Reads and hashes the exact task, explicitly supplied acceptance criteria,
+   referenced issue/PR/specification text, repository instructions, and bounded
+   static repository evidence in memory.
+2. Discovers the complete required capability set and presents one permission
+   and authentication plan for the user to approve, modify, or deny.
+3. After approval, freezes the in-memory inputs into an immutable RunSpec, then
+   checks the repository, Git state, required executables, and test command.
 4. Creates an isolated Git worktree for each contestant at the same commit.
 5. Gives both agents the same RunSpec, repository instructions, limits,
    and test command.
@@ -388,8 +389,9 @@ unscored report finding.
 - Unreviewed package installation or production service provisioning.
 - Multiple integration profiles, unrestricted browser tests, or production
   integrations.
-- Arena-generated container environments, network sandboxes, GPU workloads,
-  and mobile builds. Running a user-supplied Compose profile is allowed.
+- Arena-generated container environments, network sandboxes, hard confinement
+  of agent or test subprocesses, GPU workloads, and mobile builds. Running a
+  user-supplied Compose profile is allowed.
 - Production credentials or enterprise-grade secret management.
 - Deployment, package release, or GitHub writes without a separately
   authenticated, patch-bound delivery decision.
@@ -424,10 +426,26 @@ contestants unless the user explicitly requests that. Reference tests and
 known-good outputs remain separate harness evidence with recorded provenance;
 they are not hidden RunSpec sources.
 
-If an issue or PR cannot be fetched, preflight must not silently invent its
-contents. The user must provide a local specification with `--spec`, supply the
-task text directly, or proceed with a report warning that the RunSpec sources are
-incomplete.
+If an explicitly referenced issue, PR, or specification cannot be fetched,
+preflight stops before approval. The user must make the source retrievable,
+provide a local specification with `--spec`, or supply the complete task text
+directly; a new run never proceeds with an incomplete task contract.
+
+Pre-permission reconnaissance is a narrow read boundary. It may inspect only
+the exact task sources, known manifests and lockfiles, browser-test
+configuration, literal package scripts, framework route metadata, and known
+instruction files. It keeps all content in memory and hashes the full input.
+Text evidence is capped at 256 KiB per file and 2 MiB total. Lockfiles are
+stream-hashed and represented by digest and size rather than retained text.
+Local specs must remain inside the repository after canonical path resolution,
+including symbolic links. The only pre-approval GitHub CLI operations are the
+fixed read forms `gh issue view`, `gh pr view`, and `gh repo view`; constructive
+or destructive Git and GitHub operations remain forbidden.
+It must not create artifacts or worktrees, inspect repository cleanliness,
+resolve or fetch commits, execute repository commands or project code, start
+agents, launch browsers or servers, or install packages. After consolidated
+approval, the harness persists `reconnaissance.json`, source snapshots, and the
+resolved permission policy before performing Git and runtime preflight.
 
 ### Fair starting conditions
 
@@ -494,7 +512,7 @@ screenshots. Stored `night-edition` preferences migrate to `night-transit`;
 `sticker-league` preferences migrate to `developer-dashboard`; `evidence-deck`
 and `monster-battle` preferences migrate to `retro-tactics`.
 
-### Permission and authentication plan
+### Permission discovery, approval, and audit
 
 Before agents run, repository reconnaissance produces a capability plan covering
 tools, services, network destinations, filesystem paths, credentials, and
@@ -507,6 +525,12 @@ execution roles. Each capability has:
 - An execution role: `agent`, `harness_only`, or `both`.
 - An enforcement level: `enforced`, `brokered`, or `advisory`.
 - An authentication state and run-scoped expiration.
+
+The plan discovers requested authority, obtains a user decision, gates whether
+required run stages may start, and creates an immutable audit record. Approval
+does not restrict the ambient filesystem, network, credential, or process
+authority of a native agent or test subprocess. Hard confinement requires the
+separate strict-worker execution backend tracked in #68.
 
 The user can choose one overall mode:
 
@@ -530,13 +554,19 @@ or reports. When an integration needs a secret, a harness-only runner or
 credential broker injects it into the validation subprocess and returns only
 redacted results to agents.
 
-The MVP does not provide a complete hostile-code sandbox. `brokered` means the
+The MVP permission system is not a hostile-code sandbox. `brokered` means the
 harness withholds and injects a capability, but may not prevent an agent process
 from using other authority already available to the current OS user.
 `advisory` means the restriction exists only in policy and prompts. Preflight
 must display this distinction and cannot claim that an advisory denial is
 enforced. Users handling sensitive repositories should run Agent Arena from a
 sanitized account or external container and keep production credentials absent.
+
+Native provider and repository execution is represented as a required,
+high-risk advisory capability whose scope names the ambient filesystem, process
+environment, network, and configured provider integrations. `--yes` displays
+the same consolidated plan and native-runtime warning before it records
+non-interactive approval.
 
 Both contestants receive the same post-approval capability manifest. An attack
 may request an additional optional capability, but it is paused until a policy
@@ -886,6 +916,8 @@ containing:
 - `BATTLE.svg`: deterministic share image with the result and round digest.
 - `run-spec.json`: exact task text, explicit acceptance criteria, frozen sources,
   base commit, topology, commands, budgets, permissions, and deterministic hash.
+- `reconnaissance.json`: approved in-memory task sources, bounded repository
+  evidence, provenance, and the pre-permission input hash.
 - `permissions.json`: requested scopes, user decisions, leases, omitted checks,
   and redacted provisioning results.
 - `result.json`: compact schema-v8 status, stage, contestant health, outcome,
