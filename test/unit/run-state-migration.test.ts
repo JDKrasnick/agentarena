@@ -20,6 +20,16 @@ describe("legacy run-state migration", () => {
     expect(parsed).not.toHaveProperty("runSpecHash");
   });
 
+  it("defaults additive integrity fields for existing v4 artifacts", () => {
+    const existing = makeRunState();
+    const value = structuredClone(existing) as Record<string, unknown>;
+    delete value.integrity;
+    delete value.operatorInterventions;
+    const parsed = parseRunState(value);
+    expect(parsed.integrity).toBe("competitive");
+    expect(parsed.operatorInterventions).toEqual([]);
+  });
+
   it("loads a provider-keyed v1 fixture into stable contestant slots", () => {
     const current = makeRunState();
     const { a, b } = current.contestants;

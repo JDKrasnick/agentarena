@@ -117,6 +117,22 @@ export const StageSchema = z.enum([
 ]);
 export type Stage = z.infer<typeof StageSchema>;
 
+export const RunIntegritySchema = z.enum(["competitive", "assisted"]);
+export type RunIntegrity = z.infer<typeof RunIntegritySchema>;
+
+export const OperatorInterventionSchema = z.object({
+  version: z.literal(1).default(1),
+  id: z.string().min(1),
+  contestantId: ContestantIdSchema,
+  note: z.string().trim().min(1),
+  authoredAt: z.string().datetime(),
+  status: z.enum(["queued", "applied", "expired"]),
+  appliedStage: StageSchema.optional(),
+  appliedRound: RoundIdSchema.optional(),
+  promptHash: z.string().length(64).optional(),
+});
+export type OperatorIntervention = z.infer<typeof OperatorInterventionSchema>;
+
 export const CurrentStageSchema = z.enum([
   "preflight",
   "resolve_permissions",
@@ -1369,6 +1385,8 @@ const RunStateCoreSchema = z.object({
   submissionArtifacts: z.array(SubmissionArtifactRecordSchema).default([]),
   repairJudgments: z.array(RepairJudgmentRecordSchema).default([]),
   failureRecords: z.array(FailureRecordSchema).default([]),
+  integrity: RunIntegritySchema.default("competitive"),
+  operatorInterventions: z.array(OperatorInterventionSchema).default([]),
   coverageAssessment: CoverageAssessmentSchema.optional(),
   coverageDecision: CoverageDecisionSchema.optional(),
   terminalOutcome: TerminalOutcomeSchema.optional(),

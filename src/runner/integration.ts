@@ -4,6 +4,7 @@ import type { WorktreeManager } from "../repo/git.js";
 import { prepareWorktreeWithRetry } from "../repo/retry.js";
 import type { FailureRecord } from "../contracts/failure.js";
 import { runShellCommand } from "./process-runner.js";
+import type { ArenaObserver } from "../observability/events.js";
 
 export interface IntegrationProvisionResult {
   ready: boolean;
@@ -32,6 +33,7 @@ export async function provisionIntegrationProfile(options: {
   persistFailureAttempt?: (failure: IntegrationFailureAttempt) => Promise<void>;
   persistFailureRecord?: (record: FailureRecord) => Promise<void>;
   now?: () => Date;
+  observer?: ArenaObserver;
 }): Promise<IntegrationProvisionResult> {
   const profile = options.config.integrationProfile;
   if (!profile)
@@ -55,6 +57,14 @@ export async function provisionIntegrationProfile(options: {
     let failedOnce = false;
     for (const attempt of [1, 2] as const) {
       const startedAt = now().toISOString();
+      const invocationId = `integration-${agent}-${phase}-${String(attempt)}`;
+      await options.observer?.publish({
+        type: "invocation_started",
+        invocationId,
+        source: "integration",
+        contestantId: agent,
+        stage: `integration-${phase}`,
+      });
       const result = await runShellCommand(command, {
         cwd: worktree,
         timeoutMs: options.config.limits.attackMs,
@@ -63,6 +73,27 @@ export async function provisionIntegrationProfile(options: {
           `${agent}-${phase}-${String(attempt)}`,
         ),
         signal: options.signal,
+        onOutput: (stream, text) =>
+          options.observer?.publish({
+            type: "output",
+            invocationId,
+            source: "integration",
+            stream,
+            text,
+            contestantId: agent,
+          }),
+      });
+      await options.observer?.publish({
+        type: "invocation_finished",
+        invocationId,
+        status:
+          result.failureClass === "arena_infrastructure"
+            ? "infrastructure_error"
+            : result.exitCode === 0
+              ? "succeeded"
+              : "failed",
+        durationMs: result.durationMs,
+        contestantId: agent,
       });
       const finishedAt = now().toISOString();
       const failed = result.exitCode !== 0;
