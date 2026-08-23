@@ -20,6 +20,7 @@ import fireworksLogo from "@lobehub/icons-static-png/dark/fireworks-color.png";
 import openRouterLogo from "@lobehub/icons-static-png/dark/openrouter-color.png";
 import cursorLogo from "@lobehub/icons-static-png/dark/cursor.png";
 import type {
+  DashboardBrowserSession,
   DashboardContestant,
   DashboardState,
 } from "../../dashboard/state.js";
@@ -91,6 +92,7 @@ const fallbackState: DashboardState = {
   },
   systemOutput: [],
   attacks: [],
+  browserSessions: [],
   failures: [],
   links: [],
 };
@@ -784,6 +786,38 @@ function ThemePicker({
         </button>
       ))}
     </fieldset>
+  );
+}
+
+export function BrowserSessionAction({
+  sessions,
+}: {
+  sessions: DashboardBrowserSession[];
+}) {
+  const session = sessions.at(-1);
+  if (!session) return null;
+  const multiple = sessions.length > 1;
+  const description = multiple
+    ? `${String(sessions.length)} browser sessions are active. Open the most recent session: ${session.label}.`
+    : `Open ${session.label} in your default browser.`;
+  return (
+    <a
+      className="browser-session-action"
+      href={session.url}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={`${description} This is a separate view from Arena's isolated probe.`}
+      title={`${description} The Arena probe remains isolated.`}
+    >
+      <svg viewBox="0 0 18 18" aria-hidden="true">
+        <rect x="1.5" y="2.5" width="15" height="13" rx="2" />
+        <path d="M2 6.5h14" />
+        <circle cx="4.25" cy="4.5" r=".65" />
+        <circle cx="6.5" cy="4.5" r=".65" />
+      </svg>
+      <span>Open browser</span>
+      {multiple ? <b aria-hidden="true">{sessions.length}</b> : null}
+    </a>
   );
 }
 
@@ -2639,6 +2673,7 @@ export function App() {
             <i />
             {hasResult ? "Complete" : connected ? "Live" : "Reconnecting"}
           </span>
+          <BrowserSessionAction sessions={state.browserSessions} />
           {state.links.map((link) => (
             <a href={link.url} target="_blank" rel="noreferrer" key={link.url}>
               {link.label} ↗

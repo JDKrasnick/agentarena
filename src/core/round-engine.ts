@@ -3164,6 +3164,7 @@ export class RoundEngine {
               scope.startsWith("loopback:") && scope.endsWith(":dynamic"),
           ),
           timeoutMs: context.config.limits.attackMs,
+          ...this.browserSessionObserver(context, "Baseline validation"),
           signal: context.controller.signal,
         });
         context.browserBaseline = browserBaseline;
@@ -3539,6 +3540,10 @@ export class RoundEngine {
             scope.startsWith("loopback:") && scope.endsWith(":dynamic"),
         ),
         timeoutMs: context.config.limits.attackMs,
+        ...this.browserSessionObserver(
+          context,
+          `${contestant.id.toUpperCase()} · ${phase} validation`,
+        ),
         signal: context.controller.signal,
       }),
     );
@@ -3598,6 +3603,28 @@ export class RoundEngine {
     result: BrowserValidationResult,
   ): BrowserValidationResult {
     return attributeBrowserResult(context.browserBaseline, result);
+  }
+
+  private browserSessionObserver(
+    context: ArenaContext,
+    label: string,
+  ): Pick<
+    Parameters<typeof executeBrowserValidation>[0],
+    "onSessionStarted" | "onSessionFinished"
+  > {
+    return {
+      onSessionStarted: (activity) =>
+        this.emit(context, {
+          type: "browser_session_started",
+          ...activity,
+          label,
+        }),
+      onSessionFinished: ({ sessionId }) =>
+        this.emit(context, {
+          type: "browser_session_finished",
+          sessionId,
+        }),
+    };
   }
 
   /** Spreadable `validateAttack` option, so the closure is built exactly once. */
@@ -3662,6 +3689,10 @@ export class RoundEngine {
               scope.startsWith("loopback:") && scope.endsWith(":dynamic"),
           ),
           timeoutMs: context.config.limits.attackMs,
+          ...this.browserSessionObserver(
+            context,
+            `Attack ${attackId} · ${subject}`,
+          ),
           signal: context.controller.signal,
         }),
       );

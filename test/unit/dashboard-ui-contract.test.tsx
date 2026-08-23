@@ -6,6 +6,7 @@ import {
 } from "../../src/dashboard/state.js";
 import {
   CompactAgentOutput,
+  BrowserSessionAction,
   CompactRoundNav,
   DeveloperDashboardArena,
   FullAgentOutput,
@@ -15,6 +16,32 @@ import {
 } from "../../src/web/client/App.js";
 
 describe("dashboard UI contracts", () => {
+  it("renders an operator-triggered browser link only for an active session", () => {
+    expect(renderToStaticMarkup(<BrowserSessionAction sessions={[]} />)).toBe(
+      "",
+    );
+
+    const markup = renderToStaticMarkup(
+      <BrowserSessionAction
+        sessions={[
+          {
+            id: "8c715f8d-4528-42b1-9704-c4a323d3cc1b",
+            label: "Attack slug-check · target",
+            url: "http://127.0.0.1:5184",
+            runner: "playwright",
+            attempt: 1,
+            startedAt: "2026-08-23T12:00:00.000Z",
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Open browser");
+    expect(markup).toContain('href="http://127.0.0.1:5184"');
+    expect(markup).toContain('target="_blank"');
+    expect(markup).toContain("separate view from Arena&#x27;s isolated probe");
+  });
+
   it("exposes the selected compact round to assistive technology", () => {
     const state = initialDashboardState();
     state.round = 2;

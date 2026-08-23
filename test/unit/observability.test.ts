@@ -171,6 +171,43 @@ describe("arena observability", () => {
     expect(state.assisted).toBe(true);
   });
 
+  it("projects only active browser sessions for an operator-opened view", () => {
+    const state = initialDashboardState();
+    const timestamp = new Date().toISOString();
+    const sessionId = "8c715f8d-4528-42b1-9704-c4a323d3cc1b";
+    projectEvent(state, {
+      version: 1,
+      sequence: 1,
+      timestamp,
+      type: "browser_session_started",
+      sessionId,
+      label: "B · target validation",
+      url: "http://127.0.0.1:5184",
+      runner: "playwright",
+      attempt: 1,
+    });
+
+    expect(state.browserSessions).toEqual([
+      {
+        id: sessionId,
+        label: "B · target validation",
+        url: "http://127.0.0.1:5184",
+        runner: "playwright",
+        attempt: 1,
+        startedAt: timestamp,
+      },
+    ]);
+
+    projectEvent(state, {
+      version: 1,
+      sequence: 2,
+      timestamp,
+      type: "browser_session_finished",
+      sessionId,
+    });
+    expect(state.browserSessions).toEqual([]);
+  });
+
   it("replaces stale dashboard state when a recovery run starts", () => {
     const state = initialDashboardState();
     state.runId = "parent";

@@ -82,6 +82,16 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
     status: z.string(),
     contestantId: ContestantIdSchema.optional(),
   }),
+  event("browser_session_started", {
+    sessionId: z.string().uuid(),
+    label: z.string().min(1),
+    url: z.string().url(),
+    runner: z.enum(["playwright", "cypress", "custom"]),
+    attempt: z.number().int().min(1).max(2),
+  }),
+  event("browser_session_finished", {
+    sessionId: z.string().uuid(),
+  }),
   event("attack_mounted", {
     attackId: z.string(),
     round: RoundIdSchema,

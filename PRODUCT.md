@@ -100,6 +100,11 @@ The desktop window opens in a spacious live-battle layout with taller retained
 fighter output. When a terminal result arrives, it automatically contracts into
 a focused results view; users can still inspect either fighter or return to the
 recorded round timeline before finishing the session.
+While an Arena-managed browser session is active, the observatory surfaces an
+`Open browser` action for its approved application URL. Arena never opens that
+URL automatically. The action opens a separate user-controlled browser view;
+the evidence browser remains headless with isolated storage, and the action
+disappears when the managed session stops.
 The desktop observatory ships six supported visual themes: Classic Shell,
 Developer Dashboard, Night Transit, Test Lab, Live Arena Broadcast, and 16-Bit Tactics.
 Classic Shell is the first-run fallback. A persistent swatch picker remains available in
@@ -367,7 +372,11 @@ non-local origin as a separate capability. Built-in adapters use
 `playwright-core` with an already installed Chrome/Chromium binary to manage
 the service and Arena probes, while the repository's declared browser command
 and project matrix run unchanged as the native suite. Each contestant gets an
-isolated server and fresh browser storage for independent probes.
+isolated server and fresh browser storage for independent probes. Managed
+Chromium remains headless. The live observatory exposes an explicit action for
+opening the active approved application URL in a separate user browser, but it
+never opens that view without a click and never treats the separate view as
+evidence.
 
 The harness advertises the safe probe menu; the attacking agent chooses a
 task-specific family, desktop/mobile/reflow profile, accessible actions, and

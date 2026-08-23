@@ -62,6 +62,15 @@ export interface DashboardAttackActivity {
   detail?: string;
 }
 
+export interface DashboardBrowserSession {
+  id: string;
+  label: string;
+  url: string;
+  runner: "playwright" | "cypress" | "custom";
+  attempt: number;
+  startedAt: string;
+}
+
 export interface DashboardState {
   runId?: string;
   task: string;
@@ -74,6 +83,7 @@ export interface DashboardState {
   contestants: { a: DashboardContestant; b: DashboardContestant };
   systemOutput: Array<{ source: string; stream: string; text: string }>;
   attacks: DashboardAttackActivity[];
+  browserSessions: DashboardBrowserSession[];
   failures: Array<{
     id: string;
     stage: string;
@@ -137,6 +147,7 @@ export function initialDashboardState(): DashboardState {
     contestants: { a: contestant(), b: contestant() },
     systemOutput: [],
     attacks: [],
+    browserSessions: [],
     failures: [],
     links: [],
   };
@@ -272,6 +283,27 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
           ...(state.round ? { round: state.round } : {}),
         });
       }
+      return;
+    case "browser_session_started": {
+      const session = {
+        id: event.sessionId,
+        label: event.label,
+        url: event.url,
+        runner: event.runner,
+        attempt: event.attempt,
+        startedAt: event.timestamp,
+      };
+      const index = state.browserSessions.findIndex(
+        (entry) => entry.id === session.id,
+      );
+      if (index === -1) appendBounded(state.browserSessions, session, 8);
+      else state.browserSessions[index] = session;
+      return;
+    }
+    case "browser_session_finished":
+      state.browserSessions = state.browserSessions.filter(
+        (session) => session.id !== event.sessionId,
+      );
       return;
     case "attack_mounted":
       appendBounded(state.attacks, {

@@ -16,6 +16,7 @@ import type {
   BrowserSession,
 } from "../../src/browser/executor.js";
 import { FightConfigSchema, RunStateV7Schema } from "../../src/core/types.js";
+import type { ArenaEvent } from "../../src/observability/events.js";
 import { readBaseline } from "../../src/recovery/durable.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
 import { freezePullRequest } from "../../src/task/pr-fixture.js";
@@ -431,6 +432,7 @@ describe("PR battle modes", () => {
   it("runs and heals browser-only evidence through the asymmetric siege lane", async () => {
     const repositoryRoot = await createSlugRepository();
     const pullRequestResolver = await fixturePullRequest(repositoryRoot);
+    const observedEvents: ArenaEvent[] = [];
     const battleConfig = FightConfigSchema.parse({
       ...config(repositoryRoot, "siege"),
       task: "Render browser-entered titles with every whitespace run collapsed to one hyphen.",
@@ -453,6 +455,7 @@ describe("PR battle modes", () => {
       adapters: adapters({ browserSiege: true }),
       verifier: new RuleBasedVerifier("codex"),
       browserAdapters: { playwright: slugBrowserAdapter() },
+      observer: { publish: (event) => void observedEvents.push(event) },
       pullRequestResolver,
       freezePullRequest: (options) =>
         freezePullRequest({
@@ -499,6 +502,24 @@ describe("PR battle modes", () => {
     const report = await readFile(outcome.state.artifacts.battle!, "utf8");
     expect(report).toContain("browser artifact 1");
     expect(report).not.toContain("Both patches block the house attack");
+    const browserStarts = observedEvents.filter(
+      (event) => event.type === "browser_session_started",
+    );
+    const browserFinishes = observedEvents.filter(
+      (event) => event.type === "browser_session_finished",
+    );
+    expect(browserStarts.length).toBeGreaterThan(0);
+    expect(
+      browserStarts.some(
+        (event) =>
+          event.label.includes("target") &&
+          event.url === "http://127.0.0.1:4173" &&
+          event.runner === "playwright",
+      ),
+    ).toBe(true);
+    expect(browserFinishes.map((event) => event.sessionId).sort()).toEqual(
+      browserStarts.map((event) => event.sessionId).sort(),
+    );
   });
 
   it("awards an unresolved siege defect to the attacker", async () => {
