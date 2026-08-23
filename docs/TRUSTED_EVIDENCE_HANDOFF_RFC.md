@@ -392,6 +392,14 @@ Prior adjudicated results survive through the versioned, lane-safe
 `ContestantFeedback` projection. They MUST NOT be copied into a later handoff as
 findings or used to resurrect an old packet.
 
+Normal attacker context contains only that lane-safe projection and the current
+active packet. Diagnostic drill-down is permitted only for a stale, malformed,
+or blocked handoff. It MUST resolve exactly one directly referenced diagnostic
+artifact, MUST stop after that artifact without following nested pointers, and
+MUST reject content above 8 KiB. These pointers and lifecycle records are
+internal artifacts; this contract adds no report section, observatory element,
+or human-facing drill-down control.
+
 ## 8. Attacker consumption and blockers
 
 The attacker must return exactly one of these mutually exclusive v2 results:
@@ -720,13 +728,10 @@ coverage loss without score effect.
 
 ## 12. Compatibility
 
-New runs and resumed work use v2 only. Completed v1 artifacts remain readable
-for historical reports, retaining their original provenance and trust labels,
-but runtime code MUST NOT consume or rewrite them. There is no v1-to-v2 packet
-upgrade. Resuming at a v1 handoff boundary discards that handoff and performs a
-fresh review against the current frozen target and resolved permission policy
-to create v2. If that review cannot complete, normal v2 coverage-loss rules
-apply.
+V2 is the only supported handoff version. New runs, resumed work, artifact
+readers, and runtime consumers MUST reject v1 packets. They MUST NOT read,
+migrate, rewrite, upgrade, or consume v1 handoff artifacts. Existing generic
+legacy-run support outside the reviewer-handoff feature remains unchanged.
 
 ## 13. Implementation checklist
 
@@ -739,8 +744,8 @@ apply.
 - Add permission-projection fixtures for every capability decision plus active
   and expired approved leases; reject leases attached to non-approved decisions.
 - Add executable digest fixtures and invalid fixtures for every validation code.
-- Persist packets, validation outcomes, supersession/invalidation links, and v1
-  read-only compatibility without an upgrade path.
+- Persist packets, validation outcomes, supersession/invalidation links, and
+  bounded one-hop diagnostic pointers; reject every v1 handoff path.
 - Prove prohibited fields and unknown keys are rejected.
 
 ### Issue #19 — prompt and runtime

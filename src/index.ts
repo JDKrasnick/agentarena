@@ -19,6 +19,8 @@ export * from "./review/approval.js";
 export * from "./review/prompt.js";
 export * from "./review/service.js";
 export * from "./review/store.js";
+export * from "./review/evidence-handoff.js";
+export * from "./review/evidence-handoff-store.js";
 export * from "./delivery/github.js";
 export * from "./delivery/monitor.js";
 export * from "./delivery/plan.js";
