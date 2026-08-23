@@ -10,6 +10,7 @@ import {
   validateContestantFeedback,
 } from "../../src/contracts/round.js";
 import { makeRunState } from "../helpers/run-state.js";
+import { normalizeAttackAdjudication } from "../../src/core/scoring.js";
 
 function attack(
   id: string,
@@ -171,6 +172,82 @@ describe("lane-safe contestant feedback", () => {
         }),
       ]),
     );
+  });
+
+  it("does not project superseded incoming evidence as accepted or healed", () => {
+    const state = makeRunState();
+    const original = attack("original", "b", "a");
+    original.adjudication = normalizeAttackAdjudication(original);
+    const replacement = attack("replacement", "b", "a", {
+      round: 2,
+      status: "judge_rejected",
+      rootDefectId: undefined,
+      severity: undefined,
+      damage: undefined,
+    });
+    replacement.adjudication = {
+      ...normalizeAttackAdjudication(replacement),
+      relationship: "overturn",
+      priorAdjudicationId: original.adjudication.id,
+      supersedesAdjudicationId: original.adjudication.id,
+      scoreEffect: "none",
+      exactAmount: 0,
+      recoilAmount: undefined,
+    };
+    state.attacks = [original, replacement];
+    state.contestants.a!.healthLedger.canonicalDefects = [
+      {
+        rootDefectId: "defect-original",
+        firstAttackId: original.id,
+        firstAdjudicationId: original.adjudication.id,
+        baseSeverity: "medium",
+        currentMultiplier: 1,
+        currentDamage: 15,
+        evidenceHistory: [],
+        status: "superseded",
+        supersededByAdjudicationId: replacement.adjudication.id,
+        repairAllowance: 2,
+        repairAttemptsUsed: 0,
+        repairAttemptIds: [],
+        regressionResets: 0,
+      },
+    ];
+
+    const projected = feedback(state);
+
+    expect(projected.acceptedIncomingAttacks).toEqual([]);
+    expect(projected.healedDefectIds).toEqual([]);
+  });
+
+  it("projects only the replacement when an overturn changes defect identity", () => {
+    const state = makeRunState();
+    const original = attack("original", "b", "a");
+    original.adjudication = normalizeAttackAdjudication(original);
+    const replacement = attack("replacement", "b", "a", {
+      round: 2,
+      rootDefectId: "replacement-defect",
+    });
+    replacement.adjudication = {
+      ...normalizeAttackAdjudication(replacement),
+      relationship: "overturn",
+      priorAdjudicationId: original.adjudication.id,
+      supersedesAdjudicationId: original.adjudication.id,
+    };
+    state.attacks = [original, replacement];
+    state.contestants.a!.healthLedger.activeDefects = [
+      {
+        rootDefectId: "replacement-defect",
+        attackId: replacement.id,
+        damage: 15,
+      },
+    ];
+
+    const projected = feedback(state);
+
+    expect(
+      projected.acceptedIncomingAttacks.map((entry) => entry.attackId),
+    ).toEqual(["replacement"]);
+    expect(projected.healedDefectIds).toEqual([]);
   });
 
   it("targets 8 KiB, caps at 24 KiB, and never evicts active evidence", () => {

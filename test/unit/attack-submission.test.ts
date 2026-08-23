@@ -24,6 +24,109 @@ function entry(rank: 1 | 2 | 3) {
 }
 
 describe("ordered attack sets", () => {
+  it("lets the attacker choose one bounded browser probe", () => {
+    const base = {
+      ...entry(1),
+      focusedCommand: "npm test -- test/browser.test.ts",
+      paths: ["test/browser.test.ts"],
+      browserProbe: {
+        id: "dialog-focus",
+        family: "keyboard_focus",
+        profile: "mobile",
+        expectedBehavior: "Focus enters the dialog",
+        actions: [
+          { kind: "goto", path: "/settings" },
+          { kind: "click", role: "button", name: "Settings" },
+          { kind: "press", key: "Tab" },
+        ],
+      },
+    };
+    expect(() =>
+      AttackSubmissionSchema.parse({
+        version: 2,
+        attacks: [
+          { ...base, requiredCapabilities: ["browser_dom_validation"] },
+        ],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      AttackSubmissionSchema.parse({ version: 2, attacks: [base] }),
+    ).toThrow("browser_dom_validation");
+  });
+
+  it("accepts browser-only evidence without a repository test patch", () => {
+    const browserOnly = {
+      ...entry(1),
+      requiredCapabilities: ["browser_dom_validation"],
+      browserProbe: {
+        id: "reproduced-dialog-bug",
+        family: "interaction",
+        profile: "desktop",
+        expectedBehavior: "The dialog opens",
+        actions: [
+          { kind: "goto", path: "/" },
+          { kind: "click", role: "button", name: "Open dialog" },
+          { kind: "assert_visible", role: "dialog", name: "Settings" },
+        ],
+      },
+    };
+    const parsed = AttackSubmissionSchema.parse({
+      version: 2,
+      attacks: [browserOnly],
+    });
+    expect(parsed.attacks[0]).toMatchObject({ paths: [] });
+    expect("focusedCommand" in parsed.attacks[0]!).toBe(false);
+  });
+
+  it("requires the harness-owned canary action only for DOM-security probes", () => {
+    const domSecurity = {
+      ...entry(1),
+      requiredCapabilities: ["browser_dom_validation"],
+      browserProbe: {
+        id: "message-html",
+        family: "dom_security",
+        profile: "desktop",
+        expectedBehavior: "Message content remains inert",
+        actions: [
+          { kind: "goto", path: "/messages" },
+          { kind: "fill_dom_xss_canary", label: "Message" },
+          { kind: "click", role: "button", name: "Render" },
+        ],
+      },
+    };
+    expect(() =>
+      AttackSubmissionSchema.parse({ version: 2, attacks: [domSecurity] }),
+    ).not.toThrow();
+    expect(() =>
+      AttackSubmissionSchema.parse({
+        version: 2,
+        attacks: [
+          {
+            ...domSecurity,
+            browserProbe: {
+              ...domSecurity.browserProbe,
+              actions: [{ kind: "goto", path: "/messages" }],
+            },
+          },
+        ],
+      }),
+    ).toThrow("fill_dom_xss_canary");
+    expect(() =>
+      AttackSubmissionSchema.parse({
+        version: 2,
+        attacks: [
+          {
+            ...domSecurity,
+            browserProbe: {
+              ...domSecurity.browserProbe,
+              family: "interaction",
+            },
+          },
+        ],
+      }),
+    ).toThrow("available only for dom_security");
+  });
+
   it("accepts zero to three unique failure descriptions", () => {
     const submission = AttackSubmissionSchema.parse({
       version: 1,

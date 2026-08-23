@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  minimalEnvironment,
   runProcess,
   runShellCommand,
 } from "../../src/runner/process-runner.js";
@@ -24,6 +25,26 @@ async function waitUntilGone(pid: number): Promise<void> {
 }
 
 describe("process runner supervision", () => {
+  it("keeps browser startup credentials out of the inherited environment", () => {
+    const environment = minimalEnvironment(
+      { PORT: "4173" },
+      {
+        PATH: "/usr/bin",
+        HOME: "/tmp/home",
+        GITHUB_TOKEN: "secret-token",
+        API_KEY: "secret-key",
+        DATABASE_PASSWORD: "secret-password",
+        CHROME_BIN: "/Applications/Chrome",
+      },
+    );
+
+    expect(environment).toEqual({
+      PATH: "/usr/bin",
+      HOME: "/tmp/home",
+      PORT: "4173",
+    });
+  });
+
   it.skipIf(!["darwin", "linux"].includes(process.platform))(
     "bounds and removes a launcher tree whose descendants escape process groups and hold pipes",
     async () => {

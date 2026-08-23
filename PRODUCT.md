@@ -100,6 +100,14 @@ The desktop window opens in a spacious live-battle layout with taller retained
 fighter output. When a terminal result arrives, it automatically contracts into
 a focused results view; users can still inspect either fighter or return to the
 recorded round timeline before finishing the session.
+While an Arena-managed browser session is active, the observatory surfaces an
+`Open browser` action for its approved application URL. Arena never opens that
+URL automatically. The action opens a separate user-controlled browser view;
+the evidence browser remains headless with isolated storage, and the action
+disappears when the managed session stops. The temporary action sits beside the
+contestant using the session, names that contestant, and uses its live accent
+color. A harness-owned baseline session appears in the neutral current-event
+area labeled Arena instead of implying contestant ownership.
 The desktop observatory ships six supported visual themes: Classic Shell,
 Developer Dashboard, Night Transit, Test Lab, Live Arena Broadcast, and 16-Bit Tactics.
 Classic Shell is the first-run fallback. A persistent swatch picker remains available in
@@ -189,6 +197,15 @@ full severity damage, while a supported partial-judge ruling deals exactly 35%
 (17.5/10.5/5.25/1.75 HP). A later definitive corroboration applies only the
 delta to full damage, preserves the original severity, and does not re-damage a
 healed defect unless the current patch genuinely regresses.
+
+Later attacks may explicitly challenge a prior adjudication or match one by
+assertion identity and normalized browser actions. The existing neutral judge
+receives up to six same-target decisions and classifies the new evidence as
+independent, affirming, overturning, or unresolved. Affirmations do not repeat
+damage or recoil; overturns preserve both immutable decisions and append score
+corrections; unresolved conflicts remain score-neutral and make coverage
+provisional. A browser pass against a changed target patch is repair evidence,
+not proof that the earlier observation was wrong.
 
 Complete adjudications and rationale remain local. Agent packets are
 deterministic, digest-linked role-safe projections targeting 8 KiB with a 24
@@ -346,6 +363,90 @@ restrictions:
 ```
 
 Agents may still explore the codebase, but they do not need to rediscover basic commands or available tools independently.
+
+Browser and DOM planning consumes only the frozen task sources and bounded
+repository evidence. Task language about visible UI, interaction, responsive
+behavior, accessibility, persistence, browser, or DOM behavior makes browser
+validation required even when tooling is unavailable; repository-only frontend
+evidence makes it optional. Standing instruction files describe the repository
+rather than the task, so matches there are optional evidence and never make
+browser validation required on their own. Resolution prefers an explicit Arena profile, then
+literal Playwright or Cypress configuration, then recognized package scripts.
+Ambiguous monorepos remain unresolved rather than selecting an application.
+
+Approved browser execution is `harness_only`. Arena-managed probes broker HTTP
+and WebSocket traffic to approved origins, but the unchanged repository-native
+browser command is advisory because it executes repository code without a
+cross-platform network sandbox. The combined capability therefore advertises
+the weaker `advisory` boundary and is never silently approved in `auto` mode.
+Arena never installs packages or browser binaries and treats every exact
+non-local origin as a separate capability. Built-in adapters use
+`playwright-core` with an already installed Chrome/Chromium binary to manage
+the service and Arena probes, while the repository's declared browser command
+and project matrix run unchanged as the native suite. Each contestant gets an
+isolated server and fresh browser storage for independent probes. Managed
+Chromium remains headless. The live observatory exposes an explicit action for
+opening the active approved application URL in a separate user browser, but it
+never opens that view without a click and never treats the separate view as
+evidence. The action sits with Fighter A or Fighter B when that contestant owns
+the current session and uses a pulsing, contestant-colored treatment reserved
+for the session's temporary lifetime. Arena-owned sessions use the neutral
+current-event area.
+
+The harness advertises the safe probe menu; the attacking agent chooses a
+task-specific family, desktop/mobile/reflow profile, accessible actions, and
+expected behavior in its attack submission. Generated checks can use Chromium
+desktop at 1440×900, mobile at 390×844 with touch, or 320 CSS-pixel reflow.
+DOM-security probes use a dedicated accessible-label fill action whose inert
+markup sentinel is supplied and observed by the harness rather than by the
+contestant.
+Every browser run also includes harness-owned runtime-error, accessible-name,
+and 320 CSS-pixel overflow smoke probes. Those mandatory probes fail only on
+uncaught runtime errors and their own invariant; console output and requests to
+unapproved origins are recorded as diagnostics rather than failures, because the
+repository never chose that policy. A contestant-selected probe declares its own
+expected behavior and does fail on both. Probe families cover
+interaction, responsive layout, keyboard/focus, semantics, task-declared
+persistence, runtime DOM integrity, risk-triggered inert DOM-XSS canaries, and
+unchanged repository-owned visual baselines. New screenshots are diagnostics,
+not pass/fail baselines.
+
+A review finding may become a browser-only attack without a repository test
+patch. It lands only when the bounded probe reproduces symmetrically—passing on
+the author's patch and failing on the target—and the identity-blind judge
+accepts the frozen-task oracle. Complex flows stay in repository-authored test
+or fixture patches with a focused command; the JSON probe DSL does not become a
+general-purpose script runner.
+
+The reviewing contestant decides whether an already approved exact external
+origin provides suitable evidence. It cannot expand network authority after
+approval. Authenticated sessions and secret brokering are deferred to #66;
+until that contract exists, coverage requiring login remains unavailable.
+For Arena-managed probes, the browser broker applies the exact-origin decision
+to HTTP(S) and WebSocket traffic, mapping `ws` and `wss` to the corresponding
+approved transport origin, and records blocked socket origins with other
+network violations. Native repository commands retain the host account's
+network authority and are labeled accordingly during approval.
+
+Explicit profiles may choose `dynamic` loopback ports when their startup
+command honors the harness-provided `PORT`; otherwise they retain the exact
+fixed port and comparative lanes run sequentially. Repository-native suite
+results are cached within a run by immutable patch bytes and the exact command,
+while service startup and browser probes still execute for each lane.
+Profiles also declare whether the native suite reuses Arena's started service
+or manages its own service lifecycle. Auto-discovered Playwright `webServer`
+commands use the self-managed mode so Arena does not occupy the runner's port.
+Both modes receive the resolved `PORT` and base-URL environment; a self-managed
+suite binds that reserved port itself before Arena starts its probe service.
+
+Functional assertions run once. Browser/server infrastructure may receive one
+bounded retry with guaranteed teardown; a first-fail/second-pass assertion is
+flaky, not clean. Before contestant attribution, the same resolved profile and
+native suite run on the unpatched baseline. A baseline failure is a
+configuration or harness failure; a baseline pass followed by a stable
+contestant-only failure is an application failure; evidence that cannot make
+that distinction is unverified and causes no damage. Required gaps enter
+provisional coverage unless the exact reduced-validation contract was accepted.
 
 ### 2. Independent implementation
 

@@ -6,6 +6,8 @@ import {
 } from "../../src/dashboard/state.js";
 import {
   CompactAgentOutput,
+  BrowserSessionAction,
+  BroadcastArena,
   CompactRoundNav,
   DeveloperDashboardArena,
   FullAgentOutput,
@@ -15,6 +17,82 @@ import {
 } from "../../src/web/client/App.js";
 
 describe("dashboard UI contracts", () => {
+  it("renders an operator-triggered browser link only for an active session", () => {
+    expect(
+      renderToStaticMarkup(
+        <BrowserSessionAction sessions={[]} actor="Codex" />,
+      ),
+    ).toBe("");
+
+    const markup = renderToStaticMarkup(
+      <BrowserSessionAction
+        sessions={[
+          {
+            id: "8c715f8d-4528-42b1-9704-c4a323d3cc1b",
+            label: "Attack slug-check · target",
+            contestantId: "a",
+            url: "http://127.0.0.1:5184",
+            runner: "playwright",
+            attempt: 1,
+            startedAt: "2026-08-23T12:00:00.000Z",
+          },
+        ]}
+        actor="Codex"
+      />,
+    );
+
+    expect(markup).toContain("Open browser");
+    expect(markup).toContain("Codex is using the browser");
+    expect(markup).toContain("browser-session-action is-a");
+    expect(markup).toContain('href="http://127.0.0.1:5184"');
+    expect(markup).toContain('target="_blank"');
+    expect(markup).toContain("separate view from Arena&#x27;s isolated probe");
+  });
+
+  it("places the active browser action with its contestant in every arena theme", () => {
+    const state = initialDashboardState();
+    state.contestants.a.provider = "codex";
+    state.contestants.b.provider = "claude";
+    state.browserSessions.push({
+      id: "8c715f8d-4528-42b1-9704-c4a323d3cc1b",
+      label: "Attack slug-check · target",
+      contestantId: "a",
+      url: "http://127.0.0.1:5184",
+      runner: "playwright",
+      attempt: 1,
+      startedAt: "2026-08-23T12:00:00.000Z",
+    });
+    const common = {
+      state,
+      rounds: [1 as const],
+      selectedRound: "live" as const,
+      contestants: state.contestants,
+      attacks: state.attacks,
+      stage: "Validate attacks",
+      onRound: () => undefined,
+      onFighter: () => undefined,
+    };
+    const interactive = {
+      ...common,
+      onSteer: () => Promise.resolve(),
+      canSteer: false,
+      steeringUnavailable: "Unavailable",
+    };
+    const markups = [
+      renderToStaticMarkup(<DeveloperDashboardArena {...interactive} />),
+      renderToStaticMarkup(<NightTransitArena {...interactive} />),
+      renderToStaticMarkup(<TestLabArena {...interactive} />),
+      renderToStaticMarkup(<BroadcastArena {...common} />),
+      renderToStaticMarkup(<RetroTacticsArena {...common} />),
+    ];
+
+    for (const markup of markups) {
+      expect(markup).toContain("Codex is using the browser");
+      expect(markup).toContain('href="http://127.0.0.1:5184"');
+      expect(markup).toContain("browser-session-action is-a");
+    }
+  });
+
   it("exposes the selected compact round to assistive technology", () => {
     const state = initialDashboardState();
     state.round = 2;

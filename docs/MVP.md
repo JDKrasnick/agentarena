@@ -31,6 +31,15 @@ points to the defect. Partial-judge damage is Critical 17.5, High 10.5, Medium
 5.25, or Low 1.75 HP; health uses quarter-point precision and repairs heal the
 exact currently applied amount.
 
+Attack submissions may identify a prior adjudication as a challenge. Matching
+assertion fingerprints and normalized browser family, profile, target, and
+non-assert action sequences also supply likely prior decisions to the same
+judge call, bounded to six same-target records. The judge returns an
+independent, affirm, overturn, or unresolved relationship with its rationale.
+Affirmations never score twice; overturns append recoil refunds or defect-damage
+corrections and mark withdrawn defects superseded; unresolved challenges keep
+the prior score temporarily but prevent full-confidence completion.
+
 Unresolved required coverage preserves the health-ledger leader as provisional
 but publishes no champion or recommended patch. `agent-arena
 resolve-coverage` requires the current assessment digest: `accept-reduced`
@@ -541,6 +550,126 @@ The user can choose one overall mode:
 - `confirm`: show one consolidated preflight plan and ask the user to approve,
   change, or deny each material capability.
 - `deny`: deny capabilities unless explicitly allowed in configuration.
+
+### Browser and DOM validation
+
+The static browser planner consumes the approved reconnaissance snapshot and
+never executes configuration. Task evidence makes `browser_dom_validation`
+required when it names visible UI, interaction, responsive behavior,
+accessibility, persistence, browser, or DOM requirements. Task evidence means
+the task statement, its acceptance criteria, and resolved issue, pull-request,
+or specification sources. Standing instruction files such as `AGENTS.md` and
+`CLAUDE.md` are excluded: they describe the repository rather than the task and
+routinely use words like "render" or "navigation" for unrelated reasons.
+Frontend evidence found only in instruction files, manifests, scripts, routes,
+or literal browser configuration makes the capability optional; otherwise it is
+absent.
+
+Profile resolution uses this order: explicit `browser` configuration, literal
+Playwright/Cypress configuration, recognized package scripts, then unavailable.
+Arena does not guess between monorepo applications. An explicit profile names
+`runner`, `startup`, `health_url`, `base_url`, `test`, optional `teardown`, a
+native-suite service mode, projects, and allowed origins. The main permission
+request is `harness_only` and scoped to exact commands and loopback origins.
+Arena-managed probes broker their HTTP and WebSocket traffic, but the unchanged
+repository-native command has no cross-platform network sandbox. The combined
+capability therefore advertises `advisory` enforcement and cannot be silently
+approved in `auto` mode. Every non-loopback origin is still a separate exact,
+explicit capability; package installation, browser downloads, and wildcard
+origins are never implied.
+
+Each contestant runs in its own patched worktree and service process. Readiness
+polling, timeouts, process-group teardown, fresh contexts, and clean storage are
+harness responsibilities. The readiness window scales with the stage budget
+rather than using a fixed constant, so a contestant whose patch makes the
+service slower to boot is not misread as an application failure; the repository
+suite is likewise capped below the full budget so it cannot starve the probes. Generated probes use Chromium desktop 1440×900,
+mobile 390×844 with touch, or a 320 CSS-pixel reflow check. The attacking agent
+chooses the task-specific probe family, profile, accessible actions, and
+expected behavior from this safe envelope. Repository browser projects are not
+translated into Arena profiles: the repository's configured browser command
+and complete project matrix run unchanged as the native suite. Requests outside
+approved origins are blocked and recorded for Arena-managed HTTP(S) and
+WebSocket traffic. `ws` and `wss` use the corresponding approved HTTP transport
+origin. The approval UI states that a native repository runner retains the host
+account's network authority.
+
+Arena-managed Chromium runs headlessly. After a managed session becomes ready,
+the live observatory shows an `Open browser` action for the resolved approved
+application URL and removes it when the session stops. The action never opens
+automatically and launches a separate user-controlled browser view with storage
+independent from the evidence context; activity there cannot affect the probe
+result. The action sits beside the contestant using the session, names that
+contestant, and carries its live accent color for the temporary lifetime.
+Harness-owned baseline sessions appear in the neutral current-event area and
+are labeled Arena rather than assigned to a contestant.
+
+Runtime-error/DOM-integrity, accessible-name, and 320 CSS-pixel overflow smoke
+probes are mandatory on every browser run; the attacker-selected probe is
+additive. Because the repository never opted into the mandatory probes, they
+fail only on uncaught runtime errors and their own family invariant. Console
+messages and requests to unapproved origins are recorded on the result and in
+artifacts but do not fail a mandatory probe: an approved profile allows exactly
+the application's own origins, and ordinary applications legitimately reference
+CDNs. A contestant-selected probe states its own expected behavior, so console
+errors and blocked origins do fail it, which is what makes an undeclared
+network dependency a usable attack. A browser-only attack may omit repository paths and a focused command.
+The harness records it as reproducible evidence only after it passes on the
+author worktree, fails on the target worktree, and survives normal oracle
+adjudication. More complex flows use repository-authored tests or fixtures and
+their focused command rather than adding general-purpose script to the probe
+DSL.
+
+Built-in Playwright, Cypress, and custom adapters use `playwright-core` with an
+already installed Chrome/Chromium binary for Arena-managed navigation,
+isolation, and artifacts. The adapter does not replace the repository runner;
+Playwright, Cypress, WebDriver, or other repository tests still execute through
+the exact approved native command.
+
+An explicit profile may set `port_mode: dynamic` when its startup command
+honors the harness-provided `PORT`. The permission scope then covers a dynamic
+port on the exact loopback protocol and host. Fixed-port profiles continue to
+run comparative lanes sequentially. Native-suite results are reused within the
+run only when the exact command and immutable patch bytes match; service and
+probe lifecycles are never skipped.
+
+`native_suite_mode` is `reuse_started_service` by default. Both modes receive
+`PORT`, `BASE_URL`, `PLAYWRIGHT_BASE_URL`, and `CYPRESS_BASE_URL` for the
+resolved runtime address; the modes differ in who owns the service lifecycle,
+not in who chooses the port. `reuse_started_service` runs against the service
+Arena already started. `self_managed` runs the native suite first and expects
+it to bind the reserved port itself, before Arena starts its probe service.
+Literal Playwright configurations with a `webServer.command` resolve to
+`self_managed`, avoiding duplicate ownership of the configured port.
+
+The reviewer decides whether an already approved external origin is appropriate
+evidence, but cannot add an origin after consolidated approval. Authenticated
+routes, credential sources, and ephemeral storage-state handoff remain
+deliberately unsupported pending #66; secret-dependent checks are unverified.
+
+Probe families cover role/name/label-based interaction, responsive overflow and
+clipping, keyboard/focus behavior, accessible semantics, declared persistence,
+console/runtime/hydration/DOM integrity, risk-triggered inert DOM-XSS canaries,
+and existing visual snapshots without creating or updating baselines. Core
+accessibility checks do not constitute automated WCAG conformance.
+The bounded `fill_dom_xss_canary` action selects an accessible field by label;
+the harness supplies an inert markup sentinel and fails the probe only when the
+application interprets that sentinel as DOM markup.
+
+Functional assertions are not retried. Browser/server infrastructure gets one
+bounded retry; teardown runs after every attempt. Results are `verified`,
+`failed`, or `unverified`, with structured reasons for denial, missing tools or
+browsers, launch/health failure, blocked origins, and interruption. Real
+application failures remain valid evidence. Harness failures cause no damage;
+required unverified coverage flows into the provisional/inconclusive process,
+while optional gaps remain diagnostic.
+
+Failure attribution uses a baseline control. The resolved service lifecycle and
+native suite first run on the unpatched base. If that control cannot launch,
+become healthy, or pass, the result is a harness/configuration failure. If the
+control passes and the same bounded validation fails deterministically only on
+a contestant worktree, it is a contestant application failure. Ambiguous cases
+remain unverified and cannot affect health.
 
 `auto` is never permission to use production credentials, deploy infrastructure,
 access unrelated home-directory files, expose an SSH agent, or perform

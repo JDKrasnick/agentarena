@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { BrowserPlanSchema } from "./browser.js";
 import { FailureRecordSchema } from "./failure.js";
 
 const PointValueSchema = z.number().min(0).max(100).multipleOf(0.25);
@@ -178,6 +179,9 @@ const RunCommandSchema = z
       "integration_setup",
       "integration_check",
       "integration_teardown",
+      "browser_startup",
+      "browser_test",
+      "browser_teardown",
     ]),
     command: z.string().min(1),
     timeoutMs: z.number().int().positive(),
@@ -222,6 +226,16 @@ const RunPermissionsSchema = z
   })
   .strict();
 
+const BrowserValidationSchema = BrowserPlanSchema.extend({
+  decision: z.enum([
+    "approved",
+    "denied",
+    "unavailable",
+    "provisioning_failed",
+  ]),
+  approvedScopes: z.array(z.string()),
+}).strict();
+
 /** Immutable, JSON-safe input shared by all rounds in a battle. */
 export const RunSpecSchema = z
   .object({
@@ -233,6 +247,7 @@ export const RunSpecSchema = z
     commands: z.array(RunCommandSchema).min(1),
     budgets: RunBudgetsSchema,
     permissions: RunPermissionsSchema,
+    browserValidation: BrowserValidationSchema.optional(),
     contentHash: Sha256Schema,
   })
   .strict()
@@ -274,7 +289,8 @@ const CanonicalDefectSchema = z
         })
         .strict(),
     ),
-    status: z.enum(["active", "healed"]),
+    status: z.enum(["active", "healed", "superseded"]),
+    supersededByAdjudicationId: IdentifierSchema.optional(),
     repairAllowance: z.number().int().positive().optional(),
     repairAttemptsUsed: z.number().int().nonnegative().optional(),
     repairAttemptIds: z.array(IdentifierSchema).optional(),
@@ -304,7 +320,8 @@ const KnownDefectSchema = z
     damage: DamageValueSchema,
     multiplier: z.union([z.literal(0.35), z.literal(1)]).optional(),
     evidenceBasis: EvidenceBasisSchema.optional(),
-    status: z.enum(["active", "healed"]),
+    status: z.enum(["active", "healed", "superseded"]),
+    supersededByAdjudicationId: IdentifierSchema.optional(),
     visibleReproducerArtifactIds: z.array(IdentifierSchema),
   })
   .strict();
@@ -475,7 +492,14 @@ const ReplayRepairSchema = z
 const ReplayScoreEventSchema = z
   .object({
     contestantId: ContestantIdSchema,
-    type: z.enum(["damage", "damage_upgrade", "recoil", "heal", "elimination"]),
+    type: z.enum([
+      "damage",
+      "damage_upgrade",
+      "recoil",
+      "heal",
+      "elimination",
+      "score_correction",
+    ]),
     amount: z.number().multipleOf(0.25),
     healthAfter: PointValueSchema,
     defectId: IdentifierSchema.optional(),
@@ -806,6 +830,29 @@ export const ContestantFeedbackSchema = z
       .strict(),
     acceptedIncomingAttacks: z.array(IncomingAttackFeedbackSchema),
     ownAttackOutcomes: z.array(OwnAttackOutcomeSchema),
+    priorAdjudications: z
+      .array(
+        z
+          .object({
+            adjudicationId: IdentifierSchema,
+            attackId: IdentifierSchema,
+            target: ContestantIdSchema,
+            verdict: z.enum(["valid", "rejected", "unable"]),
+            relationship: z.enum([
+              "independent",
+              "affirm",
+              "overturn",
+              "unresolved",
+            ]),
+            claim: z.string().min(1),
+            expectedBehavior: z.string().min(1),
+            publicRationale: z.string().min(1),
+            scoreEffect: z.enum(["damage", "damage_upgrade", "recoil", "none"]),
+          })
+          .strict(),
+      )
+      .max(6)
+      .default([]),
     healedDefectIds: z.array(IdentifierSchema),
     unresolvedDefectIds: z.array(IdentifierSchema),
     capabilityRestrictions: z.array(

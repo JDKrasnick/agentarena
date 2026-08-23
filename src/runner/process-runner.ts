@@ -40,12 +40,13 @@ export interface ProcessRequest {
   ) => void | Promise<void>;
 }
 
-function minimalEnvironment(
+export function minimalEnvironment(
   extra: Record<string, string> = {},
+  inherited: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const name of INHERITED_ENV) {
-    const value = process.env[name];
+    const value = inherited[name];
     if (value !== undefined) env[name] = value;
   }
   for (const [name, value] of Object.entries(extra)) {

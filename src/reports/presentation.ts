@@ -176,6 +176,8 @@ export function recordedArtifactPaths(state: RunState): Set<string> {
   }
   for (const attack of state.attacks) {
     paths.add(attack.patchPath);
+    for (const artifact of attack.browserArtifactRefs ?? [])
+      paths.add(artifact);
     for (const check of attack.checks) {
       for (const artifact of checkPaths(check)) paths.add(artifact);
     }

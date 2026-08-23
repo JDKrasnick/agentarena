@@ -97,6 +97,33 @@ describe("fault-isolated provider submissions", () => {
     ]);
   });
 
+  it("preserves a valid browser-only V2 attack without inventing a command or path", () => {
+    const parsed = parseFaultIsolatedSubmission(
+      "attack",
+      JSON.stringify({
+        version: 2,
+        attacks: [
+          {
+            ...attack(1),
+            reproduction: undefined,
+            requiredCapabilities: ["browser_dom_validation"],
+            browserProbe: {
+              id: "dialog",
+              family: "interaction",
+              profile: "desktop",
+              expectedBehavior: "The dialog opens",
+              actions: [{ kind: "goto", path: "/" }],
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(parsed.outcome).toBe("valid");
+    expect(parsed.value.attacks[0]).toMatchObject({ paths: [] });
+    expect("focusedCommand" in parsed.value.attacks[0]!).toBe(false);
+  });
+
   it("normalizes only known path-specific enum aliases and records each rule", () => {
     const parsed = parseFaultIsolatedSubmission(
       "house",

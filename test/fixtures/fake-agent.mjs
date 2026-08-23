@@ -292,6 +292,48 @@ if (stage === "provider_health_probe") {
     );
   } else if (round === "2" && agent === "claude") {
     process.exit(0);
+  } else if (
+    process.env.AGENT_ARENA_FAKE_BROWSER_SIEGE === "1" &&
+    round === "1" &&
+    agent === "codex" &&
+    (await readFile(sourcePath, "utf8")).includes('replaceAll(" ", "-")')
+  ) {
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 2,
+        sharedSupportPaths: [],
+        attacks: [
+          {
+            rank: 1,
+            claim: "Repeated whitespace is not collapsed",
+            impact: "The browser UI renders malformed public slugs",
+            oracle: {
+              expectedBehavior:
+                "Three spaces entered through the browser produce one hyphen",
+              sourceId: "task-user",
+              sourceLocation: "command-line task",
+              rationale:
+                "The task explicitly requires every whitespace run to collapse",
+            },
+            proposedSeverity: "high",
+            confidence: 98,
+            requiredCapabilities: ["browser_dom_validation"],
+            browserProbe: {
+              id: "slug-browser-whitespace",
+              family: "interaction",
+              profile: "desktop",
+              expectedBehavior:
+                "Entering Alpha, three spaces, and Beta renders alpha-beta",
+              actions: [
+                { kind: "goto", path: "/" },
+                { kind: "assert_text", text: "alpha-beta" },
+              ],
+            },
+          },
+        ],
+      }),
+    );
   } else if (round !== "1") {
     await writeFile(
       submission,

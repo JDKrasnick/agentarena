@@ -120,6 +120,26 @@ describe("battle reports", () => {
     expect(html).toContain('href="./BATTLE.md"');
   });
 
+  it("surfaces durable browser attack artifacts in every report", () => {
+    const state = makeRunState();
+    const resultManifest = `${state.artifacts.runDirectory}/browser/attacks/attack-1/target-1-result.json`;
+    const screenshot = `${state.artifacts.runDirectory}/browser/attacks/attack-1/target.png`;
+    state.attacks = [
+      attack(state, {
+        evidenceKind: "browser_probe",
+        browserArtifactRefs: [resultManifest, screenshot],
+      }),
+    ];
+
+    expect(renderConsoleSummary(state)).toContain(resultManifest);
+    expect(renderBattleReport(state)).toContain(
+      "[browser artifact 1](./browser/attacks/attack-1/target-1-result.json)",
+    );
+    expect(renderBattleHtml(state)).toContain(
+      'href="./browser/attacks/attack-1/target.png"',
+    );
+  });
+
   it("uses the latest required check and preserves every non-pass state", () => {
     const state = makeRunState();
     const codex = state.contestants.a;

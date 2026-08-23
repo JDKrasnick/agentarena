@@ -17,10 +17,39 @@ export function validateAttackOrdering(submission: {
     throw new Error("Attack ranks must be unique values from 1 through 3");
 }
 
+/**
+ * Browser-only attacks reproduce through their bounded probe, so validation
+ * skips the focused lanes for them. This keeps the persisted attack shape
+ * uniform and stays inert if any path ever does run it.
+ */
+export const BROWSER_PROBE_PLACEHOLDER_COMMAND = 'node -e "process.exit(0)"';
+
+export function browserProbeEvidencePatch(
+  entry: AttackSubmission["attacks"][number],
+  round: RoundId,
+  contestant: ContestantId,
+): string {
+  const evidencePath = `test/.agent-arena-browser-probes/round-${String(round)}-${contestant}-${String(entry.rank)}.json`;
+  const content = JSON.stringify({
+    version: 1,
+    kind: "browser_probe",
+    claim: entry.claim,
+    oracle: entry.oracle,
+    probe: entry.browserProbe,
+  });
+  return [
+    `diff --git a/${evidencePath} b/${evidencePath}`,
+    "new file mode 100644",
+    "--- /dev/null",
+    `+++ b/${evidencePath}`,
+    "@@ -0,0 +1 @@",
+    `+${content}`,
+    "",
+  ].join("\n");
+}
+
 export async function materializeAttack(
-  submission: AttackSubmission["attacks"][number] & {
-    focusedCommand: string;
-  },
+  submission: AttackSubmission["attacks"][number],
   options: {
     author: ContestantId;
     authorProvider: AgentId;
@@ -55,9 +84,20 @@ export async function materializeAttack(
       submission.oracle.expectedBehavior,
       submission.claim,
     ),
+    ...(submission.challengeAdjudicationId
+      ? { challengeAdjudicationId: submission.challengeAdjudicationId }
+      : {}),
     requiredCapabilities: submission.requiredCapabilities,
     patchPath: options.patchPath,
-    focusedCommand: submission.focusedCommand,
+    focusedCommand:
+      submission.focusedCommand ?? BROWSER_PROBE_PLACEHOLDER_COMMAND,
+    evidenceKind:
+      submission.browserProbe && submission.paths.length === 0
+        ? "browser_probe"
+        : "patch",
+    ...(submission.browserProbe
+      ? { browserProbe: submission.browserProbe }
+      : {}),
     status: "submitted",
     proposedSeverity: submission.proposedSeverity,
     proposedConfidence: submission.confidence,

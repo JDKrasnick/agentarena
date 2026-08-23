@@ -26,10 +26,19 @@ import {
 } from "../agents/prompts.js";
 import { ArtifactStore } from "../artifacts/store.js";
 import {
+  browserProbeEvidencePatch,
   materializeAttack,
   materializeHouseAttack,
 } from "../attacks/submission.js";
-import { validateAttack, validateHouseAttack } from "../attacks/validate.js";
+import {
+  validateAttack,
+  validateHouseAttack,
+  validateSiegeAttack,
+} from "../attacks/validate.js";
+import {
+  evidenceFingerprint,
+  priorAdjudicationContext,
+} from "../attacks/challenges.js";
 import { validateSiblingCase } from "../attacks/case-bundle.js";
 import {
   parseFaultIsolatedSubmission,
@@ -80,12 +89,22 @@ import {
   buildRunSpec,
   calculateRunSpecHash,
   collectFightReconnaissance,
+  assertReconnaissanceRepositoryInputsCurrent,
   GitHubPullRequestResolver,
   type ResolvedPullRequest,
   type ReconnaissanceSnapshot,
   validateReconnaissance,
 } from "../task/task-contract.js";
 import type { RunSpec } from "../contracts/round.js";
+import {
+  BrowserValidationResultSchema,
+  type BrowserValidationResult,
+} from "../contracts/browser.js";
+import {
+  attributeBrowserResult,
+  browserRepairEvidencePasses,
+  findBrowserProbeResult,
+} from "../browser/results.js";
 import {
   FailureRecordSchema,
   type FailureCategory,
@@ -99,7 +118,9 @@ import {
 import { deriveDeliveryTarget } from "../delivery/target.js";
 import { createRunId, sha256, stableId } from "./ids.js";
 import {
+  applyChallengeCorrections,
   calculateHealth,
+  challengeCorrectionRecoil,
   DAMAGE_BY_SEVERITY,
   healDefect,
   normalizeAttackAdjudication,
@@ -159,8 +180,10 @@ import {
 } from "../recovery/contracts.js";
 import {
   applyEnvelopeExactlyOnce,
+  readBrowserBaseline,
   sealRoundEnvelope,
   writeBaseline,
+  writeBrowserBaseline,
   writeCheckpoint,
   writeFinalizationRecord,
 } from "../recovery/durable.js";
@@ -181,6 +204,12 @@ import {
   assessBattleCoverage,
   assertTargetedRetryAllowed,
 } from "../confidence/assessment.js";
+import {
+  BrowserInfrastructureError,
+  executeBrowserValidation,
+  type BrowserAdapter,
+  type BrowserNativeSuiteResult,
+} from "../browser/executor.js";
 import {
   ArenaEventBus,
   EventJournal,
@@ -218,6 +247,9 @@ export interface ArenaDependencies {
   battleControl?: ArenaBattleControl;
   /** Transactional executor hook used by isolated RoundEngine tests/adapters. */
   executeRound?: (snapshot: RoundSnapshot) => Promise<RoundResult>;
+  browserAdapters?: Partial<
+    Record<"playwright" | "cypress" | "custom", BrowserAdapter>
+  >;
 }
 
 /** Read-only legacy hooks kept out of the public runtime dependency surface. */
@@ -264,6 +296,7 @@ interface ArenaContext {
   roundInvocations: RecordedRoundInvocation[];
   priorEnvelopeHash: string | null;
   appliedEnvelopes: AppliedEnvelope[];
+  browserBaseline?: BrowserValidationResult;
 }
 
 interface RecordedRoundInvocation {
@@ -358,17 +391,20 @@ function priorCanonicalDefects(
   targets: readonly ContestantId[],
 ) {
   return targets.flatMap((target) =>
-    (getContestant(state, target).healthLedger.canonicalDefects ?? []).map(
-      (defect) => ({
+    (getContestant(state, target).healthLedger.canonicalDefects ?? [])
+      .filter((defect) => defect.status !== "superseded")
+      .map((defect) => ({
         canonicalDefectId: defect.rootDefectId,
         severity: defect.baseSeverity,
         multiplier: defect.currentMultiplier,
         effectiveDamage: defect.currentDamage,
-        status: defect.status,
+        status:
+          defect.status === "active"
+            ? ("active" as const)
+            : ("healed" as const),
         evidenceBasis:
           defect.evidenceHistory.at(-1)?.basis ?? ("legacy_unknown" as const),
-      }),
-    ),
+      })),
   );
 }
 
@@ -458,6 +494,11 @@ export class RoundEngine {
   private readonly generatedContestantAdapters: Partial<
     Record<ContestantId, AgentAdapter>
   > = {};
+  private readonly browserNativeSuiteCache = new Map<
+    string,
+    BrowserNativeSuiteResult
+  >();
+  private readonly browserProbeInvocationCounts = new Map<string, number>();
 
   constructor(
     private readonly dependencies: ArenaDependencies,
@@ -488,6 +529,8 @@ export class RoundEngine {
     suppliedReconnaissance?: ReconnaissanceSnapshot,
     replacement?: ReplacementFightOptions,
   ): Promise<FightOutcome> {
+    this.browserNativeSuiteCache.clear();
+    this.browserProbeInvocationCounts.clear();
     for (const contestantId of Object.keys(
       this.generatedContestantAdapters,
     ) as ContestantId[])
@@ -512,7 +555,11 @@ export class RoundEngine {
     );
     const permissions = replacement
       ? PermissionPolicySchema.parse(replacement.permissions)
-      : resolvePermissionPolicy(config, discoverCapabilities(config));
+      : resolvePermissionPolicy(
+          config,
+          discoverCapabilities(config, reconnaissance),
+        );
+    await assertReconnaissanceRepositoryInputsCurrent(reconnaissance);
     const runId = createRunId(this.now());
     const store = new ArtifactStore(config.artifactRoot, runId, {
       durableV5: true,
@@ -900,6 +947,8 @@ export class RoundEngine {
     options: ResumeOptions,
     externalSignal?: AbortSignal,
   ): Promise<FightOutcome> {
+    this.browserNativeSuiteCache.clear();
+    this.browserProbeInvocationCounts.clear();
     const repositoryRoot = await resolveRepositoryRoot(
       options.repositoryRoot ?? process.cwd(),
     );
@@ -938,6 +987,14 @@ export class RoundEngine {
       persistedRunSpecHash !== summary.runSpecHash
     )
       throw new Error("RunSpec hash mismatch");
+    const browserBaseline = runSpec.browserValidation
+      ? await readBrowserBaseline(store, {
+          runId: runSpec.runId,
+          baseCommit: runSpec.baseCommit,
+          runSpecHash: runSpec.contentHash,
+          browserValidation: runSpec.browserValidation,
+        })
+      : undefined;
     const permissions = PermissionPolicySchema.parse(
       JSON.parse(await readFile(store.resolve("permissions.json"), "utf8")),
     );
@@ -1223,6 +1280,7 @@ export class RoundEngine {
       roundInvocations: [],
       priorEnvelopeHash: envelopes.at(-1)?.envelopeHash ?? null,
       appliedEnvelopes: ledger,
+      ...(browserBaseline ? { browserBaseline } : {}),
     };
     control.onQueue((note) => {
       void observer.publish({
@@ -1762,6 +1820,11 @@ export class RoundEngine {
             currentDamage: defect.currentDamage,
             evidenceHistory: structuredClone(defect.evidenceHistory),
             status: defect.status,
+            ...(defect.supersededByAdjudicationId
+              ? {
+                  supersededByAdjudicationId: defect.supersededByAdjudicationId,
+                }
+              : {}),
             repairAllowance: defect.repairAllowance,
             repairAttemptsUsed: defect.repairAttemptsUsed,
             repairAttemptIds: structuredClone(defect.repairAttemptIds),
@@ -1794,6 +1857,11 @@ export class RoundEngine {
           multiplier: defect.currentMultiplier,
           evidenceBasis: evidence?.basis ?? ("legacy_unknown" as const),
           status: defect.status,
+          ...(defect.supersededByAdjudicationId
+            ? {
+                supersededByAdjudicationId: defect.supersededByAdjudicationId,
+              }
+            : {}),
           visibleReproducerArtifactIds: firstAttack
             ? [stableId("artifact", firstAttack.patchPath)]
             : [],
@@ -2315,7 +2383,10 @@ export class RoundEngine {
                 : ("missed" as const),
         ...(attack.rootDefectId ? { defectId: attack.rootDefectId } : {}),
         ...(attack.adjudication ? { adjudication: attack.adjudication } : {}),
-        artifactIds: artifactIdFor(attack.patchPath),
+        artifactIds: [
+          ...artifactIdFor(attack.patchPath),
+          ...(attack.browserArtifactRefs ?? []).flatMap(artifactIdFor),
+        ],
       })),
     );
     const checks = (
@@ -2343,9 +2414,21 @@ export class RoundEngine {
         before.contestants[contestantId]?.healthLedger.activeDefects.map(
           (defect) => defect.rootDefectId,
         ) ?? [];
-      const healed = priorActive.filter(
-        (defectId) => !active.includes(defectId),
+      const roundHealthEvents = contestant.healthEvents.slice(
+        before.contestants[contestantId]?.healthEvents.length ?? 0,
       );
+      const healed = [
+        ...new Set([
+          ...priorActive.filter((defectId) => !active.includes(defectId)),
+          ...roundHealthEvents.flatMap((event) => {
+            if (event.type !== "heal" || !event.attackId) return [];
+            const defectId = context.state.attacks.find(
+              (attack) => attack.id === event.attackId,
+            )?.rootDefectId;
+            return defectId ? [defectId] : [];
+          }),
+        ]),
+      ];
       return {
         contestantId,
         status: summary?.repair
@@ -2485,6 +2568,11 @@ export class RoundEngine {
             currentDamage: defect.currentDamage,
             evidenceHistory: structuredClone(defect.evidenceHistory),
             status: defect.status,
+            ...(defect.supersededByAdjudicationId
+              ? {
+                  supersededByAdjudicationId: defect.supersededByAdjudicationId,
+                }
+              : {}),
             repairAllowance: defect.repairAllowance,
             repairAttemptsUsed: defect.repairAttemptsUsed,
             repairAttemptIds: structuredClone(defect.repairAttemptIds),
@@ -3076,6 +3164,57 @@ export class RoundEngine {
         throw new Error(
           "Baseline validation failed; pre-existing failures are unsupported",
         );
+      const browser = context.runSpec.browserValidation;
+      if (browser) {
+        const adapter = browser.profile
+          ? this.dependencies.browserAdapters?.[browser.profile.runner]
+          : undefined;
+        const browserBaseline = await executeBrowserValidation({
+          plan: { ...browser, requirement: "optional" },
+          decision: browser.decision,
+          ...(adapter ? { adapter } : {}),
+          worktree: baseline,
+          artifactDirectory: context.store.resolve("browser/baseline"),
+          selectedProbes: [],
+          nativeSuiteCache: this.browserNativeSuiteCache,
+          nativeSuiteCacheKey: sha256(
+            `${browser.profile?.testCommand ?? "unavailable"}\0base:${context.runSpec.baseCommit}`,
+          ),
+          approvedOrigins: browser.approvedScopes
+            .filter((scope) => scope.startsWith("origin:"))
+            .map((scope) => scope.slice("origin:".length)),
+          dynamicLoopbackApproved: browser.approvedScopes.some(
+            (scope) =>
+              scope.startsWith("loopback:") && scope.endsWith(":dynamic"),
+          ),
+          timeoutMs: context.config.limits.attackMs,
+          ...this.browserSessionObserver(context, "Baseline validation"),
+          signal: context.controller.signal,
+        });
+        context.browserBaseline = browserBaseline;
+        const artifactPath = context.store.resolve(
+          "browser/baseline-result.json",
+        );
+        await writeBrowserBaseline({
+          store: context.store,
+          identity: {
+            runId: context.runSpec.runId,
+            baseCommit: context.runSpec.baseCommit,
+            runSpecHash: context.runSpec.contentHash,
+            browserValidation: browser,
+          },
+          result: browserBaseline,
+        });
+        context.state.artifacts["browser-baseline"] = artifactPath;
+        if (
+          browser.requirement === "required" &&
+          browser.decision === "approved" &&
+          browserBaseline.status !== "verified"
+        )
+          throw new Error(
+            `Baseline browser validation ${browserBaseline.status}; configuration or harness failure prevents fair attribution`,
+          );
+      }
     } finally {
       await context.worktrees.remove(baseline);
     }
@@ -3375,11 +3514,240 @@ export class RoundEngine {
           throw new Error(
             `Initial required validation infrastructure failed for ${agent}`,
           );
+        await this.validateBrowserForContestant(
+          context,
+          contestant,
+          worktree,
+          "initial",
+        );
       } finally {
         await context.worktrees.remove(worktree);
       }
     }
     await this.persist(context);
+  }
+
+  private async validateBrowserForContestant(
+    context: ArenaContext,
+    contestant: ContestantResult,
+    worktree: string,
+    phase: "initial" | "final",
+  ): Promise<void> {
+    const validation = context.runSpec.browserValidation;
+    if (!validation) return;
+    const adapter = validation.profile
+      ? this.dependencies.browserAdapters?.[validation.profile.runner]
+      : undefined;
+    const patchDigest = contestant.currentPatchPath
+      ? sha256(await readFile(contestant.currentPatchPath))
+      : `contestant:${contestant.id}:${phase}`;
+    const result = this.attributeBrowserResult(
+      context,
+      await executeBrowserValidation({
+        plan: validation,
+        decision: validation.decision,
+        ...(adapter ? { adapter } : {}),
+        worktree,
+        artifactDirectory: context.store.resolve(
+          `browser/${contestant.id}/${phase}`,
+        ),
+        selectedProbes: [],
+        nativeSuiteCache: this.browserNativeSuiteCache,
+        nativeSuiteCacheKey: sha256(
+          `${validation.profile?.testCommand ?? "unavailable"}\0${patchDigest}`,
+        ),
+        approvedOrigins: validation.approvedScopes
+          .filter((scope) => scope.startsWith("origin:"))
+          .map((scope) => scope.slice("origin:".length)),
+        dynamicLoopbackApproved: validation.approvedScopes.some(
+          (scope) =>
+            scope.startsWith("loopback:") && scope.endsWith(":dynamic"),
+        ),
+        timeoutMs: context.config.limits.attackMs,
+        ...this.browserSessionObserver(
+          context,
+          `${contestant.id.toUpperCase()} · ${phase} validation`,
+          contestant.id,
+        ),
+        signal: context.controller.signal,
+      }),
+    );
+    contestant.browserValidation = result;
+    const artifactPath = await context.store.writeJson(
+      `browser/${contestant.id}/${phase}-result.json`,
+      result,
+    );
+    context.state.artifacts[`browser-${contestant.id}-${phase}`] = artifactPath;
+    contestant.checks.push({
+      id: `${phase}-browser`,
+      kind: "browser",
+      status:
+        result.status === "verified"
+          ? "passed"
+          : result.status === "failed"
+            ? "failed"
+            : "skipped",
+      ...(result.reason ? { reason: result.reason } : {}),
+    });
+    if (
+      validation.requirement === "required" &&
+      validation.decision === "approved"
+    ) {
+      const gateStatus =
+        result.status === "verified"
+          ? "passed"
+          : result.status === "failed"
+            ? "failed"
+            : "infrastructure_error";
+      contestant.checks.push({
+        id: `${phase}-browser-required`,
+        kind: "required",
+        status: gateStatus,
+        ...(result.reason ? { reason: result.reason } : {}),
+      });
+      if (phase === "final" && gateStatus === "failed") {
+        contestant.status = "eliminated";
+        contestant.healthLedger.eliminatedByRequiredCheck = true;
+      }
+      if (phase === "final" && gateStatus === "infrastructure_error")
+        throw new Error(
+          `Final required browser validation infrastructure failed for ${contestant.id}`,
+        );
+    }
+    if (validation.decision === "approved" && result.status === "unverified") {
+      const capability = context.permissions.capabilities.find(
+        (entry) => entry.id === "browser_dom_validation",
+      );
+      if (capability) capability.status = "provisioning_failed";
+      await context.store.writeJson("permissions.json", context.permissions);
+    }
+  }
+
+  private attributeBrowserResult(
+    context: ArenaContext,
+    result: BrowserValidationResult,
+  ): BrowserValidationResult {
+    return attributeBrowserResult(context.browserBaseline, result);
+  }
+
+  private browserSessionObserver(
+    context: ArenaContext,
+    label: string,
+    contestantId?: ContestantId,
+  ): Pick<
+    Parameters<typeof executeBrowserValidation>[0],
+    "onSessionStarted" | "onSessionFinished"
+  > {
+    return {
+      onSessionStarted: (activity) =>
+        this.emit(context, {
+          type: "browser_session_started",
+          ...activity,
+          label,
+          ...(contestantId ? { contestantId } : {}),
+        }),
+      onSessionFinished: ({ sessionId }) =>
+        this.emit(context, {
+          type: "browser_session_finished",
+          sessionId,
+        }),
+    };
+  }
+
+  /** Spreadable `validateAttack` option, so the closure is built exactly once. */
+  private browserValidatorOption(
+    context: ArenaContext,
+    attack: Attack,
+  ): Pick<Parameters<typeof validateAttack>[0], "validateBrowser"> {
+    const validateBrowser = this.browserProbeValidator(context, attack.id, {
+      ...(attack.origin.kind === "contestant"
+        ? { author: attack.origin.contestant }
+        : {}),
+      ...(attack.targets[0] ? { target: attack.targets[0] } : {}),
+    });
+    return validateBrowser ? { validateBrowser } : {};
+  }
+
+  private browserProbeValidator(
+    context: ArenaContext,
+    attackId: string,
+    contestantsBySubject: Partial<
+      Record<"author" | "target", ContestantId>
+    > = {},
+  ):
+    | ((
+        worktree: string,
+        probe: NonNullable<Attack["browserProbe"]>,
+        subject: "baseline" | "author" | "target",
+        nativeSuiteIdentityPaths: string[],
+      ) => Promise<BrowserValidationResult>)
+    | undefined {
+    const validation = context.runSpec.browserValidation;
+    if (!validation) return undefined;
+    const adapter = validation.profile
+      ? this.dependencies.browserAdapters?.[validation.profile.runner]
+      : undefined;
+    return async (worktree, probe, subject, nativeSuiteIdentityPaths) => {
+      const invocationKey = `${attackId}:${subject}`;
+      const invocation =
+        (this.browserProbeInvocationCounts.get(invocationKey) ?? 0) + 1;
+      this.browserProbeInvocationCounts.set(invocationKey, invocation);
+      const patchDigest = sha256(
+        (
+          await Promise.all(
+            nativeSuiteIdentityPaths.map(async (patchPath) =>
+              sha256(await readFile(patchPath)),
+            ),
+          )
+        ).join("\0"),
+      );
+      const result = this.attributeBrowserResult(
+        context,
+        await executeBrowserValidation({
+          plan: validation,
+          decision: validation.decision,
+          ...(adapter ? { adapter } : {}),
+          worktree,
+          artifactDirectory: context.store.resolve(
+            `browser/attacks/${attackId}/${subject}-${String(invocation)}`,
+          ),
+          selectedProbes: [probe],
+          nativeSuiteCache: this.browserNativeSuiteCache,
+          nativeSuiteCacheKey: sha256(
+            `${validation.profile?.testCommand ?? "unavailable"}\0${patchDigest}`,
+          ),
+          approvedOrigins: validation.approvedScopes
+            .filter((scope) => scope.startsWith("origin:"))
+            .map((scope) => scope.slice("origin:".length)),
+          dynamicLoopbackApproved: validation.approvedScopes.some(
+            (scope) =>
+              scope.startsWith("loopback:") && scope.endsWith(":dynamic"),
+          ),
+          timeoutMs: context.config.limits.attackMs,
+          ...this.browserSessionObserver(
+            context,
+            `Attack ${attackId} · ${subject}`,
+            subject === "baseline" ? undefined : contestantsBySubject[subject],
+          ),
+          signal: context.controller.signal,
+        }),
+      );
+      const resultManifestPath = await context.store.writeJson(
+        `browser/attacks/${attackId}/${subject}-${String(invocation)}-result.json`,
+        result,
+      );
+      return BrowserValidationResultSchema.parse({
+        ...result,
+        artifacts: [
+          ...result.artifacts,
+          {
+            kind: "result_manifest",
+            path: resultManifestPath,
+            failureOnly: false,
+          },
+        ],
+      });
+    };
   }
 
   private shouldStop(context: ArenaContext): boolean {
@@ -4878,6 +5246,22 @@ export class RoundEngine {
               const overlayPath = context.store.resolve(
                 `attacks/round-${String(round)}/${agent}/${String(entry.rank)}.diff`,
               );
+              if (entry.browserProbe && entry.paths.length === 0) {
+                await context.store.writeText(
+                  `attacks/round-${String(round)}/${agent}/${String(entry.rank)}.diff`,
+                  browserProbeEvidencePatch(entry, round, agent),
+                );
+                collected.push(
+                  await materializeAttack(entry, {
+                    author: agent,
+                    authorProvider: contestant.provider,
+                    target,
+                    round,
+                    patchPath: overlayPath,
+                  }),
+                );
+                continue;
+              }
               const overlayPaths = [
                 ...new Set([...submission.sharedSupportPaths, ...entry.paths]),
               ];
@@ -5207,11 +5591,11 @@ export class RoundEngine {
 
     await this.transition(context, "validate_attacks", round);
     const knownRoots = new Set(
-      context.state.attacks
-        .filter((attack) => attack.status === "landed")
-        .flatMap((attack) =>
-          attack.rootDefectId ? [attack.rootDefectId] : [],
-        ),
+      Object.values(context.state.contestants).flatMap((contestant) =>
+        (contestant.healthLedger.canonicalDefects ?? [])
+          .filter((defect) => defect.status !== "superseded")
+          .map((defect) => defect.rootDefectId),
+      ),
     );
     const validated: Attack[] = [];
     const ordered = [...collected].sort(
@@ -5227,6 +5611,12 @@ export class RoundEngine {
         ),
     );
     for (const attack of ordered) {
+      attack.evidenceFingerprint = evidenceFingerprint(attack);
+      const adjudicationHistory = [...context.state.attacks, ...validated];
+      const priorAdjudications = priorAdjudicationContext(
+        attack,
+        adjudicationHistory,
+      );
       if (attack.origin.kind === "house") {
         const result = await validateHouseAttack({
           attack,
@@ -5253,19 +5643,29 @@ export class RoundEngine {
             context.state,
             attack.targets,
           ),
+          priorAdjudications,
           persistFailureRecord: (record) =>
             this.persistFailureRecord(context, record),
         });
         if (result.status === "landed" && result.rootDefectId)
           knownRoots.add(result.rootDefectId);
-        if (result.status === "landed" && typeof round === "number") {
+        if (
+          result.status === "landed" &&
+          result.evidenceKind !== "browser_probe" &&
+          typeof round === "number"
+        ) {
           if (
             context.state.schemaVersion < 6 ||
             result.patchPath.includes(`${path.sep}cases${path.sep}round-`)
           )
             await this.buildCaseBundle(context, result, round);
         }
-        await this.finalizeAttackAdjudication(context, result, round);
+        await this.finalizeAttackAdjudication(
+          context,
+          result,
+          round,
+          adjudicationHistory,
+        );
         validated.push(result);
         continue;
       }
@@ -5274,12 +5674,13 @@ export class RoundEngine {
       if (!target) continue;
       const targetPatch = getContestant(context.state, target).currentPatchPath;
       if (!targetPatch) continue;
+      attack.targetPatchDigest = sha256(await readFile(targetPatch));
       const authorPatch = getContestant(context.state, author).currentPatchPath;
       const result =
         context.config.mode === "siege"
-          ? await validateHouseAttack({
+          ? await validateSiegeAttack({
               attack,
-              targetPatches: { [target]: targetPatch },
+              targetPatch,
               runSpec: context.runSpec,
               permissionPolicy: context.permissions,
               config: context.config,
@@ -5294,6 +5695,8 @@ export class RoundEngine {
                 context.state,
                 attack.targets,
               ),
+              priorAdjudications,
+              ...this.browserValidatorOption(context, attack),
               persistFailureRecord: (record) =>
                 this.persistFailureRecord(context, record),
             })
@@ -5316,6 +5719,8 @@ export class RoundEngine {
                   context.state,
                   attack.targets,
                 ),
+                priorAdjudications,
+                ...this.browserValidatorOption(context, attack),
                 persistFailureRecord: (record) =>
                   this.persistFailureRecord(context, record),
               })
@@ -5323,7 +5728,11 @@ export class RoundEngine {
       if (!result) continue;
       if (result.status === "landed" && result.rootDefectId)
         knownRoots.add(result.rootDefectId);
-      if (result.status === "landed" && typeof round === "number") {
+      if (
+        result.status === "landed" &&
+        result.evidenceKind !== "browser_probe" &&
+        typeof round === "number"
+      ) {
         if (
           context.state.schemaVersion < 6 ||
           result.patchPath.includes(`${path.sep}cases${path.sep}round-`)
@@ -5356,7 +5765,12 @@ export class RoundEngine {
           });
         }
       }
-      await this.finalizeAttackAdjudication(context, result, round);
+      await this.finalizeAttackAdjudication(
+        context,
+        result,
+        round,
+        adjudicationHistory,
+      );
       validated.push(result);
     }
     context.state.attacks.push(...validated);
@@ -5364,11 +5778,26 @@ export class RoundEngine {
 
     await this.transition(context, "assign_severity", round);
     await this.transition(context, "resolve_damage", round);
+    context.state.contestants = applyChallengeCorrections(
+      context.state.contestants,
+      context.state.attacks,
+      validated,
+      round,
+    );
     const resolved = resolveRound(context.state.contestants, validated, round);
     context.state.contestants = resolved.contestants;
     for (const attack of validated) {
+      const correctionRecoil = challengeCorrectionRecoil(
+        context.state.attacks,
+        attack,
+      );
+      if (correctionRecoil) {
+        attack.recoil = correctionRecoil;
+        continue;
+      }
       if (
         attack.origin.kind === "contestant" &&
+        attack.adjudication?.relationship !== "overturn" &&
         [
           "invalid",
           "duplicate",
@@ -5492,6 +5921,10 @@ export class RoundEngine {
                 canonicalDefectId: attack.rootDefectId,
                 claim: attack.claim,
                 focusedCommand: attack.focusedCommand,
+                evidenceKind: attack.evidenceKind ?? "patch",
+                ...(attack.browserProbe
+                  ? { browserProbe: attack.browserProbe }
+                  : {}),
                 outcomeReason: attack.outcomeReason,
               })),
               null,
@@ -5671,18 +6104,79 @@ export class RoundEngine {
                 runLevel: true,
               });
               try {
-                const check = await runShellCommand(attack.focusedCommand, {
-                  cwd: checkTree,
-                  timeoutMs: context.config.limits.attackMs,
-                  logPrefix: context.store.resolve(
-                    `logs/round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-${attack.id}`,
-                  ),
-                  signal: context.controller.signal,
-                });
-                infrastructureFailure =
-                  check.failureClass === "arena_infrastructure";
-                mechanicsPassed = check.exitCode === 0 && !check.timedOut;
-                diagnosticArtifactRefs.push(check.stdoutPath, check.stderrPath);
+                if (attack.browserProbe) {
+                  const validateBrowser = this.browserProbeValidator(
+                    context,
+                    attack.id,
+                    { target: agent },
+                  );
+                  if (!validateBrowser) {
+                    infrastructureFailure = true;
+                    mechanicsPassed = false;
+                  } else {
+                    const check = await validateBrowser(
+                      checkTree,
+                      attack.browserProbe,
+                      "target",
+                      [
+                        candidatePath,
+                        ...(attack.evidenceKind === "browser_probe"
+                          ? []
+                          : [attack.patchPath]),
+                      ],
+                    );
+                    const probeResult = findBrowserProbeResult(
+                      check,
+                      attack.browserProbe.id,
+                    );
+                    infrastructureFailure =
+                      !probeResult || probeResult.status === "unverified";
+                    mechanicsPassed = probeResult?.status === "verified";
+                    diagnosticArtifactRefs.push(
+                      ...check.artifacts.map((artifact) => artifact.path),
+                    );
+                    if (
+                      mechanicsPassed &&
+                      attack.evidenceKind !== "browser_probe"
+                    ) {
+                      const focused = await runShellCommand(
+                        attack.focusedCommand,
+                        {
+                          cwd: checkTree,
+                          timeoutMs: context.config.limits.attackMs,
+                          logPrefix: context.store.resolve(
+                            `logs/round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-${attack.id}-focused`,
+                          ),
+                          signal: context.controller.signal,
+                        },
+                      );
+                      infrastructureFailure =
+                        focused.failureClass === "arena_infrastructure";
+                      mechanicsPassed =
+                        focused.exitCode === 0 && !focused.timedOut;
+                      diagnosticArtifactRefs.push(
+                        focused.stdoutPath,
+                        focused.stderrPath,
+                      );
+                    }
+                  }
+                } else {
+                  const check = await runShellCommand(attack.focusedCommand, {
+                    cwd: checkTree,
+                    timeoutMs: context.config.limits.attackMs,
+                    logPrefix: context.store.resolve(
+                      `logs/round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-${attack.id}`,
+                    ),
+                    signal: context.controller.signal,
+                  });
+                  infrastructureFailure =
+                    check.failureClass === "arena_infrastructure";
+                  mechanicsPassed = check.exitCode === 0 && !check.timedOut;
+                  diagnosticArtifactRefs.push(
+                    check.stdoutPath,
+                    check.stderrPath,
+                  );
+                }
               } finally {
                 await context.worktrees.remove(checkTree);
               }
@@ -6053,6 +6547,45 @@ export class RoundEngine {
               runLevel: true,
             });
             try {
+              const isVisibleBrowserReproducer =
+                Boolean(attack.browserProbe) &&
+                caseEntry.visibility === "visible";
+              if (isVisibleBrowserReproducer && attack.browserProbe) {
+                const validateBrowser = this.browserProbeValidator(
+                  context,
+                  attack.id,
+                  { target: agent },
+                );
+                if (!validateBrowser)
+                  throw new Error(
+                    `Browser repair evidence is unavailable for ${agent} on ${caseEntry.id}`,
+                  );
+                const browserResult = await validateBrowser(
+                  caseTree,
+                  attack.browserProbe,
+                  "target",
+                  [
+                    currentPatch,
+                    ...(attack.evidenceKind === "browser_probe"
+                      ? []
+                      : [caseEntry.patchPath]),
+                  ],
+                );
+                const browserEvidencePasses = browserRepairEvidencePasses(
+                  browserResult,
+                  attack.browserProbe.id,
+                );
+                if (browserEvidencePasses === undefined)
+                  throw new BrowserInfrastructureError(
+                    `Browser repair evidence was unverified for ${agent} on ${caseEntry.id}`,
+                    browserResult.reason ?? "launch_failure",
+                    browserResult.failureAttribution === "harness_configuration"
+                      ? "harness_configuration"
+                      : "harness_transport",
+                  );
+                if (!browserEvidencePasses) allCasesPass = false;
+                if (attack.evidenceKind === "browser_probe") continue;
+              }
               const checks = [];
               for (const sample of [1, 2] as const) {
                 let infrastructureFailure: FailureRecord | undefined;
@@ -6331,6 +6864,7 @@ export class RoundEngine {
           context.state,
           provisional.targets,
         ),
+        ...this.browserValidatorOption(context, provisional),
       });
       if (replay.status === "provisional_infrastructure") {
         replay.status = "execution_inconclusive";
@@ -6462,6 +6996,7 @@ export class RoundEngine {
     context: ArenaContext,
     result: Attack,
     round: RoundId,
+    history: readonly Attack[] = context.state.attacks,
   ): Promise<void> {
     result.adjudication = normalizeAttackAdjudication(result);
     const priorCanonicals = result.targets.map((target) =>
@@ -6472,7 +7007,11 @@ export class RoundEngine {
     );
     const priorCanonical = priorCanonicals.find(Boolean);
     const hasUnscoredTarget = priorCanonicals.some((canonical) => !canonical);
-    if (priorCanonical && result.adjudication.verdict === "valid") {
+    if (
+      priorCanonical &&
+      result.adjudication.verdict === "valid" &&
+      result.challengeRelationship !== "overturn"
+    ) {
       result.adjudication = AdjudicationRecordSchema.parse({
         ...result.adjudication,
         severity: priorCanonical.baseSeverity,
@@ -6540,6 +7079,121 @@ export class RoundEngine {
           : {}),
       });
     }
+    const challengeContext = priorAdjudicationContext(result, history);
+    const requestedPriorId =
+      result.relatedAdjudicationId ?? result.challengeAdjudicationId;
+    const referencedPrior = requestedPriorId
+      ? challengeContext.find(
+          (entry) => entry.adjudicationId === requestedPriorId,
+        )
+      : undefined;
+    let relationship =
+      result.challengeRelationship ??
+      (result.challengeAdjudicationId ? "unresolved" : "independent");
+    if (
+      (relationship !== "independent" && !referencedPrior) ||
+      (result.challengeAdjudicationId &&
+        requestedPriorId !== result.challengeAdjudicationId)
+    )
+      relationship = "unresolved";
+    if (relationship === "overturn" && result.adjudication.verdict === "unable")
+      relationship = "unresolved";
+    if (relationship === "affirm") {
+      result.damageActive = false;
+      result.adjudication = AdjudicationRecordSchema.parse({
+        ...result.adjudication,
+        relationship,
+        priorAdjudicationId: referencedPrior!.adjudicationId,
+        duplicateState: "unique",
+        scoreEffect: "none",
+        exactAmount: 0,
+        recoilAmount: undefined,
+      });
+    } else if (relationship === "unresolved") {
+      result.status = "judge_unable";
+      result.damageActive = false;
+      result.outcomeReason =
+        "Challenge relationship could not be resolved against a valid prior adjudication";
+      result.adjudication = AdjudicationRecordSchema.parse({
+        ...result.adjudication,
+        verdict: "unable",
+        relationship,
+        ...(requestedPriorId ? { priorAdjudicationId: requestedPriorId } : {}),
+        rejectionBasis: undefined,
+        canonicalDefectId: undefined,
+        severity: undefined,
+        duplicateState: "unique",
+        evidenceBasis: "none",
+        multiplier: 0,
+        scoreEffect: "none",
+        exactAmount: 0,
+        recoilAmount: undefined,
+      });
+    } else if (relationship === "overturn") {
+      const supersededAttack = referencedPrior
+        ? history.find(
+            (attack) =>
+              attack.adjudication?.id === referencedPrior.adjudicationId,
+          )
+        : undefined;
+      const adjustsExistingDefect =
+        supersededAttack?.adjudication?.verdict === "valid" &&
+        result.adjudication.verdict === "valid" &&
+        supersededAttack.adjudication.canonicalDefectId ===
+          result.adjudication.canonicalDefectId;
+      if (
+        result.adjudication.verdict === "valid" &&
+        result.adjudication.severity
+      ) {
+        result.status = "landed";
+        result.damageActive = true;
+        result.adjudication = AdjudicationRecordSchema.parse({
+          ...result.adjudication,
+          duplicateState: "unique",
+          scoreEffect: "damage",
+          exactAmount:
+            result.adjudication.multiplier === 0.35
+              ? PARTIAL_DAMAGE_BY_SEVERITY[result.adjudication.severity]
+              : DAMAGE_BY_SEVERITY[result.adjudication.severity],
+          recoilAmount: undefined,
+        });
+      }
+      if (adjustsExistingDefect) {
+        result.adjudication = AdjudicationRecordSchema.parse({
+          ...result.adjudication,
+          scoreEffect: "none",
+          exactAmount: 0,
+        });
+      }
+      if (result.adjudication.verdict === "rejected") {
+        result.adjudication = AdjudicationRecordSchema.parse({
+          ...result.adjudication,
+          scoreEffect: "none",
+          exactAmount: 0,
+          recoilAmount: undefined,
+        });
+      }
+      result.adjudication = AdjudicationRecordSchema.parse({
+        ...result.adjudication,
+        relationship,
+        priorAdjudicationId: referencedPrior!.adjudicationId,
+        supersedesAdjudicationId: referencedPrior!.adjudicationId,
+      });
+    } else {
+      result.adjudication = AdjudicationRecordSchema.parse({
+        ...result.adjudication,
+        relationship: "independent",
+      });
+    }
+    result.adjudication = AdjudicationRecordSchema.parse(
+      Object.fromEntries(
+        Object.entries({
+          ...result.adjudication,
+          evidenceFingerprint: result.evidenceFingerprint,
+          targetPatchDigest: result.targetPatchDigest,
+        }).filter(([, value]) => value !== undefined),
+      ),
+    );
     await context.store.writeImmutableJson(
       `rounds/${String(round)}/adjudications/${result.id}.json`,
       result.adjudication,
@@ -6867,6 +7521,13 @@ export class RoundEngine {
         } else {
           contestant.status = "survived";
         }
+        if (contestant.status !== "eliminated")
+          await this.validateBrowserForContestant(
+            context,
+            contestant,
+            worktree,
+            "final",
+          );
         if (contestant.status !== "eliminated") {
           for (const attack of context.state.attacks.filter(
             (candidate) =>
@@ -6880,6 +7541,40 @@ export class RoundEngine {
                 (caseEntry) => caseEntry.status !== "rejected",
               ) ?? [];
             let defectPasses = true;
+            if (attack.browserProbe) {
+              const validateBrowser = this.browserProbeValidator(
+                context,
+                attack.id,
+                { target: agent },
+              );
+              const browserResult = validateBrowser
+                ? await validateBrowser(
+                    worktree,
+                    attack.browserProbe,
+                    "target",
+                    [currentPatch],
+                  )
+                : undefined;
+              const probeResult = browserResult
+                ? findBrowserProbeResult(browserResult, attack.browserProbe.id)
+                : undefined;
+              contestant.checks.push({
+                id: `final-browser-${attack.id}`,
+                kind: "browser",
+                status:
+                  probeResult?.status === "verified"
+                    ? "passed"
+                    : probeResult?.status === "failed"
+                      ? "failed"
+                      : "infrastructure_error",
+                ...(probeResult?.reason ? { reason: probeResult.reason } : {}),
+              });
+              if (!probeResult || probeResult.status === "unverified")
+                throw new Error(
+                  `Final browser reproducer was unverified for ${agent}`,
+                );
+              defectPasses = probeResult.status === "verified";
+            }
             for (const caseEntry of finalCases) {
               const caseTree = await this.prepareWorktree(context, {
                 name: `final-${agent}-${caseEntry.id}`,

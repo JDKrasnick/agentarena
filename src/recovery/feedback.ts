@@ -13,6 +13,7 @@ import type {
   RunState,
 } from "../core/types.js";
 import type { ArtifactStore } from "../artifacts/store.js";
+import { supersededAdjudicationIds } from "../attacks/challenges.js";
 import { z } from "zod";
 
 export const FEEDBACK_INLINE_LIMIT_BYTES = 24 * 1024;
@@ -94,7 +95,12 @@ function visibleReproducers(attack: Attack) {
   return [
     {
       artifactId: `attack:${attack.id}`,
-      command: attack.focusedCommand,
+      // A browser-only attack has no focused command; describing its probe is
+      // the only honest reproduction instruction we can give the repair agent.
+      command:
+        attack.evidenceKind === "browser_probe" && attack.browserProbe
+          ? `browser probe ${attack.browserProbe.id} (${attack.browserProbe.family}, ${attack.browserProbe.profile})`
+          : attack.focusedCommand,
       expectedBehavior: attack.oracle.expectedBehavior,
     },
   ];
@@ -117,6 +123,7 @@ function compact(feedback: ContestantFeedback): ContestantFeedback {
     ...feedback,
     acceptedIncomingAttacks: incoming,
     ownAttackOutcomes: own,
+    priorAdjudications: [...feedback.priorAdjudications],
   };
   let verboseFieldsCondensed = false;
   while (bytes(candidate) > FEEDBACK_TARGET_BYTES) {
@@ -213,6 +220,7 @@ export function projectContestantFeedback(options: {
   const history = options.state.attacks.filter(
     (attack) => roundOrder(attack.round) <= roundOrder(options.roundId),
   );
+  const supersededAdjudications = supersededAdjudicationIds(history);
   const activeDefectIds = new Set(
     contestant.healthLedger.activeDefects.map((entry) => entry.rootDefectId),
   );
@@ -223,7 +231,9 @@ export function projectContestantFeedback(options: {
         attack.targets.includes(options.contestantId) &&
         attack.rootDefectId &&
         attack.severity &&
-        attack.damage,
+        attack.damage &&
+        (!attack.adjudication ||
+          !supersededAdjudications.has(attack.adjudication.id)),
     )
     .sort(
       (left, right) =>
@@ -244,7 +254,9 @@ export function projectContestantFeedback(options: {
     )
     .map((attack) => {
       const canonical = contestant.healthLedger.canonicalDefects?.find(
-        (defect) => defect.rootDefectId === attack.rootDefectId,
+        (defect) =>
+          defect.rootDefectId === attack.rootDefectId &&
+          defect.status !== "superseded",
       );
       return {
         attackId: attack.id,
@@ -336,6 +348,31 @@ export function projectContestantFeedback(options: {
     },
     acceptedIncomingAttacks: incoming,
     ownAttackOutcomes: own,
+    priorAdjudications: history
+      .filter(
+        (attack) =>
+          attack.origin.kind === "contestant" &&
+          attack.origin.contestant === options.contestantId &&
+          attack.adjudication &&
+          !supersededAdjudications.has(attack.adjudication.id),
+      )
+      .toSorted(
+        (left, right) =>
+          roundOrder(right.round) - roundOrder(left.round) ||
+          left.id.localeCompare(right.id),
+      )
+      .slice(0, 6)
+      .map((attack) => ({
+        adjudicationId: attack.adjudication!.id,
+        attackId: attack.id,
+        target: attack.targets[0]!,
+        verdict: attack.adjudication!.verdict,
+        relationship: attack.adjudication!.relationship,
+        claim: attack.claim.slice(0, 512),
+        expectedBehavior: attack.oracle.expectedBehavior.slice(0, 512),
+        publicRationale: attack.adjudication!.rationale.slice(0, 512),
+        scoreEffect: attack.adjudication!.scoreEffect,
+      })),
     healedDefectIds: healed.sort(),
     unresolvedDefectIds: [...new Set(unresolved)].sort(),
     capabilityRestrictions: options.permissions.capabilities

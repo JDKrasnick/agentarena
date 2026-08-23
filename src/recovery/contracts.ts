@@ -3,6 +3,7 @@ import {
   ArtifactReferenceSchema,
   RoundResultSchema,
 } from "../contracts/round.js";
+import { BrowserValidationResultSchema } from "../contracts/browser.js";
 
 const IdentifierSchema = z.string().trim().min(1);
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -158,6 +159,20 @@ export const RunBaselineSchema = z
   .strict()
   .readonly();
 export type RunBaseline = z.infer<typeof RunBaselineSchema>;
+
+export const BrowserBaselineRecordSchema = z
+  .object({
+    version: z.literal(1),
+    runId: IdentifierSchema,
+    baseCommit: z.string().regex(/^[a-f0-9]{40,64}$/),
+    runSpecHash: Sha256Schema,
+    browserValidationHash: Sha256Schema,
+    result: BrowserValidationResultSchema,
+    recordHash: Sha256Schema,
+  })
+  .strict()
+  .readonly();
+export type BrowserBaselineRecord = z.infer<typeof BrowserBaselineRecordSchema>;
 
 export const FinalizationRecordSchema = z
   .object({

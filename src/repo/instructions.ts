@@ -1,7 +1,8 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, realpath } from "node:fs/promises";
 import path from "node:path";
 
-const INSTRUCTION_PATHS = [
+export const INSTRUCTION_PATHS = [
   "AGENTS.md",
   "CLAUDE.md",
   "GEMINI.md",
@@ -34,14 +35,34 @@ export async function discoverInstructions(
         throw new Error(
           `Repository instruction path escapes the repository through a symbolic link: ${relativePath}`,
         );
-      const file = await stat(instructionPath);
-      if (!file.isFile())
-        throw new Error(
-          `Repository instruction path is not a regular file: ${relativePath}`,
-        );
-      if (file.size > maxBytes)
-        throw new Error(`Repository instructions exceed ${maxBytes} bytes`);
-      const content = await readFile(instructionPath, "utf8");
+      const handle = await open(
+        instructionPath,
+        constants.O_RDONLY | constants.O_NOFOLLOW,
+      );
+      let content: string;
+      try {
+        const file = await handle.stat();
+        if (!file.isFile())
+          throw new Error(
+            `Repository instruction path is not a regular file: ${relativePath}`,
+          );
+        if (file.size > maxBytes)
+          throw new Error(`Repository instructions exceed ${maxBytes} bytes`);
+        const chunks: Buffer[] = [];
+        let byteLength = 0;
+        for await (const chunk of handle.createReadStream({
+          autoClose: false,
+        })) {
+          const bytes = Buffer.from(chunk as Uint8Array);
+          byteLength += bytes.length;
+          if (total + byteLength > maxBytes)
+            throw new Error(`Repository instructions exceed ${maxBytes} bytes`);
+          chunks.push(bytes);
+        }
+        content = Buffer.concat(chunks, byteLength).toString("utf8");
+      } finally {
+        await handle.close();
+      }
       total += Buffer.byteLength(content);
       if (total > maxBytes)
         throw new Error(`Repository instructions exceed ${maxBytes} bytes`);

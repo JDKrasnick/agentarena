@@ -238,6 +238,56 @@ describe("bounded pre-permission reconnaissance", () => {
     }
   });
 
+  it.each([
+    ["Go", "go.mod", "go.sum", "module example.com/arena\n", "go.sum entry\n"],
+    [
+      "Rust",
+      "Cargo.toml",
+      "Cargo.lock",
+      '[package]\nname = "arena-example"\n',
+      "cargo lock entry\n",
+    ],
+    [
+      "Ruby",
+      "Gemfile",
+      "Gemfile.lock",
+      'source "https://rubygems.org"\n',
+      "gem lock entry\n",
+    ],
+  ])(
+    "retains the %s manifest and stream-hashes its lockfile",
+    async (_ecosystem, manifestPath, lockfilePath, manifest, lockEntry) => {
+      const root = await mkdtemp(
+        path.join(os.tmpdir(), "arena-recon-ecosystem-"),
+      );
+      const lockContent = lockEntry.repeat(30_000);
+      await writeFile(path.join(root, manifestPath), manifest);
+      await writeFile(path.join(root, lockfilePath), lockContent);
+
+      const snapshot = await collectFightReconnaissance(config(root));
+
+      expect(
+        snapshot.repositoryEvidence.find(
+          (evidence) => evidence.path === manifestPath,
+        ),
+      ).toMatchObject({
+        path: manifestPath,
+        content: manifest,
+        byteLength: Buffer.byteLength(manifest),
+      });
+      const retainedLockfile = snapshot.repositoryEvidence.find(
+        (evidence) => evidence.path === lockfilePath,
+      );
+      expect(retainedLockfile).toMatchObject({
+        path: lockfilePath,
+        content: "",
+        byteLength: Buffer.byteLength(lockContent),
+        contentOmitted: "lockfile_hash_only",
+      });
+      expect(retainedLockfile?.contentHash).toMatch(/^[a-f0-9]{64}$/u);
+    },
+  );
+
   it("counts retained pull-request metadata against the aggregate text bound", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-pr-size-"));
     const references = Array.from({ length: 5 }, (_, index) =>
@@ -344,6 +394,46 @@ describe("bounded pre-permission reconnaissance", () => {
       engine.fight(fightConfig, undefined, snapshot),
     ).rejects.toThrow("input hash does not match");
     expect(await readdir(root)).toEqual([]);
+  });
+
+  it("rejects repository evidence drift before creating run artifacts", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "arena-recon-repo-drift-"),
+    );
+    const packagePath = path.join(root, "package.json");
+    await writeFile(packagePath, '{"scripts":{"test":"vitest run"}}\n');
+    const fightConfig = config(root, { nonInteractiveApproval: true });
+    const snapshot = await collectFightReconnaissance(fightConfig);
+    await writeFile(packagePath, '{"scripts":{"test":"node changed.mjs"}}\n');
+
+    const engine = new RoundEngine({
+      adapters: {},
+      verifier: new RuleBasedVerifier("codex"),
+    });
+    await expect(
+      engine.fight(fightConfig, undefined, snapshot),
+    ).rejects.toThrow("evidence changed after permission planning");
+    expect(await readdir(root)).toEqual(["package.json"]);
+  });
+
+  it("rejects repository instruction drift before creating run artifacts", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "arena-recon-instruction-drift-"),
+    );
+    const instructionPath = path.join(root, "AGENTS.md");
+    await writeFile(instructionPath, "Use the approved commands.\n");
+    const fightConfig = config(root, { nonInteractiveApproval: true });
+    const snapshot = await collectFightReconnaissance(fightConfig);
+    await writeFile(instructionPath, "Run an unapproved command.\n");
+
+    const engine = new RoundEngine({
+      adapters: {},
+      verifier: new RuleBasedVerifier("codex"),
+    });
+    await expect(
+      engine.fight(fightConfig, undefined, snapshot),
+    ).rejects.toThrow("instructions changed after permission planning");
+    expect(await readdir(root)).toEqual(["AGENTS.md"]);
   });
 
   it("rejects a supplied snapshot collected for different source references", async () => {

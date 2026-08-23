@@ -55,6 +55,7 @@
     "@lobehub/icons-static-png": "^1.95.0",
     "commander": "^14.0.0",
     "execa": "^9.6.0",
+    "playwright-core": "^1.62.1",
     "ink": "^6.8.0",
     "ink-link": "^5.0.0",
     "react": "^19.2.8",

@@ -792,6 +792,10 @@ describe("fake-adapter fight on a mocked real issue", () => {
     );
     expect(attackPrompt).toContain("Compact target-specific review packet");
     expect(attackPrompt).toContain("run of whitespace");
+    expect(attackPrompt).toContain(
+      '"kind":"click","role":"button","name":"accessible name"',
+    );
+    expect(attackPrompt).toContain("CSS selectors are not accepted");
     const repairPrompt = await readFile(
       path.join(
         outcome.state.artifacts.runDirectory!,

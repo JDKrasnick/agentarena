@@ -25,6 +25,7 @@ import {
 } from "../core/types.js";
 import {
   CheckpointDescriptorSchema,
+  BrowserBaselineRecordSchema,
   FinalizationRecordSchema,
   LegacyRoundSnapshotHeaderSchema,
   RoundEnvelopeSchema,
@@ -35,6 +36,7 @@ import {
   RunSummaryV8Schema,
   type RunSummaryV5,
   type AppliedEnvelope,
+  type BrowserBaselineRecord,
   type CheckpointDescriptor,
   type FinalizationRecord,
   type RoundEnvelope,
@@ -56,6 +58,10 @@ export function calculateEnvelopeHash(value: object): string {
 
 export function calculateBaselineHash(value: object): string {
   return hashWithout(value, "baselineHash");
+}
+
+export function calculateBrowserBaselineRecordHash(value: object): string {
+  return hashWithout(value, "recordHash");
 }
 
 export function calculateCheckpointHash(value: object): string {
@@ -132,6 +138,59 @@ export async function readBaseline(store: ArtifactStore): Promise<RunBaseline> {
   if (baseline.baselineHash !== calculateBaselineHash(baseline))
     throw new Error("Durable baseline hash mismatch");
   return baseline;
+}
+
+interface BrowserBaselineIdentity {
+  runId: string;
+  baseCommit: string;
+  runSpecHash: string;
+  browserValidation: unknown;
+}
+
+export async function writeBrowserBaseline(options: {
+  store: ArtifactStore;
+  identity: BrowserBaselineIdentity;
+  result: BrowserBaselineRecord["result"];
+}): Promise<BrowserBaselineRecord> {
+  const draft = {
+    version: 1 as const,
+    runId: options.identity.runId,
+    baseCommit: options.identity.baseCommit,
+    runSpecHash: options.identity.runSpecHash,
+    browserValidationHash: calculateCanonicalHash(
+      options.identity.browserValidation,
+    ),
+    result: options.result,
+    recordHash: "0".repeat(64),
+  };
+  draft.recordHash = calculateBrowserBaselineRecordHash(draft);
+  const record = BrowserBaselineRecordSchema.parse(draft);
+  await options.store.writeImmutableJson(
+    "browser/baseline-result.json",
+    record,
+  );
+  return record;
+}
+
+export async function readBrowserBaseline(
+  store: ArtifactStore,
+  identity: BrowserBaselineIdentity,
+): Promise<BrowserBaselineRecord["result"]> {
+  const record = BrowserBaselineRecordSchema.parse(
+    JSON.parse(
+      await readFile(store.resolve("browser/baseline-result.json"), "utf8"),
+    ),
+  );
+  if (
+    record.recordHash !== calculateBrowserBaselineRecordHash(record) ||
+    record.runId !== identity.runId ||
+    record.baseCommit !== identity.baseCommit ||
+    record.runSpecHash !== identity.runSpecHash ||
+    record.browserValidationHash !==
+      calculateCanonicalHash(identity.browserValidation)
+  )
+    throw new Error("Browser baseline identity mismatch");
+  return record.result;
 }
 
 export async function writeFinalizationRecord(options: {

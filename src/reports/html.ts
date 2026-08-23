@@ -88,7 +88,11 @@ function attackNarrative(attack: Attack): string {
     attack.adjudication?.evidenceBasis ??
     attack.evidenceProvenance ??
     "legacy_unknown";
-  return `${basis.replaceAll("_", " ")}: ${narrative}`;
+  const relationship = attack.adjudication?.relationship ?? "independent";
+  const chain = attack.adjudication?.priorAdjudicationId
+    ? ` Decision chain ${attack.adjudication.priorAdjudicationId} → ${attack.adjudication.id}: ${relationship}; score ${attack.adjudication.scoreEffect} ${String(attack.adjudication.exactAmount)} HP.`
+    : "";
+  return `${basis.replaceAll("_", " ")}: ${narrative}${chain}`;
 }
 
 /** A deterministic, self-contained, clickable battle dossier for local review. */
@@ -168,6 +172,7 @@ export function renderBattleHtml(state: RunState): string {
       <div class="model">${escapeHtml(contestant.model ?? `${contestant.provider} default`)}</div>
       <div class="hp">${String(contestant.finalHealth)} <small>HP</small></div>
       <div class="ledger">100 − ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil)} recoil − ${String(outcome?.activeDefectDamage ?? 0)} unresolved damage</div>
+      <div class="ledger">Browser: ${escapeHtml(contestant.browserValidation?.status ?? "not run")}${contestant.browserValidation?.reason ? ` · ${escapeHtml(contestant.browserValidation.reason)}` : ""}</div>
       <div class="card-links">${link(state, "Final patch", contestant.finalPatchPath)} · ${contestant.status}</div>
     </article>`;
     })
@@ -200,6 +205,9 @@ export function renderBattleHtml(state: RunState): string {
             .join(", ");
           const evidence = [
             link(state, "attack", attack.patchPath),
+            ...(attack.browserArtifactRefs ?? []).map((artifact, index) =>
+              link(state, `browser artifact ${String(index + 1)}`, artifact),
+            ),
             ...attack.checks.flatMap((check) =>
               check.command
                 ? [
