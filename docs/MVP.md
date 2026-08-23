@@ -594,6 +594,16 @@ WebSocket traffic. `ws` and `wss` use the corresponding approved HTTP transport
 origin. The approval UI states that a native repository runner retains the host
 account's network authority.
 
+Arena-managed Chromium runs headlessly. After a managed session becomes ready,
+the live observatory shows an `Open browser` action for the resolved approved
+application URL and removes it when the session stops. The action never opens
+automatically and launches a separate user-controlled browser view with storage
+independent from the evidence context; activity there cannot affect the probe
+result. The action sits beside the contestant using the session, names that
+contestant, and carries its live accent color for the temporary lifetime.
+Harness-owned baseline sessions appear in the neutral current-event area and
+are labeled Arena rather than assigned to a contestant.
+
 Runtime-error/DOM-integrity, accessible-name, and 320 CSS-pixel overflow smoke
 probes are mandatory on every browser run; the attacker-selected probe is
 additive. Because the repository never opted into the mandatory probes, they

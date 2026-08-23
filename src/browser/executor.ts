@@ -16,6 +16,13 @@ export type BrowserNativeSuiteResult = Omit<
   "contextId" | "requiredCapabilityIds"
 >;
 
+export interface BrowserSessionActivity {
+  sessionId: string;
+  url: string;
+  runner: BrowserAdapter["runner"];
+  attempt: 1 | 2;
+}
+
 export interface BrowserSession {
   toolVersion: string;
   browserVersion: string;
@@ -199,6 +206,10 @@ export async function executeBrowserValidation(options: {
   timeoutMs: number;
   nativeSuiteCache?: Map<string, BrowserNativeSuiteResult>;
   nativeSuiteCacheKey?: string;
+  onSessionStarted?: (activity: BrowserSessionActivity) => void | Promise<void>;
+  onSessionFinished?: (
+    activity: Pick<BrowserSessionActivity, "sessionId">,
+  ) => void | Promise<void>;
   signal: AbortSignal;
 }): Promise<BrowserValidationResult> {
   if (options.decision === "denied") return unverified("denied", 0);
@@ -276,6 +287,8 @@ export async function executeBrowserValidation(options: {
     );
     let session: BrowserSession | undefined;
     let launchPromise: Promise<BrowserSession> | undefined;
+    const sessionId = randomUUID();
+    let sessionAnnounced = false;
     try {
       const runtime = adapter.resolveRuntime
         ? await beforeDeadline(
@@ -373,6 +386,15 @@ export async function executeBrowserValidation(options: {
               "health_failure",
             );
       }
+      sessionAnnounced = true;
+      await Promise.resolve(
+        options.onSessionStarted?.({
+          sessionId,
+          url: runtime.plan.profile.baseUrl,
+          runner: adapter.runner,
+          attempt,
+        }),
+      ).catch(() => undefined);
 
       if (!nativeResult)
         nativeResult = await beforeDeadline(
@@ -493,6 +515,10 @@ export async function executeBrowserValidation(options: {
     } finally {
       attemptController.abort();
       if (session) await Promise.resolve(session.stop()).catch(() => undefined);
+      if (sessionAnnounced)
+        await Promise.resolve(options.onSessionFinished?.({ sessionId })).catch(
+          () => undefined,
+        );
     }
   }
   return accumulatedInfrastructureResult(lastReason, 2, lastAttribution);

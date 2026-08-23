@@ -3,6 +3,7 @@ import {
   executeBrowserValidation,
   type BrowserAdapter,
   type BrowserSession,
+  type BrowserSessionActivity,
 } from "../../src/browser/executor.js";
 import type { BrowserPlan } from "../../src/browser/planner.js";
 
@@ -34,6 +35,77 @@ function adapter(session: BrowserSession) {
 }
 
 describe("browser validation executor", () => {
+  it("announces a ready session and withdraws it after teardown", async () => {
+    const events: string[] = [];
+    const started = vi.fn((activity: BrowserSessionActivity) => {
+      events.push(`started:${activity.url}`);
+    });
+    const finished = vi.fn(
+      (activity: Pick<BrowserSessionActivity, "sessionId">) => {
+        events.push(`finished:${activity.sessionId}`);
+      },
+    );
+    const session: BrowserSession = {
+      toolVersion: "1",
+      browserVersion: "1",
+      artifacts: [],
+      waitUntilReady: vi.fn().mockImplementation(() => {
+        events.push("ready");
+        return Promise.resolve();
+      }),
+      runNativeSuite: vi.fn().mockResolvedValue({
+        family: "visual_regression",
+        profile: "repository_native",
+        status: "verified",
+        blockedOrigins: [],
+        artifacts: [],
+      }),
+      runProbe: vi
+        .fn<BrowserSession["runProbe"]>()
+        .mockImplementation(({ request }) =>
+          Promise.resolve({
+            family: request.family,
+            profile: request.profile,
+            status: "verified",
+            blockedOrigins: [],
+            artifacts: [],
+          }),
+        ),
+      stop: vi.fn().mockImplementation(() => {
+        events.push("stopped");
+        return Promise.resolve();
+      }),
+    };
+
+    const result = await executeBrowserValidation({
+      plan,
+      decision: "approved",
+      adapter: adapter(session).value,
+      worktree: "/worktree/a",
+      artifactDirectory: "/artifacts/a",
+      selectedProbes: [],
+      approvedOrigins: ["http://127.0.0.1:4173"],
+      timeoutMs: 10_000,
+      onSessionStarted: started,
+      onSessionFinished: finished,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.status).toBe("verified");
+    expect(started).toHaveBeenCalledOnce();
+    expect(started.mock.calls[0]?.[0]).toMatchObject({
+      url: "http://127.0.0.1:4173",
+      runner: "playwright",
+      attempt: 1,
+    });
+    expect(finished).toHaveBeenCalledWith({
+      sessionId: started.mock.calls[0]?.[0].sessionId,
+    });
+    expect(events[0]).toBe("ready");
+    expect(events.at(-2)).toBe("stopped");
+    expect(events.at(-1)).toMatch(/^finished:/u);
+  });
+
   it("runs self-managed native suites before starting the probe service", async () => {
     const events: string[] = [];
     const runtimeOrigin = "http://127.0.0.1:5184";
