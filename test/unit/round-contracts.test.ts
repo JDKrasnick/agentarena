@@ -209,6 +209,63 @@ describe("round boundary contracts", () => {
     );
   });
 
+  it("round-trips superseded defects and their adjudication links", () => {
+    const superseded = {
+      defectId: "defect-1",
+      firstAttackId: "attack-1",
+      firstAdjudicationId: "adjudication-1",
+      baseSeverity: "high" as const,
+      currentMultiplier: 1 as const,
+      currentDamage: 30,
+      evidenceHistory: [],
+      status: "superseded" as const,
+      supersededByAdjudicationId: "adjudication-2",
+    };
+    const contestantB = {
+      ...contestant("b"),
+      canonicalDefects: [superseded],
+    };
+    const snapshotValue = roundTrip(RoundSnapshotSchema, {
+      ...snapshot(),
+      roundId: 2,
+      contestants: [contestant("a"), contestantB],
+      knownDefects: [
+        {
+          defectId: superseded.defectId,
+          attackId: superseded.firstAttackId,
+          target: "b",
+          severity: superseded.baseSeverity,
+          damage: superseded.currentDamage,
+          multiplier: superseded.currentMultiplier,
+          status: superseded.status,
+          supersededByAdjudicationId: superseded.supersededByAdjudicationId,
+          visibleReproducerArtifactIds: [],
+        },
+      ],
+      priorReplayHash: OTHER_HASH,
+    });
+    const resultValue = roundTrip(RoundResultSchema, {
+      version: 4,
+      runId: "run-1",
+      roundId: 2,
+      status: "completed",
+      resultingContestants: [contestant("a"), contestantB],
+      failureRecords: [],
+      replay: {
+        ...replay(),
+        roundId: 2,
+        priorReplayHash: OTHER_HASH,
+      },
+    });
+
+    expect(snapshotValue.contestants[1].canonicalDefects?.[0]).toMatchObject(
+      superseded,
+    );
+    expect(
+      resultValue.resultingContestants[1].canonicalDefects?.[0],
+    ).toMatchObject(superseded);
+  });
+
   it("hashes canonical snapshot and replay JSON without their hash fields", () => {
     expect(canonicalJson({ z: 1, a: { y: 2, x: 3 } })).toBe(
       '{"a":{"x":3,"y":2},"z":1}',

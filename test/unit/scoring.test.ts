@@ -163,6 +163,49 @@ describe("ledger scoring", () => {
     });
   });
 
+  it("applies only one correction when two challenges name the same decision", () => {
+    const prior = attacks()[0]!;
+    prior.adjudication = normalizeAttackAdjudication(prior);
+    const afterPrior = resolveRound(
+      { a: contestant("a"), b: contestant("b") },
+      [prior],
+      1,
+    ).contestants;
+    const challenges = ["first", "second"].map((id) => {
+      const challenge: Attack = {
+        ...attacks()[1]!,
+        id: `${id}-replacement`,
+        round: 2,
+        rank: 3,
+      };
+      challenge.adjudication = {
+        ...normalizeAttackAdjudication(challenge),
+        relationship: "overturn",
+        priorAdjudicationId: prior.adjudication!.id,
+        supersedesAdjudicationId: prior.adjudication!.id,
+        scoreEffect: "none",
+        exactAmount: 0,
+        recoilAmount: undefined,
+      };
+      return challenge;
+    });
+
+    const corrected = applyChallengeCorrections(
+      afterPrior,
+      [prior, ...challenges],
+      challenges,
+      2,
+    );
+
+    expect(corrected.a?.healthLedger.permanentRecoil).toBe(5);
+    expect(
+      corrected.a?.healthEvents.filter(
+        (event) => event.type === "score_correction",
+      ),
+    ).toHaveLength(1);
+    expect(corrected.b?.healthLedger.activeDefects).toEqual([]);
+  });
+
   it("applies only the damage delta for a severity overturn", () => {
     const prior = attacks()[0]!;
     prior.adjudication = normalizeAttackAdjudication(prior);

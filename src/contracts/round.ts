@@ -289,7 +289,8 @@ const CanonicalDefectSchema = z
         })
         .strict(),
     ),
-    status: z.enum(["active", "healed"]),
+    status: z.enum(["active", "healed", "superseded"]),
+    supersededByAdjudicationId: IdentifierSchema.optional(),
     repairAllowance: z.number().int().positive().optional(),
     repairAttemptsUsed: z.number().int().nonnegative().optional(),
     repairAttemptIds: z.array(IdentifierSchema).optional(),
@@ -319,7 +320,8 @@ const KnownDefectSchema = z
     damage: DamageValueSchema,
     multiplier: z.union([z.literal(0.35), z.literal(1)]).optional(),
     evidenceBasis: EvidenceBasisSchema.optional(),
-    status: z.enum(["active", "healed"]),
+    status: z.enum(["active", "healed", "superseded"]),
+    supersededByAdjudicationId: IdentifierSchema.optional(),
     visibleReproducerArtifactIds: z.array(IdentifierSchema),
   })
   .strict();

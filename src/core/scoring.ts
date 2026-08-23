@@ -217,14 +217,24 @@ export function applyChallengeCorrections(
       cloneContestant(contestant),
     ]),
   ) as Partial<Record<ContestantId, ContestantResult>>;
+  const challengeIds = new Set(challenges.map((challenge) => challenge.id));
+  const correctedAdjudications = new Set(
+    history.flatMap((attack) =>
+      !challengeIds.has(attack.id) &&
+      attack.adjudication?.supersedesAdjudicationId
+        ? [attack.adjudication.supersedesAdjudicationId]
+        : [],
+    ),
+  );
   for (const challenge of challenges) {
     const challengeAdjudication = challenge.adjudication;
     const supersededId = challengeAdjudication?.supersedesAdjudicationId;
-    if (!supersededId) continue;
+    if (!supersededId || correctedAdjudications.has(supersededId)) continue;
     const prior = history.find(
       (attack) => attack.adjudication?.id === supersededId,
     );
     if (!prior?.adjudication) continue;
+    correctedAdjudications.add(supersededId);
     if (
       prior.adjudication.verdict === "valid" &&
       challengeAdjudication.verdict === "valid" &&

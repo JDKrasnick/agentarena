@@ -1819,6 +1819,11 @@ export class RoundEngine {
             currentDamage: defect.currentDamage,
             evidenceHistory: structuredClone(defect.evidenceHistory),
             status: defect.status,
+            ...(defect.supersededByAdjudicationId
+              ? {
+                  supersededByAdjudicationId: defect.supersededByAdjudicationId,
+                }
+              : {}),
             repairAllowance: defect.repairAllowance,
             repairAttemptsUsed: defect.repairAttemptsUsed,
             repairAttemptIds: structuredClone(defect.repairAttemptIds),
@@ -1851,6 +1856,11 @@ export class RoundEngine {
           multiplier: defect.currentMultiplier,
           evidenceBasis: evidence?.basis ?? ("legacy_unknown" as const),
           status: defect.status,
+          ...(defect.supersededByAdjudicationId
+            ? {
+                supersededByAdjudicationId: defect.supersededByAdjudicationId,
+              }
+            : {}),
           visibleReproducerArtifactIds: firstAttack
             ? [stableId("artifact", firstAttack.patchPath)]
             : [],
@@ -2557,6 +2567,11 @@ export class RoundEngine {
             currentDamage: defect.currentDamage,
             evidenceHistory: structuredClone(defect.evidenceHistory),
             status: defect.status,
+            ...(defect.supersededByAdjudicationId
+              ? {
+                  supersededByAdjudicationId: defect.supersededByAdjudicationId,
+                }
+              : {}),
             repairAllowance: defect.repairAllowance,
             repairAttemptsUsed: defect.repairAttemptsUsed,
             repairAttemptIds: structuredClone(defect.repairAttemptIds),
@@ -5553,9 +5568,10 @@ export class RoundEngine {
     );
     for (const attack of ordered) {
       attack.evidenceFingerprint = evidenceFingerprint(attack);
+      const adjudicationHistory = [...context.state.attacks, ...validated];
       const priorAdjudications = priorAdjudicationContext(
         attack,
-        context.state.attacks,
+        adjudicationHistory,
       );
       if (attack.origin.kind === "house") {
         const result = await validateHouseAttack({
@@ -5600,7 +5616,12 @@ export class RoundEngine {
           )
             await this.buildCaseBundle(context, result, round);
         }
-        await this.finalizeAttackAdjudication(context, result, round);
+        await this.finalizeAttackAdjudication(
+          context,
+          result,
+          round,
+          adjudicationHistory,
+        );
         validated.push(result);
         continue;
       }
@@ -5700,7 +5721,12 @@ export class RoundEngine {
           });
         }
       }
-      await this.finalizeAttackAdjudication(context, result, round);
+      await this.finalizeAttackAdjudication(
+        context,
+        result,
+        round,
+        adjudicationHistory,
+      );
       validated.push(result);
     }
     context.state.attacks.push(...validated);
@@ -6915,6 +6941,7 @@ export class RoundEngine {
     context: ArenaContext,
     result: Attack,
     round: RoundId,
+    history: readonly Attack[] = context.state.attacks,
   ): Promise<void> {
     result.adjudication = normalizeAttackAdjudication(result);
     const priorCanonicals = result.targets.map((target) =>
@@ -6997,10 +7024,7 @@ export class RoundEngine {
           : {}),
       });
     }
-    const challengeContext = priorAdjudicationContext(
-      result,
-      context.state.attacks,
-    );
+    const challengeContext = priorAdjudicationContext(result, history);
     const requestedPriorId =
       result.relatedAdjudicationId ?? result.challengeAdjudicationId;
     const referencedPrior = requestedPriorId
@@ -7050,7 +7074,7 @@ export class RoundEngine {
       });
     } else if (relationship === "overturn") {
       const supersededAttack = referencedPrior
-        ? context.state.attacks.find(
+        ? history.find(
             (attack) =>
               attack.adjudication?.id === referencedPrior.adjudicationId,
           )

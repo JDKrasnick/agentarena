@@ -78,4 +78,27 @@ describe("contextual adjudication challenges", () => {
     expect(context).toHaveLength(6);
     expect(context[0]?.adjudicationId).toBe(challenge.challengeAdjudicationId);
   });
+
+  it("exposes only the current tip of a supersession chain", () => {
+    const original = attack("original", 1);
+    original.adjudication = normalizeAttackAdjudication(original);
+    const replacement = attack("replacement", 2);
+    replacement.adjudication = {
+      ...normalizeAttackAdjudication(replacement),
+      relationship: "overturn",
+      priorAdjudicationId: original.adjudication.id,
+      supersedesAdjudicationId: original.adjudication.id,
+    };
+    const followUp = attack("follow-up", 3);
+    followUp.challengeAdjudicationId = original.adjudication.id;
+
+    const context = priorAdjudicationContext(followUp, [original, replacement]);
+
+    expect(context.map((entry) => entry.adjudicationId)).toContain(
+      replacement.adjudication.id,
+    );
+    expect(context.map((entry) => entry.adjudicationId)).not.toContain(
+      original.adjudication.id,
+    );
+  });
 });

@@ -182,6 +182,11 @@ export function applyCompletedRound(
         currentDamage: defect.currentDamage as Damage,
         evidenceHistory: structuredClone(defect.evidenceHistory),
         status: defect.status,
+        ...(defect.supersededByAdjudicationId
+          ? {
+              supersededByAdjudicationId: defect.supersededByAdjudicationId,
+            }
+          : {}),
         repairAllowance:
           defect.repairAllowance ??
           (defect.baseSeverity === "critical" || defect.baseSeverity === "high"

@@ -63,17 +63,31 @@ export function evidenceFingerprint(attack: Attack): string {
     .digest("hex");
 }
 
+export function supersededAdjudicationIds(
+  history: readonly Attack[],
+): Set<string> {
+  return new Set(
+    history.flatMap((candidate) =>
+      candidate.adjudication?.supersedesAdjudicationId
+        ? [candidate.adjudication.supersedesAdjudicationId]
+        : [],
+    ),
+  );
+}
+
 /** Select explicit or mechanically similar history, then add bounded semantic context. */
 export function priorAdjudicationContext(
   attack: Attack,
   history: readonly Attack[],
 ): PriorAdjudicationContext[] {
+  const superseded = supersededAdjudicationIds(history);
   const prior = history.filter(
     (candidate) =>
       typeof candidate.round === "number" &&
       typeof attack.round === "number" &&
       candidate.round < attack.round &&
       candidate.adjudication &&
+      !superseded.has(candidate.adjudication.id) &&
       candidate.targets.some((target) => attack.targets.includes(target)),
   );
   const browser = normalizedBrowserActionFingerprint(attack);

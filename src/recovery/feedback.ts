@@ -13,6 +13,7 @@ import type {
   RunState,
 } from "../core/types.js";
 import type { ArtifactStore } from "../artifacts/store.js";
+import { supersededAdjudicationIds } from "../attacks/challenges.js";
 import { z } from "zod";
 
 export const FEEDBACK_INLINE_LIMIT_BYTES = 24 * 1024;
@@ -329,6 +330,7 @@ export function projectContestantFeedback(options: {
   const starting =
     contestant.rounds.find((entry) => entry.round === options.roundId)
       ?.startingHealth ?? contestant.finalHealth;
+  const supersededAdjudications = supersededAdjudicationIds(history);
   const feedbackDraft = {
     version: options.state.schemaVersion >= 6 ? 3 : 2,
     runId: options.state.runId,
@@ -347,7 +349,8 @@ export function projectContestantFeedback(options: {
         (attack) =>
           attack.origin.kind === "contestant" &&
           attack.origin.contestant === options.contestantId &&
-          attack.adjudication,
+          attack.adjudication &&
+          !supersededAdjudications.has(attack.adjudication.id),
       )
       .toSorted(
         (left, right) =>
