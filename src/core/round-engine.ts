@@ -120,6 +120,7 @@ import { createRunId, sha256, stableId } from "./ids.js";
 import {
   applyChallengeCorrections,
   calculateHealth,
+  challengeCorrectionRecoil,
   DAMAGE_BY_SEVERITY,
   healDefect,
   normalizeAttackAdjudication,
@@ -5743,8 +5744,17 @@ export class RoundEngine {
     const resolved = resolveRound(context.state.contestants, validated, round);
     context.state.contestants = resolved.contestants;
     for (const attack of validated) {
+      const correctionRecoil = challengeCorrectionRecoil(
+        context.state.attacks,
+        attack,
+      );
+      if (correctionRecoil) {
+        attack.recoil = correctionRecoil;
+        continue;
+      }
       if (
         attack.origin.kind === "contestant" &&
+        attack.adjudication?.relationship !== "overturn" &&
         [
           "invalid",
           "duplicate",
@@ -7040,6 +7050,8 @@ export class RoundEngine {
       (result.challengeAdjudicationId &&
         requestedPriorId !== result.challengeAdjudicationId)
     )
+      relationship = "unresolved";
+    if (relationship === "overturn" && result.adjudication.verdict === "unable")
       relationship = "unresolved";
     if (relationship === "affirm") {
       result.damageActive = false;

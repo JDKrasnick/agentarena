@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  challengeRelationshipFailure,
   evidenceFingerprint,
   normalizedBrowserActionFingerprint,
   priorAdjudicationContext,
@@ -100,5 +101,29 @@ describe("contextual adjudication challenges", () => {
     expect(context.map((entry) => entry.adjudicationId)).not.toContain(
       original.adjudication.id,
     );
+  });
+
+  it("rejects invalid inferred relationship links", () => {
+    const prior = attack("prior", 1);
+    prior.adjudication = normalizeAttackAdjudication(prior);
+    const context = priorAdjudicationContext(attack("challenge", 2), [prior]);
+
+    expect(
+      challengeRelationshipFailure(
+        {},
+        { relationship: "overturn", priorAdjudicationId: "missing" },
+        context,
+      ),
+    ).toBe("Inferred challenge references unavailable adjudication missing");
+    expect(
+      challengeRelationshipFailure(
+        {},
+        {
+          relationship: "affirm",
+          priorAdjudicationId: prior.adjudication.id,
+        },
+        context,
+      ),
+    ).toBeUndefined();
   });
 });

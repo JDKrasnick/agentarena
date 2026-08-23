@@ -23,6 +23,45 @@ export interface PriorAdjudicationContext {
   severity?: AdjudicationRecord["severity"];
 }
 
+interface ChallengeRelationshipVerdict {
+  relationship?: "independent" | "affirm" | "overturn" | "unresolved";
+  priorAdjudicationId?: string;
+}
+
+/** Return a targeted retry reason when a judge emits an invalid decision link. */
+export function challengeRelationshipFailure(
+  attack: Pick<Attack, "challengeAdjudicationId">,
+  verdict: ChallengeRelationshipVerdict,
+  priorAdjudications: readonly PriorAdjudicationContext[],
+): string | undefined {
+  const explicitId = attack.challengeAdjudicationId;
+  const relationship = verdict.relationship;
+  const relatedId = verdict.priorAdjudicationId;
+  if (explicitId) {
+    if (
+      !priorAdjudications.some((entry) => entry.adjudicationId === explicitId)
+    )
+      return `Explicit challenge references unavailable adjudication ${explicitId}`;
+    if (
+      !relationship ||
+      relationship === "independent" ||
+      relatedId !== explicitId
+    )
+      return "Explicit challenge verdict omitted a valid related relationship";
+    return undefined;
+  }
+  if (!relationship || relationship === "independent") {
+    return relatedId
+      ? "Independent verdict unexpectedly referenced a prior adjudication"
+      : undefined;
+  }
+  if (!relatedId)
+    return "Inferred challenge verdict omitted its related adjudication";
+  if (!priorAdjudications.some((entry) => entry.adjudicationId === relatedId))
+    return `Inferred challenge references unavailable adjudication ${relatedId}`;
+  return undefined;
+}
+
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object")

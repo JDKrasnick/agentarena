@@ -220,6 +220,7 @@ export function projectContestantFeedback(options: {
   const history = options.state.attacks.filter(
     (attack) => roundOrder(attack.round) <= roundOrder(options.roundId),
   );
+  const supersededAdjudications = supersededAdjudicationIds(history);
   const activeDefectIds = new Set(
     contestant.healthLedger.activeDefects.map((entry) => entry.rootDefectId),
   );
@@ -230,7 +231,9 @@ export function projectContestantFeedback(options: {
         attack.targets.includes(options.contestantId) &&
         attack.rootDefectId &&
         attack.severity &&
-        attack.damage,
+        attack.damage &&
+        (!attack.adjudication ||
+          !supersededAdjudications.has(attack.adjudication.id)),
     )
     .sort(
       (left, right) =>
@@ -251,7 +254,9 @@ export function projectContestantFeedback(options: {
     )
     .map((attack) => {
       const canonical = contestant.healthLedger.canonicalDefects?.find(
-        (defect) => defect.rootDefectId === attack.rootDefectId,
+        (defect) =>
+          defect.rootDefectId === attack.rootDefectId &&
+          defect.status !== "superseded",
       );
       return {
         attackId: attack.id,
@@ -330,7 +335,6 @@ export function projectContestantFeedback(options: {
   const starting =
     contestant.rounds.find((entry) => entry.round === options.roundId)
       ?.startingHealth ?? contestant.finalHealth;
-  const supersededAdjudications = supersededAdjudicationIds(history);
   const feedbackDraft = {
     version: options.state.schemaVersion >= 6 ? 3 : 2,
     runId: options.state.runId,

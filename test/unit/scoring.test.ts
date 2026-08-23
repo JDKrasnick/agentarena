@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyChallengeCorrections,
+  challengeCorrectionRecoil,
   healDefect,
   normalizeAttackAdjudication,
   PARTIAL_DAMAGE_BY_SEVERITY,
@@ -124,7 +125,7 @@ describe("ledger scoring", () => {
     expect(final.b?.finalHealth).toBe(70);
   });
 
-  it("withdraws active damage when a valid verdict is overturned to unable", () => {
+  it("keeps prior damage when an unable verdict claims to overturn it", () => {
     const prior = attacks()[0]!;
     prior.adjudication = normalizeAttackAdjudication(prior);
     const afterPrior = resolveRound(
@@ -155,12 +156,40 @@ describe("ledger scoring", () => {
       [challenge],
       2,
     );
-    expect(corrected.b?.finalHealth).toBe(100);
-    expect(corrected.b?.healthLedger.activeDefects).toEqual([]);
+    expect(corrected.b?.finalHealth).toBe(70);
+    expect(corrected.b?.healthLedger.activeDefects).toHaveLength(1);
     expect(corrected.b?.healthLedger.canonicalDefects?.[0]).toMatchObject({
-      status: "superseded",
-      supersededByAdjudicationId: challenge.adjudication?.id,
+      status: "active",
     });
+    expect(
+      corrected.b?.healthEvents.filter(
+        (event) => event.type === "score_correction",
+      ),
+    ).toEqual([]);
+  });
+
+  it("reports original-rank recoil for a valid-to-rejected overturn", () => {
+    const prior = attacks()[0]!;
+    prior.rank = 1;
+    prior.adjudication = normalizeAttackAdjudication(prior);
+    const challenge: Attack = {
+      ...attacks()[1]!,
+      id: "rejected-overturn",
+      rank: 3,
+      round: 2,
+      status: "judge_rejected",
+    };
+    challenge.adjudication = {
+      ...normalizeAttackAdjudication(challenge),
+      relationship: "overturn",
+      priorAdjudicationId: prior.adjudication.id,
+      supersedesAdjudicationId: prior.adjudication.id,
+      scoreEffect: "none",
+      exactAmount: 0,
+      recoilAmount: undefined,
+    };
+
+    expect(challengeCorrectionRecoil([prior, challenge], challenge)).toBe(5);
   });
 
   it("applies only one correction when two challenges name the same decision", () => {

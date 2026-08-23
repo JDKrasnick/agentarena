@@ -37,6 +37,27 @@ function expectedRecoil(attack: Attack): 0 | 5 | 10 | 15 {
     : 0;
 }
 
+/** Return the original-rank recoil applied by a valid-to-rejected overturn. */
+export function challengeCorrectionRecoil(
+  history: readonly Attack[],
+  challenge: Attack,
+): 5 | 10 | 15 | undefined {
+  const adjudication = challenge.adjudication;
+  if (
+    adjudication?.relationship !== "overturn" ||
+    adjudication.verdict !== "rejected" ||
+    !adjudication.supersedesAdjudicationId
+  )
+    return undefined;
+  const prior = history.find(
+    (attack) =>
+      attack.adjudication?.id === adjudication.supersedesAdjudicationId,
+  );
+  const recoil =
+    prior?.adjudication?.verdict === "valid" ? expectedRecoil(prior) : 0;
+  return recoil || undefined;
+}
+
 function adjudicationRecoil(
   attack: Attack,
   adjudication: AdjudicationRecord,
@@ -229,7 +250,12 @@ export function applyChallengeCorrections(
   for (const challenge of challenges) {
     const challengeAdjudication = challenge.adjudication;
     const supersededId = challengeAdjudication?.supersedesAdjudicationId;
-    if (!supersededId || correctedAdjudications.has(supersededId)) continue;
+    if (
+      !supersededId ||
+      challengeAdjudication.verdict === "unable" ||
+      correctedAdjudications.has(supersededId)
+    )
+      continue;
     const prior = history.find(
       (attack) => attack.adjudication?.id === supersededId,
     );
