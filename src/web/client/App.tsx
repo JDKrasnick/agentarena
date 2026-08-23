@@ -157,6 +157,7 @@ function OpenIcon() {
 function Fighter({
   id,
   fighter,
+  browserSessions,
   onSteer,
   onOpen,
   isHistorical,
@@ -165,6 +166,7 @@ function Fighter({
 }: {
   id: ContestantId;
   fighter: DashboardContestant;
+  browserSessions: DashboardBrowserSession[];
   onSteer: (id: ContestantId, note: string) => Promise<void>;
   onOpen: (id: ContestantId) => void;
   isHistorical: boolean;
@@ -198,6 +200,7 @@ function Fighter({
           <p className="fighter-label">Fighter {id.toUpperCase()}</p>
           <h2>{provider}</h2>
           <p className="model">{fighter.model ?? "Default model"}</p>
+          <BrowserSessionAction sessions={browserSessions} actor={provider} />
         </div>
         <div className="fighter-actions">
           <span className={`status status-${fighter.status}`}>
@@ -363,6 +366,7 @@ function RoundNavigator({
 function FighterDetail({
   id,
   fighter,
+  browserSessions,
   round,
   attacks,
   onBack,
@@ -373,6 +377,7 @@ function FighterDetail({
 }: {
   id: ContestantId;
   fighter: DashboardContestant;
+  browserSessions: DashboardBrowserSession[];
   round: RoundSelection;
   attacks: DashboardState["attacks"];
   onBack: () => void;
@@ -405,6 +410,7 @@ function FighterDetail({
           <p>Fighter {id.toUpperCase()}</p>
           <h1 id="fighter-detail-title">{provider}</h1>
           <span>{fighter.model ?? "Default model"}</span>
+          <BrowserSessionAction sessions={browserSessions} actor={provider} />
         </div>
         <div className="detail-health">
           <span>{roundLabel(round)}</span>
@@ -791,19 +797,14 @@ function ThemePicker({
 
 export function BrowserSessionAction({
   sessions,
-  contestants,
+  actor,
 }: {
   sessions: DashboardBrowserSession[];
-  contestants: DashboardState["contestants"];
+  actor: string;
 }) {
   const session = sessions.at(-1);
   if (!session) return null;
   const multiple = sessions.length > 1;
-  const actor = session.contestantId
-    ? contestants[session.contestantId].provider === "unknown"
-      ? `Fighter ${session.contestantId.toUpperCase()}`
-      : title(contestants[session.contestantId].provider)
-    : "Arena";
   const description = multiple
     ? `${String(sessions.length)} browser sessions are active. ${actor} is using the most recent session: ${session.label}.`
     : `${actor} is using the browser for ${session.label}.`;
@@ -908,6 +909,7 @@ interface DeveloperDashboardProps extends AlternateArenaProps {
 function DeveloperAgentPanel({
   id,
   fighter,
+  browserSessions,
   isHistorical,
   canSteer,
   steeringUnavailable,
@@ -916,6 +918,7 @@ function DeveloperAgentPanel({
 }: {
   id: ContestantId;
   fighter: DashboardContestant;
+  browserSessions: DashboardBrowserSession[];
   isHistorical: boolean;
   canSteer: boolean;
   steeringUnavailable: string;
@@ -936,6 +939,7 @@ function DeveloperAgentPanel({
         <div>
           <strong>{provider}</strong>
           <span>{fighter.model ?? "Default model"}</span>
+          <BrowserSessionAction sessions={browserSessions} actor={provider} />
         </div>
         <div className="developer-health">
           <b>{fighter.health}</b>
@@ -1144,6 +1148,9 @@ export function DeveloperDashboardArena({
             <DeveloperAgentPanel
               id={id}
               fighter={contestants[id]}
+              browserSessions={state.browserSessions.filter(
+                (session) => session.contestantId === id,
+              )}
               isHistorical={isHistorical}
               canSteer={canSteer}
               steeringUnavailable={steeringUnavailable}
@@ -1276,10 +1283,12 @@ function HealthHistory({
 function NightTransitStatus({
   id,
   fighter,
+  browserSessions,
   onFighter,
 }: {
   id: ContestantId;
   fighter: DashboardContestant;
+  browserSessions: DashboardBrowserSession[];
   onFighter: (id: ContestantId) => void;
 }) {
   const passed = fighter.checks.filter(
@@ -1291,6 +1300,10 @@ function NightTransitStatus({
       <div>
         <strong>{title(fighter.provider)} line</strong>
         <span>{fighter.model ?? "Default model"}</span>
+        <BrowserSessionAction
+          sessions={browserSessions}
+          actor={title(fighter.provider)}
+        />
       </div>
       <dl>
         <div>
@@ -1461,6 +1474,9 @@ export function NightTransitArena({
               <NightTransitStatus
                 id={id}
                 fighter={contestants[id]}
+                browserSessions={state.browserSessions.filter(
+                  (session) => session.contestantId === id,
+                )}
                 onFighter={onFighter}
                 key={id}
               />
@@ -1662,6 +1678,7 @@ export function NightTransitArena({
 function LabBench({
   id,
   fighter,
+  browserSessions,
   onFighter,
   onSteer,
   canSteer,
@@ -1670,6 +1687,7 @@ function LabBench({
 }: {
   id: ContestantId;
   fighter: DashboardContestant;
+  browserSessions: DashboardBrowserSession[];
   onFighter: (id: ContestantId) => void;
   onSteer: (id: ContestantId, note: string) => Promise<void>;
   canSteer: boolean;
@@ -1684,6 +1702,10 @@ function LabBench({
         <div>
           <strong>{title(fighter.provider)}</strong>
           <span>{fighter.model ?? "Default model"}</span>
+          <BrowserSessionAction
+            sessions={browserSessions}
+            actor={title(fighter.provider)}
+          />
         </div>
         <b>Bench {id.toUpperCase()}</b>
       </header>
@@ -1832,6 +1854,9 @@ export function TestLabArena({
         <LabBench
           id="a"
           fighter={contestants.a}
+          browserSessions={state.browserSessions.filter(
+            (session) => session.contestantId === "a",
+          )}
           onFighter={onFighter}
           onSteer={onSteer}
           canSteer={canSteer}
@@ -1927,6 +1952,9 @@ export function TestLabArena({
         <LabBench
           id="b"
           fighter={contestants.b}
+          browserSessions={state.browserSessions.filter(
+            (session) => session.contestantId === "b",
+          )}
           onFighter={onFighter}
           onSteer={onSteer}
           canSteer={canSteer}
@@ -1961,7 +1989,7 @@ export function TestLabArena({
   );
 }
 
-function BroadcastArena({
+export function BroadcastArena({
   state,
   rounds,
   selectedRound,
@@ -1992,25 +2020,41 @@ function BroadcastArena({
           <span className="feed-label">
             {roundLabel(selectedRound)} · {stage}
           </span>
-          <button
-            className="broadcast-fighter broadcast-fighter-a"
-            type="button"
-            onClick={() => onFighter("a")}
-          >
+          <article className="broadcast-fighter broadcast-fighter-a">
+            <button
+              className="broadcast-fighter-hitbox"
+              type="button"
+              aria-label={`Inspect ${title(contestants.a.provider)}`}
+              onClick={() => onFighter("a")}
+            />
             <ProviderDisc fighter={contestants.a} id="a" />
             <strong>{title(contestants.a.provider)}</strong>
             <small>{contestants.a.activity.replaceAll("_", " ")}</small>
-          </button>
+            <BrowserSessionAction
+              sessions={state.browserSessions.filter(
+                (session) => session.contestantId === "a",
+              )}
+              actor={title(contestants.a.provider)}
+            />
+          </article>
           <span className="broadcast-vs">VS</span>
-          <button
-            className="broadcast-fighter broadcast-fighter-b"
-            type="button"
-            onClick={() => onFighter("b")}
-          >
+          <article className="broadcast-fighter broadcast-fighter-b">
+            <button
+              className="broadcast-fighter-hitbox"
+              type="button"
+              aria-label={`Inspect ${title(contestants.b.provider)}`}
+              onClick={() => onFighter("b")}
+            />
             <ProviderDisc fighter={contestants.b} id="b" />
             <strong>{title(contestants.b.provider)}</strong>
             <small>{contestants.b.activity.replaceAll("_", " ")}</small>
-          </button>
+            <BrowserSessionAction
+              sessions={state.browserSessions.filter(
+                (session) => session.contestantId === "b",
+              )}
+              actor={title(contestants.b.provider)}
+            />
+          </article>
           <div className="scorebug">
             <div>
               <b>
@@ -2155,16 +2199,23 @@ export function RetroTacticsArena({
     <main className="retro-tactics">
       <header className="tactics-matchup">
         {(["a", "b"] as const).map((id) => (
-          <button
-            className={`tactics-status tactics-status-${id}`}
-            type="button"
-            key={id}
-            onClick={() => onFighter(id)}
-          >
+          <article className={`tactics-status tactics-status-${id}`} key={id}>
+            <button
+              className="tactics-status-hitbox"
+              type="button"
+              aria-label={`Inspect ${title(contestants[id].provider)}`}
+              onClick={() => onFighter(id)}
+            />
             <ProviderDisc fighter={contestants[id]} id={id} />
             <span className="tactics-identity">
               <strong>{title(contestants[id].provider)}</strong>
               <small>{contestants[id].model ?? "Default model"}</small>
+              <BrowserSessionAction
+                sessions={state.browserSessions.filter(
+                  (session) => session.contestantId === id,
+                )}
+                actor={title(contestants[id].provider)}
+              />
             </span>
             <span className="tactics-hp">
               <b>{contestants[id].health}</b>
@@ -2183,7 +2234,7 @@ export function RetroTacticsArena({
               </b>
               <small>checks</small>
             </span>
-          </button>
+          </article>
         ))}
         <span className="tactics-versus" aria-hidden="true">
           VS
@@ -2683,10 +2734,6 @@ export function App() {
             <i />
             {hasResult ? "Complete" : connected ? "Live" : "Reconnecting"}
           </span>
-          <BrowserSessionAction
-            sessions={state.browserSessions}
-            contestants={state.contestants}
-          />
           {state.links.map((link) => (
             <a href={link.url} target="_blank" rel="noreferrer" key={link.url}>
               {link.label} ↗
@@ -2717,6 +2764,15 @@ export function App() {
           ) : null}
         </div>
       </header>
+
+      <div className="arena-browser-event">
+        <BrowserSessionAction
+          sessions={state.browserSessions.filter(
+            (session) => session.contestantId === undefined,
+          )}
+          actor="Arena"
+        />
+      </div>
 
       {themeWarning ? (
         <div className="theme-warning" role="status">
@@ -2815,6 +2871,9 @@ export function App() {
               <FighterDetail
                 id={selectedFighter}
                 fighter={viewContestants[selectedFighter]}
+                browserSessions={state.browserSessions.filter(
+                  (session) => session.contestantId === selectedFighter,
+                )}
                 round={selectedRound}
                 attacks={viewAttacks}
                 backLabel={
@@ -2851,6 +2910,9 @@ export function App() {
                   <Fighter
                     id="a"
                     fighter={viewContestants.a}
+                    browserSessions={state.browserSessions.filter(
+                      (session) => session.contestantId === "a",
+                    )}
                     onSteer={steer}
                     onOpen={setSelectedFighter}
                     isHistorical={selectedRound !== "live"}
@@ -2864,6 +2926,9 @@ export function App() {
                   <Fighter
                     id="b"
                     fighter={viewContestants.b}
+                    browserSessions={state.browserSessions.filter(
+                      (session) => session.contestantId === "b",
+                    )}
                     onSteer={steer}
                     onOpen={setSelectedFighter}
                     isHistorical={selectedRound !== "live"}
