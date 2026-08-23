@@ -39,7 +39,7 @@ describe("built CLI smoke flow", () => {
     expect(help.stdout).toContain("review");
     expect(help.stdout).toContain("defend");
     expect(help.stdout).toContain("resume");
-    await execa(
+    const fight = await execa(
       process.execPath,
       [
         cli,
@@ -52,8 +52,19 @@ describe("built CLI smoke flow", () => {
         "--models",
         "codex-test-model,claude-test-model",
         "--yes",
+        "--no-window",
       ],
       { cwd: repositoryRoot, env, timeout: 60_000 },
+    );
+    expect(fight.stdout).toContain("Agent Arena permission plan");
+    expect(fight.stdout).toContain(
+      "native_subprocess_execution: required, high risk, both, advisory",
+    );
+    expect(fight.stdout).toContain(
+      "configured provider integrations, including MCP",
+    );
+    expect(fight.stdout).toContain(
+      "Permission plan approved noninteractively via --yes.",
     );
     const runsRoot = path.join(repositoryRoot, ".agent-arena", "runs");
     const [runId] = await readdir(runsRoot);
@@ -204,4 +215,137 @@ describe("built CLI smoke flow", () => {
       status: "pending",
     });
   }, 90_000);
+
+  it("recovers provider transport with an exact frozen-input replacement", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const bin = await mkdtemp(path.join(os.tmpdir(), "arena-recovery-bin-"));
+    const marker = path.join(bin, "transport-failed-once");
+    await writeFile(
+      path.join(bin, "codex"),
+      `#!/bin/sh
+if [ "$AGENT_ARENA_STAGE" = "implement" ] && [ ! -f "$AGENT_ARENA_TRANSPORT_MARKER" ]; then
+  : > "$AGENT_ARENA_TRANSPORT_MARKER"
+  echo "MCP OAuth authentication failed" >&2
+  exit 8
+fi
+exec "${process.execPath}" "${fixtureAgent}" "$@"
+`,
+    );
+    await writeFile(
+      path.join(bin, "claude"),
+      `#!/bin/sh
+exec "${process.execPath}" "${fixtureAgent}" "$@"
+`,
+    );
+    await Promise.all([
+      chmod(path.join(bin, "codex"), 0o755),
+      chmod(path.join(bin, "claude"), 0o755),
+    ]);
+    const result = await execa(
+      process.execPath,
+      [
+        cli,
+        "fight",
+        "Lowercase slugs and collapse whitespace.",
+        "--test",
+        "node --test",
+        "--agents",
+        "codex,claude",
+        "--yes",
+        "--no-window",
+      ],
+      {
+        cwd: repositoryRoot,
+        env: {
+          ...process.env,
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+          AGENT_ARENA_TRANSPORT_MARKER: marker,
+        },
+        timeout: 90_000,
+      },
+    );
+
+    const runsRoot = path.join(repositoryRoot, ".agent-arena", "runs");
+    const runIds = await readdir(runsRoot);
+    expect(runIds).toHaveLength(2);
+    const summaries = await Promise.all(
+      runIds.map(async (runId) => ({
+        runId,
+        value: JSON.parse(
+          await readFile(path.join(runsRoot, runId, "result.json"), "utf8"),
+        ) as {
+          status: string;
+          provenance: {
+            parentRunId?: string;
+            transportRestartOrdinal?: number;
+          };
+        },
+      })),
+    );
+    const child = summaries.find((entry) => entry.value.provenance.parentRunId);
+    expect(child?.value).toMatchObject({
+      status: "complete",
+      provenance: { transportRestartOrdinal: 1 },
+    });
+    const parentId = child?.value.provenance.parentRunId;
+    expect(parentId).toBeTruthy();
+    expect(result.stdout).toContain(
+      `Run chain: ${parentId} -> ${child?.runId}`,
+    );
+    const recovery = JSON.parse(
+      await readFile(
+        path.join(runsRoot, parentId!, "transport-recovery.json"),
+        "utf8",
+      ),
+    ) as { disposition: string; replacementRunId?: string };
+    expect(recovery).toMatchObject({
+      disposition: "provider_recovered",
+      replacementRunId: child?.runId,
+    });
+    const specs = await Promise.all(
+      [parentId!, child!.runId].map(
+        async (runId) =>
+          JSON.parse(
+            await readFile(path.join(runsRoot, runId, "run-spec.json"), "utf8"),
+          ) as {
+            baseCommit: string;
+            task: { task: string; sources: Array<{ contentHash: string }> };
+            topology: unknown;
+            commands: unknown;
+            budgets: unknown;
+            permissions: unknown;
+          },
+      ),
+    );
+    const parentSpec = specs[0];
+    const childSpec = specs[1];
+    if (!parentSpec || !childSpec)
+      throw new Error("Replacement RunSpecs were not persisted");
+    expect(childSpec).toMatchObject({
+      baseCommit: parentSpec.baseCommit,
+      topology: parentSpec.topology,
+      commands: parentSpec.commands,
+      budgets: parentSpec.budgets,
+      permissions: parentSpec.permissions,
+    });
+    expect(childSpec.task.task).toBe(parentSpec.task.task);
+    expect(childSpec.task.sources.map((source) => source.contentHash)).toEqual(
+      parentSpec.task.sources.map((source) => source.contentHash),
+    );
+    const reconnaissance = await Promise.all(
+      [parentId!, child!.runId].map(
+        async (runId) =>
+          JSON.parse(
+            await readFile(
+              path.join(runsRoot, runId, "reconnaissance.json"),
+              "utf8",
+            ),
+          ) as {
+            inputHash: string;
+            sources: Array<{ contentHash: string }>;
+          },
+      ),
+    );
+    expect(reconnaissance[1]).toEqual(reconnaissance[0]);
+  }, 120_000);
 });

@@ -2,6 +2,7 @@ import {
   RoundEngine,
   type ArenaDependencies,
   type FightOutcome,
+  type ReplacementFightOptions,
 } from "./round-engine.js";
 import type { FightConfig } from "./types.js";
 import type { ReconnaissanceSnapshot, ResumeOptions } from "./round-engine.js";
@@ -22,6 +23,19 @@ export class Arena {
     reconnaissance?: ReconnaissanceSnapshot,
   ): Promise<FightOutcome> {
     return this.roundEngine.fight(config, externalSignal, reconnaissance);
+  }
+
+  fightReplacement(
+    config: FightConfig,
+    replacement: ReplacementFightOptions,
+    externalSignal?: AbortSignal,
+  ): Promise<FightOutcome> {
+    return this.roundEngine.fight(
+      config,
+      externalSignal,
+      undefined,
+      replacement,
+    );
   }
 
   resume(

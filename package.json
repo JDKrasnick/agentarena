@@ -23,7 +23,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && npm run build:web",
+    "build:web": "vite build",
     "dev": "tsx src/cli.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -36,6 +37,9 @@
     "test:smoke": "vitest run test/smoke",
     "test:coverage": "vitest run test/unit test/integration --coverage.enabled --coverage.reporter=text --coverage.reporter=json-summary",
     "test:live": "tsx test/live/run.ts",
+    "demo:dashboard": "tsx test/live/dashboard-demo.tsx",
+    "demo:web": "npm run build:web && tsx test/live/web-dashboard-demo.ts",
+    "demo:window": "npm run build && tsx test/live/web-dashboard-demo.ts --window",
     "test:package": "npm run build && npm pack --dry-run",
     "prepublishOnly": "npm run build"
   },
@@ -48,21 +52,33 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@lobehub/icons-static-png": "^1.95.0",
     "commander": "^14.0.0",
     "execa": "^9.6.0",
     "playwright-core": "^1.62.1",
+    "ink": "^6.8.0",
+    "ink-link": "^5.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "yaml": "^2.8.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.1.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^10.8.0",
+    "ink-testing-library": "^4.0.0",
     "prettier": "^3.6.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.38.0",
+    "vite": "^7.3.6",
     "vitest": "^4.1.10"
+  },
+  "optionalDependencies": {
+    "electron": "^43.4.0"
   }
 }

@@ -1,0 +1,349 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+import {
+  initialDashboardState,
+  projectEvent,
+} from "../../src/dashboard/state.js";
+import {
+  CompactAgentOutput,
+  CompactRoundNav,
+  DeveloperDashboardArena,
+  FullAgentOutput,
+  NightTransitArena,
+  RetroTacticsArena,
+  TestLabArena,
+} from "../../src/web/client/App.js";
+
+describe("dashboard UI contracts", () => {
+  it("exposes the selected compact round to assistive technology", () => {
+    const state = initialDashboardState();
+    state.round = 2;
+    state.result = { roundsCompleted: 3 };
+
+    const roundTwo = renderToStaticMarkup(
+      <CompactRoundNav
+        state={state}
+        rounds={[1, 2, 3]}
+        selected={2}
+        onSelect={() => undefined}
+      />,
+    );
+    const live = renderToStaticMarkup(
+      <CompactRoundNav
+        state={state}
+        rounds={[1, 2, 3]}
+        selected="live"
+        onSelect={() => undefined}
+      />,
+    );
+
+    expect(roundTwo).toContain('aria-current="page">R2</button>');
+    expect(live).toContain('aria-current="page">Live</button>');
+  });
+
+  it("enables invocation-only historical rounds during a later live round", () => {
+    const state = initialDashboardState();
+    state.status = "running";
+    state.round = 2;
+    state.contestants.a.invocations.push({
+      id: "a-implementation",
+      stage: "implement",
+      status: "succeeded",
+      round: 1,
+      startedAt: "2026-08-19T12:00:00.000Z",
+    });
+
+    const markup = renderToStaticMarkup(
+      <CompactRoundNav
+        state={state}
+        rounds={[1, 2, 3]}
+        selected="live"
+        onSelect={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain(">R1</button>");
+    expect(markup).not.toContain('disabled="">R1</button>');
+    expect(markup).toContain('disabled="">R3</button>');
+  });
+
+  it("exposes the selected Developer Dashboard round to assistive technology", () => {
+    const state = initialDashboardState();
+    state.round = 2;
+    state.status = "running";
+
+    const markup = renderToStaticMarkup(
+      <DeveloperDashboardArena
+        state={state}
+        rounds={[1, 2, 3]}
+        selectedRound={2}
+        contestants={state.contestants}
+        attacks={state.attacks}
+        stage="Validate attacks"
+        onRound={() => undefined}
+        onFighter={() => undefined}
+        onSteer={() => Promise.resolve()}
+        canSteer={false}
+        steeringUnavailable="Unavailable"
+      />,
+    );
+
+    expect(markup).toContain('aria-current="page"');
+    expect(markup).toContain("Round 2");
+  });
+
+  it("derives Tactics identities and latest routes from recorded state", () => {
+    const state = initialDashboardState();
+    state.contestants.a.provider = "gemini";
+    state.contestants.b.provider = "opencode";
+    state.contestants.a.healthChanges.push({
+      sequence: 4,
+      amount: 10,
+      health: 100,
+      reason: "Latest repair",
+      round: 2,
+    });
+    state.contestants.b.healthChanges.push({
+      sequence: 3,
+      amount: 10,
+      health: 100,
+      reason: "Older repair",
+      round: 2,
+    });
+    state.attacks.push({
+      id: "house-check",
+      phase: "resolved",
+      status: "resolved",
+      target: "both",
+      detail: "Neutral verification completed",
+      round: 2,
+    });
+
+    const markup = renderToStaticMarkup(
+      <RetroTacticsArena
+        state={state}
+        rounds={[1, 2, 3]}
+        selectedRound="live"
+        contestants={state.contestants}
+        attacks={state.attacks}
+        stage="Validate attacks"
+        onRound={() => undefined}
+        onFighter={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("Gemini");
+    expect(markup).toContain("Opencode");
+    expect(markup).toContain("route-repair route-a");
+    expect(markup).not.toContain("route-latest route-a");
+    expect(markup).toContain("Neutral verification completed");
+  });
+
+  it("renders Night Transit routes only for recorded lifecycles and keeps replay read-only", () => {
+    const state = initialDashboardState();
+    state.contestants.a.provider = "gemini";
+    state.contestants.b.provider = "opencode";
+    state.attacks.push({
+      id: "boundary",
+      round: 2,
+      phase: "mounting",
+      status: "mounting",
+      attacker: "a",
+      target: "b",
+      detail: "Boundary claim",
+    });
+    const markup = renderToStaticMarkup(
+      <NightTransitArena
+        state={state}
+        rounds={[1, 2, 3]}
+        selectedRound={2}
+        contestants={state.contestants}
+        attacks={state.attacks}
+        stage="Mount attacks"
+        onRound={() => undefined}
+        onFighter={() => undefined}
+        onSteer={() => Promise.resolve()}
+        canSteer={true}
+        steeringUnavailable="Unavailable"
+      />,
+    );
+    expect(markup).toContain("route-a");
+    expect(markup).not.toContain("route-b");
+    expect(markup).toContain("transit-track track-a");
+    expect(markup).toContain("transit-track track-b");
+    expect(markup).toContain("transit-route-highlight route-a");
+    expect(markup).toContain("Line A");
+    expect(markup).toContain("Line B");
+    expect(markup).toContain("Boundary claim");
+    expect(markup).toContain("Read-only recorded state");
+    expect(markup).toContain("Inspect Gemini");
+    expect(markup).toContain("Inspect Opencode");
+    expect(markup).toContain("Recorded route totals");
+    expect(markup).toContain("Attack routes");
+    expect(markup).toContain("Verified");
+    expect(markup).toContain("Repaired");
+    expect(markup).not.toContain("One-time note for");
+  });
+
+  it("renders an intentional compact Night Transit empty state", () => {
+    const state = initialDashboardState();
+    const markup = renderToStaticMarkup(
+      <NightTransitArena
+        state={state}
+        rounds={[1, 2, 3]}
+        selectedRound={3}
+        contestants={state.contestants}
+        attacks={[]}
+        stage="Review attacks"
+        onRound={() => undefined}
+        onFighter={() => undefined}
+        onSteer={() => Promise.resolve()}
+        canSteer={false}
+        steeringUnavailable="Unavailable"
+      />,
+    );
+
+    expect(markup).toContain("No recorded services");
+    expect(markup).toContain("The network is ready");
+  });
+
+  it("renders Test Lab from invocation, check, health, and adjudication facts", () => {
+    const state = initialDashboardState();
+    state.contestants.a.provider = "codex";
+    state.contestants.b.provider = "claude";
+    state.contestants.a.invocations.push({
+      id: "a-review",
+      stage: "review_attacks",
+      status: "succeeded",
+      round: 2,
+      startedAt: "2026-08-20T12:00:00.000Z",
+      durationMs: 2500,
+    });
+    state.contestants.a.checks.push({
+      id: "npm test",
+      status: "passed",
+      round: 2,
+    });
+    state.contestants.b.healthChanges.push({
+      sequence: 4,
+      amount: -30,
+      health: 70,
+      reason: "High defect",
+      round: 2,
+      attackId: "race",
+    });
+    state.attacks.push(
+      {
+        id: "race",
+        round: 2,
+        phase: "mounting",
+        status: "mounting",
+        attacker: "a",
+        target: "b",
+        detail: "Concurrent writes commit twice",
+      },
+      {
+        id: "race",
+        round: 2,
+        phase: "landed",
+        status: "landed",
+        attacker: "a",
+        target: "b",
+        severity: "high",
+        damage: 30,
+      },
+    );
+    const markup = renderToStaticMarkup(
+      <TestLabArena
+        state={state}
+        rounds={[1, 2, 3]}
+        selectedRound="live"
+        contestants={state.contestants}
+        attacks={state.attacks}
+        stage="Verify attacks"
+        onRound={() => undefined}
+        onFighter={() => undefined}
+        onSteer={() => Promise.resolve()}
+        canSteer={true}
+        steeringUnavailable="Unavailable"
+      />,
+    );
+    expect(markup).toContain("Concurrent writes commit twice");
+    expect(markup).toContain("2.5s · succeeded");
+    expect(markup).toContain("npm test");
+    expect(markup).toContain("30 HP");
+    expect(markup).toContain("Codex");
+    expect(markup).toContain("Claude");
+    expect(markup).toContain("Check samples");
+    expect(markup).toContain("lab-invocation-a");
+    expect(markup).toContain("lab-fact-claim");
+    expect(markup).toContain("lab-fact-damage");
+    expect(markup).toContain("lab-check-a");
+    expect(markup).toContain("npm test: passed");
+    expect(markup).toContain(">P</span>");
+    expect(markup).toContain("100 to 70 HP; low 70 HP");
+    expect(markup).toContain('points="0,4 100,12.4"');
+    expect(markup).toContain("Inspect Codex");
+    expect(markup).toContain("Inspect Claude");
+  });
+
+  it("renders full fighter output as one whitespace-preserving terminal stream", () => {
+    const fighter = initialDashboardState().contestants.a;
+    fighter.summaries.push({
+      text: "Implemented the token-family repair.",
+      invocationId: "a-implement",
+      timestamp: "2026-08-19T12:00:02.000Z",
+    });
+    fighter.output.push(
+      {
+        stream: "stdout",
+        text: "  first line\nsecond line\n",
+        invocationId: "a-implement",
+        timestamp: "2026-08-19T12:00:00.000Z",
+      },
+      {
+        stream: "stderr",
+        text: "warning: keep trailing space \n",
+        invocationId: "a-implement",
+        timestamp: "2026-08-19T12:00:01.000Z",
+      },
+    );
+
+    const detailMarkup = renderToStaticMarkup(
+      <FullAgentOutput fighter={fighter} provider="Codex" />,
+    );
+    const compactMarkup = renderToStaticMarkup(
+      <CompactAgentOutput fighter={fighter} provider="Codex" />,
+    );
+
+    expect(detailMarkup).toContain("  first line\nsecond line\n");
+    expect(detailMarkup).toContain("warning: keep trailing space \n");
+    expect(detailMarkup).toContain("output-stderr");
+    expect(detailMarkup).not.toContain("Implemented the token-family repair.");
+    expect(detailMarkup).not.toContain("12:00:00");
+    expect(compactMarkup).toContain("Implemented the token-family repair.");
+    expect(compactMarkup).not.toContain("first line");
+  });
+
+  it("retains the complete fighter transcript beyond the compact list bound", () => {
+    const state = initialDashboardState();
+    const timestamp = new Date().toISOString();
+    for (let sequence = 1; sequence <= 2_005; sequence += 1) {
+      projectEvent(state, {
+        version: 1,
+        sequence,
+        timestamp,
+        type: "output",
+        invocationId: "a-long-run",
+        source: "agent",
+        stream: "stdout",
+        text: `chunk-${String(sequence)}\n`,
+        contestantId: "a",
+      });
+    }
+
+    expect(state.contestants.a.output).toHaveLength(2_005);
+    expect(state.contestants.a.output[0]?.text).toBe("chunk-1\n");
+    expect(state.contestants.a.output.at(-1)?.text).toBe("chunk-2005\n");
+  });
+});

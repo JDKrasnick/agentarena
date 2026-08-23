@@ -1,6 +1,7 @@
 import { access, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type {
   AgentAdapter,
   AttackVerifier,
@@ -122,6 +123,7 @@ import {
   AdjudicationRecordSchema,
   FightConfigSchema,
   PermissionPolicySchema,
+  PatchRecommendationSchema,
   RepairJudgmentRecordSchema,
   type AgentId,
   type AgentInvocation,
@@ -198,6 +200,17 @@ import {
   type BrowserAdapter,
   type BrowserNativeSuiteResult,
 } from "../browser/executor.js";
+import {
+  ArenaEventBus,
+  EventJournal,
+  type ArenaEventInput,
+  type ArenaEventSink,
+  type ArenaObserver,
+} from "../observability/events.js";
+import {
+  ArenaBattleControl,
+  appendSteering,
+} from "../observability/control.js";
 
 export type { ReconnaissanceSnapshot } from "../task/task-contract.js";
 
@@ -219,6 +232,9 @@ export interface ArenaDependencies {
   now?: () => Date;
   onProgress?: (message: string) => void;
   consoleOptions?: ConsoleRenderOptions;
+  /** Optional best-effort live display sink. Persistence remains authoritative. */
+  observer?: ArenaEventSink;
+  battleControl?: ArenaBattleControl;
   /** Transactional executor hook used by isolated RoundEngine tests/adapters. */
   executeRound?: (snapshot: RoundSnapshot) => Promise<RoundResult>;
   browserAdapters?: Partial<
@@ -246,6 +262,15 @@ export interface ResumeOptions {
   display?: "console" | "json";
 }
 
+export interface ReplacementFightOptions {
+  parentRunId: string;
+  restartOrdinal: 1 | 2;
+  runSpec: RunSpec;
+  permissions: PermissionPolicy;
+  reconnaissance: ReconnaissanceSnapshot;
+  pullRequestFixture?: PullRequestFixture;
+}
+
 interface ArenaContext {
   config: FightConfig;
   store: ArtifactStore;
@@ -254,6 +279,10 @@ interface ArenaContext {
   permissions: PermissionPolicy;
   state: RunState;
   controller: AbortController;
+  observer: ArenaObserver;
+  journal: EventJournal;
+  control: ArenaBattleControl;
+  emittedEvents: Set<string>;
   roundInvocations: RecordedRoundInvocation[];
   priorEnvelopeHash: string | null;
   appliedEnvelopes: AppliedEnvelope[];
@@ -269,6 +298,41 @@ interface RecordedRoundInvocation {
   startedAt: string;
   finishedAt: string;
   artifactPaths: string[];
+}
+
+type DashboardLink = NonNullable<
+  Extract<ArenaEventInput, { type: "battle_started" }>["links"]
+>[number];
+
+function dashboardLinks(
+  runSpec: RunSpec,
+  store: ArtifactStore,
+): DashboardLink[] {
+  const links: DashboardLink[] = [];
+  for (const source of runSpec.task.sources) {
+    if (source.github?.url) {
+      links.push({
+        kind: source.kind === "pull_request" ? "pull_request" : "issue",
+        label: `${source.kind === "pull_request" ? "PR" : "Issue"} ${source.github.repository}#${String(source.github.number)}`,
+        url: source.github.url,
+      });
+    } else if (source.kind === "repo_spec") {
+      links.push({
+        kind: "spec",
+        label: `Spec ${path.basename(source.origin)}`,
+        url: pathToFileURL(source.snapshotPath).href,
+      });
+    }
+  }
+  links.push({
+    kind: "artifacts",
+    label: "Run artifacts",
+    url: pathToFileURL(store.runDirectory).href,
+  });
+  return links.filter(
+    (link, index) =>
+      links.findIndex((candidate) => candidate.url === link.url) === index,
+  );
 }
 
 interface RoundExecutionRuntime {
@@ -450,6 +514,7 @@ export class RoundEngine {
     rawConfig: FightConfig,
     externalSignal?: AbortSignal,
     suppliedReconnaissance?: ReconnaissanceSnapshot,
+    replacement?: ReplacementFightOptions,
   ): Promise<FightOutcome> {
     this.browserNativeSuiteCache.clear();
     this.browserProbeInvocationCounts.clear();
@@ -462,7 +527,8 @@ export class RoundEngine {
       repositoryRoot: path.resolve(rawConfig.repositoryRoot),
     });
     const reconnaissance = validateReconnaissance(
-      suppliedReconnaissance ??
+      replacement?.reconnaissance ??
+        suppliedReconnaissance ??
         (await collectFightReconnaissance(config, {
           ...(this.dependencies.issueResolver
             ? { issueResolver: this.dependencies.issueResolver }
@@ -474,10 +540,12 @@ export class RoundEngine {
         })),
       config,
     );
-    const permissions = resolvePermissionPolicy(
-      config,
-      discoverCapabilities(config, reconnaissance),
-    );
+    const permissions = replacement
+      ? PermissionPolicySchema.parse(replacement.permissions)
+      : resolvePermissionPolicy(
+          config,
+          discoverCapabilities(config, reconnaissance),
+        );
     await assertReconnaissanceRepositoryInputsCurrent(reconnaissance);
     const runId = createRunId(this.now());
     const store = new ArtifactStore(config.artifactRoot, runId, {
@@ -493,7 +561,23 @@ export class RoundEngine {
     let frozenBasePullRequest: ResolvedPullRequest | undefined;
     let frozenModePullRequest: ResolvedPullRequest | undefined;
     let baseCommit: string;
-    if (config.mode === "catch_up" || config.mode === "siege") {
+    if (replacement) {
+      baseCommit = replacement.runSpec.baseCommit;
+      config = FightConfigSchema.parse({ ...config, baseCommit });
+      if (replacement.pullRequestFixture) {
+        const patchBytes = await readFile(
+          replacement.pullRequestFixture.patchPath,
+        );
+        const patchPath = await store.writeImmutableBytes(
+          "pull-request/frozen.patch",
+          patchBytes,
+        );
+        pullRequestFixture = {
+          ...replacement.pullRequestFixture,
+          patchPath,
+        };
+      }
+    } else if (config.mode === "catch_up" || config.mode === "siege") {
       const reference = config.pullRequestReferences[0];
       if (!reference)
         throw new Error(`${config.mode} mode requires a pull request`);
@@ -563,49 +647,64 @@ export class RoundEngine {
     const controller = new AbortController();
     const abort = (): void => controller.abort(externalSignal?.reason);
     externalSignal?.addEventListener("abort", abort, { once: true });
+    const journal = new EventJournal(store.resolve("events.ndjson"), this.now);
+    const observer = new ArenaEventBus(
+      journal,
+      this.dependencies.observer ? [this.dependencies.observer] : [],
+      this.now,
+    );
+    const control =
+      this.dependencies.battleControl ??
+      new ArenaBattleControl(controller, this.now);
 
     let context: ArenaContext | undefined;
     try {
       this.progress("Preflight: snapshotting run specification");
       const contractWarnings: string[] = [];
-      const runSpec = await buildRunSpec({
-        runId,
-        baseCommit,
-        config,
-        permissions,
-        repositoryRoot,
-        sourceDirectory: store.resolve("sources"),
-        ...(this.dependencies.issueResolver
-          ? { issueResolver: this.dependencies.issueResolver }
-          : {}),
-        ...(frozenBasePullRequest || frozenModePullRequest
-          ? {
-              pullRequestResolver: {
-                resolve: (reference: string) => {
-                  if (
-                    frozenBasePullRequest &&
-                    reference === rawConfig.baseFromPullRequest
-                  )
-                    return Promise.resolve(frozenBasePullRequest);
-                  if (
-                    frozenModePullRequest &&
-                    reference === String(config.pullRequestReferences[0])
-                  )
-                    return Promise.resolve(frozenModePullRequest);
-                  return (
-                    this.dependencies.pullRequestResolver ??
-                    new GitHubPullRequestResolver()
-                  ).resolve(reference, repositoryRoot);
-                },
-              },
-            }
-          : this.dependencies.pullRequestResolver
-            ? { pullRequestResolver: this.dependencies.pullRequestResolver }
-            : {}),
-        now: this.now(),
-        warnings: contractWarnings,
-        reconnaissance,
-      });
+      const runSpec = replacement
+        ? await this.copyReplacementRunSpec({
+            source: replacement.runSpec,
+            runId,
+            store,
+          })
+        : await buildRunSpec({
+            runId,
+            baseCommit,
+            config,
+            permissions,
+            repositoryRoot,
+            sourceDirectory: store.resolve("sources"),
+            ...(this.dependencies.issueResolver
+              ? { issueResolver: this.dependencies.issueResolver }
+              : {}),
+            ...(frozenBasePullRequest || frozenModePullRequest
+              ? {
+                  pullRequestResolver: {
+                    resolve: (reference: string) => {
+                      if (
+                        frozenBasePullRequest &&
+                        reference === rawConfig.baseFromPullRequest
+                      )
+                        return Promise.resolve(frozenBasePullRequest);
+                      if (
+                        frozenModePullRequest &&
+                        reference === String(config.pullRequestReferences[0])
+                      )
+                        return Promise.resolve(frozenModePullRequest);
+                      return (
+                        this.dependencies.pullRequestResolver ??
+                        new GitHubPullRequestResolver()
+                      ).resolve(reference, repositoryRoot);
+                    },
+                  },
+                }
+              : this.dependencies.pullRequestResolver
+                ? { pullRequestResolver: this.dependencies.pullRequestResolver }
+                : {}),
+            now: this.now(),
+            warnings: contractWarnings,
+            reconnaissance,
+          });
       await store.writeImmutableJson("run-spec.json", runSpec);
       const repositoryIdentity =
         await resolveGitHubRepositoryIdentity(repositoryRoot);
@@ -639,6 +738,8 @@ export class RoundEngine {
         submissionArtifacts: [],
         repairJudgments: [],
         failureRecords: [],
+        integrity: "competitive",
+        operatorInterventions: [],
         patchQualityFacts: {},
         ...(targetResolution.target
           ? { deliveryTarget: targetResolution.target }
@@ -651,6 +752,10 @@ export class RoundEngine {
           battle: store.resolve("BATTLE.md"),
           battleHtml: store.resolve("BATTLE.html"),
           battleVisual: store.resolve("BATTLE.svg"),
+          events: store.resolve("events.ndjson"),
+          operatorInterventions: store.resolve(
+            "operations/operator-interventions.json",
+          ),
         },
         warnings: [
           "Worktrees isolate accidental changes; they are not a hostile-code security sandbox.",
@@ -667,11 +772,52 @@ export class RoundEngine {
         permissions,
         state,
         controller,
+        observer,
+        journal,
+        control,
+        emittedEvents: new Set(),
         roundInvocations: [],
         priorEnvelopeHash: null,
         appliedEnvelopes: [],
       };
+      control.onQueue((note) => {
+        void observer.publish({
+          type: "steering_queued",
+          interventionId: note.id,
+          contestantId: note.contestantId,
+        });
+      });
+      control.onCancel((reason) => {
+        controller.abort(reason);
+        void observer.publish({
+          type: "cancellation_requested",
+          reason: reason instanceof Error ? reason.message : String(reason),
+        });
+      });
+      await observer.publish({
+        type: "battle_started",
+        runId,
+        task: config.task,
+        contestants: config.contestants.map((contestant) => ({
+          id: contestant.id,
+          provider: contestant.provider,
+          ...(contestant.model ? { model: contestant.model } : {}),
+        })),
+        links: dashboardLinks(runSpec, store),
+      });
       await this.persist(context);
+      if (replacement) {
+        const summary = await store.readSummary();
+        if (!summary) throw new Error("Replacement result summary is missing");
+        await store.replaceDerivedJson("result.json", {
+          ...summary,
+          provenance: {
+            ...summary.provenance,
+            parentRunId: replacement.parentRunId,
+            transportRestartOrdinal: replacement.restartOrdinal,
+          },
+        });
+      }
 
       await this.preflight(context);
       await writeDependencyManifest({
@@ -737,6 +883,8 @@ export class RoundEngine {
       context.state.status = "complete";
       context.state.completedAt = this.now().toISOString();
       await this.transition(context, "complete");
+      await this.expireSteering(context);
+      await this.emitBattleCompleted(context, "complete");
       return {
         state: context.state,
         summary: renderConsoleSummary(
@@ -763,12 +911,22 @@ export class RoundEngine {
         await context.store
           .writeText("BATTLE.svg", renderBattleVisual(context.state))
           .catch(() => undefined);
+        await this.emitNewStateEvents(context).catch(() => undefined);
+        if (cancelled)
+          await this.emit(context, { type: "cancellation_completed" }).catch(
+            () => undefined,
+          );
+        await this.emitBattleCompleted(
+          context,
+          cancelled ? "cancelled" : "inconclusive",
+        ).catch(() => undefined);
       }
       throw error;
     } finally {
       externalSignal?.removeEventListener("abort", abort);
       if (!config.keepWorktrees)
         await worktrees.cleanup().catch(() => undefined);
+      await journal.flush().catch(() => undefined);
     }
   }
 
@@ -1080,6 +1238,20 @@ export class RoundEngine {
     const controller = new AbortController();
     const abort = (): void => controller.abort(externalSignal?.reason);
     externalSignal?.addEventListener("abort", abort, { once: true });
+    const journal = new EventJournal(store.resolve("events.ndjson"), this.now);
+    const observer = new ArenaEventBus(
+      journal,
+      this.dependencies.observer ? [this.dependencies.observer] : [],
+      this.now,
+    );
+    const control =
+      this.dependencies.battleControl ??
+      new ArenaBattleControl(
+        controller,
+        this.now,
+        undefined,
+        state.operatorInterventions,
+      );
     const context: ArenaContext = {
       config,
       store,
@@ -1088,11 +1260,29 @@ export class RoundEngine {
       permissions,
       state,
       controller,
+      observer,
+      journal,
+      control,
+      emittedEvents: this.projectedStateEventKeys(state),
       roundInvocations: [],
       priorEnvelopeHash: envelopes.at(-1)?.envelopeHash ?? null,
       appliedEnvelopes: ledger,
       ...(browserBaseline ? { browserBaseline } : {}),
     };
+    control.onQueue((note) => {
+      void observer.publish({
+        type: "steering_queued",
+        interventionId: note.id,
+        contestantId: note.contestantId,
+      });
+    });
+    control.onCancel((reason) => {
+      controller.abort(reason);
+      void observer.publish({
+        type: "cancellation_requested",
+        reason: reason instanceof Error ? reason.message : String(reason),
+      });
+    });
     try {
       let priorReplayHash = envelopes.at(-1)?.replayHash ?? null;
       for (const round of [1, 2, 3] as const) {
@@ -1148,6 +1338,8 @@ export class RoundEngine {
       context.state.status = "complete";
       context.state.completedAt = this.now().toISOString();
       await this.transition(context, "complete");
+      await this.expireSteering(context);
+      await this.emitBattleCompleted(context, "complete");
       await appendRecoveryEvent({
         store,
         type: "resume_continued",
@@ -1168,7 +1360,41 @@ export class RoundEngine {
       externalSignal?.removeEventListener("abort", abort);
       if (!config.keepWorktrees)
         await worktrees.cleanup().catch(() => undefined);
+      await journal.flush().catch(() => undefined);
     }
+  }
+
+  private async copyReplacementRunSpec(options: {
+    source: RunSpec;
+    runId: string;
+    store: ArtifactStore;
+  }): Promise<RunSpec> {
+    const sources = await Promise.all(
+      options.source.task.sources.map(async (source, index) => {
+        const bytes = await readFile(source.snapshotPath);
+        if (sha256(bytes) !== source.contentHash)
+          throw new Error(`Frozen source ${source.id} failed its digest`);
+        const snapshotPath = await options.store.writeImmutableBytes(
+          `sources/${String(index + 1).padStart(2, "0")}-${path.basename(source.snapshotPath)}`,
+          bytes,
+        );
+        return { ...source, snapshotPath };
+      }),
+    );
+    const withoutHash: Omit<RunSpec, "contentHash"> = {
+      version: options.source.version,
+      runId: options.runId,
+      task: { ...options.source.task, sources },
+      baseCommit: options.source.baseCommit,
+      topology: options.source.topology,
+      commands: options.source.commands,
+      budgets: options.source.budgets,
+      permissions: options.source.permissions,
+    };
+    return RunSpecSchema.parse({
+      ...withoutHash,
+      contentHash: calculateRunSpecHash(withoutHash),
+    });
   }
 
   private async executeLiveRound(
@@ -1321,52 +1547,6 @@ export class RoundEngine {
       getContestant(context.state, id),
     );
     const artifactPaths = contestants.flatMap(preReviewArtifactPaths);
-    if (context.controller.signal.aborted) {
-      return {
-        version: 1,
-        phase: "pre_review",
-        kind: "cancelled",
-        reasonCode: "external_cancellation",
-        affectedContestantIds: production,
-        eligibleContestantIds: [],
-        artifactPaths,
-        reason:
-          "The run was cancelled during implementation or initial validation.",
-      };
-    }
-    const providerInfrastructure = contestants.some(
-      (contestant) =>
-        contestant.implementation?.status === "infrastructure_error",
-    );
-    if (providerInfrastructure) {
-      return {
-        version: 1,
-        phase: "pre_review",
-        kind: "inconclusive",
-        reasonCode: "provider_transport_failure",
-        affectedContestantIds: production,
-        eligibleContestantIds: [],
-        artifactPaths,
-        reason: "Provider transport failed during implementation.",
-      };
-    }
-    const harnessInfrastructure = contestants.some((contestant) =>
-      contestant.checks.some(
-        (check) => check.status === "infrastructure_error",
-      ),
-    );
-    if (harnessInfrastructure) {
-      return {
-        version: 1,
-        phase: "pre_review",
-        kind: "inconclusive",
-        reasonCode: "harness_infrastructure_failure",
-        affectedContestantIds: production,
-        eligibleContestantIds: [],
-        artifactPaths,
-        reason: "Harness infrastructure failed during initial validation.",
-      };
-    }
     const eligible = contestants
       .filter(
         (contestant) =>
@@ -1376,58 +1556,180 @@ export class RoundEngine {
           latestRequiredPass(contestant),
       )
       .map((contestant) => contestant.id);
+    const contestantReason = (
+      contestant: ContestantResult,
+    ):
+      | Exclude<
+          NonNullable<
+            Extract<
+              TerminalOutcome,
+              { version: 2 }
+            >["contestants"][number]["reasonCode"]
+          >,
+          "test_only_role"
+        >
+      | undefined => {
+      if (eligible.includes(contestant.id)) return undefined;
+      if (
+        contestant.implementation?.status === "cancelled" &&
+        !context.controller.signal.aborted
+      )
+        return "peer_cancelled_due_to_transport";
+      if (
+        contestant.implementation?.status === "infrastructure_error" &&
+        contestant.implementation.command?.failureClass ===
+          "arena_infrastructure"
+      )
+        return "harness_infrastructure_failure";
+      if (contestant.implementation?.command?.transportFailures?.length)
+        return "provider_transport_failure";
+      if (contestant.implementation?.status === "infrastructure_error")
+        return "harness_infrastructure_failure";
+      if (contestant.implementation?.status === "timed_out")
+        return "implementation_timeout";
+      if (contestant.implementation?.status === "failed")
+        return "implementation_failed";
+      if (
+        contestant.checks.some(
+          (check) => check.kind === "apply" && check.status === "failed",
+        )
+      )
+        return "implementation_unapplicable_patch";
+      if (!contestant.currentPatchPath || contestant.patchSize === 0)
+        return "implementation_empty_patch";
+      if (
+        contestant.checks.some(
+          (check) => check.kind === "required" && check.status === "failed",
+        )
+      )
+        return "initial_validation_failed";
+      return "implementation_failed";
+    };
+    const dispositions: Extract<
+      TerminalOutcome,
+      { version: 2 }
+    >["contestants"] = context.config.agents.map((id) => {
+      const contestant = getContestant(context.state, id);
+      if (contestant.role === "attacker")
+        return {
+          contestantId: id,
+          eligible: false,
+          reasonCode: "test_only_role" as const,
+          artifactPaths: preReviewArtifactPaths(contestant),
+        };
+      const reasonCode = contestantReason(contestant);
+      return {
+        contestantId: id,
+        eligible: eligible.includes(id),
+        ...(reasonCode ? { reasonCode } : {}),
+        artifactPaths: preReviewArtifactPaths(contestant),
+      };
+    });
+    const makeOutcome = (options: {
+      kind: "forfeit" | "inconclusive" | "cancelled";
+      reasonCode: Extract<TerminalOutcome, { version: 2 }>["reasonCode"];
+      affectedContestantIds: ContestantId[];
+      reason: string;
+    }): TerminalOutcome => ({
+      version: 2,
+      phase: "pre_review",
+      kind: options.kind,
+      status:
+        options.kind === "forfeit"
+          ? "completed"
+          : options.kind === "cancelled"
+            ? "cancelled"
+            : "inconclusive",
+      reasonCode: options.reasonCode,
+      affectedContestantIds: options.affectedContestantIds,
+      eligibleContestantIds: eligible,
+      artifactPaths,
+      contestants: dispositions,
+      reason: options.reason,
+    });
+    if (context.controller.signal.aborted) {
+      return makeOutcome({
+        kind: "cancelled",
+        reasonCode: "external_cancellation",
+        affectedContestantIds: production,
+        reason:
+          "The run was cancelled during implementation or initial validation.",
+      });
+    }
+    const harnessAffected = contestants
+      .filter(
+        (contestant) =>
+          contestantReason(contestant) === "harness_infrastructure_failure" ||
+          contestant.checks.some(
+            (check) => check.status === "infrastructure_error",
+          ),
+      )
+      .map((contestant) => contestant.id);
+    if (
+      forcedReason === "harness_infrastructure_failure" ||
+      harnessAffected.length
+    ) {
+      return makeOutcome({
+        kind: "inconclusive",
+        reasonCode: "harness_infrastructure_failure",
+        affectedContestantIds: harnessAffected.length
+          ? harnessAffected
+          : production,
+        reason:
+          "Harness infrastructure failed before review eligibility could be sealed.",
+      });
+    }
+    const providerInfrastructure = contestants.some(
+      (contestant) =>
+        contestantReason(contestant) === "provider_transport_failure",
+    );
+    if (providerInfrastructure) {
+      return makeOutcome({
+        kind: "inconclusive",
+        reasonCode: "provider_transport_failure",
+        affectedContestantIds: contestants
+          .filter(
+            (contestant) =>
+              contestantReason(contestant) === "provider_transport_failure",
+          )
+          .map((contestant) => contestant.id),
+        reason: "Provider transport failed during implementation.",
+      });
+    }
     if (forcedReason) {
       const reason =
         forcedReason === "frozen_incumbent_invalid"
           ? "The frozen incumbent patch is not eligible, so the challenger is not run."
           : "Harness infrastructure failed before review eligibility could be sealed.";
-      return {
-        version: 1,
-        phase: "pre_review",
+      return makeOutcome({
         kind: "inconclusive",
         reasonCode: forcedReason,
-        affectedContestantIds: production,
-        eligibleContestantIds: eligible,
-        artifactPaths,
+        affectedContestantIds: contestants
+          .filter((contestant) => !eligible.includes(contestant.id))
+          .map((contestant) => contestant.id),
         reason,
-      };
+      });
     }
     if (eligible.length === production.length) return undefined;
     const failed = contestants.find(
       (contestant) => !eligible.includes(contestant.id),
     );
-    const reasonCode: TerminalOutcome["reasonCode"] =
-      failed?.implementation?.status === "timed_out"
-        ? "implementation_timeout"
-        : failed?.implementation?.status === "failed"
-          ? "implementation_failed"
-          : failed?.checks.some(
-                (check) => check.kind === "apply" && check.status === "failed",
-              )
-            ? "implementation_unapplicable_patch"
-            : !failed?.currentPatchPath || failed.patchSize === 0
-              ? "implementation_empty_patch"
-              : failed.checks.some(
-                    (check) =>
-                      check.kind === "required" && check.status === "failed",
-                  )
-                ? "initial_validation_failed"
-                : "implementation_failed";
+    const failedReason = failed ? contestantReason(failed) : undefined;
+    const reasonCode =
+      failedReason === "peer_cancelled_due_to_transport"
+        ? "provider_transport_failure"
+        : (failedReason ?? "implementation_failed");
     const isForfeit = eligible.length === 1 && context.config.mode === "duel";
-    return {
-      version: 1,
-      phase: "pre_review",
+    return makeOutcome({
       kind: isForfeit ? "forfeit" : "inconclusive",
       reasonCode,
       affectedContestantIds: contestants
         .filter((contestant) => !eligible.includes(contestant.id))
         .map((contestant) => contestant.id),
-      eligibleContestantIds: eligible,
-      artifactPaths,
       reason: isForfeit
         ? "Exactly one production patch passed initial validation; it wins by forfeit before review."
         : "No eligible production patch is available for a pre-review comparison.",
-    };
+    });
   }
 
   private async applyRoundTransaction(
@@ -2320,11 +2622,12 @@ export class RoundEngine {
       }
       if (!contestant.finalPatchPath)
         throw new Error("Forfeit winner has no final patch");
-      await this.collectAndPersistPatchQualityFacts(
-        context,
-        winner,
-        contestant.finalPatchPath,
-      );
+      const patchBytes = await readFile(contestant.finalPatchPath);
+      context.state.patchQualityFacts[winner] = collectPatchQualityFacts({
+        contestantId: winner,
+        patch: patchBytes.toString("utf8"),
+        patchBytes,
+      });
       context.state.ranking = rankContestants(
         context.config.agents.map((agent) =>
           getContestant(context.state, agent),
@@ -2332,9 +2635,22 @@ export class RoundEngine {
         { patchSizeTieBreaker: context.config.mode !== "siege" },
       );
       context.state.arenaOutcome = deriveArenaOutcome(context.state);
-      context.state.patchRecommendation = selectRecommendedPatch({
-        contestants: context.state.contestants,
-        championId: winner,
+      context.state.patchRecommendation = PatchRecommendationSchema.parse({
+        contestantId: winner,
+        reason: "forfeit",
+        rationale: [
+          "This was the only production patch that applied and passed required initial validation.",
+        ],
+        comparison: context.config.agents.map((id) => {
+          const candidate = getContestant(context.state, id);
+          return {
+            contestantId: id,
+            eligible: id === winner,
+            activeDefectDamage: 0,
+            requiredValidationPassed: latestRequiredPass(candidate),
+            finalApplicabilityPassed: Boolean(candidate.finalPatchPath),
+          };
+        }),
       });
       context.state.reviewPrompt = buildReviewPrompt(context.state);
       await context.store.writeImmutableJson(
@@ -2364,7 +2680,8 @@ export class RoundEngine {
       context.state.warnings.push(
         ...result.diagnostics.map((entry) => entry.message),
       );
-    await context.store.writeState(context.state, context.appliedEnvelopes);
+    await this.expireSteering(context);
+    await this.persist(context);
     await context.store.writeText(
       "BATTLE.md",
       renderBattleReport(context.state),
@@ -2377,6 +2694,9 @@ export class RoundEngine {
       "BATTLE.svg",
       renderBattleVisual(context.state),
     );
+    if (context.state.status === "cancelled")
+      await this.emit(context, { type: "cancellation_completed" });
+    await this.emitBattleCompleted(context, context.state.status);
     return {
       state: context.state,
       summary: renderConsoleSummary(
@@ -2388,8 +2708,252 @@ export class RoundEngine {
 
   private async persist(context: ArenaContext): Promise<void> {
     context.state.updatedAt = this.now().toISOString();
+    this.syncSteeringLedger(context);
+    await this.emitNewStateEvents(context);
+    await context.store.writeJson("operations/operator-interventions.json", {
+      version: 1,
+      runId: context.state.runId,
+      interventions: context.state.operatorInterventions,
+    });
     if (this.runtime) return;
     await context.store.writeState(context.state, context.appliedEnvelopes);
+  }
+
+  private syncSteeringLedger(context: ArenaContext): void {
+    context.state.operatorInterventions = structuredClone([
+      ...context.control.all(),
+    ]);
+    if (
+      context.state.operatorInterventions.some(
+        (intervention) => intervention.status === "applied",
+      )
+    )
+      context.state.integrity = "assisted";
+  }
+
+  private emit(context: ArenaContext, event: ArenaEventInput): Promise<void> {
+    return Promise.resolve(context.observer.publish(event));
+  }
+
+  private projectedStateEventKeys(state: RunState): Set<string> {
+    const keys = new Set<string>();
+    state.warnings.forEach((_warning, index) =>
+      keys.add(`warning:${String(index)}`),
+    );
+    for (const contestant of Object.values(state.contestants)) {
+      contestant.checks.forEach((check) =>
+        keys.add(`check:${contestant.id}:${check.id}:${check.status}`),
+      );
+      contestant.healthEvents.forEach((_event, index) =>
+        keys.add(`health:${contestant.id}:${String(index)}`),
+      );
+    }
+    for (const attack of state.attacks) {
+      keys.add(`attack:${attack.id}:${attack.status}`);
+      if (attack.evidenceRevision) keys.add(`attack:${attack.id}:revision`);
+    }
+    for (const failure of state.failureRecords)
+      keys.add(
+        `failure:${failure.failureId}:${String(failure.attempts.length)}:${failure.terminalDisposition ?? "retrying"}`,
+      );
+    return keys;
+  }
+
+  /** Project only authoritative persisted state changes into live telemetry. */
+  private async emitNewStateEvents(context: ArenaContext): Promise<void> {
+    const emitted = context.emittedEvents;
+    for (const [index, message] of context.state.warnings.entries()) {
+      const key = `warning:${String(index)}`;
+      if (emitted.has(key)) continue;
+      emitted.add(key);
+      await this.emit(context, { type: "warning", message });
+    }
+    for (const contestant of Object.values(context.state.contestants)) {
+      for (const check of contestant.checks) {
+        const key = `check:${contestant.id}:${check.id}:${check.status}`;
+        if (emitted.has(key)) continue;
+        emitted.add(key);
+        await this.emit(context, {
+          type: "check_completed",
+          checkId: check.id,
+          status: check.status,
+          contestantId: contestant.id,
+        });
+      }
+      let health = 100;
+      for (const [index, healthEvent] of contestant.healthEvents.entries()) {
+        health = Math.max(0, Math.min(100, health + healthEvent.amount));
+        const key = `health:${contestant.id}:${String(index)}`;
+        if (emitted.has(key)) continue;
+        emitted.add(key);
+        await this.emit(context, {
+          type: "health_changed",
+          contestantId: contestant.id,
+          health,
+          amount: healthEvent.amount,
+          reason: healthEvent.reason,
+          round: healthEvent.round,
+          ...(healthEvent.attackId ? { attackId: healthEvent.attackId } : {}),
+        });
+      }
+    }
+    for (const attack of context.state.attacks) {
+      const participants = {
+        ...(attack.origin.kind === "contestant"
+          ? { attackerId: attack.origin.contestant }
+          : {}),
+        ...(attack.targets[0] ? { targetId: attack.targets[0] } : {}),
+      };
+      const key = `attack:${attack.id}:${attack.status}`;
+      if (!emitted.has(key)) {
+        emitted.add(key);
+        await this.emit(
+          context,
+          attack.status === "submitted"
+            ? {
+                type: "attack_mounted",
+                attackId: attack.id,
+                round: attack.round,
+                claim: attack.claim,
+                ...participants,
+              }
+            : {
+                type: "attack_resolved",
+                attackId: attack.id,
+                round: attack.round,
+                status: attack.status,
+                ...participants,
+                ...(attack.severity ? { severity: attack.severity } : {}),
+                ...(attack.damage === undefined
+                  ? {}
+                  : { damage: attack.damage }),
+              },
+        );
+      }
+      const revisionKey = `attack:${attack.id}:revision`;
+      if (attack.evidenceRevision && !emitted.has(revisionKey)) {
+        emitted.add(revisionKey);
+        await this.emit(context, {
+          type: "attack_revised",
+          attackId: attack.id,
+          round: attack.round,
+          explanation: attack.evidenceRevision.explanation,
+          ...participants,
+        });
+      }
+    }
+    for (const failure of context.state.failureRecords) {
+      const attempt = failure.attempts.at(-1)!;
+      const key = `failure:${failure.failureId}:${String(failure.attempts.length)}:${failure.terminalDisposition ?? "retrying"}`;
+      if (emitted.has(key)) continue;
+      emitted.add(key);
+      await this.emit(context, {
+        type: "failure_updated",
+        failureId: failure.failureId,
+        stage: failure.stage,
+        subject: failure.subject,
+        attempt: attempt.attempt,
+        attemptStatus: attempt.status,
+        state:
+          failure.terminalDisposition === "recovered"
+            ? "recovered"
+            : failure.terminalDisposition
+              ? "resolved"
+              : "retrying",
+        ...(failure.terminalDisposition
+          ? { terminalDisposition: failure.terminalDisposition }
+          : {}),
+        ...(failure.contestantId ? { contestantId: failure.contestantId } : {}),
+        ...(failure.laneId ? { laneId: failure.laneId } : {}),
+        ...(failure.attackId ? { attackId: failure.attackId } : {}),
+        diagnosticArtifactRefs: [...attempt.diagnosticArtifactRefs],
+      });
+    }
+  }
+
+  private applyQueuedSteering(
+    context: ArenaContext,
+    contestantId: ContestantId,
+    stage: Stage,
+    prompt: string,
+    round?: RoundId,
+  ): string {
+    const intervention = context.control.consume(contestantId);
+    if (!intervention) return prompt;
+    const steeredPrompt = appendSteering(prompt, intervention.note);
+    intervention.status = "applied";
+    intervention.appliedStage = stage;
+    if (round !== undefined) intervention.appliedRound = round;
+    intervention.promptHash = sha256(steeredPrompt);
+    void this.emit(context, {
+      type: "steering_applied",
+      interventionId: intervention.id,
+      contestantId,
+      stage,
+      ...(round === undefined ? {} : { round }),
+      promptHash: intervention.promptHash,
+    });
+    return steeredPrompt;
+  }
+
+  private async expireSteering(context: ArenaContext): Promise<void> {
+    for (const intervention of context.control.all()) {
+      if (intervention.status !== "queued") continue;
+      intervention.status = "expired";
+      await this.emit(context, {
+        type: "steering_expired",
+        interventionId: intervention.id,
+        contestantId: intervention.contestantId,
+      });
+    }
+    await this.persist(context);
+  }
+
+  private async emitBattleCompleted(
+    context: ArenaContext,
+    status: "complete" | "inconclusive" | "failed" | "cancelled",
+  ): Promise<void> {
+    await this.emit(context, {
+      type: "battle_completed",
+      status,
+      roundsCompleted: Math.max(
+        0,
+        ...Object.values(context.state.contestants).flatMap((contestant) =>
+          contestant.rounds
+            .filter((round) => typeof round.round === "number")
+            .map((round) => Number(round.round)),
+        ),
+      ),
+      ...(context.state.arenaOutcome?.championId
+        ? { championId: context.state.arenaOutcome.championId }
+        : {}),
+      ...(context.state.patchRecommendation?.contestantId
+        ? { recommendedId: context.state.patchRecommendation.contestantId }
+        : {}),
+      ...(context.state.patchRecommendation?.rationale.length
+        ? {
+            recommendationReason:
+              context.state.patchRecommendation.rationale.join(" "),
+          }
+        : {}),
+      ...(context.state.coverageAssessment
+        ? { coverageConfidence: context.state.coverageAssessment.confidence }
+        : {}),
+      ...(context.state.terminalOutcome
+        ? { terminalOutcome: context.state.terminalOutcome }
+        : {}),
+      contestants: Object.values(context.state.contestants).map(
+        (contestant) => ({
+          id: contestant.id,
+          health: contestant.finalHealth,
+          status: contestant.status,
+          checksPassed: contestant.checks.filter(
+            (check) => check.status === "passed",
+          ).length,
+          checksTotal: contestant.checks.length,
+        }),
+      ),
+    });
   }
 
   private adapterFor(
@@ -2438,6 +3002,13 @@ export class RoundEngine {
     this.progress(
       `${round === undefined ? "" : `Round ${String(round)} — `}${stage}`,
     );
+    await this.emit(context, {
+      type: "stage_changed",
+      stage,
+      ...(round === undefined ? {} : { round }),
+    });
+    if (round !== undefined && stage === "review_attacks")
+      await this.emit(context, { type: "round_started", round });
     await this.persist(context);
   }
 
@@ -2611,6 +3182,15 @@ export class RoundEngine {
   private async implement(context: ArenaContext): Promise<void> {
     await this.transition(context, "implement");
     const worktrees = new Map<ContestantId, string>();
+    const phaseController = new AbortController();
+    let transportFailure = false;
+    const cancelPhase = (): void =>
+      phaseController.abort(context.controller.signal.reason);
+    if (context.controller.signal.aborted) cancelPhase();
+    else
+      context.controller.signal.addEventListener("abort", cancelPhase, {
+        once: true,
+      });
     const implementationAgents = context.config.agents.filter(
       (agent) =>
         context.config.contestants.find((contestant) => contestant.id === agent)
@@ -2628,22 +3208,28 @@ export class RoundEngine {
       );
     }
     try {
-      await Promise.all(
+      const results = await Promise.allSettled(
         implementationAgents.map(async (agent) => {
           const worktree = worktrees.get(agent);
           if (!worktree)
             throw new Error(`Missing implementation worktree for ${agent}`);
-          const prompt = composePrompt({
+          const prompt = this.applyQueuedSteering(
+            context,
             agent,
-            stage: "implement",
-            runSpec: context.runSpec,
-            config: context.config,
-            permissions: context.permissions,
-          });
+            "implement",
+            composePrompt({
+              agent,
+              stage: "implement",
+              runSpec: context.runSpec,
+              config: context.config,
+              permissions: context.permissions,
+            }),
+          );
           const promptPath = await context.store.writeText(
             `prompts/implementation-${agent}.md`,
             prompt,
           );
+          await this.persist(context);
           const contestant = getContestant(context.state, agent);
           let invocation!: AgentInvocation;
           let implementationFailure: FailureRecord | undefined;
@@ -2659,7 +3245,8 @@ export class RoundEngine {
               promptPath,
               transcriptPrefix,
               timeoutMs: context.config.limits.implementationMs,
-              signal: context.controller.signal,
+              signal: phaseController.signal,
+              observer: context.observer,
             });
             const finishedAt = this.now().toISOString();
             invocation.contestantId = agent;
@@ -2684,13 +3271,20 @@ export class RoundEngine {
               break;
             }
             if (invocation.status === "cancelled") {
-              context.controller.abort(
-                new Error(`Implementation cancelled for ${agent}`),
-              );
-              throw new Error(`Implementation cancelled for ${agent}`);
+              if (context.controller.signal.aborted)
+                throw new Error(`Implementation cancelled for ${agent}`);
+              if (!transportFailure) {
+                context.controller.abort(
+                  new Error(`Implementation cancelled for ${agent}`),
+                );
+                throw new Error(`Implementation cancelled for ${agent}`);
+              }
+              contestant.status = "failed";
+              return;
             }
-            const category =
-              invocation.status === "timed_out"
+            const category = invocation.command?.transportFailures?.length
+              ? ("transport" as const)
+              : invocation.status === "timed_out"
                 ? ("timeout" as const)
                 : invocation.status === "infrastructure_error"
                   ? ("process_launch" as const)
@@ -2708,10 +3302,22 @@ export class RoundEngine {
               ...(implementationFailure
                 ? { existing: implementationFailure }
                 : {}),
-              ...(attempt === 2
+              ...(attempt === 2 ||
+              (invocation.status === "infrastructure_error" &&
+                invocation.command?.transportFailures?.length)
                 ? { terminalDisposition: "run_level_coverage_lost" as const }
                 : {}),
             });
+            if (
+              invocation.status === "infrastructure_error" &&
+              invocation.command?.transportFailures?.length
+            ) {
+              transportFailure = true;
+              phaseController.abort(
+                new Error(`Provider transport failed for ${agent}`),
+              );
+              throw new Error(`Implementation transport failed for ${agent}`);
+            }
             if (attempt === 1) continue;
             if (invocation.status === "infrastructure_error") {
               throw new Error(
@@ -2736,7 +3342,13 @@ export class RoundEngine {
           if (patchSize === 0) contestant.status = "failed";
         }),
       );
+      const rejected = results.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
+      );
+      if (rejected) throw rejected.reason;
     } finally {
+      context.controller.signal.removeEventListener("abort", cancelPhase);
       for (const worktree of worktrees.values()) {
         await context.worktrees.remove(worktree);
       }
@@ -2782,11 +3394,25 @@ export class RoundEngine {
       const worktree = await this.prepareWorktree(context, {
         name: `initial-validate-${agent}`,
         subject: `initial-validation-worktree:${agent}`,
-        patches: [contestant.currentPatchPath],
         contestantId: agent,
         runLevel: true,
       });
       try {
+        try {
+          await context.worktrees.applyPatch(
+            worktree,
+            contestant.currentPatchPath,
+          );
+        } catch (error) {
+          contestant.checks.push({
+            id: "initial-apply",
+            kind: "apply",
+            status: "failed",
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          contestant.status = "failed";
+          continue;
+        }
         let command!: Awaited<ReturnType<typeof runShellCommand>>;
         let validationFailure: FailureRecord | undefined;
         for (const attempt of [1, 2] as const) {
@@ -3141,6 +3767,7 @@ export class RoundEngine {
             signal: context.controller.signal,
             round,
             opponent: target,
+            observer: context.observer,
           });
           const attemptFinishedAt = this.now().toISOString();
           finalAttemptStartedAt = attemptStartedAt;
@@ -3408,7 +4035,10 @@ export class RoundEngine {
           String(context.roundInvocations.length),
         );
         try {
-          const verdict = await verifier.assess(input);
+          const verdict = await verifier.assess({
+            ...input,
+            observer: context.observer,
+          });
           context.roundInvocations.push({
             id,
             kind: "verification",
@@ -3447,7 +4077,10 @@ export class RoundEngine {
                 String(context.roundInvocations.length),
               );
               try {
-                const verdict = await verifier.adjudicate!(input);
+                const verdict = await verifier.adjudicate!({
+                  ...input,
+                  observer: context.observer,
+                });
                 context.roundInvocations.push({
                   id,
                   kind: "verification",
@@ -3488,7 +4121,10 @@ export class RoundEngine {
                 String(context.roundInvocations.length),
               );
               try {
-                const verdict = await verifier.assessRepair!(input);
+                const verdict = await verifier.assessRepair!({
+                  ...input,
+                  observer: context.observer,
+                });
                 context.roundInvocations.push({
                   id,
                   kind: "verification",
@@ -3820,6 +4456,7 @@ export class RoundEngine {
             signal: context.controller.signal,
             round,
             opponent: target,
+            observer: context.observer,
           });
           if (invocation.status !== "succeeded")
             throw new Error(`Correction invocation ${invocation.status}`);
@@ -4112,6 +4749,7 @@ export class RoundEngine {
           worktrees: context.worktrees,
           logRoot: context.store.resolve("logs/integration"),
           signal: context.controller.signal,
+          observer: context.observer,
           now: this.now,
           persistFailureRecord: (record) =>
             this.persistFailureRecord(context, record),
@@ -4259,26 +4897,33 @@ export class RoundEngine {
           round,
           "attack",
         );
-        const prompt = composePrompt({
+        const prompt = this.applyQueuedSteering(
+          context,
           agent,
-          target,
-          stage: "attack",
+          "collect_attacks",
+          composePrompt({
+            agent,
+            target,
+            stage: "attack",
+            round,
+            runSpec: context.runSpec,
+            config: context.config,
+            permissions: context.permissions,
+            methodSelection: selection,
+            opponentPatch,
+            ...(reviewPackets.get(agent)
+              ? { reviewPacket: reviewPackets.get(agent)! }
+              : {}),
+            currentHealth: contestant.finalHealth,
+            contestantFeedback,
+          }),
           round,
-          runSpec: context.runSpec,
-          config: context.config,
-          permissions: context.permissions,
-          methodSelection: selection,
-          opponentPatch,
-          ...(reviewPackets.get(agent)
-            ? { reviewPacket: reviewPackets.get(agent)! }
-            : {}),
-          currentHealth: contestant.finalHealth,
-          contestantFeedback,
-        });
+        );
         const promptPath = await context.store.writeText(
           `prompts/round-${String(round)}-${agent}.md`,
           prompt,
         );
+        await this.persist(context);
         let invocation!: AgentInvocation;
         let submissionFailure: FailureRecord | undefined;
         let finalAttemptStartedAt = this.now().toISOString();
@@ -5148,7 +5793,7 @@ export class RoundEngine {
           });
           if (remainingAttacks.length === 0 && latestRequiredPass(contestant))
             break;
-          const attemptPrompt = [
+          let attemptPrompt = [
             prompt,
             "",
             "# Remaining failures for this attempt",
@@ -5168,10 +5813,18 @@ export class RoundEngine {
             ),
             "Fix only the remaining failures above. Previously healed defects are regression checks, not permission to rewrite their evidence.",
           ].join("\n");
+          attemptPrompt = this.applyQueuedSteering(
+            context,
+            agent,
+            "repair",
+            attemptPrompt,
+            round,
+          );
           const attemptPromptPath = await context.store.writeText(
             `prompts/round-${String(round)}-repair-${agent}-attempt-${String(attemptNumber)}.md`,
             attemptPrompt,
           );
+          await this.persist(context);
           const attemptId = stableId(
             "repair-attempt",
             context.state.runId,
@@ -5195,6 +5848,7 @@ export class RoundEngine {
               signal: context.controller.signal,
               round,
               activeAttacks: remainingAttacks,
+              observer: context.observer,
             });
             attempts.push(invocation);
             const finishedAt = this.now().toISOString();

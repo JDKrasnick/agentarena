@@ -19,6 +19,7 @@ import {
   RunStateV5Schema,
   RunStateV6Schema,
   RunStateV7Schema,
+  OperatorInterventionSchema,
   type CheckResult,
   type RunState,
 } from "../core/types.js";
@@ -627,6 +628,29 @@ export async function reconstructRunState(options: {
     state.completedAt = options.summary.completedAt;
   state.warnings = [...options.summary.warnings];
   state.artifacts = { ...options.summary.artifacts };
+  state.integrity = options.summary.provenance.assisted
+    ? "assisted"
+    : "competitive";
+  try {
+    const ledger = JSON.parse(
+      await readFile(
+        options.store.resolve("operations/operator-interventions.json"),
+        "utf8",
+      ),
+    ) as { version?: unknown; interventions?: unknown };
+    if (ledger.version === 1 && Array.isArray(ledger.interventions))
+      state.operatorInterventions = ledger.interventions.map((intervention) =>
+        OperatorInterventionSchema.parse(intervention),
+      );
+    if (
+      state.operatorInterventions.some(
+        (intervention) => intervention.status === "applied",
+      )
+    )
+      state.integrity = "assisted";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   if (options.summary.ranking)
     state.ranking = options.summary.ranking as RunState["ranking"];
   if (options.summary.outcome)
@@ -817,8 +841,10 @@ export async function buildRunSummary(options: {
     ...(baseline ? { baseline } : {}),
     ...(finalization ? { finalization } : {}),
     contestants,
-    ranking: options.state.ranking,
-    ...(options.state.arenaOutcome
+    ...(!options.state.terminalOutcome && options.state.ranking
+      ? { ranking: options.state.ranking }
+      : {}),
+    ...(!options.state.terminalOutcome && options.state.arenaOutcome
       ? { outcome: options.state.arenaOutcome }
       : {}),
     ...(options.state.terminalOutcome
@@ -836,10 +862,14 @@ export async function buildRunSummary(options: {
     warnings: options.state.warnings,
     artifacts: options.state.artifacts,
     appliedEnvelopes: options.appliedEnvelopes,
-    provenance: options.provenance ?? {
-      assisted: false,
-      competitivelyComparable: true,
-      driftApprovalHashes: [],
+    provenance: {
+      ...(options.provenance ?? { driftApprovalHashes: [] }),
+      assisted:
+        (options.provenance?.assisted ?? false) ||
+        options.state.integrity === "assisted",
+      competitivelyComparable:
+        (options.provenance?.competitivelyComparable ?? true) &&
+        options.state.integrity !== "assisted",
     },
   };
   return schemaVersion === 8

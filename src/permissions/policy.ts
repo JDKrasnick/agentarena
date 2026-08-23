@@ -36,6 +36,21 @@ export function discoverCapabilities(
 ): CapabilityRequest[] {
   const requests: CapabilityRequest[] = [
     {
+      id: "native_subprocess_execution",
+      reason:
+        "Provider and repository subprocesses run as the current OS account; approval acknowledges native launch risk but neither authorizes task-irrelevant access nor technically prevents access to ambient files, environment variables, network destinations, credentials, or configured provider integrations",
+      risk: "high",
+      requirement: "required",
+      role: "both",
+      enforcement: "advisory",
+      scopes: [
+        "current OS account filesystem",
+        "current OS account process environment",
+        "host network stack",
+        "configured provider integrations",
+      ],
+    },
+    {
       id: "repository_read_write",
       reason: "Contestants must inspect and edit isolated Git worktrees",
       risk: "medium",

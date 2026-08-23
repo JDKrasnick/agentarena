@@ -79,6 +79,38 @@ describe("bounded pre-permission reconnaissance", () => {
     expect(() => validateReconnaissance(snapshot)).not.toThrow();
   });
 
+  it("includes a direct API base-from-PR reference in reconnaissance", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-base-pr-"));
+    const pullRequestResolver = {
+      resolve: vi.fn().mockResolvedValue({
+        origin: "https://github.com/acme/repo/pull/9",
+        repository: "acme/repo",
+        number: 9,
+        url: "https://github.com/acme/repo/pull/9",
+        title: "Base patch",
+        body: "Use this pull request as the contestant base.",
+        comments: [],
+        baseBranch: "main",
+        headBranch: "feature",
+        headRepository: "acme/repo",
+        headCommit: "9".repeat(40),
+      }),
+    };
+    const fightConfig = config(root, { baseFromPullRequest: "9" });
+
+    const snapshot = await collectFightReconnaissance(fightConfig, {
+      pullRequestResolver,
+    });
+
+    expect(fightConfig.pullRequestReferences).toEqual(["9"]);
+    expect(pullRequestResolver.resolve).toHaveBeenCalledWith("9", root);
+    expect(snapshot.resolvedPullRequests["9"]).toMatchObject({
+      number: 9,
+      headCommit: "9".repeat(40),
+    });
+    expect(() => validateReconnaissance(snapshot, fightConfig)).not.toThrow();
+  });
+
   it("stops when an explicit source cannot be retrieved", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-source-"));
     await expect(

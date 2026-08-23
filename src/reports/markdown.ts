@@ -294,6 +294,49 @@ function contestantSection(contestant: ContestantResult): string[] {
 }
 
 export function renderBattleReport(state: RunState): string {
+  if (state.terminalOutcome) {
+    const terminal = state.terminalOutcome;
+    const recommended =
+      terminal.kind === "forfeit"
+        ? terminal.eligibleContestantIds[0]
+        : undefined;
+    const dispositions =
+      terminal.version === 2
+        ? terminal.contestants.map(
+            (entry) =>
+              `| ${contestantLabel(state.config.contestants, entry.contestantId)} | ${entry.eligible ? "eligible" : "ineligible"} | ${entry.reasonCode ?? "eligible_patch"} | ${entry.artifactPaths.join("<br>") || "none"} |`,
+          )
+        : terminal.affectedContestantIds.map(
+            (id) =>
+              `| ${contestantLabel(state.config.contestants, id)} | ineligible | ${terminal.reasonCode} | ${terminal.artifactPaths.join("<br>") || "none"} |`,
+          );
+    return [
+      "# Agent Arena Pre-Review Result",
+      "",
+      `Run: \`${state.runId}\``,
+      "",
+      `Task: ${state.config.task}`,
+      "",
+      `Mode: **${state.config.mode}**`,
+      "",
+      `Status: **${terminal.kind}** (\`${terminal.reasonCode}\`)`,
+      "",
+      terminal.reason,
+      "",
+      recommended
+        ? `Recommended patch: **${contestantLabel(state.config.contestants, recommended)}** by deterministic duel forfeit.`
+        : "Recommended patch: **none**.",
+      "",
+      "No review, attack, repair, quality comparison, or coverage stage ran.",
+      "",
+      "| Contestant | Eligibility | Cause | Diagnostics |",
+      "| --- | --- | --- | --- |",
+      ...dispositions,
+      "",
+      "Human review is required before applying any recommended patch.",
+      "",
+    ].join("\n");
+  }
   const contestants = reportContestants(state);
   const defects = reportDefects(state);
   const lines = [
@@ -305,6 +348,12 @@ export function renderBattleReport(state: RunState): string {
     "",
     `Mode: **${state.config.mode}**`,
     "",
+    ...(state.integrity === "assisted"
+      ? [
+          "> **Assisted — not competitively comparable.** Operator steering was applied during this run.",
+          "",
+        ]
+      : []),
     "runSpecHash" in state
       ? `Run specification: \`${state.runSpecHash}\``
       : `Legacy task contract: \`${state.taskContractHash}\``,
@@ -314,16 +363,6 @@ export function renderBattleReport(state: RunState): string {
     ...pullRequestProvenance(state),
     "## Final result",
     "",
-    ...(state.terminalOutcome
-      ? [
-          `**Pre-review terminal status:** ${state.terminalOutcome.kind} (${state.terminalOutcome.reasonCode})`,
-          "",
-          state.terminalOutcome.reason,
-          "",
-          `Eligible production patches: ${state.terminalOutcome.eligibleContestantIds.join(", ") || "none"}. No review, attack, repair, quality, or coverage artifacts were created.`,
-          "",
-        ]
-      : []),
     state.ranking?.draw
       ? `Draw: ${state.ranking.reason}`
       : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Winner"}: **${state.coverageDecision?.decision === "inconclusive" ? (state.ranking?.order[0] ?? "none") : (state.ranking?.winner ?? "none")}** — ${state.ranking?.reason ?? "run incomplete"}`,
@@ -332,7 +371,7 @@ export function renderBattleReport(state: RunState): string {
       !state.coverageDecision)
       ? "Arena champion: **not published** (coverage unresolved or finalized inconclusive)"
       : state.arenaOutcome
-        ? `Arena champion: **${state.arenaOutcome.championId ?? "draw"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
+        ? `${state.integrity === "assisted" ? "Assisted leader" : "Arena champion"}: **${state.arenaOutcome.championId ?? "draw"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
         : "Arena champion: unavailable",
     state.config.mode === "siege"
       ? "Production artifact: **defender final patch only** (patch comparison disabled)"
@@ -561,6 +600,11 @@ export function renderBattleReport(state: RunState): string {
     ...contestants.flatMap(contestantSection),
     "## Permissions and limitations",
     "",
+    ...(state.operatorInterventions.length
+      ? [
+          `- Operator interventions: ${state.operatorInterventions.map((note) => `${note.contestantId}:${note.status}${note.appliedStage ? `@${note.appliedStage}` : ""}`).join(", ")}.`,
+        ]
+      : []),
     "- Agent worktrees isolate accidental changes but are not hostile-code sandboxes.",
     "- Credential/service delivery is brokered where declared; advisory restrictions are not OS-enforced.",
     "- No novel final-validation finding can change health after the last repair opportunity.",

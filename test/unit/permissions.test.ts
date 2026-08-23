@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FightConfigSchema } from "../../src/core/types.js";
 import {
   assertDirectCapabilitiesAllowed,
+  discoverCapabilities,
   resolvePermissionPolicy,
   type CapabilityRequest,
 } from "../../src/permissions/policy.js";
@@ -42,6 +43,26 @@ describe("permission policy", () => {
     enforcement: "advisory",
     scopes: ["/tmp/repo"],
   };
+
+  it("discloses ambient native subprocess authority as required and advisory", () => {
+    const native = discoverCapabilities(base).find(
+      (capability) => capability.id === "native_subprocess_execution",
+    );
+    expect(native?.reason).toContain("current OS account");
+    expect(native).toMatchObject({
+      id: "native_subprocess_execution",
+      risk: "high",
+      requirement: "required",
+      role: "both",
+      enforcement: "advisory",
+      scopes: [
+        "current OS account filesystem",
+        "current OS account process environment",
+        "host network stack",
+        "configured provider integrations",
+      ],
+    });
+  });
 
   it("never auto-approves advisory access", () => {
     const config = FightConfigSchema.parse({
