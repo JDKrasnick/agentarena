@@ -110,6 +110,40 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
       expect(verified.status).toBe("verified");
       expect(verified.probes).toHaveLength(8);
 
+      const missingText = await executeBrowserValidation({
+        plan,
+        decision: "approved",
+        adapter: adapter!,
+        worktree: process.cwd(),
+        artifactDirectory: path.join(artifacts, "missing-text"),
+        approvedOrigins: [origin],
+        dynamicLoopbackApproved: true,
+        timeoutMs: 30_000,
+        selectedProbes: [
+          {
+            id: "missing-text",
+            family: "interaction",
+            profile: "desktop",
+            expectedBehavior: "A missing application condition is attributed",
+            actions: [
+              { kind: "goto", path: "/" },
+              { kind: "assert_text", text: "never-rendered" },
+            ],
+          },
+        ],
+        signal: controller.signal,
+      });
+      expect(missingText).toMatchObject({
+        status: "failed",
+        provisionAttempts: 1,
+        failureAttribution: "contestant_application",
+      });
+      expect(missingText.probes.at(-1)).toMatchObject({
+        probeId: "missing-text",
+        status: "failed",
+        reason: "application_failure",
+      });
+
       const selfManagedDynamic = await executeBrowserValidation({
         plan: {
           ...plan,
@@ -348,6 +382,6 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
         signal: controller.signal,
       });
       expect(safeDom.probes.at(-1)).toMatchObject({ status: "verified" });
-    });
+    }, 60_000);
   },
 );

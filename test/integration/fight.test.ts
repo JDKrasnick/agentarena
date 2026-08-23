@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, readdir, rm } from "node:fs/promises";
 import { execa } from "execa";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -23,6 +23,8 @@ import { FightConfigSchema } from "../../src/core/types.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
 import type { IssueResolver } from "../../src/task/task-contract.js";
 import { createSlugRepository } from "../helpers/repository.js";
+import { ArenaBattleControl } from "../../src/observability/control.js";
+import { ArenaEventSchema } from "../../src/observability/events.js";
 
 const fixtureAgent = fileURLToPath(
   new URL("../fixtures/fake-agent.mjs", import.meta.url),
@@ -95,6 +97,11 @@ describe("fake-adapter fight on a mocked real issue", () => {
       executable: process.execPath,
       args: [fixtureAgent],
     });
+    const control = new ArenaBattleControl(new AbortController());
+    control.queueSteering(
+      "a",
+      "Pay special attention to normalization boundaries",
+    );
     const outcome = await new Arena({
       adapters: { codex: adapter },
       verifier: new RuleBasedVerifier("codex"),
@@ -102,6 +109,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         executable: process.execPath,
         args: [fixtureAgent],
       }),
+      battleControl: control,
     }).fight(config);
 
     expect(outcome.state.config.contestants).toMatchObject([
@@ -120,6 +128,48 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(await readFile(a!.currentPatchPath!, "utf8")).not.toBe(
       await readFile(b!.currentPatchPath!, "utf8"),
     );
+    expect(outcome.state.integrity).toBe("assisted");
+    expect(outcome.state.operatorInterventions).toEqual([
+      expect.objectContaining({
+        contestantId: "a",
+        status: "applied",
+        appliedStage: "implement",
+      }),
+    ]);
+    expect(outcome.state.operatorInterventions[0]?.promptHash).toMatch(
+      /^[a-f0-9]{64}$/,
+    );
+    expect(await readFile(a!.implementation!.promptPath, "utf8")).toContain(
+      "Pay special attention to normalization boundaries",
+    );
+    const events = (await readFile(outcome.state.artifacts.events!, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => ArenaEventSchema.parse(JSON.parse(line)));
+    expect(events.map((event) => event.sequence)).toEqual(
+      events.map((_event, index) => index + 1),
+    );
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "steering_applied",
+          contestantId: "a",
+        }),
+        expect.objectContaining({
+          type: "battle_completed",
+          status: "complete",
+        }),
+      ]),
+    );
+    const durableSummary = JSON.parse(
+      await readFile(outcome.state.artifacts.result!, "utf8"),
+    ) as {
+      provenance: { assisted: boolean; competitivelyComparable: boolean };
+    };
+    expect(durableSummary.provenance).toMatchObject({
+      assisted: true,
+      competitivelyComparable: false,
+    });
     const attackBy = (slot: "a" | "b") =>
       outcome.state.attacks.find(
         (attack) =>
@@ -192,10 +242,20 @@ describe("fake-adapter fight on a mocked real issue", () => {
 
     expect(outcome.state.status).toBe("complete");
     expect(outcome.state.terminalOutcome).toMatchObject({
+      version: 2,
       phase: "pre_review",
       kind: "forfeit",
+      status: "completed",
       reasonCode: "implementation_empty_patch",
       eligibleContestantIds: ["b"],
+      contestants: [
+        expect.objectContaining({
+          contestantId: "a",
+          eligible: false,
+          reasonCode: "implementation_empty_patch",
+        }),
+        expect.objectContaining({ contestantId: "b", eligible: true }),
+      ],
     });
     expect(outcome.state.contestants.a).toMatchObject({
       status: "failed",
@@ -216,6 +276,22 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(outcome.state.reviewPrompt?.choices).toEqual([
       expect.objectContaining({ contestantId: "b", eligible: true }),
     ]);
+    const terminalReport = await readFile(
+      outcome.state.artifacts.battle!,
+      "utf8",
+    );
+    expect(terminalReport).toContain("Pre-Review Result");
+    expect(terminalReport).not.toMatch(/\bDraw\b|Arena champion|Attack-lane/);
+    expect(
+      await readdir(
+        path.join(outcome.state.artifacts.runDirectory!, "quality"),
+      ),
+    ).toEqual([]);
+    expect(
+      await readdir(
+        path.join(outcome.state.artifacts.runDirectory!, "coverage"),
+      ),
+    ).toEqual([]);
 
     const resumed = await arena.resume({
       runId: outcome.state.runId,
@@ -404,7 +480,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(outcome.state.terminalOutcome).toMatchObject({
       phase: "pre_review",
       kind: "inconclusive",
-      reasonCode: "provider_transport_failure",
+      reasonCode: "harness_infrastructure_failure",
       eligibleContestantIds: [],
     });
     expect(run).toHaveBeenCalledOnce();
@@ -716,6 +792,10 @@ describe("fake-adapter fight on a mocked real issue", () => {
     );
     expect(attackPrompt).toContain("Compact target-specific review packet");
     expect(attackPrompt).toContain("run of whitespace");
+    expect(attackPrompt).toContain(
+      '"kind":"click","role":"button","name":"accessible name"',
+    );
+    expect(attackPrompt).toContain("CSS selectors are not accepted");
     const repairPrompt = await readFile(
       path.join(
         outcome.state.artifacts.runDirectory!,

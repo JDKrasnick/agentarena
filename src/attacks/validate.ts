@@ -45,10 +45,15 @@ interface ValidateAttackOptions {
   validateBrowser?: (
     worktree: string,
     probe: NonNullable<Attack["browserProbe"]>,
-    subject: "author" | "target",
+    subject: "baseline" | "author" | "target",
     nativeSuiteIdentityPaths: string[],
   ) => Promise<BrowserValidationResult>;
 }
+
+type NonComparativeAttackOptions = Omit<
+  ValidateAttackOptions,
+  "authorPatch" | "targetPatch"
+>;
 
 interface RepeatedCheck {
   checks: CheckResult[];
@@ -71,6 +76,38 @@ const SKIPPED_FOCUSED_CHECK: RepeatedCheck = {
 
 function focusedLaneSkipped(attack: Attack): boolean {
   return attack.evidenceKind === "browser_probe";
+}
+
+function capabilityGap(
+  attack: Attack,
+  permissionPolicy: PermissionPolicy,
+): Attack | undefined {
+  const unavailable = attack.requiredCapabilities.find((id) => {
+    const capability = permissionPolicy.capabilities.find(
+      (entry) => entry.id === id,
+    );
+    return capability && capability.status !== "approved";
+  });
+  if (unavailable) {
+    const status = permissionPolicy.capabilities.find(
+      (entry) => entry.id === unavailable,
+    )?.status;
+    return withOutcome(
+      attack,
+      "capability_denied",
+      `Capability ${unavailable} is ${status ?? "unavailable"}`,
+    );
+  }
+  const unknown = attack.requiredCapabilities.find(
+    (id) => !permissionPolicy.capabilities.some((entry) => entry.id === id),
+  );
+  return unknown
+    ? withOutcome(
+        attack,
+        "capability_denied",
+        `Optional capability ${unknown} was not in the approved manifest`,
+      )
+    : undefined;
 }
 
 type AttackAssessment = Awaited<ReturnType<AttackVerifier["assess"]>>;
@@ -682,33 +719,8 @@ export async function validateAttack(
     );
   }
 
-  const unavailable = attack.requiredCapabilities.find((id) => {
-    const capability = options.permissionPolicy.capabilities.find(
-      (entry) => entry.id === id,
-    );
-    return capability && capability.status !== "approved";
-  });
-  if (unavailable) {
-    const status = options.permissionPolicy.capabilities.find(
-      (entry) => entry.id === unavailable,
-    )?.status;
-    return withOutcome(
-      attack,
-      "capability_denied",
-      `Capability ${unavailable} is ${status ?? "unavailable"}`,
-    );
-  }
-  const unknown = attack.requiredCapabilities.find(
-    (id) =>
-      !options.permissionPolicy.capabilities.some((entry) => entry.id === id),
-  );
-  if (unknown) {
-    return withOutcome(
-      attack,
-      "capability_denied",
-      `Optional capability ${unknown} was not in the approved manifest`,
-    );
-  }
+  const gap = capabilityGap(attack, options.permissionPolicy);
+  if (gap) return gap;
   const baseName = `${String(attack.round)}-${attack.id}`;
   const created: string[] = [];
   try {
@@ -1049,6 +1061,263 @@ export async function validateAttack(
       options,
       attack,
       `Harness exception during attack validation after the targeted retry: ${error instanceof Error ? error.message : String(error)}`,
+      options.targetPatch,
+    );
+  } finally {
+    for (const worktree of created) await options.worktrees.remove(worktree);
+  }
+}
+
+/**
+ * Siege has no author production patch. Browser-only evidence therefore uses
+ * the base tree as a diagnostic control and the frozen defender as the scored
+ * lane. A base failure is allowed when the pull request introduces the feature;
+ * the target still needs an attributable selected-probe failure and semantic
+ * adjudication before damage can land.
+ */
+export async function validateSiegeAttack(
+  options: NonComparativeAttackOptions & { targetPatch: string },
+): Promise<Attack> {
+  if (
+    options.attack.evidenceKind !== "browser_probe" ||
+    !options.attack.browserProbe
+  ) {
+    return validateHouseAttack({
+      ...options,
+      targetPatches: Object.fromEntries(
+        options.attack.targets.map((target) => [target, options.targetPatch]),
+      ),
+    });
+  }
+
+  const attack = structuredClone(options.attack);
+  const browserProbe = attack.browserProbe;
+  if (!browserProbe)
+    return withOutcome(
+      attack,
+      "invalid",
+      "Browser-only siege evidence is missing its probe",
+    );
+  const patch = await readFile(attack.patchPath, "utf8");
+  const changedPaths = changedPathsFromPatch(patch);
+  if (
+    patch.trim().length === 0 ||
+    changedPaths.length === 0 ||
+    changedPaths.some((filePath) => !isAllowedAttackPath(filePath))
+  ) {
+    return withOutcome(
+      attack,
+      "invalid",
+      "Browser probe evidence must change only its recognized test fixture",
+    );
+  }
+  const gap = capabilityGap(attack, options.permissionPolicy);
+  if (gap) return gap;
+  if (!options.validateBrowser) {
+    return withOutcome(
+      attack,
+      "capability_denied",
+      "Browser validation was requested but no harness adapter is available",
+    );
+  }
+
+  const target = attack.targets[0];
+  if (!target)
+    return withOutcome(
+      attack,
+      "invalid",
+      "Siege attack has no defender target",
+    );
+
+  const created: string[] = [];
+  try {
+    let baseline: string | undefined;
+    try {
+      baseline = await prepare(
+        options.worktrees,
+        `siege-${String(attack.round)}-${attack.id}-base`,
+        undefined,
+        attack.patchPath,
+        options,
+        true,
+      );
+      created.push(baseline);
+    } catch {
+      // Target-relative evidence may not apply to the base tree. The frozen
+      // run-level baseline remains authoritative for failure attribution.
+    }
+
+    let targetTree: string;
+    try {
+      targetTree = await prepare(
+        options.worktrees,
+        `siege-${String(attack.round)}-${attack.id}-${target}`,
+        options.targetPatch,
+        attack.patchPath,
+        options,
+      );
+      created.push(targetTree);
+    } catch (error) {
+      if (error instanceof WorktreePreparationInfrastructureError) {
+        return judgeFallback(
+          options,
+          attack,
+          error.message,
+          options.targetPatch,
+          created.at(-1),
+        );
+      }
+      return withOutcome(
+        attack,
+        "invalid",
+        `Browser probe evidence does not apply to the defender: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    const targetFull = await runTwice(
+      `siege-${target}-required`,
+      "required",
+      options.config.testCommand,
+      targetTree,
+      options.config,
+      options.logRoot,
+      options.signal,
+      options,
+    );
+    attack.checks.push(...targetFull.checks);
+    if (targetFull.infrastructure) {
+      return judgeFallback(
+        options,
+        attack,
+        "Siege defender validation had an infrastructure failure after the targeted retry",
+        options.targetPatch,
+        targetTree,
+      );
+    }
+    if (!targetFull.stable)
+      return withOutcome(attack, "invalid", "Defender validation was flaky");
+    if (!targetFull.passed)
+      return withOutcome(
+        attack,
+        "execution_inconclusive",
+        "Defender failed its required suite before the browser probe could be isolated",
+      );
+
+    const baselineBrowser = baseline
+      ? await options.validateBrowser(baseline, browserProbe, "baseline", [])
+      : undefined;
+    const targetBrowser = await options.validateBrowser(
+      targetTree,
+      browserProbe,
+      "target",
+      [options.targetPatch],
+    );
+    attack.browserArtifactRefs = [
+      ...new Set(
+        [...(baselineBrowser?.artifacts ?? []), ...targetBrowser.artifacts].map(
+          (artifact) => artifact.path,
+        ),
+      ),
+    ];
+    const baselineProbe = baselineBrowser
+      ? findBrowserProbeResult(baselineBrowser, browserProbe.id)
+      : undefined;
+    const targetProbe = findBrowserProbeResult(targetBrowser, browserProbe.id);
+    if (baselineBrowser) {
+      attack.checks.push({
+        id: "baseline-browser-probe",
+        kind: "browser",
+        status:
+          baselineProbe?.status === "verified"
+            ? "passed"
+            : baselineProbe?.status === "failed"
+              ? "failed"
+              : "infrastructure_error",
+        ...(baselineProbe?.reason ? { reason: baselineProbe.reason } : {}),
+      });
+    }
+    attack.checks.push({
+      id: "target-browser-probe",
+      kind: "browser",
+      status:
+        targetProbe?.status === "verified"
+          ? "passed"
+          : targetProbe?.status === "failed"
+            ? "failed"
+            : "infrastructure_error",
+      ...(targetProbe?.reason ? { reason: targetProbe.reason } : {}),
+    });
+    if (
+      baselineBrowser?.reason === "timed_out" ||
+      targetBrowser.reason === "timed_out"
+    ) {
+      return withOutcome(
+        attack,
+        "execution_inconclusive",
+        "Browser attack exceeded its configured stage budget",
+      );
+    }
+    if (
+      (baselineBrowser &&
+        (!baselineProbe || baselineProbe.status === "unverified")) ||
+      !targetProbe ||
+      targetProbe.status === "unverified"
+    ) {
+      return withOutcome(
+        attack,
+        "execution_inconclusive",
+        "Siege browser execution was unverified",
+      );
+    }
+    if (targetProbe.status === "verified") {
+      return withOutcome(
+        attack,
+        "blocked",
+        "Defender patch passes the agent-chosen browser probe",
+      );
+    }
+    if (targetBrowser.failureAttribution !== "contestant_application") {
+      return withOutcome(
+        attack,
+        "execution_inconclusive",
+        "Browser failure could not be attributed to the defender against the frozen baseline",
+      );
+    }
+
+    const verdict = await assessWithRetry(options, attack, targetTree);
+    if (!verdict.oracleSupported)
+      return withOutcome(attack, "unproven", verdict.oracleRationale);
+    if (!verdict.relevant)
+      return withOutcome(attack, "invalid", verdict.rationale);
+    if (options.knownRootDefects.has(verdict.rootDefectId)) {
+      return {
+        ...withOutcome(
+          attack,
+          "duplicate",
+          "Canonical root defect already scored",
+        ),
+        rootDefectId: verdict.rootDefectId,
+        severity: verdict.severity,
+        evidenceProvenance: "mechanical",
+        severityRationale: verdict.rationale,
+      };
+    }
+    return {
+      ...attack,
+      status: "landed",
+      rootDefectId: verdict.rootDefectId,
+      severity: verdict.severity,
+      damage: DAMAGE_BY_SEVERITY[verdict.severity],
+      damageActive: true,
+      evidenceProvenance: "mechanical",
+      severityRationale: verdict.rationale,
+      outcomeReason: `Stable defender browser failure; ${verdict.rationale}`,
+    };
+  } catch (error) {
+    return judgeFallback(
+      options,
+      attack,
+      `Harness exception during siege browser validation after the targeted retry: ${error instanceof Error ? error.message : String(error)}`,
       options.targetPatch,
     );
   } finally {

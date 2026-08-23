@@ -8,6 +8,7 @@ import {
 } from "../core/types.js";
 import type { RunSpec } from "../contracts/round.js";
 import { runProcess } from "../runner/process-runner.js";
+import type { ArenaObserver } from "../observability/events.js";
 
 export interface PatchQualityVerifierInput {
   runSpec: RunSpec;
@@ -30,6 +31,7 @@ export interface PatchQualityVerifierInput {
   transcriptPrefix: string;
   timeoutMs: number;
   signal: AbortSignal;
+  observer?: ArenaObserver;
 }
 
 export interface PatchQualityVerifier {
@@ -92,6 +94,13 @@ export class CommandPatchQualityVerifier implements PatchQualityVerifier {
       ),
     ].join("\n");
     await writeFile(input.promptPath, prompt, "utf8");
+    const invocationId = `quality-verifier-${String(Date.now())}`;
+    await input.observer?.publish({
+      type: "invocation_started",
+      invocationId,
+      source: "verifier",
+      stage: "quality-verifier",
+    });
     const result = await runProcess({
       ...command,
       input: prompt,
@@ -103,6 +112,20 @@ export class CommandPatchQualityVerifier implements PatchQualityVerifier {
         AGENT_ARENA_STAGE: "quality_verifier",
         AGENT_ARENA_SUBMISSION: outputPath,
       },
+      onOutput: async (stream, text) =>
+        input.observer?.publish({
+          type: "output",
+          invocationId,
+          source: "verifier",
+          stream,
+          text,
+        }),
+    });
+    await input.observer?.publish({
+      type: "invocation_finished",
+      invocationId,
+      status: result.exitCode === 0 ? "succeeded" : "failed",
+      durationMs: result.durationMs,
     });
     if (result.exitCode !== 0 || result.failureClass) {
       throw new Error("Quality verifier invocation failed");

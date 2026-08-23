@@ -11,6 +11,10 @@ import {
 import { ArtifactStore } from "../../src/artifacts/store.js";
 import { applyAcceptedPatch } from "../../src/commands/apply.js";
 import { Arena } from "../../src/core/arena.js";
+import type {
+  BrowserAdapter,
+  BrowserSession,
+} from "../../src/browser/executor.js";
 import { FightConfigSchema, RunStateV7Schema } from "../../src/core/types.js";
 import { readBaseline } from "../../src/recovery/durable.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
@@ -65,12 +69,17 @@ async function fixturePullRequest(
   };
 }
 
-function adapters(options: { skipDefenderRepair?: boolean } = {}) {
+function adapters(
+  options: { skipDefenderRepair?: boolean; browserSiege?: boolean } = {},
+) {
   return {
     codex: new CommandAgentAdapter({
       id: "codex",
       executable: process.execPath,
       args: [fixtureAgent],
+      ...(options.browserSiege
+        ? { environment: { AGENT_ARENA_FAKE_BROWSER_SIEGE: "1" } }
+        : {}),
     }),
     claude: new CommandAgentAdapter({
       id: "claude",
@@ -80,6 +89,50 @@ function adapters(options: { skipDefenderRepair?: boolean } = {}) {
         ? { environment: { AGENT_ARENA_FAKE_SKIP_REPAIR: "1" } }
         : {}),
     }),
+  };
+}
+
+function slugBrowserAdapter(): BrowserAdapter {
+  return {
+    runner: "playwright",
+    async launch(input): Promise<BrowserSession> {
+      const source = await readFile(
+        path.join(input.worktree, "src", "slug.mjs"),
+        "utf8",
+      );
+      const repeatedWhitespaceBroken =
+        source.includes('replaceAll(" ", "-")') &&
+        !source.includes('replace("   ", "-")');
+      return {
+        toolVersion: "fake-browser-1",
+        browserVersion: "fake-chromium-1",
+        artifacts: [],
+        waitUntilReady: () => Promise.resolve(),
+        runNativeSuite: () =>
+          Promise.resolve({
+            family: "visual_regression",
+            profile: "repository_native",
+            status: "verified",
+            blockedOrigins: [],
+            artifacts: [],
+          }),
+        runProbe: ({ request, harnessOwned }) => {
+          const failed =
+            !harnessOwned &&
+            request.id === "slug-browser-whitespace" &&
+            repeatedWhitespaceBroken;
+          return Promise.resolve({
+            family: request.family,
+            profile: request.profile,
+            status: failed ? "failed" : "verified",
+            ...(failed ? { reason: "application_failure" as const } : {}),
+            blockedOrigins: [],
+            artifacts: [],
+          });
+        },
+        stop: () => Promise.resolve(),
+      };
+    },
   };
 }
 
@@ -292,6 +345,39 @@ describe("PR battle modes", () => {
       ),
     ) as { evidenceBasis: string };
     expect(attackerAdjudication.evidenceBasis).toBe("mechanical");
+    const replay = JSON.parse(
+      await readFile(
+        path.join(
+          outcome.state.artifacts.runDirectory!,
+          "rounds",
+          String(attackerAttack!.round),
+          "replay.json",
+        ),
+        "utf8",
+      ),
+    ) as {
+      repairs: Array<{
+        contestantId: string;
+        status: string;
+        healedDefectIds: string[];
+      }>;
+      scoreEvents: Array<{
+        contestantId: string;
+        type: string;
+        defectId?: string;
+      }>;
+    };
+    const healedEvent = replay.scoreEvents.find(
+      (event) => event.contestantId === "b" && event.type === "heal",
+    );
+    expect(healedEvent?.defectId).toBe(attackerAttack?.rootDefectId);
+    expect(replay.repairs).toContainEqual(
+      expect.objectContaining({
+        contestantId: "b",
+        status: "repaired",
+        healedDefectIds: [attackerAttack!.rootDefectId!],
+      }),
+    );
     expect(outcome.state.contestants.b?.healthEvents).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: "heal" })]),
     );
@@ -340,6 +426,79 @@ describe("PR battle modes", () => {
     expect(
       await readFile(path.join(repositoryRoot, "src", "slug.mjs"), "utf8"),
     ).toContain('replace("   ", "-").replaceAll(" ", "-")');
+  });
+
+  it("runs and heals browser-only evidence through the asymmetric siege lane", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const pullRequestResolver = await fixturePullRequest(repositoryRoot);
+    const battleConfig = FightConfigSchema.parse({
+      ...config(repositoryRoot, "siege"),
+      task: "Render browser-entered titles with every whitespace run collapsed to one hyphen.",
+      acceptanceCriteria: [
+        "Three spaces entered through the browser produce one hyphen.",
+      ],
+      browserProfile: {
+        runner: "playwright",
+        startupCommand: "node server.mjs",
+        healthUrl: "http://127.0.0.1:4173/health",
+        baseUrl: "http://127.0.0.1:4173",
+        testCommand: "node --test",
+        portMode: "fixed",
+        nativeSuiteMode: "reuse_started_service",
+        projects: [],
+        allowedOrigins: ["http://127.0.0.1:4173"],
+      },
+    });
+    const outcome = await new Arena({
+      adapters: adapters({ browserSiege: true }),
+      verifier: new RuleBasedVerifier("codex"),
+      browserAdapters: { playwright: slugBrowserAdapter() },
+      pullRequestResolver,
+      freezePullRequest: (options) =>
+        freezePullRequest({
+          ...options,
+          fetchCommit: (_root, _repository, commit) => Promise.resolve(commit),
+        }),
+    }).fight(battleConfig);
+
+    const browserAttack = outcome.state.attacks.find(
+      (candidate) => candidate.evidenceKind === "browser_probe",
+    );
+    expect(browserAttack).toMatchObject({
+      status: "landed",
+      damageActive: false,
+    });
+    expect(typeof browserAttack?.rootDefectId).toBe("string");
+    expect(browserAttack?.outcomeReason).not.toContain("house attack");
+    expect(browserAttack?.checks.map((check) => check.id)).toEqual(
+      expect.arrayContaining([
+        "baseline-browser-probe",
+        "target-browser-probe",
+      ]),
+    );
+    expect(
+      browserAttack?.checks.some((check) => check.kind === "focused"),
+    ).toBe(false);
+    expect(browserAttack?.browserArtifactRefs).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /browser\/attacks\/.+\/baseline-1-result\.json$/u,
+        ),
+        expect.stringMatching(/browser\/attacks\/.+\/target-1-result\.json$/u),
+      ]),
+    );
+    expect(outcome.state.contestants.b?.healthEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "target_damage", amount: -30 }),
+        expect.objectContaining({ type: "heal", amount: 30 }),
+      ]),
+    );
+    expect(outcome.state.contestants.b?.browserValidation?.status).toBe(
+      "verified",
+    );
+    const report = await readFile(outcome.state.artifacts.battle!, "utf8");
+    expect(report).toContain("browser artifact 1");
+    expect(report).not.toContain("Both patches block the house attack");
   });
 
   it("awards an unresolved siege defect to the attacker", async () => {

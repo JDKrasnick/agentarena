@@ -91,6 +91,34 @@ to review without producing review, attack, repair, quality, or coverage
 artifacts. The persisted pre-review terminal outcome controls resume and CLI
 status reporting.
 
+New runs write the v2 pre-review contract with an overall terminal status and a
+separate eligibility, cause code, and diagnostic-artifact list for each
+contestant; completed v1 records remain readable. Classification precedence is
+external cancellation, harness infrastructure, provider transport/MCP/auth or
+reconnect evidence, contestant timeout or failed invocation, then patch
+applicability and required validation. Transport evidence supersedes timeout or
+nonzero exit only when no usable implementation result was produced. A
+transport failure stops the peer implementation with a phase-local controller
+and records that peer as transport-cancelled rather than failed.
+
+For implementation transport failures only, the harness launches at most three
+fresh backend-authenticating sentinel probes in a shared 30-second window. A
+successful probe creates a replacement run by copying the parent's frozen task
+sources and preserving its base commit, topology, permissions, budgets, and
+configuration; live issues and pull requests are not fetched again. Each failed
+parent persists a typed `transport-recovery.json` with probe results,
+disposition, restart ordinal, and replacement run ID, while child result
+provenance identifies its parent. Two replacements are the hard cap, so a
+transport failure in the third total run ends inconclusively without probes.
+
+The command layer returns the final run ID, status, and rendered summary. The
+built CLI exits `0` for a completed battle, draw, or valid duel forfeit; `2` for
+a persisted inconclusive run; `130` for cancellation; and `1` for persisted
+internal failure, invalid configuration, or an uncaught command error. Recovery
+prints the complete run-ID chain and returns the last replacement's exit code.
+Resume renders a stored terminal result and never invokes stages skipped by the
+terminal outcome.
+
 Runtime services, callbacks, worktree objects, abort controllers, and mutable
 `RunState` never enter these serialized contracts. Expected execution failures
 are terminal result values; throws indicate invalid configuration, schema
@@ -149,12 +177,17 @@ Agent Arena then:
    - The harness freezes both current patches.
    - Both agents get an extended read-only review phase and produce structured
      target-specific findings.
-   - Each agent receives its compact review packet and submits zero to three
-     sparse, uniquely ranked executable attacks. `AttackSubmissionV2` includes
-     oracle metadata, a focused command, required capabilities, disjoint
-     rank-specific paths, and optional shared support paths copied into every
-     independently replayable target-relative overlay. `attacks: []` explicitly
-     records that no reviewed hypothesis is credible.
+   - The harness creates a fresh v2 trusted evidence-handoff packet for each
+     target lane under
+     [`TRUSTED_EVIDENCE_HANDOFF_RFC.md`](TRUSTED_EVIDENCE_HANDOFF_RFC.md),
+     validates its target and permission fingerprints immediately before use,
+     and injects it immediately before attack instructions.
+   - Each agent inspects the frozen target in its assigned worktree and submits
+     zero to three sparse, uniquely ranked executable attacks.
+     `AttackSubmissionV2` includes oracle metadata, a focused command, required
+     capabilities, disjoint rank-specific paths, and optional shared support
+     paths copied into every independently replayable target-relative overlay.
+     `attacks: []` explicitly records that no reviewed hypothesis is credible.
    - The harness validates every attack and resolves damage or recoil
      simultaneously.
    - Both agents receive the new evidence and the remaining durable repair
@@ -237,12 +270,35 @@ cross-component failures. It does not grant production access.
 
 Before focused failure analysis, each agent receives a separate
 `review_minutes` budget for read-only inspection of the opponent's frozen patch.
-The resulting packet records the checked invariant, code location, trigger
-sequence, expected behavior, confidence, and a suggested minimal regression
-test. It is not hidden chain-of-thought and excludes private implementation
-transcripts. Only the reviewer that produced the packet receives it before
-adjudication; repair prompts contain verifier-confirmed tests rather than raw
-findings. Only committed attacks can land or recoil.
+The resulting v2 packet records harness-attested target and complete resolved
+permission fingerprints plus at most 12 ordered reviewer hypotheses. Each
+hypothesis includes its invariant, structured observations and provenance, code
+locations, trigger sequence, oracle and task-source rationale, expected
+behavior, confidence, required capabilities, and focused regression plan. Stable
+finding IDs reject exact duplicates while preserving the first priority; they
+never identify canonical defects. Deterministic tail compaction records omitted
+IDs and enforces a 16 KiB canonical UTF-8 ceiling.
+
+Immediately before attack invocation, the harness recomputes both fingerprints.
+A stale or malformed packet skips invocation and receives one targeted review
+refresh; a second failure loses coverage for that lane. Repair, target mutation,
+permission changes, and round transitions invalidate packets immediately. A
+typed `handoff_blocker` containing affected finding IDs and missing permission
+or context is mutually exclusive with attacks and receives one targeted
+refresh; persistence loses coverage without damage or recoil. A valid
+`attacks: []` is instead successful packet consumption and completes the lane.
+
+The packet is engineering evidence rather than hidden chain-of-thought. Every
+observation remains explicitly a reviewer hypothesis; the packet excludes
+private implementation transcripts, private reasoning, provider identity,
+credentials, and raw frozen patch bytes. Only the reviewer that produced it
+receives it immediately before the attack instructions and inspects the target
+through the assigned worktree. Repair prompts contain verifier-confirmed tests
+rather than raw findings, and only committed attacks can land or recoil. Cited
+files, nearby tests, and direct dependencies remain inspectable. Broader
+repository rediscovery is allowed and warned about when visible, then recorded
+as `targeted`, `broad`, or `unknown`; this telemetry never affects health,
+scoring, retries, coverage, or selection.
 
 Both review and focused failure analysis receive a standardized execution
 architecture: battle mode and contestant role, phase sequence, exact worktree
@@ -342,8 +398,9 @@ unscored report finding.
 - Unreviewed package installation or production service provisioning.
 - Multiple integration profiles, unrestricted browser tests, or production
   integrations.
-- Arena-generated container environments, network sandboxes, GPU workloads,
-  and mobile builds. Running a user-supplied Compose profile is allowed.
+- Arena-generated container environments, network sandboxes, hard confinement
+  of agent or test subprocesses, GPU workloads, and mobile builds. Running a
+  user-supplied Compose profile is allowed.
 - Production credentials or enterprise-grade secret management.
 - Deployment, package release, or GitHub writes without a separately
   authenticated, patch-bound delivery decision.
@@ -405,7 +462,66 @@ Both agents start from the exact same commit and receive the same RunSpec,
 test command, repository instructions, time limit, and available context. They
 cannot read the opponent worktree during implementation.
 
-### Permission and authentication plan
+### Live observability surface
+
+Fights default to the dedicated React desktop window. The window loads only
+Agent Arena assets and a randomly assigned `127.0.0.1` event stream, keeps Node
+integration disabled, and does not launch a browser tab. `--no-window` opts out,
+using Ink in an interactive TTY and plain output otherwise. Explicit
+`--display window|terminal|plain` modes remain available, while `--display
+dashboard` remains a compatibility alias for the desktop window. Closing the
+window cancels an active battle; after completion, **Finish session** closes the
+window and its local server.
+
+Fighter cards open a full-page drill-down within the desktop window. The detail
+view exposes recorded invocations, output, checks, health changes, attack
+involvement, and live steering, with a persistent route back to the arena. The
+round rail can select completed rounds and reconstruct their recorded fighter
+and evidence state. This replay is read-only: the MVP has no pause, arbitrary
+retry, or execution rewind control. Durable resume continues from a sealed
+boundary rather than rolling a completed round backward.
+
+The desktop window uses a larger live-battle size so each fighter card retains
+and exposes more output. Once a terminal result is projected, the window
+contracts to a results-first layout showing the recommendation, final fighter
+health and checks, coverage, run integrity, completed rounds, landed defects,
+verified repairs, terminal outcome, evidence links, and controls to review the
+recorded battle or finish the session.
+
+The window includes Classic Shell, Developer Dashboard, Night Transit, Test Lab,
+Live Arena Broadcast, and 16-Bit Tactics themes. Classic Shell is used until a valid local
+selection exists. The always-available swatch picker changes renderer families
+without reconnecting the event stream or resetting fighter, replay, or result
+navigation. Electron loads the preference before React mounts and stores it
+atomically below the user's application-data directory. Corrupt or unknown
+preferences fall back to Classic; a failed write keeps the session choice and
+shows a non-blocking warning. This preference is excluded from runtime schemas,
+battle records, artifacts, scoring, project configuration, and recovery hashes.
+Ink and plain CLI behavior is unchanged.
+
+Developer Dashboard is a conventional dark observability renderer with the
+dashboard-native three-column structure: round timeline, paired contestant
+workspaces, and chronological activity. Each contestant workspace exposes
+health, checks, normalized work summaries, steering, and full-detail inspection;
+a bottom status bar keeps the run identity and state visible. Night Transit
+projects append-only battle telemetry into two contestant lines, real round
+stations, a verification interchange, and a consolidated arrivals board. Test
+Lab uses opposing benches, a central experiment sheet, invocation timestamps
+and durations, health-history charts, check grids, and a recent-test tray. Both
+renderers use only recorded dashboard facts, retain live Inspect and cancellation
+actions, move side rails below the workspace at narrow widths, and make replay
+explicitly read-only. 16-Bit Tactics
+uses a code-native tile field, tactical nodes, authoritative attack and repair
+routes, opposing status bars, inspection commands, an evidence channel, and a
+structured in-map readout for the latest recorded event. It
+keeps the complete cartridge HUD visible at desktop widths and derives compact
+work nodes from recorded contestant invocations rather than invented game
+state. It does not bundle third-party game characters, logos, sprites, or
+screenshots. Stored `night-edition` preferences migrate to `night-transit`;
+`sticker-league` preferences migrate to `developer-dashboard`; `evidence-deck`
+and `monster-battle` preferences migrate to `retro-tactics`.
+
+### Permission discovery, approval, and audit
 
 Before agents run, repository reconnaissance produces a capability plan covering
 tools, services, network destinations, filesystem paths, credentials, and
@@ -418,6 +534,12 @@ execution roles. Each capability has:
 - An execution role: `agent`, `harness_only`, or `both`.
 - An enforcement level: `enforced`, `brokered`, or `advisory`.
 - An authentication state and run-scoped expiration.
+
+The plan discovers requested authority, obtains a user decision, gates whether
+required run stages may start, and creates an immutable audit record. Approval
+does not restrict the ambient filesystem, network, credential, or process
+authority of a native agent or test subprocess. Hard confinement requires the
+separate strict-worker execution backend tracked in #68.
 
 The user can choose one overall mode:
 
@@ -551,13 +673,19 @@ or reports. When an integration needs a secret, a harness-only runner or
 credential broker injects it into the validation subprocess and returns only
 redacted results to agents.
 
-The MVP does not provide a complete hostile-code sandbox. `brokered` means the
+The MVP permission system is not a hostile-code sandbox. `brokered` means the
 harness withholds and injects a capability, but may not prevent an agent process
 from using other authority already available to the current OS user.
 `advisory` means the restriction exists only in policy and prompts. Preflight
 must display this distinction and cannot claim that an advisory denial is
 enforced. Users handling sensitive repositories should run Agent Arena from a
 sanitized account or external container and keep production credentials absent.
+
+Native provider and repository execution is represented as a required,
+high-risk advisory capability whose scope names the ambient filesystem, process
+environment, network, and configured provider integrations. `--yes` displays
+the same consolidated plan and native-runtime warning before it records
+non-interactive approval.
 
 Both contestants receive the same post-approval capability manifest. An attack
 may request an additional optional capability, but it is paused until a policy
@@ -923,6 +1051,11 @@ containing:
   interrupted legacy runs require a restart.
 - `rounds/<round>/repair-judgments/`: immutable, digest-bound judge decisions
   for defects whose repair cannot be confirmed mechanically.
+- `rounds/<round>/handoffs/`: canonical v2 reviewer-to-attacker packets,
+  fingerprint validation, omission metadata, refreshes, blockers,
+  invalidations, consumption outcomes, and inspection telemetry. Completed v1
+  artifacts remain reportable but are never consumed or upgraded; a resumed v1
+  handoff regenerates v2.
 - `feedback/`: schema-v3 deterministic, digest-linked role-safe agent
   projections targeting 8 KiB and capped at 24 KiB. Private transcripts,
   verbose judge rationale, and opponent-only evidence are never projected.
