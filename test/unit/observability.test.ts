@@ -182,6 +182,7 @@ describe("arena observability", () => {
       type: "browser_session_started",
       sessionId,
       label: "B · target validation",
+      contestantId: "b",
       url: "http://127.0.0.1:5184",
       runner: "playwright",
       attempt: 1,
@@ -191,6 +192,7 @@ describe("arena observability", () => {
       {
         id: sessionId,
         label: "B · target validation",
+        contestantId: "b",
         url: "http://127.0.0.1:5184",
         runner: "playwright",
         attempt: 1,

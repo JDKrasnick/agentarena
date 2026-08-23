@@ -5,7 +5,7 @@ import type {
   ArenaEventSink,
   ArenaObserver,
 } from "../observability/events.js";
-import type { RoundId, Stage } from "../core/types.js";
+import type { ContestantId, RoundId, Stage } from "../core/types.js";
 
 export interface DashboardContestant {
   provider: string;
@@ -65,6 +65,7 @@ export interface DashboardAttackActivity {
 export interface DashboardBrowserSession {
   id: string;
   label: string;
+  contestantId?: ContestantId;
   url: string;
   runner: "playwright" | "cypress" | "custom";
   attempt: number;
@@ -288,6 +289,7 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
       const session = {
         id: event.sessionId,
         label: event.label,
+        ...(event.contestantId ? { contestantId: event.contestantId } : {}),
         url: event.url,
         runner: event.runner,
         attempt: event.attempt,

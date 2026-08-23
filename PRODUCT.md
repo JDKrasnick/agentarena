@@ -104,7 +104,10 @@ While an Arena-managed browser session is active, the observatory surfaces an
 `Open browser` action for its approved application URL. Arena never opens that
 URL automatically. The action opens a separate user-controlled browser view;
 the evidence browser remains headless with isolated storage, and the action
-disappears when the managed session stops.
+disappears when the managed session stops. The temporary action names the
+contestant using the session and uses the contestant's live accent color; a
+harness-owned baseline session is labeled Arena instead of implying contestant
+ownership.
 The desktop observatory ships six supported visual themes: Classic Shell,
 Developer Dashboard, Night Transit, Test Lab, Live Arena Broadcast, and 16-Bit Tactics.
 Classic Shell is the first-run fallback. A persistent swatch picker remains available in
@@ -376,7 +379,9 @@ isolated server and fresh browser storage for independent probes. Managed
 Chromium remains headless. The live observatory exposes an explicit action for
 opening the active approved application URL in a separate user browser, but it
 never opens that view without a click and never treats the separate view as
-evidence.
+evidence. The action identifies whether Fighter A, Fighter B, or Arena owns the
+current session and uses a pulsing, contestant-colored treatment reserved for
+the session's temporary lifetime.
 
 The harness advertises the safe probe menu; the attacking agent chooses a
 task-specific family, desktop/mobile/reflow profile, accessible actions, and

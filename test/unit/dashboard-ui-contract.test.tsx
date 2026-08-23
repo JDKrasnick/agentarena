@@ -17,9 +17,13 @@ import {
 
 describe("dashboard UI contracts", () => {
   it("renders an operator-triggered browser link only for an active session", () => {
-    expect(renderToStaticMarkup(<BrowserSessionAction sessions={[]} />)).toBe(
-      "",
-    );
+    const state = initialDashboardState();
+    state.contestants.a.provider = "codex";
+    expect(
+      renderToStaticMarkup(
+        <BrowserSessionAction sessions={[]} contestants={state.contestants} />,
+      ),
+    ).toBe("");
 
     const markup = renderToStaticMarkup(
       <BrowserSessionAction
@@ -27,16 +31,20 @@ describe("dashboard UI contracts", () => {
           {
             id: "8c715f8d-4528-42b1-9704-c4a323d3cc1b",
             label: "Attack slug-check · target",
+            contestantId: "a",
             url: "http://127.0.0.1:5184",
             runner: "playwright",
             attempt: 1,
             startedAt: "2026-08-23T12:00:00.000Z",
           },
         ]}
+        contestants={state.contestants}
       />,
     );
 
     expect(markup).toContain("Open browser");
+    expect(markup).toContain("Codex is using the browser");
+    expect(markup).toContain("browser-session-action is-a");
     expect(markup).toContain('href="http://127.0.0.1:5184"');
     expect(markup).toContain('target="_blank"');
     expect(markup).toContain("separate view from Arena&#x27;s isolated probe");

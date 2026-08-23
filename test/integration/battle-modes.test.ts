@@ -513,6 +513,7 @@ describe("PR battle modes", () => {
       browserStarts.some(
         (event) =>
           event.label.includes("target") &&
+          event.contestantId === "b" &&
           event.url === "http://127.0.0.1:4173" &&
           event.runner === "playwright",
       ),

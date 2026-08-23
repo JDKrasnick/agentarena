@@ -286,20 +286,49 @@ input:focus-visible {
   color: var(--app-danger);
 }
 .top-actions .browser-session-action {
+  --browser-session-accent: var(--green);
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  min-height: 34px;
+  min-height: 42px;
   padding-inline: 11px;
-  color: var(--app-ink);
-  background: var(--app-control);
-  font-weight: 800;
+  color: var(--app-white);
+  background: color-mix(
+    in srgb,
+    var(--browser-session-accent) 38%,
+    var(--app-chrome)
+  );
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--browser-session-accent) 55%, transparent),
+    0 5px 14px
+      color-mix(in srgb, var(--browser-session-accent) 18%, transparent);
   white-space: nowrap;
   animation: browser-session-enter 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
+.top-actions .browser-session-action.is-a {
+  --browser-session-accent: var(--cyan);
+}
+.top-actions .browser-session-action.is-b {
+  --browser-session-accent: var(--amber);
+}
 .top-actions .browser-session-action:hover {
-  color: var(--app-ink);
-  background: color-mix(in srgb, var(--app-control) 84%, var(--green));
+  color: var(--app-white);
+  background: color-mix(
+    in srgb,
+    var(--browser-session-accent) 52%,
+    var(--app-chrome)
+  );
+}
+.browser-session-action::before {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  content: "";
+  background: var(--browser-session-accent);
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--browser-session-accent) 20%, transparent);
+  animation: browser-session-pulse 1.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
 }
 .browser-session-action svg {
   width: 18px;
@@ -314,15 +343,41 @@ input:focus-visible {
   fill: currentColor;
   stroke: none;
 }
+.browser-session-copy {
+  display: grid;
+  gap: 1px;
+  text-align: left;
+}
+.browser-session-copy small {
+  color: color-mix(
+    in srgb,
+    var(--browser-session-accent) 50%,
+    var(--app-white)
+  );
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.browser-session-copy strong {
+  color: var(--app-white);
+  font-size: 12px;
+  line-height: 1.1;
+}
 .browser-session-action b {
   min-width: 18px;
   padding: 1px 5px;
   border-radius: 999px;
-  color: var(--app-white);
-  background: var(--app-chrome);
+  color: var(--app-ink);
+  background: var(--app-white);
   font-size: 10px;
   line-height: 16px;
   text-align: center;
+}
+@keyframes browser-session-pulse {
+  50% {
+    box-shadow: 0 0 0 6px
+      color-mix(in srgb, var(--browser-session-accent) 4%, transparent);
+  }
 }
 @keyframes browser-session-enter {
   from {

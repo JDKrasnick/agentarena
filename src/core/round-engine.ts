@@ -3543,6 +3543,7 @@ export class RoundEngine {
         ...this.browserSessionObserver(
           context,
           `${contestant.id.toUpperCase()} · ${phase} validation`,
+          contestant.id,
         ),
         signal: context.controller.signal,
       }),
@@ -3608,6 +3609,7 @@ export class RoundEngine {
   private browserSessionObserver(
     context: ArenaContext,
     label: string,
+    contestantId?: ContestantId,
   ): Pick<
     Parameters<typeof executeBrowserValidation>[0],
     "onSessionStarted" | "onSessionFinished"
@@ -3618,6 +3620,7 @@ export class RoundEngine {
           type: "browser_session_started",
           ...activity,
           label,
+          ...(contestantId ? { contestantId } : {}),
         }),
       onSessionFinished: ({ sessionId }) =>
         this.emit(context, {
@@ -3630,15 +3633,23 @@ export class RoundEngine {
   /** Spreadable `validateAttack` option, so the closure is built exactly once. */
   private browserValidatorOption(
     context: ArenaContext,
-    attackId: string,
+    attack: Attack,
   ): Pick<Parameters<typeof validateAttack>[0], "validateBrowser"> {
-    const validateBrowser = this.browserProbeValidator(context, attackId);
+    const validateBrowser = this.browserProbeValidator(context, attack.id, {
+      ...(attack.origin.kind === "contestant"
+        ? { author: attack.origin.contestant }
+        : {}),
+      ...(attack.targets[0] ? { target: attack.targets[0] } : {}),
+    });
     return validateBrowser ? { validateBrowser } : {};
   }
 
   private browserProbeValidator(
     context: ArenaContext,
     attackId: string,
+    contestantsBySubject: Partial<
+      Record<"author" | "target", ContestantId>
+    > = {},
   ):
     | ((
         worktree: string,
@@ -3692,6 +3703,7 @@ export class RoundEngine {
           ...this.browserSessionObserver(
             context,
             `Attack ${attackId} · ${subject}`,
+            subject === "baseline" ? undefined : contestantsBySubject[subject],
           ),
           signal: context.controller.signal,
         }),
@@ -5646,7 +5658,7 @@ export class RoundEngine {
                 context.state,
                 attack.targets,
               ),
-              ...this.browserValidatorOption(context, attack.id),
+              ...this.browserValidatorOption(context, attack),
               persistFailureRecord: (record) =>
                 this.persistFailureRecord(context, record),
             })
@@ -5669,7 +5681,7 @@ export class RoundEngine {
                   context.state,
                   attack.targets,
                 ),
-                ...this.browserValidatorOption(context, attack.id),
+                ...this.browserValidatorOption(context, attack),
                 persistFailureRecord: (record) =>
                   this.persistFailureRecord(context, record),
               })
@@ -6037,6 +6049,7 @@ export class RoundEngine {
                   const validateBrowser = this.browserProbeValidator(
                     context,
                     attack.id,
+                    { target: agent },
                   );
                   if (!validateBrowser) {
                     infrastructureFailure = true;
@@ -6482,6 +6495,7 @@ export class RoundEngine {
                 const validateBrowser = this.browserProbeValidator(
                   context,
                   attack.id,
+                  { target: agent },
                 );
                 if (!validateBrowser)
                   throw new Error(
@@ -6791,7 +6805,7 @@ export class RoundEngine {
           context.state,
           provisional.targets,
         ),
-        ...this.browserValidatorOption(context, provisional.id),
+        ...this.browserValidatorOption(context, provisional),
       });
       if (replay.status === "provisional_infrastructure") {
         replay.status = "execution_inconclusive";
@@ -7352,6 +7366,7 @@ export class RoundEngine {
               const validateBrowser = this.browserProbeValidator(
                 context,
                 attack.id,
+                { target: agent },
               );
               const browserResult = validateBrowser
                 ? await validateBrowser(

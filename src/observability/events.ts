@@ -85,6 +85,7 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
   event("browser_session_started", {
     sessionId: z.string().uuid(),
     label: z.string().min(1),
+    contestantId: ContestantIdSchema.optional(),
     url: z.string().url(),
     runner: z.enum(["playwright", "cypress", "custom"]),
     attempt: z.number().int().min(1).max(2),

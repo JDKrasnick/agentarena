@@ -791,22 +791,29 @@ function ThemePicker({
 
 export function BrowserSessionAction({
   sessions,
+  contestants,
 }: {
   sessions: DashboardBrowserSession[];
+  contestants: DashboardState["contestants"];
 }) {
   const session = sessions.at(-1);
   if (!session) return null;
   const multiple = sessions.length > 1;
+  const actor = session.contestantId
+    ? contestants[session.contestantId].provider === "unknown"
+      ? `Fighter ${session.contestantId.toUpperCase()}`
+      : title(contestants[session.contestantId].provider)
+    : "Arena";
   const description = multiple
-    ? `${String(sessions.length)} browser sessions are active. Open the most recent session: ${session.label}.`
-    : `Open ${session.label} in your default browser.`;
+    ? `${String(sessions.length)} browser sessions are active. ${actor} is using the most recent session: ${session.label}.`
+    : `${actor} is using the browser for ${session.label}.`;
   return (
     <a
-      className="browser-session-action"
+      className={`browser-session-action${session.contestantId ? ` is-${session.contestantId}` : " is-arena"}`}
       href={session.url}
       target="_blank"
       rel="noreferrer"
-      aria-label={`${description} This is a separate view from Arena's isolated probe.`}
+      aria-label={`Open browser. ${description} This is a separate view from Arena's isolated probe.`}
       title={`${description} The Arena probe remains isolated.`}
     >
       <svg viewBox="0 0 18 18" aria-hidden="true">
@@ -815,7 +822,10 @@ export function BrowserSessionAction({
         <circle cx="4.25" cy="4.5" r=".65" />
         <circle cx="6.5" cy="4.5" r=".65" />
       </svg>
-      <span>Open browser</span>
+      <span className="browser-session-copy">
+        <small>{actor} is using the browser</small>
+        <strong>Open browser</strong>
+      </span>
       {multiple ? <b aria-hidden="true">{sessions.length}</b> : null}
     </a>
   );
@@ -2673,7 +2683,10 @@ export function App() {
             <i />
             {hasResult ? "Complete" : connected ? "Live" : "Reconnecting"}
           </span>
-          <BrowserSessionAction sessions={state.browserSessions} />
+          <BrowserSessionAction
+            sessions={state.browserSessions}
+            contestants={state.contestants}
+          />
           {state.links.map((link) => (
             <a href={link.url} target="_blank" rel="noreferrer" key={link.url}>
               {link.label} ↗

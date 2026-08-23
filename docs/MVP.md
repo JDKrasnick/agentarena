@@ -590,7 +590,9 @@ the live observatory shows an `Open browser` action for the resolved approved
 application URL and removes it when the session stops. The action never opens
 automatically and launches a separate user-controlled browser view with storage
 independent from the evidence context; activity there cannot affect the probe
-result.
+result. The action names the contestant using the session and carries that
+contestant's live accent color for its temporary lifetime. Harness-owned
+baseline sessions are labeled Arena rather than assigned to a contestant.
 
 Runtime-error/DOM-integrity, accessible-name, and 320 CSS-pixel overflow smoke
 probes are mandatory on every browser run; the attacker-selected probe is
