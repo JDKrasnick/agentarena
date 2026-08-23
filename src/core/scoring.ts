@@ -37,10 +37,36 @@ function expectedRecoil(attack: Attack): 0 | 5 | 10 | 15 {
     : 0;
 }
 
+/** Return the original-rank recoil applied by a valid-to-rejected overturn. */
+export function challengeCorrectionRecoil(
+  history: readonly Attack[],
+  challenge: Attack,
+): 5 | 10 | 15 | undefined {
+  const adjudication = challenge.adjudication;
+  if (
+    adjudication?.relationship !== "overturn" ||
+    adjudication.verdict !== "rejected" ||
+    !adjudication.supersedesAdjudicationId
+  )
+    return undefined;
+  const prior = history.find(
+    (attack) =>
+      attack.adjudication?.id === adjudication.supersedesAdjudicationId,
+  );
+  const recoil =
+    prior?.adjudication?.verdict === "valid" ? expectedRecoil(prior) : 0;
+  return recoil || undefined;
+}
+
 function adjudicationRecoil(
   attack: Attack,
   adjudication: AdjudicationRecord,
 ): 0 | 5 | 10 | 15 {
+  if (
+    adjudication.relationship === "overturn" &&
+    adjudication.scoreEffect === "none"
+  )
+    return 0;
   const shouldRecoil =
     adjudication.verdict === "rejected" ||
     adjudication.duplicateState !== "unique";
@@ -199,6 +225,177 @@ function cloneContestant(contestant: ContestantResult): ContestantResult {
   return structuredClone(contestant);
 }
 
+/** Reverse a superseded decision through append-only health events. */
+export function applyChallengeCorrections(
+  contestants: Partial<Record<ContestantId, ContestantResult>>,
+  history: readonly Attack[],
+  challenges: readonly Attack[],
+  round: RoundId,
+): Partial<Record<ContestantId, ContestantResult>> {
+  const next = Object.fromEntries(
+    Object.entries(contestants).map(([id, contestant]) => [
+      id,
+      cloneContestant(contestant),
+    ]),
+  ) as Partial<Record<ContestantId, ContestantResult>>;
+  const challengeIds = new Set(challenges.map((challenge) => challenge.id));
+  const correctedAdjudications = new Set(
+    history.flatMap((attack) =>
+      !challengeIds.has(attack.id) &&
+      attack.adjudication?.supersedesAdjudicationId
+        ? [attack.adjudication.supersedesAdjudicationId]
+        : [],
+    ),
+  );
+  for (const challenge of challenges) {
+    const challengeAdjudication = challenge.adjudication;
+    const supersededId = challengeAdjudication?.supersedesAdjudicationId;
+    if (
+      !supersededId ||
+      challengeAdjudication.verdict === "unable" ||
+      correctedAdjudications.has(supersededId)
+    )
+      continue;
+    const prior = history.find(
+      (attack) => attack.adjudication?.id === supersededId,
+    );
+    if (!prior?.adjudication) continue;
+    correctedAdjudications.add(supersededId);
+    if (
+      prior.adjudication.verdict === "valid" &&
+      challengeAdjudication.verdict === "valid" &&
+      prior.adjudication.canonicalDefectId &&
+      prior.adjudication.canonicalDefectId ===
+        challengeAdjudication.canonicalDefectId &&
+      challengeAdjudication.severity &&
+      challengeAdjudication.multiplier > 0
+    ) {
+      const replacementMultiplier =
+        challengeAdjudication.multiplier === 0.35 ? 0.35 : 1;
+      const replacementDamage =
+        replacementMultiplier === 0.35
+          ? PARTIAL_DAMAGE_BY_SEVERITY[challengeAdjudication.severity]
+          : DAMAGE_BY_SEVERITY[challengeAdjudication.severity];
+      for (const target of prior.targets) {
+        const contestant = next[target];
+        if (!contestant) continue;
+        const canonical = contestant.healthLedger.canonicalDefects?.find(
+          (entry) =>
+            entry.rootDefectId === prior.adjudication!.canonicalDefectId &&
+            entry.status !== "superseded",
+        );
+        if (!canonical) continue;
+        const previousDamage = canonical.currentDamage;
+        canonical.baseSeverity = challengeAdjudication.severity;
+        canonical.currentMultiplier = replacementMultiplier;
+        canonical.currentDamage = replacementDamage;
+        canonical.repairAllowance = repairAllowanceForSeverity(
+          challengeAdjudication.severity,
+        );
+        const active = contestant.healthLedger.activeDefects.find(
+          (entry) => entry.rootDefectId === canonical.rootDefectId,
+        );
+        if (active) {
+          active.damage = replacementDamage;
+          active.severity = challengeAdjudication.severity;
+          active.multiplier = replacementMultiplier;
+          const delta = replacementDamage - previousDamage;
+          if (delta !== 0)
+            contestant.healthEvents.push({
+              attackId: challenge.id,
+              adjudicationId: challengeAdjudication.id,
+              upgradesAdjudicationId: supersededId,
+              round,
+              type: "score_correction",
+              amount: -delta,
+              reason: `Overturn adjusts ${canonical.rootDefectId} damage by ${String(delta)} HP`,
+            });
+        }
+      }
+      continue;
+    }
+    if (
+      prior.adjudication.verdict === "rejected" &&
+      prior.origin.kind === "contestant"
+    ) {
+      const author = next[prior.origin.contestant];
+      const amount = expectedRecoil(prior);
+      if (author && amount > 0) {
+        author.healthLedger.permanentRecoil = Math.max(
+          0,
+          author.healthLedger.permanentRecoil - amount,
+        );
+        author.healthEvents.push({
+          attackId: challenge.id,
+          adjudicationId: challengeAdjudication.id,
+          upgradesAdjudicationId: supersededId,
+          round,
+          type: "score_correction",
+          amount,
+          reason: `Overturn refunds recoil from ${supersededId}`,
+        });
+      }
+    }
+    if (
+      prior.adjudication.verdict === "valid" &&
+      prior.adjudication.canonicalDefectId
+    ) {
+      for (const target of prior.targets) {
+        const contestant = next[target];
+        if (!contestant) continue;
+        const canonical = contestant.healthLedger.canonicalDefects?.find(
+          (entry) =>
+            entry.rootDefectId === prior.adjudication!.canonicalDefectId &&
+            entry.status !== "superseded",
+        );
+        if (!canonical) continue;
+        const active = contestant.healthLedger.activeDefects.find(
+          (entry) => entry.rootDefectId === canonical.rootDefectId,
+        );
+        contestant.healthLedger.activeDefects =
+          contestant.healthLedger.activeDefects.filter(
+            (entry) => entry.rootDefectId !== canonical.rootDefectId,
+          );
+        canonical.status = "superseded";
+        canonical.supersededByAdjudicationId = challengeAdjudication.id;
+        if (active)
+          contestant.healthEvents.push({
+            attackId: challenge.id,
+            adjudicationId: challengeAdjudication.id,
+            upgradesAdjudicationId: supersededId,
+            round,
+            type: "score_correction",
+            amount: active.damage,
+            reason: `Overturn withdraws damage from ${supersededId}`,
+          });
+      }
+    }
+    if (
+      prior.adjudication.verdict === "valid" &&
+      challengeAdjudication.verdict === "rejected" &&
+      prior.origin.kind === "contestant"
+    ) {
+      const author = next[prior.origin.contestant];
+      const amount = expectedRecoil(prior);
+      if (author && amount > 0) {
+        author.healthLedger.permanentRecoil += amount;
+        author.healthEvents.push({
+          attackId: challenge.id,
+          adjudicationId: challengeAdjudication.id,
+          upgradesAdjudicationId: supersededId,
+          round,
+          type: "score_correction",
+          amount: -amount,
+          reason: `Overturn applies the original rank recoil from ${supersededId}`,
+        });
+      }
+    }
+  }
+  for (const contestant of Object.values(next))
+    contestant.finalHealth = calculateHealth(contestant.healthLedger);
+  return next;
+}
+
 export function resolveRound(
   contestants: Partial<Record<ContestantId, ContestantResult>>,
   attacks: readonly Attack[],
@@ -235,7 +432,9 @@ export function resolveRound(
         const ledger = contestant.healthLedger;
         ledger.canonicalDefects ??= [];
         let canonical = ledger.canonicalDefects.find(
-          (defect) => defect.rootDefectId === adjudication.canonicalDefectId,
+          (defect) =>
+            defect.rootDefectId === adjudication.canonicalDefectId &&
+            defect.status !== "superseded",
         );
         if (!canonical) {
           if (adjudication.scoreEffect !== "damage") continue;

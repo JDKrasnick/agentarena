@@ -25,6 +25,10 @@ import { changedPathsFromPatch, isAllowedAttackPath } from "../repo/git.js";
 import type { WorktreeManager } from "../repo/git.js";
 import { runShellCommand } from "../runner/process-runner.js";
 import { applyJudgeVerdict, suppressKnownJudgeDefect } from "./adjudicate.js";
+import {
+  challengeRelationshipFailure,
+  type PriorAdjudicationContext,
+} from "./challenges.js";
 
 interface ValidateAttackOptions {
   attack: Attack;
@@ -39,6 +43,7 @@ interface ValidateAttackOptions {
   signal: AbortSignal;
   knownRootDefects: ReadonlySet<string>;
   priorCanonicalDefects?: JudgeAdjudicationInput["priorCanonicalDefects"];
+  priorAdjudications?: readonly PriorAdjudicationContext[];
   persistFailureRecord?: (record: FailureRecord) => Promise<void>;
   validateBrowser?: (
     worktree: string,
@@ -109,6 +114,15 @@ function capabilityGap(
 }
 
 type AttackAssessment = Awaited<ReturnType<AttackVerifier["assess"]>>;
+
+function recordAssessmentRelationship(
+  attack: Attack,
+  verdict: AttackAssessment,
+): void {
+  if (verdict.relationship) attack.challengeRelationship = verdict.relationship;
+  if (verdict.priorAdjudicationId)
+    attack.relatedAdjudicationId = verdict.priorAdjudicationId;
+}
 
 class AttackPatchApplicationError extends Error {}
 class WorktreePreparationInfrastructureError extends Error {}
@@ -465,6 +479,10 @@ async function judgeFallback(
           targetPatchPath,
           mechanicalDiagnosticArtifactRefs,
           priorCanonicalDefects: options.priorCanonicalDefects ?? [],
+          priorAdjudications: options.priorAdjudications ?? [],
+          ...(attack.targetPatchDigest
+            ? { targetPatchDigest: attack.targetPatchDigest }
+            : {}),
           worktree: fallbackWorktree,
           promptPath,
           transcriptPrefix: attemptTranscriptPrefix,
@@ -472,6 +490,25 @@ async function judgeFallback(
           signal: options.signal,
           ...(retryReason ? { retryReason } : {}),
         });
+        const relationshipFailure = challengeRelationshipFailure(
+          attack,
+          verdict,
+          options.priorAdjudications ?? [],
+        );
+        if (relationshipFailure) {
+          lastFailure = relationshipFailure;
+          retryReason = lastFailure;
+          if (attempt === 1) continue;
+          return {
+            ...attack,
+            status: "judge_unable",
+            challengeRelationship: "unresolved",
+            ...(attack.challengeAdjudicationId
+              ? { relatedAdjudicationId: attack.challengeAdjudicationId }
+              : {}),
+            outcomeReason: lastFailure,
+          };
+        }
         const adjudicated = suppressKnownJudgeDefect(
           applyJudgeVerdict(attack, verdict),
           options.knownRootDefects,
@@ -575,8 +612,37 @@ async function assessWithRetry(
         transcriptPrefix,
         timeoutMs: options.config.limits.verifierMs,
         signal: options.signal,
+        priorAdjudications: options.priorAdjudications ?? [],
+        ...(attack.targetPatchDigest
+          ? { targetPatchDigest: attack.targetPatchDigest }
+          : {}),
         ...(retryReason ? { retryReason } : {}),
       });
+      const relationshipFailure = challengeRelationshipFailure(
+        attack,
+        verdict,
+        options.priorAdjudications ?? [],
+      );
+      if (relationshipFailure) {
+        const reason = relationshipFailure;
+        if (attempt === 1) {
+          lastError = new Error(reason);
+          retryReason = reason;
+          continue;
+        }
+        return {
+          relevant: verdict.relevant,
+          oracleSupported: verdict.oracleSupported,
+          oracleRationale: verdict.oracleRationale,
+          rootDefectId: verdict.rootDefectId,
+          severity: verdict.severity,
+          rationale: verdict.rationale,
+          relationship: "unresolved",
+          ...(attack.challengeAdjudicationId
+            ? { priorAdjudicationId: attack.challengeAdjudicationId }
+            : {}),
+        };
+      }
       if (record) {
         record = FailureRecordSchema.parse({
           ...record,
@@ -643,6 +709,9 @@ export async function validateAttack(
   options: ValidateAttackOptions,
 ): Promise<Attack> {
   const attack = structuredClone(options.attack);
+  attack.targetPatchDigest = createHash("sha256")
+    .update(await readFile(options.targetPatch))
+    .digest("hex");
   const patch = await readFile(attack.patchPath, "utf8");
   if (patch.trim().length === 0)
     return withOutcome(attack, "invalid", "Attack patch is empty");
@@ -963,6 +1032,7 @@ export async function validateAttack(
     }
 
     const verdict = await assessWithRetry(options, attack, target);
+    recordAssessmentRelationship(attack, verdict);
     if (!verdict.oracleSupported) {
       return withOutcome(attack, "unproven", verdict.oracleRationale);
     }
@@ -1221,6 +1291,7 @@ export async function validateSiegeAttack(
     }
 
     const verdict = await assessWithRetry(options, attack, targetTree);
+    recordAssessmentRelationship(attack, verdict);
     if (!verdict.oracleSupported)
       return withOutcome(attack, "unproven", verdict.oracleRationale);
     if (!verdict.relevant)
@@ -1396,6 +1467,7 @@ export async function validateHouseAttack(
       );
     if (!verifierTree) throw new Error("Missing house verifier worktree");
     const verdict = await assessWithRetry(options, attack, verifierTree);
+    recordAssessmentRelationship(attack, verdict);
     if (!verdict.oracleSupported)
       return withOutcome(attack, "unproven", verdict.oracleRationale);
     if (!verdict.relevant)

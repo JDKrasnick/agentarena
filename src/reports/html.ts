@@ -88,7 +88,11 @@ function attackNarrative(attack: Attack): string {
     attack.adjudication?.evidenceBasis ??
     attack.evidenceProvenance ??
     "legacy_unknown";
-  return `${basis.replaceAll("_", " ")}: ${narrative}`;
+  const relationship = attack.adjudication?.relationship ?? "independent";
+  const chain = attack.adjudication?.priorAdjudicationId
+    ? ` Decision chain ${attack.adjudication.priorAdjudicationId} → ${attack.adjudication.id}: ${relationship}; score ${attack.adjudication.scoreEffect} ${String(attack.adjudication.exactAmount)} HP.`
+    : "";
+  return `${basis.replaceAll("_", " ")}: ${narrative}${chain}`;
 }
 
 /** A deterministic, self-contained, clickable battle dossier for local review. */

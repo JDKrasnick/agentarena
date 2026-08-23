@@ -35,6 +35,10 @@ import {
   validateHouseAttack,
   validateSiegeAttack,
 } from "../attacks/validate.js";
+import {
+  evidenceFingerprint,
+  priorAdjudicationContext,
+} from "../attacks/challenges.js";
 import { validateSiblingCase } from "../attacks/case-bundle.js";
 import {
   parseFaultIsolatedSubmission,
@@ -114,7 +118,9 @@ import {
 import { deriveDeliveryTarget } from "../delivery/target.js";
 import { createRunId, sha256, stableId } from "./ids.js";
 import {
+  applyChallengeCorrections,
   calculateHealth,
+  challengeCorrectionRecoil,
   DAMAGE_BY_SEVERITY,
   healDefect,
   normalizeAttackAdjudication,
@@ -385,17 +391,20 @@ function priorCanonicalDefects(
   targets: readonly ContestantId[],
 ) {
   return targets.flatMap((target) =>
-    (getContestant(state, target).healthLedger.canonicalDefects ?? []).map(
-      (defect) => ({
+    (getContestant(state, target).healthLedger.canonicalDefects ?? [])
+      .filter((defect) => defect.status !== "superseded")
+      .map((defect) => ({
         canonicalDefectId: defect.rootDefectId,
         severity: defect.baseSeverity,
         multiplier: defect.currentMultiplier,
         effectiveDamage: defect.currentDamage,
-        status: defect.status,
+        status:
+          defect.status === "active"
+            ? ("active" as const)
+            : ("healed" as const),
         evidenceBasis:
           defect.evidenceHistory.at(-1)?.basis ?? ("legacy_unknown" as const),
-      }),
-    ),
+      })),
   );
 }
 
@@ -1811,6 +1820,11 @@ export class RoundEngine {
             currentDamage: defect.currentDamage,
             evidenceHistory: structuredClone(defect.evidenceHistory),
             status: defect.status,
+            ...(defect.supersededByAdjudicationId
+              ? {
+                  supersededByAdjudicationId: defect.supersededByAdjudicationId,
+                }
+              : {}),
             repairAllowance: defect.repairAllowance,
             repairAttemptsUsed: defect.repairAttemptsUsed,
             repairAttemptIds: structuredClone(defect.repairAttemptIds),
@@ -1843,6 +1857,11 @@ export class RoundEngine {
           multiplier: defect.currentMultiplier,
           evidenceBasis: evidence?.basis ?? ("legacy_unknown" as const),
           status: defect.status,
+          ...(defect.supersededByAdjudicationId
+            ? {
+                supersededByAdjudicationId: defect.supersededByAdjudicationId,
+              }
+            : {}),
           visibleReproducerArtifactIds: firstAttack
             ? [stableId("artifact", firstAttack.patchPath)]
             : [],
@@ -2549,6 +2568,11 @@ export class RoundEngine {
             currentDamage: defect.currentDamage,
             evidenceHistory: structuredClone(defect.evidenceHistory),
             status: defect.status,
+            ...(defect.supersededByAdjudicationId
+              ? {
+                  supersededByAdjudicationId: defect.supersededByAdjudicationId,
+                }
+              : {}),
             repairAllowance: defect.repairAllowance,
             repairAttemptsUsed: defect.repairAttemptsUsed,
             repairAttemptIds: structuredClone(defect.repairAttemptIds),
@@ -5567,11 +5591,11 @@ export class RoundEngine {
 
     await this.transition(context, "validate_attacks", round);
     const knownRoots = new Set(
-      context.state.attacks
-        .filter((attack) => attack.status === "landed")
-        .flatMap((attack) =>
-          attack.rootDefectId ? [attack.rootDefectId] : [],
-        ),
+      Object.values(context.state.contestants).flatMap((contestant) =>
+        (contestant.healthLedger.canonicalDefects ?? [])
+          .filter((defect) => defect.status !== "superseded")
+          .map((defect) => defect.rootDefectId),
+      ),
     );
     const validated: Attack[] = [];
     const ordered = [...collected].sort(
@@ -5587,6 +5611,12 @@ export class RoundEngine {
         ),
     );
     for (const attack of ordered) {
+      attack.evidenceFingerprint = evidenceFingerprint(attack);
+      const adjudicationHistory = [...context.state.attacks, ...validated];
+      const priorAdjudications = priorAdjudicationContext(
+        attack,
+        adjudicationHistory,
+      );
       if (attack.origin.kind === "house") {
         const result = await validateHouseAttack({
           attack,
@@ -5613,6 +5643,7 @@ export class RoundEngine {
             context.state,
             attack.targets,
           ),
+          priorAdjudications,
           persistFailureRecord: (record) =>
             this.persistFailureRecord(context, record),
         });
@@ -5629,7 +5660,12 @@ export class RoundEngine {
           )
             await this.buildCaseBundle(context, result, round);
         }
-        await this.finalizeAttackAdjudication(context, result, round);
+        await this.finalizeAttackAdjudication(
+          context,
+          result,
+          round,
+          adjudicationHistory,
+        );
         validated.push(result);
         continue;
       }
@@ -5638,6 +5674,7 @@ export class RoundEngine {
       if (!target) continue;
       const targetPatch = getContestant(context.state, target).currentPatchPath;
       if (!targetPatch) continue;
+      attack.targetPatchDigest = sha256(await readFile(targetPatch));
       const authorPatch = getContestant(context.state, author).currentPatchPath;
       const result =
         context.config.mode === "siege"
@@ -5658,6 +5695,7 @@ export class RoundEngine {
                 context.state,
                 attack.targets,
               ),
+              priorAdjudications,
               ...this.browserValidatorOption(context, attack),
               persistFailureRecord: (record) =>
                 this.persistFailureRecord(context, record),
@@ -5681,6 +5719,7 @@ export class RoundEngine {
                   context.state,
                   attack.targets,
                 ),
+                priorAdjudications,
                 ...this.browserValidatorOption(context, attack),
                 persistFailureRecord: (record) =>
                   this.persistFailureRecord(context, record),
@@ -5726,7 +5765,12 @@ export class RoundEngine {
           });
         }
       }
-      await this.finalizeAttackAdjudication(context, result, round);
+      await this.finalizeAttackAdjudication(
+        context,
+        result,
+        round,
+        adjudicationHistory,
+      );
       validated.push(result);
     }
     context.state.attacks.push(...validated);
@@ -5734,11 +5778,26 @@ export class RoundEngine {
 
     await this.transition(context, "assign_severity", round);
     await this.transition(context, "resolve_damage", round);
+    context.state.contestants = applyChallengeCorrections(
+      context.state.contestants,
+      context.state.attacks,
+      validated,
+      round,
+    );
     const resolved = resolveRound(context.state.contestants, validated, round);
     context.state.contestants = resolved.contestants;
     for (const attack of validated) {
+      const correctionRecoil = challengeCorrectionRecoil(
+        context.state.attacks,
+        attack,
+      );
+      if (correctionRecoil) {
+        attack.recoil = correctionRecoil;
+        continue;
+      }
       if (
         attack.origin.kind === "contestant" &&
+        attack.adjudication?.relationship !== "overturn" &&
         [
           "invalid",
           "duplicate",
@@ -6937,6 +6996,7 @@ export class RoundEngine {
     context: ArenaContext,
     result: Attack,
     round: RoundId,
+    history: readonly Attack[] = context.state.attacks,
   ): Promise<void> {
     result.adjudication = normalizeAttackAdjudication(result);
     const priorCanonicals = result.targets.map((target) =>
@@ -6947,7 +7007,11 @@ export class RoundEngine {
     );
     const priorCanonical = priorCanonicals.find(Boolean);
     const hasUnscoredTarget = priorCanonicals.some((canonical) => !canonical);
-    if (priorCanonical && result.adjudication.verdict === "valid") {
+    if (
+      priorCanonical &&
+      result.adjudication.verdict === "valid" &&
+      result.challengeRelationship !== "overturn"
+    ) {
       result.adjudication = AdjudicationRecordSchema.parse({
         ...result.adjudication,
         severity: priorCanonical.baseSeverity,
@@ -7015,6 +7079,121 @@ export class RoundEngine {
           : {}),
       });
     }
+    const challengeContext = priorAdjudicationContext(result, history);
+    const requestedPriorId =
+      result.relatedAdjudicationId ?? result.challengeAdjudicationId;
+    const referencedPrior = requestedPriorId
+      ? challengeContext.find(
+          (entry) => entry.adjudicationId === requestedPriorId,
+        )
+      : undefined;
+    let relationship =
+      result.challengeRelationship ??
+      (result.challengeAdjudicationId ? "unresolved" : "independent");
+    if (
+      (relationship !== "independent" && !referencedPrior) ||
+      (result.challengeAdjudicationId &&
+        requestedPriorId !== result.challengeAdjudicationId)
+    )
+      relationship = "unresolved";
+    if (relationship === "overturn" && result.adjudication.verdict === "unable")
+      relationship = "unresolved";
+    if (relationship === "affirm") {
+      result.damageActive = false;
+      result.adjudication = AdjudicationRecordSchema.parse({
+        ...result.adjudication,
+        relationship,
+        priorAdjudicationId: referencedPrior!.adjudicationId,
+        duplicateState: "unique",
+        scoreEffect: "none",
+        exactAmount: 0,
+        recoilAmount: undefined,
+      });
+    } else if (relationship === "unresolved") {
+      result.status = "judge_unable";
+      result.damageActive = false;
+      result.outcomeReason =
+        "Challenge relationship could not be resolved against a valid prior adjudication";
+      result.adjudication = AdjudicationRecordSchema.parse({
+        ...result.adjudication,
+        verdict: "unable",
+        relationship,
+        ...(requestedPriorId ? { priorAdjudicationId: requestedPriorId } : {}),
+        rejectionBasis: undefined,
+        canonicalDefectId: undefined,
+        severity: undefined,
+        duplicateState: "unique",
+        evidenceBasis: "none",
+        multiplier: 0,
+        scoreEffect: "none",
+        exactAmount: 0,
+        recoilAmount: undefined,
+      });
+    } else if (relationship === "overturn") {
+      const supersededAttack = referencedPrior
+        ? history.find(
+            (attack) =>
+              attack.adjudication?.id === referencedPrior.adjudicationId,
+          )
+        : undefined;
+      const adjustsExistingDefect =
+        supersededAttack?.adjudication?.verdict === "valid" &&
+        result.adjudication.verdict === "valid" &&
+        supersededAttack.adjudication.canonicalDefectId ===
+          result.adjudication.canonicalDefectId;
+      if (
+        result.adjudication.verdict === "valid" &&
+        result.adjudication.severity
+      ) {
+        result.status = "landed";
+        result.damageActive = true;
+        result.adjudication = AdjudicationRecordSchema.parse({
+          ...result.adjudication,
+          duplicateState: "unique",
+          scoreEffect: "damage",
+          exactAmount:
+            result.adjudication.multiplier === 0.35
+              ? PARTIAL_DAMAGE_BY_SEVERITY[result.adjudication.severity]
+              : DAMAGE_BY_SEVERITY[result.adjudication.severity],
+          recoilAmount: undefined,
+        });
+      }
+      if (adjustsExistingDefect) {
+        result.adjudication = AdjudicationRecordSchema.parse({
+          ...result.adjudication,
+          scoreEffect: "none",
+          exactAmount: 0,
+        });
+      }
+      if (result.adjudication.verdict === "rejected") {
+        result.adjudication = AdjudicationRecordSchema.parse({
+          ...result.adjudication,
+          scoreEffect: "none",
+          exactAmount: 0,
+          recoilAmount: undefined,
+        });
+      }
+      result.adjudication = AdjudicationRecordSchema.parse({
+        ...result.adjudication,
+        relationship,
+        priorAdjudicationId: referencedPrior!.adjudicationId,
+        supersedesAdjudicationId: referencedPrior!.adjudicationId,
+      });
+    } else {
+      result.adjudication = AdjudicationRecordSchema.parse({
+        ...result.adjudication,
+        relationship: "independent",
+      });
+    }
+    result.adjudication = AdjudicationRecordSchema.parse(
+      Object.fromEntries(
+        Object.entries({
+          ...result.adjudication,
+          evidenceFingerprint: result.evidenceFingerprint,
+          targetPatchDigest: result.targetPatchDigest,
+        }).filter(([, value]) => value !== undefined),
+      ),
+    );
     await context.store.writeImmutableJson(
       `rounds/${String(round)}/adjudications/${result.id}.json`,
       result.adjudication,

@@ -4,6 +4,7 @@ import path from "node:path";
 import { execa } from "execa";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { browserProbeEvidencePatch } from "../../src/attacks/submission.js";
+import type { PriorAdjudicationContext } from "../../src/attacks/challenges.js";
 import {
   validateAttack,
   validateSiegeAttack,
@@ -218,9 +219,11 @@ describe("browser-only attacks", () => {
     validateBrowser: ValidateBrowser;
     permissionPolicy?: PermissionPolicy;
     verifier?: AttackVerifier;
+    attack?: Partial<Attack>;
+    priorAdjudications?: readonly PriorAdjudicationContext[];
   }) {
     return validateAttack({
-      attack: { ...attack, id: options.id, checks: [] },
+      attack: { ...attack, ...options.attack, id: options.id, checks: [] },
       authorPatch,
       targetPatch,
       runSpec: {} as never,
@@ -232,6 +235,7 @@ describe("browser-only attacks", () => {
       logRoot: path.join(temporaryRoot, `${options.id}-logs`),
       signal: new AbortController().signal,
       knownRootDefects: new Set(),
+      priorAdjudications: options.priorAdjudications ?? [],
     });
   }
 
@@ -240,9 +244,11 @@ describe("browser-only attacks", () => {
     validateBrowser: ValidateBrowser;
     permissionPolicy?: PermissionPolicy;
     verifier?: AttackVerifier;
+    attack?: Partial<Attack>;
+    priorAdjudications?: readonly PriorAdjudicationContext[];
   }) {
     return validateSiegeAttack({
-      attack: { ...attack, id: options.id, checks: [] },
+      attack: { ...attack, ...options.attack, id: options.id, checks: [] },
       targetPatch,
       runSpec: {} as never,
       permissionPolicy: options.permissionPolicy ?? browserCapability(),
@@ -253,8 +259,26 @@ describe("browser-only attacks", () => {
       logRoot: path.join(temporaryRoot, `${options.id}-logs`),
       signal: new AbortController().signal,
       knownRootDefects: new Set(),
+      priorAdjudications: options.priorAdjudications ?? [],
     });
   }
+
+  const priorAdjudication: PriorAdjudicationContext = {
+    adjudicationId: "adjudication:prior-dialog",
+    attackId: "prior-dialog",
+    round: 1,
+    target: "b",
+    claim: "The settings dialog does not open",
+    expectedBehavior: "The settings dialog opens",
+    oracle: {
+      expectedBehavior: "The settings dialog opens",
+      rationale: "The task explicitly requires the dialog",
+    },
+    verdict: "rejected",
+    rationale: "The earlier evidence was insufficient",
+    scoreEffect: "recoil",
+    exactAmount: 5,
+  };
 
   it("lands after a symmetric author pass and target failure", async () => {
     const validateBrowser = vi.fn(symmetricReproduction);
@@ -267,6 +291,97 @@ describe("browser-only attacks", () => {
     expect(result.status).toBe("landed");
     expect(result.evidenceKind).toBe("browser_probe");
     expect(validateBrowser).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries an invalid inferred relationship and retains the valid link", async () => {
+    const assess = vi
+      .fn<AttackVerifier["assess"]>()
+      .mockResolvedValueOnce({
+        relevant: true,
+        oracleSupported: true,
+        oracleRationale: "The behavior is explicit",
+        rootDefectId: "settings-dialog",
+        severity: "medium",
+        rationale: "Invalid first relationship",
+        relationship: "overturn",
+        priorAdjudicationId: "missing-adjudication",
+      })
+      .mockResolvedValueOnce({
+        relevant: true,
+        oracleSupported: true,
+        oracleRationale: "The behavior is explicit",
+        rootDefectId: "settings-dialog",
+        severity: "medium",
+        rationale: "The prior rejection is affirmed",
+        relationship: "affirm",
+        priorAdjudicationId: priorAdjudication.adjudicationId,
+      });
+
+    const result = await validate({
+      id: "browser-only-inferred-challenge",
+      validateBrowser: symmetricReproduction,
+      verifier: { id: "codex", assess },
+      priorAdjudications: [priorAdjudication],
+    });
+
+    expect(assess).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({
+      challengeRelationship: "affirm",
+      relatedAdjudicationId: priorAdjudication.adjudicationId,
+    });
+  });
+
+  it("retains explicit challenge relationships in siege assessment", async () => {
+    const result = await validateSiege({
+      id: "siege-browser-explicit-challenge",
+      attack: {
+        challengeAdjudicationId: priorAdjudication.adjudicationId,
+      },
+      validateBrowser: (_worktree, probe, subject) =>
+        Promise.resolve({
+          status: subject === "baseline" ? "verified" : "failed",
+          provisionAttempts: 1,
+          probes: [
+            {
+              probeId: probe.id,
+              family: probe.family,
+              profile: probe.profile,
+              status: subject === "baseline" ? "verified" : "failed",
+              contextId: `${subject}-${probe.id}`,
+              requiredCapabilityIds: ["browser_dom_validation"],
+              blockedOrigins: [],
+              artifacts: [],
+            },
+          ],
+          artifacts: [],
+          ...(subject === "target"
+            ? {
+                reason: "application_failure" as const,
+                failureAttribution: "contestant_application" as const,
+              }
+            : {}),
+        }),
+      verifier: {
+        id: "codex",
+        assess: () =>
+          Promise.resolve({
+            relevant: true,
+            oracleSupported: true,
+            oracleRationale: "The behavior is explicit",
+            rootDefectId: "settings-dialog",
+            severity: "medium",
+            rationale: "The earlier decision is affirmed",
+            relationship: "affirm",
+            priorAdjudicationId: priorAdjudication.adjudicationId,
+          }),
+      },
+      priorAdjudications: [priorAdjudication],
+    });
+
+    expect(result).toMatchObject({
+      challengeRelationship: "affirm",
+      relatedAdjudicationId: priorAdjudication.adjudicationId,
+    });
   });
 
   it("runs no focused command when the probe is the only evidence", async () => {

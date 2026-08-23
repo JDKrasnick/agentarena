@@ -198,6 +198,15 @@ full severity damage, while a supported partial-judge ruling deals exactly 35%
 delta to full damage, preserves the original severity, and does not re-damage a
 healed defect unless the current patch genuinely regresses.
 
+Later attacks may explicitly challenge a prior adjudication or match one by
+assertion identity and normalized browser actions. The existing neutral judge
+receives up to six same-target decisions and classifies the new evidence as
+independent, affirming, overturning, or unresolved. Affirmations do not repeat
+damage or recoil; overturns preserve both immutable decisions and append score
+corrections; unresolved conflicts remain score-neutral and make coverage
+provisional. A browser pass against a changed target patch is repair evidence,
+not proof that the earlier observation was wrong.
+
 Complete adjudications and rationale remain local. Agent packets are
 deterministic, digest-linked role-safe projections targeting 8 KiB with a 24
 KiB ceiling; they retain current and unresolved defects, concise verdict,

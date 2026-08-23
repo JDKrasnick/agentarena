@@ -80,6 +80,19 @@ describe("completed round state application", () => {
               damage: 15,
             },
           ],
+          canonicalDefects: [
+            {
+              defectId: "withdrawn-defect",
+              firstAttackId: "withdrawn-attack",
+              firstAdjudicationId: "adjudication-1",
+              baseSeverity: "high",
+              currentMultiplier: 1,
+              currentDamage: 30,
+              evidenceHistory: [],
+              status: "superseded",
+              supersededByAdjudicationId: "adjudication-2",
+            },
+          ],
           replacementCredits: [],
           status: "active",
         },
@@ -105,6 +118,15 @@ describe("completed round state application", () => {
       currentPatchPath: "/tmp/a-round-1.diff",
       patchSize: 123,
       healthEvents: [expect.objectContaining({ amount: -15 })],
+      healthLedger: {
+        canonicalDefects: [
+          expect.objectContaining({
+            rootDefectId: "withdrawn-defect",
+            status: "superseded",
+            supersededByAdjudicationId: "adjudication-2",
+          }),
+        ],
+      },
     });
     expect(applied).toMatchObject({
       stage: "validate_repairs",
