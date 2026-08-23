@@ -52,6 +52,8 @@ const MIN_READINESS_MS = 15_000;
 const READINESS_BUDGET_SHARE = 0.5;
 /** Share of the remaining stage budget the repository-native suite may spend. */
 const NATIVE_SUITE_BUDGET_SHARE = 0.6;
+/** A missing application condition must fail a probe before exhausting the stage. */
+const PROBE_ACTION_TIMEOUT_MS = 5_000;
 /** Grace period teardown always receives, measured from when teardown starts. */
 const TEARDOWN_GRACE_MS = 1_500;
 
@@ -424,9 +426,7 @@ class BuiltInBrowserSession implements BrowserSession {
     // the probe phase.
     const readinessMs = Math.max(
       MIN_READINESS_MS,
-      Math.floor(
-        (this.input.deadlineAt - Date.now()) * READINESS_BUDGET_SHARE,
-      ),
+      Math.floor((this.input.deadlineAt - Date.now()) * READINESS_BUDGET_SHARE),
     );
     const deadline = Math.min(Date.now() + readinessMs, this.input.deadlineAt);
     while (Date.now() < deadline) {
@@ -493,7 +493,10 @@ class BuiltInBrowserSession implements BrowserSession {
         serviceWorkers: "block",
       });
       context.setDefaultTimeout(
-        Math.max(1, this.input.deadlineAt - Date.now()),
+        Math.max(
+          1,
+          Math.min(PROBE_ACTION_TIMEOUT_MS, this.input.deadlineAt - Date.now()),
+        ),
       );
       context.setDefaultNavigationTimeout(
         Math.max(1, this.input.deadlineAt - Date.now()),

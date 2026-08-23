@@ -30,7 +30,11 @@ import {
   materializeAttack,
   materializeHouseAttack,
 } from "../attacks/submission.js";
-import { validateAttack, validateHouseAttack } from "../attacks/validate.js";
+import {
+  validateAttack,
+  validateHouseAttack,
+  validateSiegeAttack,
+} from "../attacks/validate.js";
 import { validateSiblingCase } from "../attacks/case-bundle.js";
 import {
   parseFaultIsolatedSubmission,
@@ -2391,9 +2395,21 @@ export class RoundEngine {
         before.contestants[contestantId]?.healthLedger.activeDefects.map(
           (defect) => defect.rootDefectId,
         ) ?? [];
-      const healed = priorActive.filter(
-        (defectId) => !active.includes(defectId),
+      const roundHealthEvents = contestant.healthEvents.slice(
+        before.contestants[contestantId]?.healthEvents.length ?? 0,
       );
+      const healed = [
+        ...new Set([
+          ...priorActive.filter((defectId) => !active.includes(defectId)),
+          ...roundHealthEvents.flatMap((event) => {
+            if (event.type !== "heal" || !event.attackId) return [];
+            const defectId = context.state.attacks.find(
+              (attack) => attack.id === event.attackId,
+            )?.rootDefectId;
+            return defectId ? [defectId] : [];
+          }),
+        ]),
+      ];
       return {
         contestantId,
         status: summary?.repair
@@ -3600,7 +3616,7 @@ export class RoundEngine {
     | ((
         worktree: string,
         probe: NonNullable<Attack["browserProbe"]>,
-        subject: "author" | "target",
+        subject: "baseline" | "author" | "target",
         nativeSuiteIdentityPaths: string[],
       ) => Promise<BrowserValidationResult>)
     | undefined {
@@ -5582,9 +5598,9 @@ export class RoundEngine {
       const authorPatch = getContestant(context.state, author).currentPatchPath;
       const result =
         context.config.mode === "siege"
-          ? await validateHouseAttack({
+          ? await validateSiegeAttack({
               attack,
-              targetPatches: { [target]: targetPatch },
+              targetPatch,
               runSpec: context.runSpec,
               permissionPolicy: context.permissions,
               config: context.config,
@@ -5599,6 +5615,7 @@ export class RoundEngine {
                 context.state,
                 attack.targets,
               ),
+              ...this.browserValidatorOption(context, attack.id),
               persistFailureRecord: (record) =>
                 this.persistFailureRecord(context, record),
             })

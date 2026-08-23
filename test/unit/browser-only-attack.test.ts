@@ -4,7 +4,10 @@ import path from "node:path";
 import { execa } from "execa";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { browserProbeEvidencePatch } from "../../src/attacks/submission.js";
-import { validateAttack } from "../../src/attacks/validate.js";
+import {
+  validateAttack,
+  validateSiegeAttack,
+} from "../../src/attacks/validate.js";
 import type { AttackVerifier } from "../../src/agents/adapter.js";
 import {
   AttackSubmissionV2Schema,
@@ -24,7 +27,7 @@ import { createSlugRepository } from "../helpers/repository.js";
 type ValidateBrowser = (
   worktree: string,
   probe: BrowserProbeRequest,
-  subject: "author" | "target",
+  subject: "baseline" | "author" | "target",
   nativeSuiteIdentityPaths: string[],
 ) => Promise<BrowserValidationResult>;
 
@@ -144,7 +147,10 @@ describe("browser-only attacks", () => {
       ],
     }).attacks[0]!;
     probePatch = path.join(temporaryRoot, "probe.diff");
-    await writeFile(probePatch, browserProbeEvidencePatch(evidenceEntry, 1, "a"));
+    await writeFile(
+      probePatch,
+      browserProbeEvidencePatch(evidenceEntry, 1, "a"),
+    );
 
     config = FightConfigSchema.parse({
       task: "Fix the dialog",
@@ -216,6 +222,27 @@ describe("browser-only attacks", () => {
     return validateAttack({
       attack: { ...attack, id: options.id, checks: [] },
       authorPatch,
+      targetPatch,
+      runSpec: {} as never,
+      permissionPolicy: options.permissionPolicy ?? browserCapability(),
+      config,
+      worktrees,
+      verifier: options.verifier ?? verifier,
+      validateBrowser: options.validateBrowser,
+      logRoot: path.join(temporaryRoot, `${options.id}-logs`),
+      signal: new AbortController().signal,
+      knownRootDefects: new Set(),
+    });
+  }
+
+  function validateSiege(options: {
+    id: string;
+    validateBrowser: ValidateBrowser;
+    permissionPolicy?: PermissionPolicy;
+    verifier?: AttackVerifier;
+  }) {
+    return validateSiegeAttack({
+      attack: { ...attack, id: options.id, checks: [] },
       targetPatch,
       runSpec: {} as never,
       permissionPolicy: options.permissionPolicy ?? browserCapability(),
@@ -423,6 +450,153 @@ describe("browser-only attacks", () => {
       status: "capability_denied",
       outcomeReason: "Capability browser_dom_validation is provisioning_failed",
     });
+    expect(validateBrowser).not.toHaveBeenCalled();
+  });
+
+  it("lands a siege browser probe against the defender even when the base lacks the feature", async () => {
+    const validateBrowser = vi.fn<ValidateBrowser>(
+      (_worktree, probe, subject) =>
+        Promise.resolve({
+          status: "failed",
+          provisionAttempts: 1,
+          probes: [
+            {
+              probeId: probe.id,
+              family: probe.family,
+              profile: probe.profile,
+              status: "failed",
+              contextId: `${subject}-${probe.id}`,
+              requiredCapabilityIds: ["browser_dom_validation"],
+              reason: "application_failure",
+              blockedOrigins: [],
+              artifacts: [],
+            },
+          ],
+          artifacts: [
+            {
+              kind: "result_manifest",
+              path: `/artifacts/${subject}-result.json`,
+              failureOnly: false,
+            },
+          ],
+          reason: "application_failure",
+          failureAttribution: "contestant_application",
+        }),
+    );
+
+    const result = await validateSiege({
+      id: "siege-browser-defender-failure",
+      validateBrowser,
+    });
+
+    expect(result).toMatchObject({
+      status: "landed",
+      evidenceKind: "browser_probe",
+      rootDefectId: "settings-dialog",
+    });
+    expect(result.outcomeReason).not.toContain("house attack");
+    expect(result.checks.filter((check) => check.kind === "focused")).toEqual(
+      [],
+    );
+    expect(result.checks.map((check) => check.id)).toEqual(
+      expect.arrayContaining([
+        "baseline-browser-probe",
+        "target-browser-probe",
+      ]),
+    );
+    expect(result.browserArtifactRefs).toEqual([
+      "/artifacts/baseline-result.json",
+      "/artifacts/target-result.json",
+    ]);
+    expect(validateBrowser.mock.calls.map((call) => call[2])).toEqual([
+      "baseline",
+      "target",
+    ]);
+  });
+
+  it("blocks a siege browser attack when the defender passes the selected probe", async () => {
+    const result = await validateSiege({
+      id: "siege-browser-defender-pass",
+      validateBrowser: (_worktree, probe, subject) =>
+        Promise.resolve({
+          status: subject === "baseline" ? "failed" : "verified",
+          provisionAttempts: 1,
+          probes: [
+            {
+              probeId: probe.id,
+              family: probe.family,
+              profile: probe.profile,
+              status: subject === "baseline" ? "failed" : "verified",
+              contextId: `${subject}-${probe.id}`,
+              requiredCapabilityIds: ["browser_dom_validation"],
+              blockedOrigins: [],
+              artifacts: [],
+            },
+          ],
+          artifacts: [],
+          ...(subject === "baseline"
+            ? {
+                reason: "application_failure" as const,
+                failureAttribution: "contestant_application" as const,
+              }
+            : {}),
+        }),
+    });
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      outcomeReason: "Defender patch passes the agent-chosen browser probe",
+    });
+  });
+
+  it("keeps siege browser infrastructure failures score-neutral", async () => {
+    const assess = vi.fn((input: Parameters<AttackVerifier["assess"]>[0]) =>
+      verifier.assess(input),
+    );
+    const result = await validateSiege({
+      id: "siege-browser-unverified",
+      verifier: { ...verifier, assess },
+      validateBrowser: (_worktree, probe, subject) =>
+        Promise.resolve({
+          status: "unverified",
+          provisionAttempts: 2,
+          reason: "health_failure",
+          probes: [
+            {
+              probeId: probe.id,
+              family: probe.family,
+              profile: probe.profile,
+              status: "unverified",
+              reason: "health_failure",
+              contextId: `${subject}-${probe.id}`,
+              requiredCapabilityIds: ["browser_dom_validation"],
+              blockedOrigins: [],
+              artifacts: [],
+            },
+          ],
+          artifacts: [],
+          failureAttribution: "harness_transport",
+        }),
+    });
+
+    expect(result.status).toBe("execution_inconclusive");
+    expect(result.damage).toBeUndefined();
+    expect(assess).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke siege browser mechanics when the capability is unavailable", async () => {
+    const validateBrowser = vi.fn(symmetricReproduction);
+    const result = await validateSiege({
+      id: "siege-browser-capability-gap",
+      validateBrowser,
+      permissionPolicy: {
+        ...browserCapability({ status: "provisioning_failed" }),
+        reducedValidationAccepted: true,
+      },
+    });
+
+    expect(result.status).toBe("capability_denied");
+    expect(result.damage).toBeUndefined();
     expect(validateBrowser).not.toHaveBeenCalled();
   });
 });
