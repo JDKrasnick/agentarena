@@ -382,6 +382,6 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
         signal: controller.signal,
       });
       expect(safeDom.probes.at(-1)).toMatchObject({ status: "verified" });
-    });
+    }, 60_000);
   },
 );
