@@ -151,9 +151,17 @@ export function assessBattleCoverage(
     }
 
     const usableTerminal = explicitEmpty || usable.length > 0;
+    // Legacy partial reviews may already own a consumable packet artifact.
+    // Trusted v2 retries never create one from an exhausted partial parse.
+    const reviewOutcomeUsable = (
+      record: (typeof reviews)[number] | undefined,
+    ): boolean =>
+      record?.parseOutcome === "valid" ||
+      record?.parseOutcome === "valid_empty" ||
+      (record?.parseOutcome === "partial" && Boolean(record.artifactPath)) ||
+      (!coverageV2 && record?.parseOutcome === undefined);
     const reviewCompleted = Boolean(
-      review?.invocation.status === "succeeded" &&
-      review.parseOutcome !== "invalid",
+      review?.invocation.status === "succeeded" && reviewOutcomeUsable(review),
     );
     const focusedCompleted = focusedAttempts.at(-1)?.state !== "failed";
     const attackPathResolved =
@@ -236,7 +244,7 @@ export function assessBattleCoverage(
           ? reviews.slice(0, 2).map((record, index) =>
               attempt(
                 record.invocation.status === "succeeded" &&
-                  record.parseOutcome !== "invalid"
+                  reviewOutcomeUsable(record)
                   ? record.parseOutcome === "valid_empty"
                     ? "valid_empty"
                     : "succeeded"

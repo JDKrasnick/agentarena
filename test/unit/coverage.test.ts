@@ -390,6 +390,22 @@ describe("coverage assessment", () => {
     expect(roundTwoLane?.reasonCodes).toContain("focused_description_failed");
   });
 
+  it("treats an exhausted partial v2 review as failed coverage", () => {
+    const state = makeRunState();
+    addLaneRecords(state);
+    state.reviewInvocations[0]!.parseOutcome = "partial";
+    state.reviewInvocations[0]!.submissionStatus = "partially_submitted";
+
+    const assessment = assessBattleCoverage(state);
+    const lane = assessment.requiredLanes[0];
+
+    expect(lane?.finalState).toBe("unresolved");
+    expect(lane?.reasonCodes).toContain("review_partial");
+    expect(
+      lane?.stages.find((entry) => entry.stage === "review")?.finalState,
+    ).toBe("failed");
+  });
+
   it("keeps evidence-count categories mutually exclusive", () => {
     const state = makeRunState();
     addLaneRecords(state);

@@ -25,11 +25,13 @@ import type { IssueResolver } from "../../src/task/task-contract.js";
 import { createSlugRepository } from "../helpers/repository.js";
 import { ArenaBattleControl } from "../../src/observability/control.js";
 import { ArenaEventSchema } from "../../src/observability/events.js";
+import { ArtifactStore } from "../../src/artifacts/store.js";
 import {
   EvidenceHandoffPacketSchema,
   assertEvidenceHandoffPacketIntrinsic,
   canonicalHandoffJson,
 } from "../../src/review/evidence-handoff.js";
+import { readHandoffLifecycle } from "../../src/review/evidence-handoff-store.js";
 
 const fixtureAgent = fileURLToPath(
   new URL("../fixtures/fake-agent.mjs", import.meta.url),
@@ -591,6 +593,109 @@ describe("fake-adapter fight on a mocked real issue", () => {
       reasonCode: "external_cancellation",
       eligibleContestantIds: [],
     });
+  });
+
+  it("does not turn exhausted invalid review or attack output into an empty handoff", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = duelConfig(repositoryRoot);
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_INVALID_REVIEW_ALWAYS: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_INVALID_ATTACK_ALWAYS: "1" },
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+    const store = new ArtifactStore(config.artifactRoot, outcome.state.runId, {
+      durableV5: true,
+    });
+
+    expect(
+      outcome.state.reviewInvocations.find(
+        (entry) => entry.round === 1 && entry.reviewer === "a",
+      ),
+    ).toMatchObject({
+      parseOutcome: "invalid",
+      submissionStatus: "invalid_submission",
+    });
+    await expect(
+      readHandoffLifecycle(store, "round_1", "a-to-b"),
+    ).resolves.toEqual([]);
+
+    expect(
+      outcome.state.attackInvocations.find(
+        (entry) => entry.round === 1 && entry.attacker === "b",
+      ),
+    ).toMatchObject({ submissionStatus: "invalid_submission", attackCount: 0 });
+    const attackLifecycle = await readHandoffLifecycle(
+      store,
+      "round_1",
+      "b-to-a",
+    );
+    expect(attackLifecycle.map((record) => record.state)).toEqual([
+      "created",
+      "validated",
+      "invalidated",
+    ]);
+    expect(attackLifecycle.map((record) => record.state)).not.toContain(
+      "completed_empty",
+    );
+  });
+
+  it("refreshes a blocker from a clean frozen target worktree", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = duelConfig(repositoryRoot);
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: {
+            AGENT_ARENA_FAKE_BLOCKER_ONCE: "1",
+            AGENT_ARENA_FAKE_DIRTY_BLOCKER: "1",
+          },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+    const store = new ArtifactStore(config.artifactRoot, outcome.state.runId, {
+      durableV5: true,
+    });
+    const lifecycle = await readHandoffLifecycle(store, "round_2", "a-to-b");
+
+    expect(lifecycle.map((record) => record.state)).toEqual([
+      "created",
+      "validated",
+      "refresh_required",
+      "validated",
+      "completed_empty",
+    ]);
+    expect(
+      outcome.state.reviewInvocations.find(
+        (entry) =>
+          entry.round === 2 &&
+          entry.reviewer === "a" &&
+          entry.detail?.includes("Targeted blocker refresh completed"),
+      ),
+    ).toBeTruthy();
+    expect(outcome.state.warnings.join("\n")).not.toContain(
+      "Trusted handoff refresh failed for a against b",
+    );
   });
 
   it("runs three rounds, lands and heals evidence, recoils a miss, and writes replayable artifacts", async () => {

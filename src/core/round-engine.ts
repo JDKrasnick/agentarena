@@ -3788,6 +3788,26 @@ export class RoundEngine {
     return active.length <= 1;
   }
 
+  private resolvedHandoffPermissions(
+    context: ArenaContext,
+  ): ResolvedPermissionProjection {
+    return projectResolvedPermissions({
+      policy: context.permissions,
+      now: this.now(),
+      ...(context.permissions.reducedValidationAccepted
+        ? {
+            reducedValidation: {
+              accepted: true,
+              assessmentDigest: sha256(
+                `${context.state.runId}:reduced-validation`,
+              ),
+              omittedCheckIds: [],
+            },
+          }
+        : {}),
+    });
+  }
+
   private async runTargetedHandoffReview(
     context: ArenaContext,
     options: {
@@ -4099,6 +4119,36 @@ export class RoundEngine {
               terminalDisposition: recovered ? "recovered" : "coverage_lost",
             });
           }
+          if (
+            captured.parsed.outcome !== "valid" &&
+            captured.parsed.outcome !== "valid_empty"
+          ) {
+            await removeSubmission(worktree);
+            context.state.reviewInvocations.push({
+              round,
+              reviewer,
+              target,
+              invocation,
+              submissionStatus:
+                captured.parsed.outcome === "partial"
+                  ? "partially_submitted"
+                  : "invalid_submission",
+              findingCount: 0,
+              parseOutcome: captured.parsed.outcome,
+              sectionOutcomes: Object.fromEntries(
+                Object.entries(captured.parsed.sections).map(
+                  ([key, section]) => [key, section.outcome],
+                ),
+              ),
+              rawArtifactPath: captured.rawPath,
+              parsedArtifactPath: captured.parsedPath,
+              detail: "Review submission remained invalid after targeted retry",
+            });
+            context.state.warnings.push(
+              `Review submission from ${reviewer} against ${target} remained invalid after targeted retry; lane lost coverage without creating a handoff packet`,
+            );
+            continue;
+          }
           const submission = captured.parsed.value as {
             version: 2;
             findings: HandoffFindingPayload[];
@@ -4121,21 +4171,7 @@ export class RoundEngine {
             frozen_patch_sha256: sha256(targetPatch),
             frozen_git_tree_id: targetSnapshot,
           };
-          const permissionProjection = projectResolvedPermissions({
-            policy: context.permissions,
-            now: this.now(),
-            ...(context.permissions.reducedValidationAccepted
-              ? {
-                  reducedValidation: {
-                    accepted: true,
-                    assessmentDigest: sha256(
-                      `${context.state.runId}:reduced-validation`,
-                    ),
-                    omittedCheckIds: [],
-                  },
-                }
-              : {}),
-          });
+          const permissionProjection = this.resolvedHandoffPermissions(context);
           const built = buildEvidenceHandoffPacket({
             runId: context.state.runId,
             roundId,
@@ -4194,12 +4230,7 @@ export class RoundEngine {
             reviewer,
             target,
             invocation,
-            submissionStatus:
-              captured.parsed.outcome === "partial"
-                ? "partially_submitted"
-                : captured.parsed.outcome === "invalid"
-                  ? "invalid_submission"
-                  : "submitted",
+            submissionStatus: "submitted",
             findingCount: built.packet.findings.length,
             artifactPath,
             parseOutcome: captured.parsed.outcome,
@@ -5131,7 +5162,7 @@ export class RoundEngine {
         !targetPatchPath
       )
         continue;
-      const worktree = await this.prepareWorktree(context, {
+      let worktree = await this.prepareWorktree(context, {
         name: `round-${String(round)}-attack-${agent}`,
         subject: `attack-generation-worktree:${String(round)}:${agent}`,
         patches: [targetPatchPath],
@@ -5139,7 +5170,7 @@ export class RoundEngine {
         laneId: `attack-${String(round)}-${agent}`,
       });
       try {
-        const targetSnapshot = await context.worktrees.snapshot(worktree);
+        let targetSnapshot = await context.worktrees.snapshot(worktree);
         const handoff = reviewPackets.get(agent);
         if (!handoff) {
           context.state.warnings.push(
@@ -5147,21 +5178,8 @@ export class RoundEngine {
           );
           continue;
         }
-        const currentPermissionProjection = projectResolvedPermissions({
-          policy: context.permissions,
-          now: this.now(),
-          ...(context.permissions.reducedValidationAccepted
-            ? {
-                reducedValidation: {
-                  accepted: true,
-                  assessmentDigest: sha256(
-                    `${context.state.runId}:reduced-validation`,
-                  ),
-                  omittedCheckIds: [],
-                },
-              }
-            : {}),
-        });
+        let currentPermissionProjection =
+          this.resolvedHandoffPermissions(context);
         let handoffValidation = validateEvidenceHandoffPacket({
           packet: handoff.packet,
           canonicalBytes: handoff.canonicalBytes,
@@ -5260,6 +5278,8 @@ export class RoundEngine {
             );
             continue;
           }
+          const refreshedPermissionProjection =
+            this.resolvedHandoffPermissions(context);
           const refreshed = buildEvidenceHandoffPacket({
             runId: context.state.runId,
             roundId: `round_${String(round)}`,
@@ -5319,7 +5339,7 @@ export class RoundEngine {
                 frozen_patch_sha256: sha256(await readFile(targetPatchPath)),
                 frozen_git_tree_id: targetSnapshot,
               },
-              permissionProjection: currentPermissionProjection,
+              permissionProjection: refreshedPermissionProjection,
             },
             sourceFindings: refreshedReview.findings,
             taskSourceIds: context.runSpec.task.sources.map(
@@ -5410,6 +5430,7 @@ export class RoundEngine {
           handoff.packetPointer = refreshedPointer;
           handoff.lifecycle = refreshedLifecycle;
           handoffValidation = refreshedValidation;
+          currentPermissionProjection = refreshedPermissionProjection;
         } else {
           const validatedLifecycle = {
             ...handoff.lifecycle,
@@ -5553,6 +5574,21 @@ export class RoundEngine {
                   break;
                 }
                 await removeSubmission(worktree);
+                await context.worktrees.remove(worktree);
+                worktree = await this.prepareWorktree(context, {
+                  name: `round-${String(round)}-attack-${agent}`,
+                  subject: `blocker-refresh-worktree:${String(round)}:${agent}`,
+                  patches: [targetPatchPath],
+                  contestantId: agent,
+                  laneId: `attack-${String(round)}-${agent}`,
+                });
+                targetSnapshot = await context.worktrees.snapshot(worktree);
+                if (
+                  targetSnapshot !== handoff.targetSnapshot.frozen_git_tree_id
+                )
+                  throw new Error(
+                    "Blocker refresh worktree does not match the frozen target",
+                  );
                 const refreshPrompt = `${composeAttackReviewPrompt({
                   agent,
                   target,
@@ -5623,6 +5659,8 @@ export class RoundEngine {
                   throw new Error(
                     `Read-only blocker refresh changed worktree paths: ${refreshChangedPaths.join(", ")}`,
                   );
+                const blockerRefreshPermissionProjection =
+                  this.resolvedHandoffPermissions(context);
                 const refreshed = buildEvidenceHandoffPacket({
                   runId: context.state.runId,
                   roundId: `round_${String(round)}`,
@@ -5655,7 +5693,7 @@ export class RoundEngine {
                     reviewerSlot: agent,
                     targetSlot: target,
                     targetSnapshot: handoff.targetSnapshot,
-                    permissionProjection: currentPermissionProjection,
+                    permissionProjection: blockerRefreshPermissionProjection,
                   },
                   sourceFindings: refreshSubmission.findings,
                   taskSourceIds: context.runSpec.task.sources.map(
@@ -5714,6 +5752,8 @@ export class RoundEngine {
                 handoff.sourceFindings = refreshSubmission.findings;
                 handoff.packetPointer = refreshedPointer;
                 handoff.lifecycle = refreshedLifecycle;
+                currentPermissionProjection =
+                  blockerRefreshPermissionProjection;
                 prompt = composePrompt({
                   agent,
                   target,
@@ -5890,8 +5930,36 @@ export class RoundEngine {
               terminalDisposition: recovered ? "recovered" : "coverage_lost",
             });
           }
+          if (captured.parsed.outcome === "invalid") {
+            await removeSubmission(worktree);
+            context.state.attackInvocations.push({
+              round,
+              attacker: agent,
+              target,
+              invocation,
+              handoffPacketId: handoff.packet.packet_id,
+              handoffPacketDigest: handoff.packet.packet_digest,
+              handoffTargetFingerprint:
+                handoff.packet.target_snapshot.fingerprint,
+              submissionStatus: "invalid_submission",
+              attackCount: 0,
+              parseOutcome: captured.parsed.outcome,
+              sectionOutcomes: Object.fromEntries(
+                Object.entries(captured.parsed.sections).map(
+                  ([key, section]) => [key, section.outcome],
+                ),
+              ),
+              rawArtifactPath: captured.rawPath,
+              parsedArtifactPath: captured.parsedPath,
+              detail: "Attack submission remained invalid after targeted retry",
+            });
+            context.state.warnings.push(
+              `Attack submission from ${agent} against ${target} remained invalid after targeted retry; handoff was not consumed`,
+            );
+            continue;
+          }
           const submission = captured.parsed.value as AttackSubmission;
-          const completedEmpty = submission.attacks.length === 0;
+          const completedEmpty = captured.parsed.outcome === "valid_empty";
           const terminalLifecycle = {
             ...handoff.lifecycle,
             record_id: stableId(
@@ -6043,9 +6111,7 @@ export class RoundEngine {
             submissionStatus:
               captured.parsed.outcome === "partial"
                 ? "partially_submitted"
-                : captured.parsed.outcome === "invalid"
-                  ? "invalid_submission"
-                  : "submitted",
+                : "submitted",
             attackCount: materializable.length,
             parseOutcome: captured.parsed.outcome,
             sectionOutcomes: Object.fromEntries(

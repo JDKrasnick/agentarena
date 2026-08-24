@@ -196,6 +196,24 @@ if (stage === "provider_health_probe") {
     );
   }
 } else if (stage === "review_attacks") {
+  if (
+    process.env.AGENT_ARENA_FAKE_INVALID_REVIEW_ALWAYS === "1" &&
+    round === "1"
+  ) {
+    await writeFile(submission, JSON.stringify({ version: 2, findings: [{}] }));
+    process.exit(0);
+  }
+  if (
+    process.env.AGENT_ARENA_FAKE_DIRTY_BLOCKER === "1" &&
+    prompt.includes("# Targeted blocker refresh")
+  ) {
+    try {
+      await readFile(path.join(process.cwd(), ".attacker-refresh-leak"));
+      process.exit(2);
+    } catch {
+      // The blocker refresh must run in a freshly frozen target worktree.
+    }
+  }
   const source = await readFile(sourcePath, "utf8");
   const repeatedWhitespaceFinding = source.includes('replaceAll(" ", "-")')
     ? [
@@ -288,6 +306,13 @@ if (stage === "provider_health_probe") {
     JSON.stringify({ version: 2, findings: repeatedWhitespaceFinding }),
   );
 } else if (stage === "collect_attacks") {
+  if (
+    process.env.AGENT_ARENA_FAKE_INVALID_ATTACK_ALWAYS === "1" &&
+    round === "1"
+  ) {
+    await writeFile(submission, JSON.stringify({ version: 2, attacks: [{}] }));
+    process.exit(0);
+  }
   const retryMarker = path.join(process.cwd(), ".agent-arena-retry-once");
   const blockerMarker = path.join(
     tmpdir(),
@@ -322,6 +347,11 @@ if (stage === "provider_health_probe") {
     }
   }
   if (emitBlocker) {
+    if (process.env.AGENT_ARENA_FAKE_DIRTY_BLOCKER === "1")
+      await writeFile(
+        path.join(process.cwd(), ".attacker-refresh-leak"),
+        "attacker-owned bytes\n",
+      );
     const findingId = prompt.match(
       /"finding_id":"(finding_[a-f0-9]{64})"/,
     )?.[1];
