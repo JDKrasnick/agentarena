@@ -55,6 +55,13 @@ export async function persistEvidenceHandoffPacket(
   };
 }
 
+/** Each parent may be extended once, so a forked append fails instead of splitting the chain. */
+function headClaimId(record: HandoffLifecycleRecord): string {
+  return sha256(
+    canonicalHandoffJson({ previous_record_id: record.previous_record_id }),
+  );
+}
+
 function orderLifecycle(
   records: readonly HandoffLifecycleRecord[],
 ): HandoffLifecycleRecord[] {
@@ -128,11 +135,25 @@ export async function persistHandoffLifecycleRecord(
     validated.lane_id,
   );
   assertHandoffLifecycleTransition(current, validated);
-  const relative = path.posix.join(
+  const lifecycle = path.posix.join(
     handoffRoot(validated.round_id, validated.lane_id),
     "lifecycle",
+  );
+  const relative = path.posix.join(
+    lifecycle,
     `${safeSegment(validated.record_id, "record_id")}.json`,
   );
+  try {
+    await store.writeImmutableJson(
+      path.posix.join(lifecycle, "heads", `${headClaimId(validated)}.json`),
+      { record_id: validated.record_id },
+    );
+  } catch (error) {
+    throw new Error(
+      "Handoff lifecycle head is already claimed by another record",
+      { cause: error },
+    );
+  }
   await store.writeImmutableJson(relative, validated);
   return relative;
 }

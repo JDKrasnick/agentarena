@@ -5,6 +5,7 @@ import type { CapabilityLease } from "../permissions/leases.js";
 
 export const EVIDENCE_HANDOFF_VERSION = 2 as const;
 export const EVIDENCE_HANDOFF_MAX_FINDINGS = 12;
+export const EVIDENCE_HANDOFF_MAX_BOUNDARY_FINDINGS = 24;
 export const EVIDENCE_HANDOFF_MAX_BYTES = 16 * 1024;
 export const EVIDENCE_HANDOFF_DIAGNOSTIC_MAX_BYTES = 8 * 1024;
 
@@ -290,7 +291,11 @@ export type HandoffFindingPayload = z.infer<typeof HandoffFindingPayloadSchema>;
 export const EvidenceHandoffFindingSchema = z
   .object({
     finding_id: FindingIdSchema,
-    priority: z.number().int().min(1).max(12),
+    priority: z
+      .number()
+      .int()
+      .min(1)
+      .max(EVIDENCE_HANDOFF_MAX_BOUNDARY_FINDINGS),
     ...HandoffFindingPayloadShape,
   })
   .strict()
@@ -304,7 +309,11 @@ export type EvidenceHandoffFinding = z.infer<
 export const HandoffOmissionEntrySchema = z
   .object({
     finding_id: FindingIdSchema,
-    original_priority: z.number().int().positive().max(24),
+    original_priority: z
+      .number()
+      .int()
+      .positive()
+      .max(EVIDENCE_HANDOFF_MAX_BOUNDARY_FINDINGS),
     reason: z.enum(["duplicate", "finding_limit", "packet_size"]),
     duplicate_of: z.union([FindingIdSchema, z.null()]),
   })
@@ -341,11 +350,19 @@ export const EvidenceHandoffPacketSchema = z
     target_slot: SlotIdSchema,
     target_snapshot: HandoffTargetSnapshotSchema,
     permission_manifest_fingerprint: Sha256Schema,
-    findings: z.array(EvidenceHandoffFindingSchema).max(12),
+    findings: z
+      .array(EvidenceHandoffFindingSchema)
+      .max(EVIDENCE_HANDOFF_MAX_FINDINGS),
     omitted_findings: z
       .object({
-        count: z.number().int().min(0).max(12),
-        entries: z.array(HandoffOmissionEntrySchema).max(12),
+        count: z
+          .number()
+          .int()
+          .min(0)
+          .max(EVIDENCE_HANDOFF_MAX_BOUNDARY_FINDINGS),
+        entries: z
+          .array(HandoffOmissionEntrySchema)
+          .max(EVIDENCE_HANDOFF_MAX_BOUNDARY_FINDINGS),
       })
       .strict(),
   })
@@ -495,7 +512,7 @@ function resolvedLease(
 ): CapabilityLease | undefined {
   const explicit = leases.get(capability.id);
   if (explicit) return explicit;
-  return capability.expiresAt
+  return capability.status === "approved" && capability.expiresAt
     ? {
         capabilityId: capability.id,
         scopes: capability.scopes,
@@ -893,8 +910,10 @@ export type BuildEvidenceHandoffPacketResult =
 function assemblePacket(
   input: BuildEvidenceHandoffPacketInput,
 ): BuildEvidenceHandoffPacketResult {
-  if (input.findings.length > 24)
-    throw new Error("Review handoff accepts at most 24 boundary findings");
+  if (input.findings.length > EVIDENCE_HANDOFF_MAX_BOUNDARY_FINDINGS)
+    throw new Error(
+      `Review handoff accepts at most ${String(EVIDENCE_HANDOFF_MAX_BOUNDARY_FINDINGS)} boundary findings`,
+    );
   const packetId = UuidV7Schema.parse(input.packetId ?? createUuidV7());
   const targetBase = HandoffTargetSnapshotSchema.omit({
     fingerprint: true,
@@ -936,7 +955,7 @@ function assemblePacket(
         reason: "duplicate",
         duplicate_of: findingId,
       });
-    } else if (priority > EVIDENCE_HANDOFF_MAX_FINDINGS) {
+    } else if (retained.length >= EVIDENCE_HANDOFF_MAX_FINDINGS) {
       omissions.push({
         finding_id: findingId,
         original_priority: priority,
@@ -965,6 +984,27 @@ function assemblePacket(
     permission_manifest_fingerprint:
       calculatePermissionManifestFingerprint(permissionProjection),
   };
+  const blockOnSize = (
+    measuredBytes: number,
+  ): BuildEvidenceHandoffPacketResult => ({
+    status: "handoff_blocked",
+    blocker: HandoffPacketSizeBlockerSchema.parse({
+      version: 2,
+      status: "handoff_blocked",
+      category: "packet_size",
+      packet_id: packetId,
+      finding_ids: [
+        ...new Set(
+          normalizedFindings.map((payload) =>
+            calculateFindingId(targetSnapshot.fingerprint, payload),
+          ),
+        ),
+      ].slice(0, EVIDENCE_HANDOFF_MAX_FINDINGS),
+      measured_bytes: measuredBytes,
+      max_bytes: EVIDENCE_HANDOFF_MAX_BYTES,
+    }),
+    normalizedFindings,
+  });
   let lastOversizedBytes = 0;
   while (true) {
     omissions.sort(
@@ -986,23 +1026,7 @@ function assemblePacket(
         normalizedFindings.length > 0 &&
         omissions.some((entry) => entry.reason === "packet_size")
       ) {
-        return {
-          status: "handoff_blocked",
-          blocker: HandoffPacketSizeBlockerSchema.parse({
-            version: 2,
-            status: "handoff_blocked",
-            category: "packet_size",
-            packet_id: packetId,
-            finding_ids: normalizedFindings
-              .map((payload) =>
-                calculateFindingId(targetSnapshot.fingerprint, payload),
-              )
-              .slice(0, 12),
-            measured_bytes: lastOversizedBytes,
-            max_bytes: EVIDENCE_HANDOFF_MAX_BYTES,
-          }),
-          normalizedFindings,
-        };
+        return blockOnSize(lastOversizedBytes);
       }
       return {
         status: "packet_created",
@@ -1013,25 +1037,7 @@ function assemblePacket(
     }
     lastOversizedBytes = measuredBytes;
     const removed = retained.pop();
-    if (!removed) {
-      return {
-        status: "handoff_blocked",
-        blocker: HandoffPacketSizeBlockerSchema.parse({
-          version: 2,
-          status: "handoff_blocked",
-          category: "packet_size",
-          packet_id: packetId,
-          finding_ids: normalizedFindings
-            .map((payload) =>
-              calculateFindingId(targetSnapshot.fingerprint, payload),
-            )
-            .slice(0, 12),
-          measured_bytes: measuredBytes,
-          max_bytes: EVIDENCE_HANDOFF_MAX_BYTES,
-        }),
-        normalizedFindings,
-      };
-    }
+    if (!removed) return blockOnSize(measuredBytes);
     omissions.push({
       finding_id: removed.finding_id,
       original_priority: removed.priority,

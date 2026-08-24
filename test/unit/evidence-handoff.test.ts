@@ -6,6 +6,7 @@ import { ArtifactStore } from "../../src/artifacts/store.js";
 import { sha256 } from "../../src/core/ids.js";
 import type { PermissionPolicy } from "../../src/core/types.js";
 import {
+  EVIDENCE_HANDOFF_MAX_BOUNDARY_FINDINGS,
   EVIDENCE_HANDOFF_MAX_BYTES,
   HandoffLifecycleRecordSchema,
   buildEvidenceHandoffPacket,
@@ -350,6 +351,97 @@ describe("trusted evidence handoff v2", () => {
     ]);
   });
 
+  it("fills every retained slot when a duplicate precedes the finding limit", () => {
+    const submitted = Array.from({ length: 14 }, (_, index) => ({
+      ...structuredClone(finding),
+      invariant: `Distinct invariant ${String(index === 4 ? 3 : index + 1)}`,
+    }));
+    const result = created(submitted);
+    expect(result.packet.findings).toHaveLength(12);
+    expect(result.packet.findings.map((entry) => entry.priority)).toEqual([
+      1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13,
+    ]);
+    expect(result.packet.omitted_findings.entries).toMatchObject([
+      { original_priority: 5, reason: "duplicate" },
+      { original_priority: 14, reason: "finding_limit" },
+    ]);
+    expect(
+      validateEvidenceHandoffPacket({
+        packet: result.packet,
+        expected: {
+          runId: result.packet.run_id,
+          roundId: result.packet.round_id,
+          reviewerSlot: "a",
+          targetSlot: "b",
+          targetSnapshot,
+          permissionProjection: projection,
+        },
+        sourceFindings: submitted,
+        taskSourceIds: ["source_issue_241"],
+        capabilityIds: ["filesystem", "shell"],
+      }).status,
+    ).toBe("packet_valid");
+  });
+
+  it("records every omission when the boundary delivers duplicates and over-limit findings", () => {
+    const submitted = Array.from(
+      { length: EVIDENCE_HANDOFF_MAX_BOUNDARY_FINDINGS },
+      (_, index) => ({
+        ...structuredClone(finding),
+        invariant: `Distinct invariant ${String(index === 4 ? 3 : index + 1)}`,
+      }),
+    );
+    const result = created(submitted);
+    expect(result.packet.findings).toHaveLength(12);
+    expect(result.packet.omitted_findings.count).toBe(
+      EVIDENCE_HANDOFF_MAX_BOUNDARY_FINDINGS - 12,
+    );
+    expect(
+      result.packet.omitted_findings.entries.filter(
+        (entry) => entry.reason === "duplicate",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("blocks an oversized multi-finding review instead of throwing", () => {
+    const bulky = {
+      ...structuredClone(finding),
+      observations: Array.from({ length: 8 }, (_, index) => ({
+        trust: "reviewer_hypothesis",
+        statement: "o".repeat(900),
+        provenance: {
+          kind: "code_inspection",
+          references: [`src/session-${String(index)}.ts`],
+        },
+      })),
+      trigger_sequence: Array.from({ length: 12 }, () => "t".repeat(400)),
+      oracle: {
+        expected_behavior: "e".repeat(1_400),
+        task_source_ids: ["source_issue_241"],
+        task_source_rationale: "r".repeat(1_400),
+      },
+      regression_test_plan: {
+        summary: "s".repeat(1_400),
+        suggested_paths: [],
+        focused_command: null,
+      },
+    };
+    const result = buildEvidenceHandoffPacket(
+      buildInput(
+        Array.from({ length: 13 }, (_, index) => ({
+          ...structuredClone(bulky),
+          invariant: `Distinct invariant ${String(index + 1)}`,
+        })),
+      ),
+    );
+    expect(result.status).toBe("handoff_blocked");
+    if (result.status === "handoff_blocked") {
+      expect(result.blocker.category).toBe("packet_size");
+      expect(result.blocker.finding_ids).toHaveLength(12);
+      expect(new Set(result.blocker.finding_ids).size).toBe(12);
+    }
+  });
+
   it("blocks an oversized single finding instead of creating a false empty packet", () => {
     const huge = {
       ...structuredClone(finding),
@@ -621,6 +713,24 @@ describe("trusted evidence handoff v2", () => {
     ).toThrow(/lease without an approved decision/);
   });
 
+  it("ignores an expiry on a capability decision that was never approved", () => {
+    const denied = projectResolvedPermissions({
+      policy: {
+        ...policy,
+        capabilities: [
+          {
+            ...policy.capabilities[0]!,
+            status: "denied",
+            expiresAt: "2026-08-18T22:00:00.000Z",
+          },
+        ],
+      },
+    });
+    expect(denied.capabilities).toMatchObject([
+      { capability_id: "shell", status: "denied", expires_at: null },
+    ]);
+  });
+
   it("normalizes a focused blocker and rejects unknown packet identities", () => {
     const result = created();
     const blocked = normalizeHandoffBlocker(
@@ -829,6 +939,66 @@ describe("trusted evidence handoff v2", () => {
     await expect(
       readEvidenceHandoffArtifact(store, "legacy/handoff.json"),
     ).rejects.toThrow();
+  });
+
+  it("keeps a single lifecycle head when concurrent appends share a parent", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-lifecycle-"));
+    const store = new ArtifactStore(root, "run");
+    await store.initialize();
+    const result = created();
+    const pointer = await persistEvidenceHandoffPacket(
+      store,
+      "round_2",
+      "a-to-b",
+      result.packet,
+    );
+    const base = {
+      version: 2 as const,
+      run_id: "run_2026-08-18T200000Z",
+      round_id: "round_2",
+      lane_id: "a-to-b",
+      reviewer_slot: "a",
+      target_slot: "b",
+      packet_id: result.packet.packet_id,
+      packet_digest: result.packet.packet_digest,
+      attempt: 1 as const,
+      artifact_pointers: [pointer],
+      diagnostic_pointer: null,
+      recorded_at: "2026-08-18T20:00:00.000Z",
+    };
+    await persistHandoffLifecycleRecord(
+      store,
+      HandoffLifecycleRecordSchema.parse({
+        ...base,
+        record_id: "created",
+        previous_record_id: null,
+        state: "created",
+        event: "creation",
+        reason_code: "review_valid",
+      }),
+    );
+    const child = (recordId: string) =>
+      persistHandoffLifecycleRecord(
+        store,
+        HandoffLifecycleRecordSchema.parse({
+          ...base,
+          record_id: recordId,
+          previous_record_id: "created",
+          state: "validated",
+          event: "validation",
+          reason_code: "fingerprints_match",
+        }),
+      );
+    const settled = await Promise.allSettled([
+      child("validated-a"),
+      child("validated-b"),
+    ]);
+    expect(
+      settled.filter((entry) => entry.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      (await readCurrentHandoffLifecycle(store, "round_2", "a-to-b"))?.state,
+    ).toBe("validated");
   });
 
   it("allows one direct diagnostic artifact up to 8 KiB without traversing pointers", async () => {
