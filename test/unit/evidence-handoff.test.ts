@@ -135,6 +135,34 @@ describe("trusted evidence handoff v2", () => {
       "e745c956a26b486165d92d414109963f4d5df4d09f8088e5ccd176b89d85c5cb",
     );
     expect(result.canonicalBytes.byteLength).toBe(1_877);
+    const expected = {
+      runId: result.packet.run_id,
+      roundId: result.packet.round_id,
+      reviewerSlot: "a",
+      targetSlot: "b",
+      targetSnapshot,
+      permissionProjection: projection,
+    };
+    expect(
+      validateEvidenceHandoffPacket({
+        packet: result.packet,
+        canonicalBytes: result.canonicalBytes,
+        expected,
+        sourceFindings: [finding],
+        taskSourceIds: ["source_issue_241"],
+        capabilityIds: ["filesystem", "shell"],
+      }),
+    ).toEqual({
+      status: "packet_valid",
+      packet_digest: result.packet.packet_digest,
+      finding_count: 1,
+    });
+    expect(
+      validateEvidenceHandoffPacket({ packet: result.packet, expected }),
+    ).toEqual({
+      status: "packet_malformed",
+      diagnostic_code: "omission_evidence_missing",
+    });
   });
 
   it("creates a genuine empty packet without confusing it with failure", () => {
@@ -152,6 +180,9 @@ describe("trusted evidence handoff v2", () => {
       validateEvidenceHandoffPacket({
         packet: result.packet,
         canonicalBytes: result.canonicalBytes,
+        sourceFindings: [],
+        taskSourceIds: ["source_issue_241"],
+        capabilityIds: ["filesystem", "shell"],
         expected: {
           runId: result.packet.run_id,
           roundId: result.packet.round_id,
@@ -165,6 +196,66 @@ describe("trusted evidence handoff v2", () => {
       status: "packet_valid_empty",
       packet_digest: result.packet.packet_digest,
       finding_count: 0,
+    });
+  });
+
+  it("rejects silently dropped and duplicated source findings", () => {
+    const second = {
+      ...structuredClone(finding),
+      invariant: "A distinct second invariant.",
+    };
+    const result = created([finding, second]);
+    const expected = {
+      runId: result.packet.run_id,
+      roundId: result.packet.round_id,
+      reviewerSlot: "a",
+      targetSlot: "b",
+      targetSnapshot,
+      permissionProjection: projection,
+    };
+    const silentlyDropped = structuredClone(result.packet);
+    silentlyDropped.findings.pop();
+    silentlyDropped.packet_digest = calculatePacketDigest(
+      Object.fromEntries(
+        Object.entries(silentlyDropped).filter(
+          ([key]) => key !== "packet_digest",
+        ),
+      ) as Omit<typeof silentlyDropped, "packet_digest">,
+    );
+    expect(
+      validateEvidenceHandoffPacket({
+        packet: silentlyDropped,
+        expected,
+        sourceFindings: [finding, second],
+        taskSourceIds: ["source_issue_241"],
+        capabilityIds: ["filesystem", "shell"],
+      }),
+    ).toEqual({
+      status: "packet_malformed",
+      diagnostic_code: "omission_metadata_mismatch",
+    });
+
+    const duplicated = structuredClone(created().packet);
+    duplicated.findings.push({
+      ...structuredClone(duplicated.findings[0]!),
+      priority: 2,
+    });
+    duplicated.packet_digest = calculatePacketDigest(
+      Object.fromEntries(
+        Object.entries(duplicated).filter(([key]) => key !== "packet_digest"),
+      ) as Omit<typeof duplicated, "packet_digest">,
+    );
+    expect(
+      validateEvidenceHandoffPacket({
+        packet: duplicated,
+        expected,
+        sourceFindings: [finding],
+        taskSourceIds: ["source_issue_241"],
+        capabilityIds: ["filesystem", "shell"],
+      }),
+    ).toEqual({
+      status: "packet_malformed",
+      diagnostic_code: "omission_metadata_mismatch",
     });
   });
 
@@ -468,6 +559,47 @@ describe("trusted evidence handoff v2", () => {
       "approved",
       "unavailable",
     ]);
+    const narrowed = projectResolvedPermissions({
+      policy,
+      leases: [
+        {
+          capabilityId: "shell",
+          scopes: [],
+          status: "active",
+          expiresAt: "2026-08-18T22:00:00.000Z",
+        },
+      ],
+      now: new Date("2026-08-18T21:00:00.000Z"),
+    });
+    expect(calculatePermissionManifestFingerprint(narrowed)).not.toBe(
+      calculatePermissionManifestFingerprint(
+        projectResolvedPermissions({
+          policy,
+          leases: [
+            {
+              capabilityId: "shell",
+              scopes: ["repository"],
+              status: "active",
+              expiresAt: "2026-08-18T22:00:00.000Z",
+            },
+          ],
+          now: new Date("2026-08-18T21:00:00.000Z"),
+        }),
+      ),
+    );
+    expect(() =>
+      projectResolvedPermissions({
+        policy,
+        leases: [
+          {
+            capabilityId: "shell",
+            scopes: ["production"],
+            status: "active",
+            expiresAt: "2026-08-18T22:00:00.000Z",
+          },
+        ],
+      }),
+    ).toThrow(/exceeds its approved scopes/);
     expect(() =>
       projectResolvedPermissions({
         policy,
@@ -622,6 +754,20 @@ describe("trusted evidence handoff v2", () => {
         { status: "packet_valid", unexpected: true },
       ),
     ).rejects.toThrow();
+    await expect(
+      persistHandoffLifecycleRecord(
+        store,
+        HandoffLifecycleRecordSchema.parse({
+          ...base,
+          record_id: "substituted-digest",
+          previous_record_id: "created",
+          packet_digest: "f".repeat(64),
+          state: "validated",
+          event: "validation",
+          reason_code: "fingerprints_match",
+        }),
+      ),
+    ).rejects.toThrow(/identity or digest/);
     await persistHandoffLifecycleRecord(
       store,
       HandoffLifecycleRecordSchema.parse({

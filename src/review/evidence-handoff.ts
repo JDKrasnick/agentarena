@@ -536,12 +536,22 @@ export function projectResolvedPermissions(
         ? Date.parse(lease.expiresAt) <= now.getTime() ||
           lease.status === "expired"
         : false;
+      const approvedScopes = new Set(
+        capability.scopes.map((scope) => normalizeText(scope)),
+      );
+      const effectiveScopes = (lease?.scopes ?? capability.scopes).map(
+        (scope) => normalizeText(scope),
+      );
+      if (effectiveScopes.some((scope) => !approvedScopes.has(scope)))
+        throw new Error(
+          `Capability ${capability.id} lease exceeds its approved scopes`,
+        );
       return {
         capability_id: normalizeText(capability.id),
         status: expired ? ("expired" as const) : capability.status,
         requirement: capability.requirement,
         roles: [capability.role] as [typeof capability.role],
-        scopes: sortedUnique(capability.scopes.map(normalizeText)),
+        scopes: sortedUnique(effectiveScopes),
         enforcement: capability.enforcement,
         expires_at: lease ? new Date(lease.expiresAt).toISOString() : null,
       };
@@ -1338,39 +1348,37 @@ export function validateEvidenceHandoffPacket(
       status: "packet_stale",
       diagnostic_code: "permission_fingerprint_mismatch",
     };
-  if (packet.omitted_findings.entries.length > 0) {
-    if (!input.sourceFindings || !input.taskSourceIds || !input.capabilityIds)
-      return {
-        status: "packet_malformed",
-        diagnostic_code: "omission_evidence_missing",
-      };
-    try {
-      const rebuilt = assemblePacket({
-        packetId: packet.packet_id,
-        runId: packet.run_id,
-        roundId: packet.round_id,
-        reviewerSlot: packet.reviewer_slot,
-        targetSlot: packet.target_slot,
-        targetSnapshot: input.expected.targetSnapshot,
-        permissionProjection: input.expected.permissionProjection,
-        findings: input.sourceFindings,
-        taskSourceIds: input.taskSourceIds,
-        capabilityIds: input.capabilityIds,
-      });
-      if (
-        rebuilt.status !== "packet_created" ||
-        canonicalHandoffJson(rebuilt.packet) !== canonicalHandoffJson(packet)
-      )
-        return {
-          status: "packet_malformed",
-          diagnostic_code: "omission_metadata_mismatch",
-        };
-    } catch {
+  if (!input.sourceFindings || !input.taskSourceIds || !input.capabilityIds)
+    return {
+      status: "packet_malformed",
+      diagnostic_code: "omission_evidence_missing",
+    };
+  try {
+    const rebuilt = assemblePacket({
+      packetId: packet.packet_id,
+      runId: packet.run_id,
+      roundId: packet.round_id,
+      reviewerSlot: packet.reviewer_slot,
+      targetSlot: packet.target_slot,
+      targetSnapshot: input.expected.targetSnapshot,
+      permissionProjection: input.expected.permissionProjection,
+      findings: input.sourceFindings,
+      taskSourceIds: input.taskSourceIds,
+      capabilityIds: input.capabilityIds,
+    });
+    if (
+      rebuilt.status !== "packet_created" ||
+      canonicalHandoffJson(rebuilt.packet) !== canonicalHandoffJson(packet)
+    )
       return {
         status: "packet_malformed",
         diagnostic_code: "omission_metadata_mismatch",
       };
-    }
+  } catch {
+    return {
+      status: "packet_malformed",
+      diagnostic_code: "omission_metadata_mismatch",
+    };
   }
   return packet.findings.length === 0
     ? {
@@ -1564,9 +1572,12 @@ export function assertHandoffLifecycleTransition(
     );
   if (
     (previous.state === "created" || previous.state === "validated") &&
-    next.packet_id !== previous.packet_id
+    (next.packet_id !== previous.packet_id ||
+      next.packet_digest !== previous.packet_digest)
   )
-    throw new Error("A packet identity cannot change without a refresh");
+    throw new Error(
+      "A packet identity or digest cannot change without a refresh",
+    );
   if (
     previous.state === "refresh_required" &&
     next.state === "validated" &&
