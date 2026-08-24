@@ -14,7 +14,6 @@ import {
   type HandoffArtifactPointer,
   type HandoffDiagnosticPointer,
   type HandoffLifecycleRecord,
-  type HandoffValidationOutcome,
 } from "./evidence-handoff.js";
 import { sha256 } from "../core/ids.js";
 
@@ -33,6 +32,18 @@ function handoffRoot(roundId: string, laneId: string): string {
   );
 }
 
+function packetLane(packet: EvidenceHandoffPacket): string {
+  return `${safeSegment(packet.reviewer_slot, "reviewer_slot")}-to-${safeSegment(packet.target_slot, "target_slot")}`;
+}
+
+function packetArtifactPath(packet: EvidenceHandoffPacket): string {
+  return path.posix.join(
+    handoffRoot(packet.round_id, packetLane(packet)),
+    "packets",
+    `${safeSegment(packet.packet_id, "packet_id")}.json`,
+  );
+}
+
 export async function persistEvidenceHandoffPacket(
   store: ArtifactStore,
   roundId: string,
@@ -40,12 +51,13 @@ export async function persistEvidenceHandoffPacket(
   packet: EvidenceHandoffPacket,
 ): Promise<HandoffArtifactPointer> {
   const validated = assertEvidenceHandoffPacketIntrinsic(packet);
+  const expectedLaneId = packetLane(validated);
+  if (roundId !== validated.round_id || laneId !== expectedLaneId)
+    throw new Error(
+      `Evidence handoff storage identity must match packet lane ${validated.round_id}/${expectedLaneId}`,
+    );
   const bytes = Buffer.from(canonicalHandoffJson(validated), "utf8");
-  const relative = path.posix.join(
-    handoffRoot(roundId, laneId),
-    "packets",
-    `${validated.packet_id}.json`,
-  );
+  const relative = packetArtifactPath(validated);
   await store.writeImmutableBytes(relative, bytes);
   return {
     artifact_id: validated.packet_id,
@@ -188,24 +200,82 @@ export async function readEvidenceHandoffArtifact(
   const packet = EvidenceHandoffPacketSchema.parse(value);
   if (!bytes.equals(Buffer.from(canonicalHandoffJson(packet), "utf8")))
     throw new Error("Persisted v2 handoff packet is not canonical JSON");
-  return assertEvidenceHandoffPacketIntrinsic(packet);
+  const validated = assertEvidenceHandoffPacketIntrinsic(packet);
+  if (relativePath !== packetArtifactPath(validated))
+    throw new Error(
+      "Persisted v2 handoff packet path does not match its round and lane identity",
+    );
+  return validated;
 }
 
 export async function readHandoffDiagnostic(
   store: ArtifactStore,
   pointer: HandoffDiagnosticPointer,
-  outcome: HandoffValidationOutcome,
+  owner: HandoffLifecycleRecord,
 ): Promise<Uint8Array> {
-  const validatedOutcome = HandoffValidationOutcomeSchema.parse(outcome);
+  const validatedOwner = HandoffLifecycleRecordSchema.parse(owner);
+  const persistedOwner = (
+    await readHandoffLifecycle(
+      store,
+      validatedOwner.round_id,
+      validatedOwner.lane_id,
+    )
+  ).find((record) => record.record_id === validatedOwner.record_id);
   if (
-    validatedOutcome.status !== "packet_stale" &&
-    validatedOutcome.status !== "packet_malformed" &&
-    validatedOutcome.status !== "handoff_blocked"
+    !persistedOwner ||
+    canonicalHandoffJson(persistedOwner) !==
+      canonicalHandoffJson(validatedOwner)
   )
+    throw new Error(
+      "Diagnostic owner is not an immutable persisted lifecycle record",
+    );
+  const validated = HandoffDiagnosticPointerSchema.parse(pointer);
+  if (
+    persistedOwner.diagnostic_pointer === null ||
+    canonicalHandoffJson(persistedOwner.diagnostic_pointer) !==
+      canonicalHandoffJson(validated)
+  )
+    throw new Error("Diagnostic pointer is not owned by the lifecycle record");
+  const diagnosticRoot = path.posix.join(
+    handoffRoot(persistedOwner.round_id, persistedOwner.lane_id),
+    "diagnostics",
+  );
+  if (path.posix.dirname(validated.path) !== diagnosticRoot)
+    throw new Error("Handoff diagnostic must be one direct lane artifact");
+  const blockerCategories = new Set([
+    "permission_unavailable",
+    "cited_context_missing",
+    "target_artifact_unavailable",
+    "policy_ambiguous",
+    "packet_size",
+  ]);
+  const validationDiagnostics = new Set([
+    "target_fingerprint_mismatch",
+    "permission_fingerprint_mismatch",
+    "strict_schema_invalid",
+    "noncanonical_encoding",
+    "packet_digest_mismatch",
+    "target_snapshot_fingerprint_invalid",
+    "finding_id_mismatch",
+    "lane_identity_mismatch",
+    "omission_evidence_missing",
+    "omission_metadata_mismatch",
+    "packet_oversized",
+  ]);
+  const diagnosticTransition =
+    (persistedOwner.state === "refresh_required" ||
+      persistedOwner.state === "coverage_loss") &&
+    ((persistedOwner.event === "validation" &&
+      validationDiagnostics.has(persistedOwner.reason_code)) ||
+      (persistedOwner.event === "coverage_loss" &&
+        (validationDiagnostics.has(persistedOwner.reason_code) ||
+          blockerCategories.has(persistedOwner.reason_code))) ||
+      (persistedOwner.event === "blocking" &&
+        blockerCategories.has(persistedOwner.reason_code)));
+  if (!diagnosticTransition)
     throw new Error(
       "Diagnostic drill-down is available only for stale, malformed, or blocked handoffs",
     );
-  const validated = HandoffDiagnosticPointerSchema.parse(pointer);
   const bytes = await readFile(store.resolve(validated.path));
   if (
     bytes.byteLength > EVIDENCE_HANDOFF_DIAGNOSTIC_MAX_BYTES ||

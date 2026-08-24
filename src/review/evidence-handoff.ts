@@ -156,8 +156,14 @@ const prohibitedContent = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
   /\b(?:private reasoning|chain[- ]of[- ]thought|hidden deliberation)\b/i,
   /\b(?:provider transcript|implementation transcript|raw transcript)\b/i,
-  /\b(?:api[_-]?key|password|passwd|client_secret)\s*[:=]/i,
-  /\b(?:claude|codex|gemini)\s+(?:said|wrote|reported|reasoned)\b/i,
+  /\bauthorization\s*[:=]\s*\S+/i,
+  /\bbearer\s+\S+/i,
+  /\b(?:api[_-]?key|token|secret|password|passwd|client_secret)\s*[:=]\s*\S+/i,
+  /\b(?:process\.env\.)?[a-z][a-z0-9_]*(?:_token|_secret|_password|_api_key|_access_key)(?:\b|\s*[:=])/i,
+  /\$\{?[a-z][a-z0-9_]*(?:_token|_secret|_password|_api_key|_access_key)\}?\b/i,
+  /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/,
+  /\b(?:sk-(?:proj-)?[a-z0-9_-]{12,}|gh[pousr]_[a-z0-9]{20,}|github_pat_[a-z0-9_]{20,}|xox[baprs]-[a-z0-9-]{12,}|AIza[a-z0-9_-]{20,})\b/i,
+  /\b(?:anthropic|claude|codex|gemini|openai|opencode)\b/i,
 ];
 
 function assertNoProhibitedContent(
@@ -1569,13 +1575,17 @@ export function assertHandoffLifecycleTransition(
   if (!previous) {
     if (
       next.previous_record_id !== null ||
-      (next.state !== "created" && next.state !== "refresh_required")
+      (next.state !== "created" && next.state !== "refresh_required") ||
+      next.attempt !== 1 ||
+      (next.state === "created" && next.event !== "creation") ||
+      (next.state === "refresh_required" && next.event !== "blocking")
     )
       throw new Error(
-        "A handoff lifecycle must start at created or refresh_required without a parent",
+        "A handoff lifecycle must start with a valid attempt-1 creation or blocking tuple without a parent",
       );
     return;
   }
+  HandoffLifecycleRecordSchema.parse(previous);
   if (next.previous_record_id !== previous.record_id)
     throw new Error("Handoff lifecycle record must point to the current head");
   if (
@@ -1590,8 +1600,50 @@ export function assertHandoffLifecycleTransition(
     throw new Error(
       `Invalid handoff lifecycle transition: ${previous.state} -> ${next.state}`,
     );
+  const expectedEvents: Partial<
+    Record<
+      HandoffLifecycleState,
+      Partial<
+        Record<
+          HandoffLifecycleState,
+          z.infer<typeof HandoffLifecycleEventSchema>
+        >
+      >
+    >
+  > = {
+    created: {
+      validated: "validation",
+      refresh_required: "validation",
+      invalidated: "invalidation",
+    },
+    validated: {
+      consumed: "consumption",
+      completed_empty: "empty_completion",
+      refresh_required: "blocking",
+      invalidated: "invalidation",
+    },
+    refresh_required: {
+      validated: "refresh",
+      coverage_loss: "coverage_loss",
+    },
+  };
+  const expectedEvent = expectedEvents[previous.state]?.[next.state];
+  const expectedAttempt =
+    previous.state === "refresh_required" ? 2 : previous.attempt;
   if (
-    (previous.state === "created" || previous.state === "validated") &&
+    next.event !== expectedEvent ||
+    next.attempt !== expectedAttempt ||
+    (previous.state === "refresh_required" &&
+      previous.attempt === 2 &&
+      next.state !== "coverage_loss")
+  )
+    throw new Error(
+      `Invalid handoff lifecycle tuple: ${previous.state} -> ${next.state} via ${next.event} on attempt ${String(next.attempt)}`,
+    );
+  const successfulRefresh =
+    previous.state === "refresh_required" && next.state === "validated";
+  if (
+    !successfulRefresh &&
     (next.packet_id !== previous.packet_id ||
       next.packet_digest !== previous.packet_digest)
   )
