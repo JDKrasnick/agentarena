@@ -204,6 +204,55 @@ if (stage === "provider_health_probe") {
     process.exit(0);
   }
   if (
+    process.env.AGENT_ARENA_FAKE_OVERSIZED_REVIEW_ONCE === "1" &&
+    round === "1" &&
+    agent === "codex" &&
+    !prompt.includes("# Targeted packet-size blocker refresh")
+  ) {
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 2,
+        findings: [
+          {
+            trust: "reviewer_hypothesis",
+            invariant: "i".repeat(1_000),
+            observations: Array.from({ length: 8 }, (_, index) => ({
+              trust: "reviewer_hypothesis",
+              statement: "o".repeat(1_000),
+              provenance: {
+                kind: "code_inspection",
+                references: [`src/slug-${String(index)}.mjs`],
+              },
+            })),
+            code_locations: [
+              {
+                path: "src/slug.mjs",
+                line_start: 1,
+                line_end: 3,
+                symbol: "slug",
+              },
+            ],
+            trigger_sequence: Array.from({ length: 12 }, () => "t".repeat(500)),
+            oracle: {
+              expected_behavior: "e".repeat(1_500),
+              task_source_ids: ["task-user"],
+              task_source_rationale: "r".repeat(1_500),
+            },
+            confidence: 90,
+            required_capability_ids: [],
+            regression_test_plan: {
+              summary: "s".repeat(1_500),
+              suggested_paths: [],
+              focused_command: "c".repeat(1_000),
+            },
+          },
+        ],
+      }),
+    );
+    process.exit(0);
+  }
+  if (
     process.env.AGENT_ARENA_FAKE_DIRTY_BLOCKER === "1" &&
     prompt.includes("# Targeted blocker refresh")
   ) {
@@ -320,6 +369,24 @@ if (stage === "provider_health_probe") {
   );
   let emitRetryFailure = false;
   let emitBlocker = false;
+  if (
+    process.env.AGENT_ARENA_FAKE_INVALID_THEN_BLOCKER === "1" &&
+    round === "2" &&
+    agent === "codex"
+  ) {
+    try {
+      const phase = await readFile(blockerMarker, "utf8");
+      if (phase === "invalid\n") {
+        emitBlocker = true;
+        await writeFile(blockerMarker, "blocker\n");
+      } else {
+        await rm(blockerMarker);
+      }
+    } catch {
+      emitRetryFailure = true;
+      await writeFile(blockerMarker, "invalid\n");
+    }
+  }
   if (
     process.env.AGENT_ARENA_FAKE_RETRY_ONCE === "1" &&
     round === "1" &&

@@ -698,6 +698,109 @@ describe("fake-adapter fight on a mocked real issue", () => {
     );
   });
 
+  it("keeps blocker refresh independent from attack submission correction", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = duelConfig(repositoryRoot);
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_INVALID_THEN_BLOCKER: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+    const store = new ArtifactStore(config.artifactRoot, outcome.state.runId, {
+      durableV5: true,
+    });
+    const lifecycle = await readHandoffLifecycle(store, "round_2", "a-to-b");
+    const invocations = outcome.state.attackInvocations.filter(
+      (entry) =>
+        entry.round === 2 && entry.attacker === "a" && entry.target === "b",
+    );
+
+    expect(lifecycle.map((record) => record.state)).toEqual([
+      "created",
+      "validated",
+      "refresh_required",
+      "validated",
+      "completed_empty",
+    ]);
+    expect(invocations).toHaveLength(3);
+    expect(invocations.map((entry) => entry.submissionStatus)).toEqual([
+      "invalid_submission",
+      "not_submitted",
+      "submitted",
+    ]);
+    for (const invocation of invocations) {
+      expect(invocation.handoffPacketId).toBeTruthy();
+      expect(invocation.handoffPacketDigest).toHaveLength(64);
+      expect(invocation.handoffTargetFingerprint).toHaveLength(64);
+    }
+    expect(
+      outcome.state.reviewInvocations.some(
+        (entry) =>
+          entry.round === 2 &&
+          entry.reviewer === "a" &&
+          entry.detail?.includes("Targeted blocker refresh completed"),
+      ),
+    ).toBe(true);
+  });
+
+  it("refreshes a valid review when no nonempty finding fits the packet ceiling", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = duelConfig(repositoryRoot);
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_OVERSIZED_REVIEW_ONCE: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+    const store = new ArtifactStore(config.artifactRoot, outcome.state.runId, {
+      durableV5: true,
+    });
+    const lifecycle = await readHandoffLifecycle(store, "round_1", "a-to-b");
+
+    expect(lifecycle.map((record) => record.state)).toEqual([
+      "refresh_required",
+      "validated",
+      "consumed",
+    ]);
+    expect(lifecycle[0]).toMatchObject({
+      event: "blocking",
+      reason_code: "packet_size",
+      attempt: 1,
+    });
+    expect(
+      outcome.state.reviewInvocations.some(
+        (entry) =>
+          entry.round === 1 &&
+          entry.reviewer === "a" &&
+          entry.detail?.includes("Targeted packet-size refresh completed"),
+      ),
+    ).toBe(true);
+    await expect(
+      readdir(store.resolve("rounds/round_1/handoffs/a-to-b/blockers")),
+    ).resolves.toHaveLength(1);
+  });
+
   it("runs three rounds, lands and heals evidence, recoils a miss, and writes replayable artifacts", async () => {
     const repositoryRoot = await createSlugRepository();
     const integrationRetryMarker = `${repositoryRoot}-integration-retry`;
@@ -861,6 +964,11 @@ describe("fake-adapter fight on a mocked real issue", () => {
         }),
       ]),
     );
+    for (const invocation of outcome.state.attackInvocations) {
+      expect(invocation.handoffPacketId).toBeTruthy();
+      expect(invocation.handoffPacketDigest).toHaveLength(64);
+      expect(invocation.handoffTargetFingerprint).toHaveLength(64);
+    }
     expect(
       outcome.state.attackInvocations.filter(
         (entry) =>
