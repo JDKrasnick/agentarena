@@ -21,7 +21,11 @@ import { applyAcceptedPatch } from "../../src/commands/apply.js";
 import { resolveCoverage } from "../../src/commands/resolve-coverage.js";
 import { FightConfigSchema } from "../../src/core/types.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
-import type { IssueResolver } from "../../src/task/task-contract.js";
+import {
+  buildRunSpec,
+  collectFightReconnaissance,
+  type IssueResolver,
+} from "../../src/task/task-contract.js";
 import { createSlugRepository } from "../helpers/repository.js";
 import { ArenaBattleControl } from "../../src/observability/control.js";
 import { ArenaEventSchema } from "../../src/observability/events.js";
@@ -32,6 +36,7 @@ import {
   canonicalHandoffJson,
 } from "../../src/review/evidence-handoff.js";
 import { readHandoffLifecycle } from "../../src/review/evidence-handoff-store.js";
+import { resolvePermissionPolicy } from "../../src/permissions/policy.js";
 
 const fixtureAgent = fileURLToPath(
   new URL("../fixtures/fake-agent.mjs", import.meta.url),
@@ -695,6 +700,108 @@ describe("fake-adapter fight on a mocked real issue", () => {
     ).toBeTruthy();
     expect(outcome.state.warnings.join("\n")).not.toContain(
       "Trusted handoff refresh failed for a against b",
+    );
+  });
+
+  it("builds validation refresh packets from permissions resolved after review", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = duelConfig(repositoryRoot);
+    const beforeExpiry = new Date("2026-08-24T20:00:00.000Z");
+    const firstExpiry = new Date("2026-08-24T20:01:00.000Z");
+    const secondExpiry = new Date("2026-08-24T20:02:00.000Z");
+    const betweenExpiries = new Date("2026-08-24T20:01:30.000Z");
+    const afterExpiries = new Date("2026-08-24T20:02:30.000Z");
+    let clock = beforeExpiry;
+    const permissions = resolvePermissionPolicy(config);
+    const approved = permissions.capabilities.filter(
+      (capability) => capability.status === "approved",
+    );
+    expect(approved.length).toBeGreaterThanOrEqual(2);
+    approved[0]!.expiresAt = firstExpiry.toISOString();
+    approved[1]!.expiresAt = secondExpiry.toISOString();
+    const reconnaissance = await collectFightReconnaissance(config, {
+      now: beforeExpiry,
+    });
+    const baseCommit = (
+      await execa("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot })
+    ).stdout;
+    const runSpec = await buildRunSpec({
+      runId: "permission-refresh-parent",
+      baseCommit,
+      config,
+      permissions,
+      repositoryRoot,
+      reconnaissance,
+      sourceDirectory: path.join(config.artifactRoot, "parent-sources"),
+      now: beforeExpiry,
+    });
+    const codex = new CommandAgentAdapter({
+      id: "codex",
+      executable: process.execPath,
+      args: [fixtureAgent],
+    });
+    const claude = new CommandAgentAdapter({
+      id: "claude",
+      executable: process.execPath,
+      args: [fixtureAgent],
+    });
+    const originalCodexReview = codex.review.bind(codex);
+    vi.spyOn(codex, "review").mockImplementation(async (input) => {
+      const invocation = await originalCodexReview(input);
+      if (input.prompt.includes("# Targeted validation refresh"))
+        clock = afterExpiries;
+      return invocation;
+    });
+    const originalClaudeReview = claude.review.bind(claude);
+    vi.spyOn(claude, "review").mockImplementation(async (input) => {
+      const invocation = await originalClaudeReview(input);
+      if (
+        input.round === 1 &&
+        !input.prompt.includes("# Targeted validation refresh")
+      )
+        clock = betweenExpiries;
+      return invocation;
+    });
+    const outcome = await new Arena({
+      adapters: { codex, claude },
+      verifier: new RuleBasedVerifier("claude"),
+      now: () => clock,
+    }).fightReplacement(config, {
+      parentRunId: "permission-refresh-parent",
+      restartOrdinal: 1,
+      runSpec,
+      permissions,
+      reconnaissance,
+    });
+    const store = new ArtifactStore(config.artifactRoot, outcome.state.runId, {
+      durableV5: true,
+    });
+    const firstLane = await readHandoffLifecycle(store, "round_1", "a-to-b");
+
+    expect(firstLane.map((record) => record.state)).toEqual([
+      "created",
+      "refresh_required",
+      "validated",
+      "consumed",
+    ]);
+    expect(firstLane[1]).toMatchObject({
+      event: "validation",
+      reason_code: "permission_fingerprint_mismatch",
+    });
+    expect(firstLane[2]).toMatchObject({
+      event: "refresh",
+      reason_code: "refresh_valid",
+    });
+    expect(
+      outcome.state.reviewInvocations.some(
+        (entry) =>
+          entry.round === 1 &&
+          entry.reviewer === "a" &&
+          entry.detail?.includes("Targeted validation refresh completed"),
+      ),
+    ).toBe(true);
+    expect(outcome.state.warnings.join("\n")).not.toContain(
+      "Trusted handoff validation refresh remained invalid",
     );
   });
 

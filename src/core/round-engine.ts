@@ -5541,7 +5541,7 @@ export class RoundEngine {
               frozen_patch_sha256: sha256(await readFile(targetPatchPath)),
               frozen_git_tree_id: targetSnapshot,
             },
-            permissionProjection: currentPermissionProjection,
+            permissionProjection: refreshedPermissionProjection,
             findings: refreshedReview.findings,
             taskSourceIds: context.runSpec.task.sources.map(
               (source) => source.id,
