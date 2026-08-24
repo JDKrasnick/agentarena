@@ -753,6 +753,31 @@ describe("trusted evidence handoff v2", () => {
     ).toThrow(/lease without an approved decision/);
   });
 
+  it("sorts permission arrays by Unicode code point", () => {
+    const projected = projectResolvedPermissions({
+      policy: {
+        ...policy,
+        capabilities: [
+          {
+            ...policy.capabilities[0]!,
+            scopes: ["\u{1f600}", "\ue000"],
+          },
+        ],
+      },
+      reducedValidation: {
+        accepted: false,
+        assessmentDigest: null,
+        omittedCheckIds: ["\u{1f600}", "\ue000"],
+      },
+    });
+
+    expect(projected.capabilities[0]?.scopes).toEqual(["\ue000", "\u{1f600}"]);
+    expect(projected.reduced_validation.omitted_check_ids).toEqual([
+      "\ue000",
+      "\u{1f600}",
+    ]);
+  });
+
   it("ignores an expiry on a capability decision that was never approved", () => {
     const denied = projectResolvedPermissions({
       policy: {

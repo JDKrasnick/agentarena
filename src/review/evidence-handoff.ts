@@ -85,12 +85,26 @@ function normalizedTextSchema(minBytes: number, maxBytes: number) {
   });
 }
 
-function unicodeCompare(left: string, right: string): number {
+/** RFC 8785 sorts JSON object keys by their UTF-16 code units. */
+function utf16Compare(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+/** Contract arrays sort lexicographically by Unicode scalar value. */
+function unicodeCodePointCompare(left: string, right: string): number {
+  const leftPoints = [...left];
+  const rightPoints = [...right];
+  const length = Math.min(leftPoints.length, rightPoints.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftPoint = leftPoints[index]!.codePointAt(0)!;
+    const rightPoint = rightPoints[index]!.codePointAt(0)!;
+    if (leftPoint !== rightPoint) return leftPoint - rightPoint;
+  }
+  return leftPoints.length - rightPoints.length;
+}
+
 function sortedUnique(values: readonly string[]): string[] {
-  return [...new Set(values)].sort(unicodeCompare);
+  return [...new Set(values)].sort(unicodeCodePointCompare);
 }
 
 function normalizeStringArray(
@@ -574,7 +588,7 @@ export function projectResolvedPermissions(
       };
     })
     .sort((left, right) =>
-      unicodeCompare(left.capability_id, right.capability_id),
+      unicodeCodePointCompare(left.capability_id, right.capability_id),
     );
   const reduced = options.reducedValidation ?? {
     accepted: options.policy.reducedValidationAccepted,
@@ -619,7 +633,7 @@ export function canonicalHandoffJson(value: unknown): string {
       if (prototype !== Object.prototype && prototype !== null)
         throw new Error("Canonical JSON requires plain JSON objects");
       const entries = Object.entries(candidate as Record<string, unknown>).sort(
-        ([left], [right]) => unicodeCompare(left, right),
+        ([left], [right]) => utf16Compare(left, right),
       );
       return `{${entries
         .map(([key, entry]) => {
