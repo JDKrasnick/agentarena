@@ -308,6 +308,19 @@ export const HandoffFindingPayloadSchema = z
   });
 export type HandoffFindingPayload = z.infer<typeof HandoffFindingPayloadSchema>;
 
+/** Exact reviewer output accepted by new trusted-handoff runs. */
+export const TrustedReviewSubmissionSchema = z
+  .object({
+    version: z.literal(2),
+    findings: z
+      .array(HandoffFindingPayloadSchema)
+      .max(EVIDENCE_HANDOFF_MAX_BOUNDARY_FINDINGS),
+  })
+  .strict();
+export type TrustedReviewSubmission = z.infer<
+  typeof TrustedReviewSubmissionSchema
+>;
+
 export const EvidenceHandoffFindingSchema = z
   .object({
     finding_id: FindingIdSchema,

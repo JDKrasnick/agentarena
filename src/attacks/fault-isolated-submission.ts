@@ -5,12 +5,14 @@ import {
   CaseSubmissionSchema,
   HouseSubmissionSchema,
   LegacyAttackSubmissionEntrySchema,
-  ReviewFindingSchema,
   type AttackSubmission,
   type CaseSubmission,
   type HouseSubmission,
-  type ReviewSubmission,
 } from "../core/types.js";
+import {
+  HandoffFindingPayloadSchema,
+  type TrustedReviewSubmission,
+} from "../review/evidence-handoff.js";
 
 export const SUBMISSION_PARSER_VERSION = 1 as const;
 
@@ -497,7 +499,7 @@ function overall(
 export function parseFaultIsolatedSubmission(
   kind: "review",
   source: string,
-): ParsedSubmission<ReviewSubmission>;
+): ParsedSubmission<TrustedReviewSubmission>;
 export function parseFaultIsolatedSubmission(
   kind: "attack",
   source: string,
@@ -514,11 +516,11 @@ export function parseFaultIsolatedSubmission(
   kind: SubmissionKind,
   source: string,
 ): ParsedSubmission<
-  ReviewSubmission | AttackSubmission | HouseSubmission | CaseSubmission
+  TrustedReviewSubmission | AttackSubmission | HouseSubmission | CaseSubmission
 > {
   const empty =
     kind === "review"
-      ? { version: 1 as const, findings: [] }
+      ? { version: 2 as const, findings: [] }
       : kind === "attack"
         ? { version: 2 as const, sharedSupportPaths: [], attacks: [] }
         : kind === "house"
@@ -551,7 +553,8 @@ export function parseFaultIsolatedSubmission(
       ),
     );
   const envelope = decoded as Record<string, unknown>;
-  const supportedVersions = kind === "attack" ? [1, 2] : [1];
+  const supportedVersions =
+    kind === "attack" ? [1, 2] : kind === "review" ? [2] : [1];
   if (!supportedVersions.includes(Number(envelope.version)))
     return invalidSubmission(
       kind,
@@ -564,15 +567,27 @@ export function parseFaultIsolatedSubmission(
         supportedVersions.map(String),
       ),
     );
+  if (kind === "attack" && "handoff_blocker" in envelope) {
+    return invalidSubmission(
+      kind,
+      empty,
+      reject(
+        "$.handoff_blocker",
+        envelope.handoff_blocker,
+        "handoff_blocker_requires_refresh",
+        "A handoff blocker must be handled by the trusted handoff refresh path",
+      ),
+    );
+  }
 
   const sections: Record<string, ParsedSection> = {};
   if (kind === "review") {
     sections.findings = parseEntries({
       envelope,
       key: "findings",
-      schema: ReviewFindingSchema,
-      fieldSchema: ReviewFindingSchema,
-      limit: 12,
+      schema: HandoffFindingPayloadSchema,
+      fieldSchema: HandoffFindingPayloadSchema,
+      limit: 24,
     });
   } else if (kind === "attack") {
     sections.attacks = parseEntries<unknown>({
@@ -735,8 +750,9 @@ export function parseFaultIsolatedSubmission(
   const value =
     kind === "review"
       ? {
-          version: 1 as const,
-          findings: sections.findings!.accepted as ReviewSubmission["findings"],
+          version: 2 as const,
+          findings: sections.findings!
+            .accepted as TrustedReviewSubmission["findings"],
         }
       : kind === "attack"
         ? {

@@ -25,6 +25,11 @@ import type { IssueResolver } from "../../src/task/task-contract.js";
 import { createSlugRepository } from "../helpers/repository.js";
 import { ArenaBattleControl } from "../../src/observability/control.js";
 import { ArenaEventSchema } from "../../src/observability/events.js";
+import {
+  EvidenceHandoffPacketSchema,
+  assertEvidenceHandoffPacketIntrinsic,
+  canonicalHandoffJson,
+} from "../../src/review/evidence-handoff.js";
 
 const fixtureAgent = fileURLToPath(
   new URL("../fixtures/fake-agent.mjs", import.meta.url),
@@ -769,16 +774,56 @@ describe("fake-adapter fight on a mocked real issue", () => {
         }),
       ]),
     );
+    const packetIds = new Set<string>();
+    for (const reviewInvocation of outcome.state.reviewInvocations) {
+      expect(reviewInvocation.artifactPath).toBeTruthy();
+      const packetBytes = await readFile(reviewInvocation.artifactPath!);
+      const packet = assertEvidenceHandoffPacketIntrinsic(
+        EvidenceHandoffPacketSchema.parse(
+          JSON.parse(packetBytes.toString("utf8")),
+        ),
+      );
+      expect(packetBytes.toString("utf8")).toBe(canonicalHandoffJson(packet));
+      expect(packet.version).toBe(2);
+      expect(packetIds.has(packet.packet_id)).toBe(false);
+      packetIds.add(packet.packet_id);
+      expect(packet.round_id).toBe(`round_${String(reviewInvocation.round)}`);
+      expect(packet.reviewer_slot).toBe(reviewInvocation.reviewer);
+      expect(packet.target_slot).toBe(reviewInvocation.target);
+      const prompt = await readFile(
+        path.join(
+          outcome.state.artifacts.runDirectory!,
+          "prompts",
+          `round-${String(reviewInvocation.round)}-${reviewInvocation.reviewer}.md`,
+        ),
+        "utf8",
+      );
+      expect(prompt).toContain(
+        `${canonicalHandoffJson(packet)}\n# Attack instructions`,
+      );
+      expect(prompt).not.toContain("diff --git");
+      expect(prompt).not.toContain('"provider": "codex"');
+      expect(prompt).not.toContain('"provider": "claude"');
+    }
+    expect(packetIds.size).toBe(6);
     const reviewArtifactPath = outcome.state.reviewInvocations.find(
       (invocation) => invocation.reviewer === "a" && invocation.round === 1,
     )?.artifactPath;
     const reviewArtifact = JSON.parse(
       await readFile(reviewArtifactPath!, "utf8"),
     ) as {
-      targetPatchSha256: string;
+      version: number;
+      packet_id: string;
+      packet_digest: string;
+      target_snapshot: { frozen_patch_sha256: string };
       findings: Array<{ invariant: string }>;
     };
-    expect(reviewArtifact.targetPatchSha256).toHaveLength(64);
+    expect(reviewArtifact.version).toBe(2);
+    expect(reviewArtifact.packet_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(reviewArtifact.packet_digest).toHaveLength(64);
+    expect(reviewArtifact.target_snapshot.frozen_patch_sha256).toHaveLength(64);
     expect(reviewArtifact.findings[0]?.invariant).toContain(
       "run of whitespace",
     );
@@ -790,11 +835,11 @@ describe("fake-adapter fight on a mocked real issue", () => {
       ),
       "utf8",
     );
-    expect(attackPrompt).toContain("Compact target-specific review packet");
+    expect(attackPrompt).toContain("Trusted evidence handoff v2");
     expect(attackPrompt).toContain("run of whitespace");
-    expect(attackPrompt).toContain(
-      '"kind":"click","role":"button","name":"accessible name"',
-    );
+    expect(attackPrompt).not.toContain("diff --git");
+    expect(attackPrompt).not.toContain('"provider": "codex"');
+    expect(attackPrompt).not.toContain('"provider": "claude"');
     expect(attackPrompt).toContain("CSS selectors are not accepted");
     const repairPrompt = await readFile(
       path.join(

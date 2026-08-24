@@ -1,7 +1,6 @@
 import { sha256 } from "../core/ids.js";
 import type {
   AgentId,
-  AttackReviewArtifact,
   ContestantId,
   FightConfig,
   PermissionPolicy,
@@ -10,6 +9,10 @@ import type {
 } from "../core/types.js";
 import type { ContestantFeedback, RunSpec } from "../contracts/round.js";
 import type { MethodSelection } from "../methods/catalog.js";
+import {
+  canonicalHandoffJson,
+  type EvidenceHandoffPacket,
+} from "../review/evidence-handoff.js";
 
 const COMMON_VERSION = "common@1";
 const OVERLAY_VERSION: Record<RoundId, string> = {
@@ -99,12 +102,43 @@ export interface PromptContext {
   methodSelection?: MethodSelection;
   target?: ContestantId;
   opponentPatch?: string;
-  reviewPacket?: Omit<AttackReviewArtifact, "reviewer" | "target">;
+  reviewPacket?: EvidenceHandoffPacket;
   evidence?: string;
   currentHealth?: number;
   priorOutcomes?: string;
   contestantFeedback?: ContestantFeedback;
+  allowMissingReviewPacket?: boolean;
 }
+
+function roleSafeRunSpec(runSpec: RunSpec): object {
+  return {
+    ...runSpec,
+    topology: {
+      ...runSpec.topology,
+      contestants: runSpec.topology.contestants.map((contestant) => ({
+        id: contestant.id,
+        role: contestant.role,
+        startingPatch: contestant.startingPatch,
+      })),
+    },
+  };
+}
+
+const ATTACK_INSTRUCTIONS = [
+  "# Attack instructions",
+  "Write structured output to .agent-arena-submission.json using exactly one supported v2 result.",
+  "# Submission schema",
+  '{"version":2,"sharedSupportPaths":["test/support/arena.ts"],"attacks":[{"rank":1,"claim":"...","impact":"...","oracle":{"expectedBehavior":"...","rationale":"Explain how the frozen task text supports this behavior"},"proposedSeverity":"high","confidence":90,"focusedCommand":"npm test -- test/arena-rank-1.test.ts","paths":["test/arena-rank-1.test.ts"],"requiredCapabilities":[]}]}',
+  'A successful empty result is {"version":2,"sharedSupportPaths":[],"attacks":[]}.',
+  'If the packet cannot be used, return only {"version":2,"handoff_blocker":{"finding_ids":["finding_..."],"category":"cited_context_missing","explanation":"...","requested_capability_ids":[],"requested_context":["src/file.ts"]}}.',
+  "Attack ranks must be unique values from 1 through 3 and may be sparse. Create executable test or fixture evidence, but never edit production code. Rank-specific paths must be disjoint; shared support paths are copied into every independently replayable overlay.",
+  "The assigned worktree contains the frozen target patch. Start from the trusted packet, inspect cited code and nearby tests as needed, and build deterministic executable evidence.",
+  "A blocker is mutually exclusive with attacks. Do not include credentials, provider identity, transcripts, or private reasoning.",
+  "Update the structured submission as each attack becomes executable. Leaving attacks: [] is correct when no reviewed finding reproduces.",
+  "Feedback may include prior adjudications. Set challengeAdjudicationId only when disputing or confirming one exact decision.",
+  "When browser_dom_validation is approved, the bounded DSL supports goto, click, fill, fill_dom_xss_canary, press, reload, assert_text, assert_visible, and assert_url using accessible targets; CSS selectors are not accepted.",
+  "The harness owns origins, lifecycle, timeouts, isolation, and harness-only capabilities.",
+];
 
 export function composePrompt(context: PromptContext): string {
   const common = [
@@ -113,7 +147,13 @@ export function composePrompt(context: PromptContext): string {
     `Stage: ${context.stage}`,
     "",
     "# Immutable run specification",
-    JSON.stringify(context.runSpec, null, 2),
+    JSON.stringify(
+      context.stage === "attack"
+        ? roleSafeRunSpec(context.runSpec)
+        : context.runSpec,
+      null,
+      2,
+    ),
     "",
     `Required validation command: ${context.config.testCommand}`,
     `Time limit: ${String(context.config.limits[`${context.stage === "implement" ? "implementation" : context.stage}Ms`])} ms`,
@@ -127,26 +167,12 @@ export function composePrompt(context: PromptContext): string {
     "Edit only the assigned worktree. Do not commit. Do not access production credentials or unrelated files.",
     "Never request or print raw secrets; request capabilities by ID.",
     "The harness decides whether checks pass. State the expected behavior and why the frozen task text supports it; source ID and location are optional compatibility metadata.",
-    "Write structured output to .agent-arena-submission.json using the schema in this prompt.",
   ];
   if (context.stage === "implement" || context.stage === "repair") {
     common.push(
       "",
       "# Submission schema",
       '{"version":1,"explanation":"concise summary"}',
-    );
-  } else {
-    common.push(
-      "",
-      "# Submission schema",
-      '{"version":2,"sharedSupportPaths":["test/support/arena.ts"],"attacks":[{"rank":1,"claim":"...","impact":"...","oracle":{"expectedBehavior":"...","rationale":"Explain how the frozen task text supports this behavior"},"proposedSeverity":"high","confidence":90,"focusedCommand":"npm test -- test/arena-rank-1.test.ts","paths":["test/arena-rank-1.test.ts"],"requiredCapabilities":[],"challengeAdjudicationId":"optional-prior-id"},{"rank":2,"claim":"...","impact":"...","oracle":{"expectedBehavior":"...","rationale":"..."},"proposedSeverity":"medium","confidence":85,"requiredCapabilities":["browser_dom_validation"],"browserProbe":{"id":"browser-only-reproducer","family":"interaction","profile":"desktop","expectedBehavior":"...","actions":[{"kind":"goto","path":"/"},{"kind":"assert_text","text":"..."}]}}]}',
-      "Attack ranks must be unique values from 1 through 3 and may be sparse. Create executable test or fixture evidence, but never edit production code. Rank-specific paths must be disjoint; shared support paths are copied into every independently replayable overlay.",
-      'Immediately write {"version":2,"sharedSupportPaths":[],"attacks":[]} to .agent-arena-submission.json before doing any other work, so a bounded phase always has an explicit result.',
-      "The assigned worktree contains the frozen target patch. Start from the review packet, inspect the cited code and nearby tests as needed, and build deterministic executable evidence. Do not restart broad repository review.",
-      "Update the structured submission as each attack becomes executable. Leaving attacks: [] is the correct result when no reviewed finding reproduces.",
-      "Feedback may include up to six prior adjudications. Set challengeAdjudicationId when the new evidence disputes or confirms one of those exact decisions; otherwise omit it. The judge receives the prior claim, oracle, verdict, public rationale, evidence identity, target patch identity, and score effect.",
-      'When browser_dom_validation is approved, you may choose one task-specific browserProbe from the advertised families and profiles. Include browser_dom_validation in requiredCapabilities. The complete bounded action DSL is: {"kind":"goto","path":"/..."}; {"kind":"click","role":"button","name":"accessible name"}; {"kind":"fill","label":"accessible field label","value":"..."}; {"kind":"fill_dom_xss_canary","label":"accessible field label"}; {"kind":"press","key":"Enter"}; {"kind":"reload"}; {"kind":"assert_text","text":"exact visible text"}; {"kind":"assert_visible","role":"button","name":"accessible name"}; and {"kind":"assert_url","value":"/..."}. CSS selectors are not accepted. A dom_security probe must include fill_dom_xss_canary; the harness supplies and observes the inert payload. A browser-only attack may omit focusedCommand and paths; it lands only if the harness reproduces an author pass and target failure and the judge accepts its oracle. The harness also runs mandatory runtime, semantics, and 320-pixel smoke probes.',
-      "The harness owns origins, lifecycle, timeouts, and isolation. You may rely on an exact external origin only when its capability is already approved; decide whether that live dependency is suitable evidence. For flows beyond the bounded DSL, submit a repository-authored test/fixture with paths and focusedCommand instead of embedding general-purpose script in browserProbe.",
     );
   }
   if (context.round !== undefined) {
@@ -168,15 +194,6 @@ export function composePrompt(context: PromptContext): string {
       );
     }
   }
-  if (context.opponentPatch)
-    common.push("", "# Frozen opponent patch", context.opponentPatch);
-  if (context.reviewPacket) {
-    common.push(
-      "",
-      "# Compact target-specific review packet",
-      JSON.stringify(context.reviewPacket, null, 2),
-    );
-  }
   if (context.evidence)
     common.push("", "# Validated evidence", context.evidence);
   if (context.currentHealth !== undefined) {
@@ -190,12 +207,22 @@ export function composePrompt(context: PromptContext): string {
       "# Lane-safe committed feedback",
       JSON.stringify(context.contestantFeedback, null, 2),
     );
+  if (context.stage === "attack") {
+    if (!context.reviewPacket && !context.allowMissingReviewPacket)
+      throw new Error("Attack prompts require a validated v2 handoff packet");
+    if (context.reviewPacket)
+      common.push(
+        "",
+        "# Trusted evidence handoff v2",
+        canonicalHandoffJson(context.reviewPacket),
+        ...ATTACK_INSTRUCTIONS,
+      );
+  }
   return `${common.join("\n")}\n`;
 }
 
 export function composeAttackReviewPrompt(
   context: Omit<PromptContext, "stage" | "reviewPacket" | "evidence"> & {
-    opponentPatch: string;
     target: ContestantId;
   },
 ): string {
@@ -209,7 +236,7 @@ export function composeAttackReviewPrompt(
     `Target slot: ${context.target}`,
     "",
     "# Immutable run specification",
-    JSON.stringify(context.runSpec, null, 2),
+    JSON.stringify(roleSafeRunSpec(context.runSpec), null, 2),
     "",
     `Required validation command: ${context.config.testCommand}`,
     `Time limit: ${String(context.config.limits.reviewMs)} ms`,
@@ -232,8 +259,8 @@ export function composeAttackReviewPrompt(
     "Write only .agent-arena-submission.json. Any other worktree change invalidates the review artifact.",
     "",
     "# Submission schema",
-    '{"version":1,"findings":[{"invariant":"...","codeLocation":"src/file.ts:42 or symbol","triggerSequence":["first event","second event"],"expectedBehavior":"...","confidence":85,"suggestedMinimalRegressionTest":"Add test/arena-... exercising ..."}]}',
-    "Zero findings is valid. Rank findings by confidence and keep the packet compact (at most 12).",
+    '{"version":2,"findings":[{"trust":"reviewer_hypothesis","invariant":"...","observations":[{"trust":"reviewer_hypothesis","statement":"...","provenance":{"kind":"code_inspection","references":["src/file.ts:42"]}}],"code_locations":[{"path":"src/file.ts","line_start":42,"line_end":42,"symbol":"functionName"}],"trigger_sequence":["first event","second event"],"oracle":{"expected_behavior":"...","task_source_ids":["task-user"],"task_source_rationale":"Explain how the frozen source supports the expectation"},"confidence":85,"required_capability_ids":[],"regression_test_plan":{"summary":"...","suggested_paths":["test/arena-example.test.ts"],"focused_command":"npm test -- test/arena-example.test.ts"}}]}',
+    "Zero findings is valid. Rank at most 24 findings by priority. Exact duplicates and the final 12/16 KiB limits are enforced by the harness.",
     "",
     `# Round ${String(context.round)} review brief`,
     context.round === undefined ? "" : OVERLAYS[context.round],
@@ -248,8 +275,6 @@ export function composeAttackReviewPrompt(
         ]
       : []),
     "",
-    "# Frozen target patch",
-    context.opponentPatch,
   ].join("\n")}\n`;
 }
 

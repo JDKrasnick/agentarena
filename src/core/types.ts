@@ -428,6 +428,9 @@ export const AttackInvocationRecordSchema = z.object({
     "not_run",
   ]),
   attackCount: z.number().int().nonnegative(),
+  handoffPacketId: z.string().optional(),
+  handoffPacketDigest: z.string().length(64).optional(),
+  handoffTargetFingerprint: z.string().length(64).optional(),
   parseOutcome: z
     .enum(["valid", "valid_empty", "partial", "invalid"])
     .optional(),

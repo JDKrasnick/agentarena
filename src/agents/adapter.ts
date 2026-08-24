@@ -5,7 +5,6 @@ import {
   AgentInvocationSchema,
   AttackSubmissionV2Schema,
   InfrastructureReviewSubmissionSchema,
-  ReviewSubmissionSchema,
   SeveritySchema,
   StageSubmissionSchema,
   type AgentId,
@@ -20,9 +19,12 @@ import {
   type HouseSubmission,
   type InfrastructureReviewSubmission,
   type PermissionPolicy,
-  type ReviewSubmission,
   type Severity,
 } from "../core/types.js";
+import {
+  TrustedReviewSubmissionSchema,
+  type TrustedReviewSubmission,
+} from "../review/evidence-handoff.js";
 import { calculateCanonicalHash, type RunSpec } from "../contracts/round.js";
 import { sha256 } from "../core/ids.js";
 import { buildJudgePacket } from "../judge/packets.js";
@@ -327,10 +329,10 @@ export async function readAttackSubmission(
 
 export async function readReviewSubmission(
   worktree: string,
-): Promise<ReviewSubmission> {
+): Promise<TrustedReviewSubmission> {
   const submissionPath = path.join(worktree, ".agent-arena-submission.json");
   return parseModelSubmission(
-    ReviewSubmissionSchema,
+    TrustedReviewSubmissionSchema,
     await readFile(submissionPath, "utf8"),
   );
 }
