@@ -27,6 +27,7 @@ import {
   readCurrentHandoffLifecycle,
   readEvidenceHandoffArtifact,
   readHandoffDiagnostic,
+  readHandoffLifecycle,
 } from "../../src/review/evidence-handoff-store.js";
 
 const policy: PermissionPolicy = {
@@ -159,10 +160,26 @@ describe("trusted evidence handoff v2", () => {
       finding_count: 1,
     });
     expect(
-      validateEvidenceHandoffPacket({ packet: result.packet, expected }),
+      validateEvidenceHandoffPacket({
+        packet: result.packet,
+        canonicalBytes: result.canonicalBytes,
+        expected,
+      }),
     ).toEqual({
       status: "packet_malformed",
       diagnostic_code: "omission_evidence_missing",
+    });
+    expect(
+      validateEvidenceHandoffPacket({
+        packet: result.packet,
+        expected,
+        sourceFindings: [finding],
+        taskSourceIds: ["source_issue_241"],
+        capabilityIds: ["filesystem", "shell"],
+      }),
+    ).toEqual({
+      status: "packet_malformed",
+      diagnostic_code: "noncanonical_encoding",
     });
   });
 
@@ -226,6 +243,10 @@ describe("trusted evidence handoff v2", () => {
     expect(
       validateEvidenceHandoffPacket({
         packet: silentlyDropped,
+        canonicalBytes: Buffer.from(
+          canonicalHandoffJson(silentlyDropped),
+          "utf8",
+        ),
         expected,
         sourceFindings: [finding, second],
         taskSourceIds: ["source_issue_241"],
@@ -249,6 +270,7 @@ describe("trusted evidence handoff v2", () => {
     expect(
       validateEvidenceHandoffPacket({
         packet: duplicated,
+        canonicalBytes: Buffer.from(canonicalHandoffJson(duplicated), "utf8"),
         expected,
         sourceFindings: [finding],
         taskSourceIds: ["source_issue_241"],
@@ -305,6 +327,7 @@ describe("trusted evidence handoff v2", () => {
     expect(
       validateEvidenceHandoffPacket({
         packet: compacted.packet,
+        canonicalBytes: compacted.canonicalBytes,
         expected,
       }),
     ).toEqual({
@@ -314,6 +337,7 @@ describe("trusted evidence handoff v2", () => {
     expect(
       validateEvidenceHandoffPacket({
         packet: compacted.packet,
+        canonicalBytes: compacted.canonicalBytes,
         expected,
         sourceFindings: many,
         taskSourceIds: ["source_issue_241"],
@@ -332,6 +356,10 @@ describe("trusted evidence handoff v2", () => {
     expect(
       validateEvidenceHandoffPacket({
         packet: wrongOmissions,
+        canonicalBytes: Buffer.from(
+          canonicalHandoffJson(wrongOmissions),
+          "utf8",
+        ),
         expected,
         sourceFindings: many,
         taskSourceIds: ["source_issue_241"],
@@ -368,6 +396,7 @@ describe("trusted evidence handoff v2", () => {
     expect(
       validateEvidenceHandoffPacket({
         packet: result.packet,
+        canonicalBytes: result.canonicalBytes,
         expected: {
           runId: result.packet.run_id,
           roundId: result.packet.round_id,
@@ -498,6 +527,7 @@ describe("trusted evidence handoff v2", () => {
     expect(
       validateEvidenceHandoffPacket({
         packet: result.packet,
+        canonicalBytes: result.canonicalBytes,
         expected: {
           ...expected,
           targetSnapshot: {
@@ -513,6 +543,7 @@ describe("trusted evidence handoff v2", () => {
     expect(
       validateEvidenceHandoffPacket({
         packet: result.packet,
+        canonicalBytes: result.canonicalBytes,
         expected: {
           ...expected,
           permissionProjection: {
@@ -531,15 +562,24 @@ describe("trusted evidence handoff v2", () => {
     expect(
       validateEvidenceHandoffPacket({
         packet: result.packet,
+        canonicalBytes: result.canonicalBytes,
         expected: { ...expected, reviewerSlot: "b" },
       }),
     ).toEqual({
       status: "packet_malformed",
       diagnostic_code: "lane_identity_mismatch",
     });
+    const mismatchedDigest = {
+      ...result.packet,
+      packet_digest: "f".repeat(64),
+    };
     expect(
       validateEvidenceHandoffPacket({
-        packet: { ...result.packet, packet_digest: "f".repeat(64) },
+        packet: mismatchedDigest,
+        canonicalBytes: Buffer.from(
+          canonicalHandoffJson(mismatchedDigest),
+          "utf8",
+        ),
         expected,
       }),
     ).toEqual({
@@ -999,6 +1039,61 @@ describe("trusted evidence handoff v2", () => {
     expect(
       (await readCurrentHandoffLifecycle(store, "round_2", "a-to-b"))?.state,
     ).toBe("validated");
+  });
+
+  it("rejects illegal state transitions when replaying lifecycle artifacts", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-replay-"));
+    const store = new ArtifactStore(root, "run");
+    await store.initialize();
+    const result = created();
+    const pointer = await persistEvidenceHandoffPacket(
+      store,
+      "round_2",
+      "a-to-b",
+      result.packet,
+    );
+    const base = {
+      version: 2 as const,
+      run_id: "run_2026-08-18T200000Z",
+      round_id: "round_2",
+      lane_id: "a-to-b",
+      reviewer_slot: "a",
+      target_slot: "b",
+      packet_id: result.packet.packet_id,
+      packet_digest: result.packet.packet_digest,
+      attempt: 1 as const,
+      artifact_pointers: [pointer],
+      diagnostic_pointer: null,
+      recorded_at: "2026-08-18T20:00:00.000Z",
+    };
+    await store.writeImmutableJson(
+      "rounds/round_2/handoffs/a-to-b/lifecycle/created.json",
+      HandoffLifecycleRecordSchema.parse({
+        ...base,
+        record_id: "created",
+        previous_record_id: null,
+        state: "created",
+        event: "creation",
+        reason_code: "review_valid",
+      }),
+    );
+    await store.writeImmutableJson(
+      "rounds/round_2/handoffs/a-to-b/lifecycle/consumed.json",
+      HandoffLifecycleRecordSchema.parse({
+        ...base,
+        record_id: "consumed",
+        previous_record_id: "created",
+        state: "consumed",
+        event: "consumption",
+        reason_code: "attacks_submitted",
+      }),
+    );
+
+    await expect(
+      readHandoffLifecycle(store, "round_2", "a-to-b"),
+    ).rejects.toThrow(
+      /Invalid handoff lifecycle transition: created -> consumed/,
+    );
   });
 
   it("allows one direct diagnostic artifact up to 8 KiB without traversing pointers", async () => {

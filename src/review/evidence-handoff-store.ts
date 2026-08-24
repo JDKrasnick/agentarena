@@ -113,7 +113,11 @@ export async function readHandoffLifecycle(
     path.posix.join(handoffRoot(roundId, laneId), "lifecycle"),
     HandoffLifecycleRecordSchema,
   );
-  return orderLifecycle(records);
+  const ordered = orderLifecycle(records);
+  ordered.forEach((record, index) =>
+    assertHandoffLifecycleTransition(ordered[index - 1], record),
+  );
+  return ordered;
 }
 
 export async function readCurrentHandoffLifecycle(

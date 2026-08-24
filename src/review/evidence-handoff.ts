@@ -1283,7 +1283,7 @@ export function validateEvidenceHandoffPacket(
       max_bytes: EVIDENCE_HANDOFF_MAX_BYTES,
     };
   if (
-    input.canonicalBytes &&
+    !input.canonicalBytes ||
     !Buffer.from(input.canonicalBytes).equals(
       Buffer.from(canonicalHandoffJson(packet), "utf8"),
     )
