@@ -139,7 +139,10 @@ capability decision and current resolved lease:
 | `provisioning_failed` | None                                  | `provisioning_failed` |
 
 A non-approved decision with a lease is an invalid runtime invariant, not a new
-projection state. `expires_at` is the resolved lease expiry in RFC 3339 UTC form
+projection state. Only an approved decision contributes a lease, so an expiry
+recorded on a decision that was never approved is ignored and projects
+`expires_at` as `null` rather than failing the projection. `expires_at` is the
+resolved lease expiry in RFC 3339 UTC form
 or `null`; the harness evaluates expiry with its current clock whenever it
 constructs or recomputes the projection. Reduced-validation acceptance, its
 exact assessment digest, and all omitted check IDs are mandatory even when
@@ -209,7 +212,7 @@ disclosed to the same attacker and retained in local artifacts.
 
 | Field                         | Canonicalization                    | Validation                                                                                                      |
 | ----------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `omitted_findings.count`      | Integer                             | 0–12 and exactly `entries.length`                                                                               |
+| `omitted_findings.count`      | Integer                             | 0–24 and exactly `entries.length`                                                                               |
 | `omitted_findings.entries`    | Array sorted by `original_priority` | One entry for every duplicate, over-limit, or size-compacted finding and no others                              |
 | `entries[].finding_id`        | Formula in section 3                | Must recompute from the omitted normalized payload and current target fingerprint                               |
 | `entries[].original_priority` | Integer                             | Original positive review position; unique except exact duplicates may share only a finding ID, never a priority |
@@ -274,7 +277,7 @@ hypothesis label when projected independently.
 | Field                                  | Owner and trust                              | Canonicalization                                       | Validation                                                                                                     | Disclosure                        |
 | -------------------------------------- | -------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | --------------------------------- |
 | `finding_id`                           | Harness, attested identifier of a hypothesis | Formula in section 3                                   | Exact recomputation; it is not a canonical defect ID                                                           | Attacker and local artifacts      |
-| `priority`                             | Reviewer, hypothesis metadata                | Integer                                                | Original one-based position, 1–12, unique and ascending in emitted `findings`; never renumbered after omission | Attacker and local artifacts      |
+| `priority`                             | Reviewer, hypothesis metadata                | Integer                                                | Original one-based position, 1–24, unique and ascending in emitted `findings`; never renumbered after omission | Attacker and local artifacts      |
 | `trust`                                | Harness normalization of reviewer content    | Literal string                                         | Exactly `reviewer_hypothesis`                                                                                  | Always disclosed with finding     |
 | `invariant`                            | Reviewer, hypothesis                         | NFC string, trim outer whitespace                      | 1–1,000 UTF-8 bytes; no control characters except newline                                                      | Attacker and local artifacts      |
 | `observations`                         | Reviewer, hypotheses                         | Preserve order                                         | 1–8 entries                                                                                                    | Attacker and local artifacts      |
@@ -302,9 +305,10 @@ provider identity.
 
 ## 6. Duplicate rejection and size compaction
 
-Review parsing preserves the first 12 submitted positions and assigns their
-one-based positions as priorities. Invalid findings are review-schema failures
-handled by the review retry policy and never enter a packet.
+Review parsing accepts at most 24 submitted positions at this boundary and
+assigns their one-based positions as priorities. A packet retains at most 12 of
+them. Invalid findings are review-schema failures handled by the review retry
+policy and never enter a packet.
 
 For valid findings, the harness performs these steps exactly:
 
@@ -314,9 +318,11 @@ For valid findings, the harness performs these steps exactly:
    reason `duplicate`, the duplicate's original priority, and
    `duplicate_of` equal to the retained ID. Do not perform fuzzy, semantic,
    embedding, textual-similarity, or canonical-defect deduplication.
-3. If more than 12 valid positions somehow reach this boundary, keep positions
-   1–12 and record every later entry as `finding_limit`. A conforming review
-   parser normally prevents this case.
+3. Retain findings in ascending priority until 12 are retained, then record
+   every later nonduplicate entry as `finding_limit`. The limit counts retained
+   findings, not submitted positions, so a duplicate never costs a retained
+   slot and a retained priority may exceed 12. A conforming review parser
+   normally prevents this case.
 4. Build the full packet and serialize it as canonical UTF-8 JSON, including
    the final `packet_digest`. The maximum is 16 KiB (16,384 bytes).
 5. While the packet is oversized, remove the lowest-priority retained finding,
@@ -391,6 +397,14 @@ never be revalidated and reused.
 Prior adjudicated results survive through the versioned, lane-safe
 `ContestantFeedback` projection. They MUST NOT be copied into a later handoff as
 findings or used to resurrect an old packet.
+
+Normal attacker context contains only that lane-safe projection and the current
+active packet. Diagnostic drill-down is permitted only for a stale, malformed,
+or blocked handoff. It MUST resolve exactly one directly referenced diagnostic
+artifact, MUST stop after that artifact without following nested pointers, and
+MUST reject content above 8 KiB. These pointers and lifecycle records are
+internal artifacts; this contract adds no report section, observatory element,
+or human-facing drill-down control.
 
 ## 8. Attacker consumption and blockers
 
@@ -524,6 +538,13 @@ Lifecycle state is harness-owned sidecar metadata, not a mutable packet field.
 Every transition records run, round, lane, packet ID and digest when available,
 reason code, attempt number, and artifact pointers. No stale, malformed,
 blocked, invalidated, or oversized packet can silently become `consumed`.
+
+The lifecycle of one lane is a single append-only chain. Each record names its
+parent, and a parent MUST be extended exactly once: appending a second child to
+an already-extended record MUST fail rather than fork the chain. Because
+lifecycle records are immutable, a fork would leave the lane permanently
+unreadable, so the head claim MUST be atomic with respect to concurrent
+writers.
 
 ## 11. Required examples
 
@@ -720,13 +741,10 @@ coverage loss without score effect.
 
 ## 12. Compatibility
 
-New runs and resumed work use v2 only. Completed v1 artifacts remain readable
-for historical reports, retaining their original provenance and trust labels,
-but runtime code MUST NOT consume or rewrite them. There is no v1-to-v2 packet
-upgrade. Resuming at a v1 handoff boundary discards that handoff and performs a
-fresh review against the current frozen target and resolved permission policy
-to create v2. If that review cannot complete, normal v2 coverage-loss rules
-apply.
+V2 is the only supported handoff version. New runs, resumed work, artifact
+readers, and runtime consumers MUST reject v1 packets. They MUST NOT read,
+migrate, rewrite, upgrade, or consume v1 handoff artifacts. Existing generic
+legacy-run support outside the reviewer-handoff feature remains unchanged.
 
 ## 13. Implementation checklist
 
@@ -739,8 +757,8 @@ apply.
 - Add permission-projection fixtures for every capability decision plus active
   and expired approved leases; reject leases attached to non-approved decisions.
 - Add executable digest fixtures and invalid fixtures for every validation code.
-- Persist packets, validation outcomes, supersession/invalidation links, and v1
-  read-only compatibility without an upgrade path.
+- Persist packets, validation outcomes, supersession/invalidation links, and
+  bounded one-hop diagnostic pointers; reject every v1 handoff path.
 - Prove prohibited fields and unknown keys are rejected.
 
 ### Issue #19 — prompt and runtime

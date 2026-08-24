@@ -558,6 +558,17 @@ warned about when visible, and recorded as `targeted`, `broad`, or `unknown`;
 telemetry never affects validity, retries, coverage, health, scoring, or
 selection. Only the zero to three committed attacks can land or recoil.
 
+Normal attacker context contains only the current lane-safe summary and active
+v2 packet. Diagnostic drill-down is available only when that handoff is stale,
+malformed, or blocked, and may read one directly referenced artifact capped at
+8 KiB. The harness never follows a diagnostic pointer recursively. Handoff
+lifecycle state remains internal artifact metadata; reports and observatory
+views add no lifecycle section or drill-down control.
+
+New and resumed runs support only v2 handoffs. They reject v1 packets without
+reading, migrating, rewriting, or consuming them; this does not remove generic
+legacy-run support outside the reviewer-handoff feature.
+
 The shared taxonomy covers contract and logic, inputs and errors, state and
 lifecycle, data integrity, concurrency and time, integration and configuration,
 security and privacy, resilience, performance and resources, and test/build

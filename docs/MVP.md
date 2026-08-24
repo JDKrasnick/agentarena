@@ -300,6 +300,17 @@ repository rediscovery is allowed and warned about when visible, then recorded
 as `targeted`, `broad`, or `unknown`; this telemetry never affects health,
 scoring, retries, coverage, or selection.
 
+Normal attacker context contains only the current lane-safe summary and active
+v2 packet. When the handoff is stale, malformed, or blocked, the attacker may
+read at most one directly referenced diagnostic artifact of 8 KiB or less. The
+harness does not traverse pointers from that artifact. Lifecycle sidecars stay
+internal and add no report section, observatory element, or human drill-down
+control.
+
+Only v2 handoffs are supported. New runs and resumes reject v1 packets and do
+not read, migrate, rewrite, or consume them. Existing generic legacy-run
+support outside reviewer handoffs is unchanged.
+
 Both review and focused failure analysis receive a standardized execution
 architecture: battle mode and contestant role, phase sequence, exact worktree
 state, validation authority, information boundaries, declared integration
@@ -1063,9 +1074,8 @@ containing:
   for defects whose repair cannot be confirmed mechanically.
 - `rounds/<round>/handoffs/`: canonical v2 reviewer-to-attacker packets,
   fingerprint validation, omission metadata, refreshes, blockers,
-  invalidations, consumption outcomes, and inspection telemetry. Completed v1
-  artifacts remain reportable but are never consumed or upgraded; a resumed v1
-  handoff regenerates v2.
+  invalidations, consumption outcomes, bounded diagnostic pointers, and
+  inspection telemetry. V1 handoff artifacts are unsupported and rejected.
 - `feedback/`: schema-v3 deterministic, digest-linked role-safe agent
   projections targeting 8 KiB and capped at 24 KiB. Private transcripts,
   verbose judge rationale, and opponent-only evidence are never projected.
