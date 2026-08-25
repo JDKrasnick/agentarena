@@ -1571,6 +1571,7 @@ const allowedLifecycleTransitions: Record<
     "consumed",
     "completed_empty",
     "refresh_required",
+    "coverage_loss",
     "invalidated",
   ]),
   refresh_required: new Set(["validated", "coverage_loss"]),
@@ -1633,6 +1634,7 @@ export function assertHandoffLifecycleTransition(
       consumed: "consumption",
       completed_empty: "empty_completion",
       refresh_required: "blocking",
+      coverage_loss: "coverage_loss",
       invalidated: "invalidation",
     },
     refresh_required: {

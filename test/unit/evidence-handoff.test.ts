@@ -1129,6 +1129,18 @@ describe("trusted evidence handoff v2", () => {
     expect(() =>
       assertHandoffLifecycleTransition(validated, refreshRequired),
     ).not.toThrow();
+    expect(() =>
+      assertHandoffLifecycleTransition(
+        validated,
+        record(
+          "invalid-blocker",
+          "validated",
+          "coverage_loss",
+          "coverage_loss",
+          1,
+        ),
+      ),
+    ).not.toThrow();
 
     const invalid: Array<[typeof initial | undefined, typeof initial]> = [
       [undefined, record("created-2", null, "created", "creation", 2)],

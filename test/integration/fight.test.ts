@@ -861,6 +861,66 @@ describe("fake-adapter fight on a mocked real issue", () => {
     ).toBe(true);
   });
 
+  it("ends an invalid trusted-handoff blocker in coverage loss without correction", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = duelConfig(repositoryRoot);
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_INVALID_BLOCKER: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+    const store = new ArtifactStore(config.artifactRoot, outcome.state.runId, {
+      durableV5: true,
+    });
+    const lifecycle = await readHandoffLifecycle(store, "round_2", "a-to-b");
+    const invocations = outcome.state.attackInvocations.filter(
+      (entry) =>
+        entry.round === 2 && entry.attacker === "a" && entry.target === "b",
+    );
+
+    expect(lifecycle.map((record) => record.state)).toEqual([
+      "created",
+      "validated",
+      "coverage_loss",
+    ]);
+    expect(lifecycle.at(-1)).toMatchObject({
+      event: "coverage_loss",
+      reason_code: "invalid_blocker",
+      attempt: 1,
+    });
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]).toMatchObject({
+      submissionStatus: "invalid_submission",
+      attackCount: 0,
+      parseOutcome: "invalid",
+    });
+    expect(invocations[0]?.handoffPacketId).toBeTruthy();
+    expect(invocations[0]?.handoffPacketDigest).toHaveLength(64);
+    expect(invocations[0]?.handoffTargetFingerprint).toHaveLength(64);
+    expect(outcome.state.coverageAssessment).toMatchObject({
+      confidence: "provisional",
+    });
+    expect(
+      outcome.state.reviewInvocations.some(
+        (entry) =>
+          entry.round === 2 &&
+          entry.reviewer === "a" &&
+          entry.detail?.includes("Targeted blocker refresh completed"),
+      ),
+    ).toBe(false);
+  });
+
   it("refreshes a valid review when no nonempty finding fits the packet ceiling", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = duelConfig(repositoryRoot);

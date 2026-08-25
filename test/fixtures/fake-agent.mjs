@@ -369,6 +369,10 @@ if (stage === "provider_health_probe") {
   );
   let emitRetryFailure = false;
   let emitBlocker = false;
+  const emitInvalidBlocker =
+    process.env.AGENT_ARENA_FAKE_INVALID_BLOCKER === "1" &&
+    round === "2" &&
+    agent === "codex";
   if (
     process.env.AGENT_ARENA_FAKE_INVALID_THEN_BLOCKER === "1" &&
     round === "2" &&
@@ -413,7 +417,21 @@ if (stage === "provider_health_probe") {
       await writeFile(blockerMarker, "blocker\n");
     }
   }
-  if (emitBlocker) {
+  if (emitInvalidBlocker) {
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 2,
+        handoff_blocker: {
+          finding_ids: [`finding_${"0".repeat(64)}`],
+          category: "cited_context_missing",
+          explanation: "This blocker cites a finding outside the packet.",
+          requested_capability_ids: [],
+          requested_context: ["src/slug.mjs"],
+        },
+      }),
+    );
+  } else if (emitBlocker) {
     if (process.env.AGENT_ARENA_FAKE_DIRTY_BLOCKER === "1")
       await writeFile(
         path.join(process.cwd(), ".attacker-refresh-leak"),

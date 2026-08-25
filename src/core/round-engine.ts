@@ -5765,6 +5765,7 @@ export class RoundEngine {
           finalAttemptFinishedAt = attemptFinishedAt;
           invocation = candidate;
           let usableSubmission = false;
+          let blockerEnvelopeDetected = false;
           if (
             candidate.status === "succeeded" ||
             candidate.status === "timed_out"
@@ -5781,6 +5782,7 @@ export class RoundEngine {
                 !Array.isArray(decoded) &&
                 "handoff_blocker" in decoded
               ) {
+                blockerEnvelopeDetected = true;
                 const blocker = normalizeHandoffBlocker(
                   decoded,
                   handoff.packet,
@@ -6075,6 +6077,72 @@ export class RoundEngine {
                 context.state.warnings.push(
                   `Trusted handoff refresh failed for ${agent} against ${target}; lane lost coverage without a score effect: ${error instanceof Error ? error.message : String(error)}`,
                 );
+                await removeSubmission(worktree);
+                break;
+              }
+              if (blockerEnvelopeDetected) {
+                let failedCapture:
+                  | {
+                      parsed: ParsedSubmission<unknown>;
+                      rawPath: string;
+                      parsedPath: string;
+                    }
+                  | undefined;
+                try {
+                  failedCapture = await this.persistProviderSubmission(
+                    context,
+                    {
+                      worktree,
+                      sourceName: ".agent-arena-submission.json",
+                      round,
+                      phase: "attack",
+                      actor: `${agent}-invalid-blocker`,
+                      kind: "attack",
+                    },
+                  );
+                  candidate.submissionPath = failedCapture.parsedPath;
+                } catch {
+                  // Missing output is represented by the invocation record.
+                }
+                const coverageLoss = {
+                  ...handoff.lifecycle,
+                  record_id: stableId(
+                    "handoff-invalid-blocker",
+                    handoff.packet.packet_id,
+                  ),
+                  previous_record_id: handoff.lifecycle.record_id,
+                  state: "coverage_loss" as const,
+                  event: "coverage_loss" as const,
+                  reason_code: "invalid_blocker",
+                  recorded_at: this.now().toISOString(),
+                } satisfies HandoffLifecycleRecord;
+                await persistHandoffLifecycleRecord(
+                  context.store,
+                  coverageLoss,
+                );
+                handoff.lifecycle = coverageLoss;
+                handoffCoverageLost = true;
+                const detail = `Invalid trusted-handoff blocker caused coverage loss: ${error instanceof Error ? error.message : String(error)}`;
+                context.state.attackInvocations.push({
+                  round,
+                  attacker: agent,
+                  target,
+                  invocation: candidate,
+                  ...handoffInvocationMetadata(),
+                  submissionStatus: failedCapture
+                    ? "invalid_submission"
+                    : "not_submitted",
+                  attackCount: 0,
+                  ...(failedCapture
+                    ? {
+                        parseOutcome: failedCapture.parsed.outcome,
+                        rawArtifactPath: failedCapture.rawPath,
+                        parsedArtifactPath: failedCapture.parsedPath,
+                      }
+                    : {}),
+                  detail,
+                });
+                context.state.warnings.push(detail);
                 await removeSubmission(worktree);
                 break;
               }

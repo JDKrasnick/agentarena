@@ -531,6 +531,7 @@ Lifecycle state is harness-owned sidecar metadata, not a mutable packet field.
 | `validated`                     | Attacker returns attacks                                           | Persist consumed digest and continue attack validation | `consumed`                |
 | `validated`                     | Attacker returns `attacks: []`                                     | Mark downstream stages not applicable                  | `completed_empty`         |
 | `validated`                     | Attacker returns valid blocker                                     | Persist blocker and use blocker-stage refresh          | `refresh_required`        |
+| `validated`                     | Attacker returns invalid blocker                                   | Record required-lane failure; no score effect          | `coverage_loss`           |
 | `validated`                     | Blocker persists or blocker refresh fails                          | Record required-lane failure; no score effect          | `coverage_loss`           |
 | `created` or `validated`        | Repair, target mutation, policy change, or round end               | Make packet permanently non-consumable                 | `invalidated`             |
 | `consumed` or `completed_empty` | Later repair, mutation, or policy change                           | Retain historical consumption; prohibit reuse          | terminal historical state |
