@@ -308,6 +308,19 @@ export const HandoffFindingPayloadSchema = z
   });
 export type HandoffFindingPayload = z.infer<typeof HandoffFindingPayloadSchema>;
 
+/** Exact reviewer output accepted by new trusted-handoff runs. */
+export const TrustedReviewSubmissionSchema = z
+  .object({
+    version: z.literal(2),
+    findings: z
+      .array(HandoffFindingPayloadSchema)
+      .max(EVIDENCE_HANDOFF_MAX_BOUNDARY_FINDINGS),
+  })
+  .strict();
+export type TrustedReviewSubmission = z.infer<
+  typeof TrustedReviewSubmissionSchema
+>;
+
 export const EvidenceHandoffFindingSchema = z
   .object({
     finding_id: FindingIdSchema,
@@ -1558,6 +1571,7 @@ const allowedLifecycleTransitions: Record<
     "consumed",
     "completed_empty",
     "refresh_required",
+    "coverage_loss",
     "invalidated",
   ]),
   refresh_required: new Set(["validated", "coverage_loss"]),
@@ -1620,6 +1634,7 @@ export function assertHandoffLifecycleTransition(
       consumed: "consumption",
       completed_empty: "empty_completion",
       refresh_required: "blocking",
+      coverage_loss: "coverage_loss",
       invalidated: "invalidation",
     },
     refresh_required: {
@@ -1629,14 +1644,12 @@ export function assertHandoffLifecycleTransition(
   };
   const expectedEvent = expectedEvents[previous.state]?.[next.state];
   const expectedAttempt =
-    previous.state === "refresh_required" ? 2 : previous.attempt;
-  if (
-    next.event !== expectedEvent ||
-    next.attempt !== expectedAttempt ||
-    (previous.state === "refresh_required" &&
-      previous.attempt === 2 &&
-      next.state !== "coverage_loss")
-  )
+    next.state === "refresh_required"
+      ? 1
+      : previous.state === "refresh_required"
+        ? 2
+        : previous.attempt;
+  if (next.event !== expectedEvent || next.attempt !== expectedAttempt)
     throw new Error(
       `Invalid handoff lifecycle tuple: ${previous.state} -> ${next.state} via ${next.event} on attempt ${String(next.attempt)}`,
     );

@@ -21,6 +21,36 @@ function attack(rank: number, overrides: Record<string, unknown> = {}) {
   };
 }
 
+function reviewFinding() {
+  return {
+    trust: "reviewer_hypothesis",
+    invariant: "invariant",
+    observations: [
+      {
+        trust: "reviewer_hypothesis",
+        statement: "observation",
+        provenance: { kind: "code_inspection", references: ["src/file.ts:1"] },
+      },
+    ],
+    code_locations: [
+      { path: "src/file.ts", line_start: 1, line_end: 1, symbol: "work" },
+    ],
+    trigger_sequence: ["call"],
+    oracle: {
+      expected_behavior: "works",
+      task_source_ids: ["task-user"],
+      task_source_rationale: "The frozen task requires it.",
+    },
+    confidence: 80,
+    required_capability_ids: [],
+    regression_test_plan: {
+      summary: "assert result",
+      suggested_paths: ["test/file.test.ts"],
+      focused_command: "npm test",
+    },
+  };
+}
+
 describe("fault-isolated provider submissions", () => {
   it("keeps a valid attack when malformed legacy hypotheses coexist", () => {
     const parsed = parseFaultIsolatedSubmission(
@@ -124,6 +154,27 @@ describe("fault-isolated provider submissions", () => {
     expect("focusedCommand" in parsed.value.attacks[0]!).toBe(false);
   });
 
+  it("does not confuse a typed handoff blocker with a valid empty attack", () => {
+    const parsed = parseFaultIsolatedSubmission(
+      "attack",
+      JSON.stringify({
+        version: 2,
+        handoff_blocker: {
+          finding_ids: [`finding_${"a".repeat(64)}`],
+          category: "cited_context_missing",
+          explanation: "The cited file is unavailable.",
+          requested_capability_ids: [],
+          requested_context: ["src/file.ts"],
+        },
+      }),
+    );
+
+    expect(parsed.outcome).toBe("invalid");
+    expect(parsed.rejections).toEqual([
+      expect.objectContaining({ code: "handoff_blocker_requires_refresh" }),
+    ]);
+  });
+
   it("normalizes only known path-specific enum aliases and records each rule", () => {
     const parsed = parseFaultIsolatedSubmission(
       "house",
@@ -170,12 +221,33 @@ describe("fault-isolated provider submissions", () => {
     expect(
       parseFaultIsolatedSubmission(
         "review",
-        JSON.stringify({ version: 1, findings: [] }),
+        JSON.stringify({ version: 2, findings: [] }),
       ).outcome,
     ).toBe("valid_empty");
     expect(parseFaultIsolatedSubmission("review", "not json").outcome).toBe(
       "invalid",
     );
+  });
+
+  it("rejects unknown fields on the strict v2 review envelope", () => {
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({
+        version: 2,
+        findings: [],
+        provider_identity: "claude",
+      }),
+    );
+
+    expect(parsed.outcome).toBe("invalid");
+    expect(parsed.value).toEqual({ version: 2, findings: [] });
+    expect(parsed.rejections).toEqual([
+      expect.objectContaining({
+        path: "$",
+        code: "unknown_field",
+        received: '["provider_identity"]',
+      }),
+    ]);
   });
 
   it("reports exact paths and allowed enums while safely rendering values", () => {
@@ -309,23 +381,16 @@ describe("fault-isolated provider submissions", () => {
   });
 
   it("limits review and case positions without suppressing valid siblings", () => {
-    const finding = {
-      invariant: "invariant",
-      codeLocation: "src/file.ts:1",
-      triggerSequence: ["call"],
-      expectedBehavior: "works",
-      confidence: 80,
-      suggestedMinimalRegressionTest: "assert result",
-    };
+    const finding = reviewFinding();
     const review = parseFaultIsolatedSubmission(
       "review",
       JSON.stringify({
-        version: 1,
-        findings: Array.from({ length: 13 }, () => finding),
+        version: 2,
+        findings: Array.from({ length: 25 }, () => finding),
       }),
     );
-    expect(review.value.findings).toHaveLength(12);
-    expect(review.rejections[0]?.path).toBe("$.findings[12]");
+    expect(review.value.findings).toHaveLength(24);
+    expect(review.rejections[0]?.path).toBe("$.findings[24]");
 
     const cases = parseFaultIsolatedSubmission(
       "case",

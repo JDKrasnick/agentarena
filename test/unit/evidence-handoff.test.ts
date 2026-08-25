@@ -1129,6 +1129,61 @@ describe("trusted evidence handoff v2", () => {
     expect(() =>
       assertHandoffLifecycleTransition(validated, refreshRequired),
     ).not.toThrow();
+    const validationRefreshed = HandoffLifecycleRecordSchema.parse({
+      ...refreshRequired,
+      record_id: "validation-refreshed",
+      previous_record_id: refreshRequired.record_id,
+      packet_id: "0191a2b3-c4d5-7e70-8123-456789abcdef",
+      packet_digest: "b".repeat(64),
+      state: "validated",
+      event: "refresh",
+      attempt: 2,
+    });
+    expect(() =>
+      assertHandoffLifecycleTransition(refreshRequired, validationRefreshed),
+    ).not.toThrow();
+    const independentlyBlocked = HandoffLifecycleRecordSchema.parse({
+      ...validationRefreshed,
+      record_id: "independently-blocked",
+      previous_record_id: validationRefreshed.record_id,
+      state: "refresh_required",
+      event: "blocking",
+      attempt: 1,
+    });
+    expect(() =>
+      assertHandoffLifecycleTransition(
+        validationRefreshed,
+        independentlyBlocked,
+      ),
+    ).not.toThrow();
+    const independentlyRefreshed = HandoffLifecycleRecordSchema.parse({
+      ...independentlyBlocked,
+      record_id: "independently-refreshed",
+      previous_record_id: independentlyBlocked.record_id,
+      packet_id: "0191a2b3-c4d5-7e71-8123-456789abcdef",
+      packet_digest: "c".repeat(64),
+      state: "validated",
+      event: "refresh",
+      attempt: 2,
+    });
+    expect(() =>
+      assertHandoffLifecycleTransition(
+        independentlyBlocked,
+        independentlyRefreshed,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertHandoffLifecycleTransition(
+        validated,
+        record(
+          "invalid-blocker",
+          "validated",
+          "coverage_loss",
+          "coverage_loss",
+          1,
+        ),
+      ),
+    ).not.toThrow();
 
     const invalid: Array<[typeof initial | undefined, typeof initial]> = [
       [undefined, record("created-2", null, "created", "creation", 2)],
@@ -1213,6 +1268,7 @@ describe("trusted evidence handoff v2", () => {
         ),
       ],
       [
+        validated,
         record(
           "blocked-second",
           "validated",
@@ -1220,7 +1276,6 @@ describe("trusted evidence handoff v2", () => {
           "blocking",
           2,
         ),
-        record("third-refresh", "blocked-second", "validated", "refresh", 2),
       ],
     ];
     for (const [previous, next] of invalid) {

@@ -83,6 +83,24 @@ import {
 import { compareQualityWithRetry } from "../quality/retry.js";
 import { selectRecommendedPatch } from "../recommendation/select-patch.js";
 import { buildReviewPrompt } from "../review/prompt.js";
+import {
+  buildEvidenceHandoffPacket,
+  normalizeHandoffBlocker,
+  projectResolvedPermissions,
+  requireConsumableEvidenceHandoff,
+  validateEvidenceHandoffPacket,
+  type EvidenceHandoffPacket,
+  type HandoffArtifactPointer,
+  type HandoffFindingPayload,
+  type HandoffLifecycleRecord,
+  type HandoffTargetSnapshot,
+  type ResolvedPermissionProjection,
+} from "../review/evidence-handoff.js";
+import {
+  persistEvidenceHandoffPacket,
+  persistHandoffLifecycleRecord,
+  persistHandoffValidationOutcome,
+} from "../review/evidence-handoff-store.js";
 import { runShellCommand } from "../runner/process-runner.js";
 import { provisionIntegrationProfile } from "../runner/integration.js";
 import {
@@ -138,7 +156,6 @@ import {
   type AgentId,
   type AgentInvocation,
   type Attack,
-  type AttackReviewArtifact,
   type AttackSubmission,
   type CaseSubmission,
   type CheckResult,
@@ -166,6 +183,7 @@ import {
   validateRoundResult,
   validateRoundSnapshot,
   type ArtifactReference,
+  type ContestantFeedback,
   type RoundReplay,
   type RoundResult,
   type RoundSnapshot,
@@ -297,6 +315,19 @@ interface ArenaContext {
   priorEnvelopeHash: string | null;
   appliedEnvelopes: AppliedEnvelope[];
   browserBaseline?: BrowserValidationResult;
+}
+
+interface EvidenceHandoffLane {
+  packet: EvidenceHandoffPacket;
+  canonicalBytes: Uint8Array;
+  sourceFindings: HandoffFindingPayload[];
+  targetSnapshot: Pick<
+    HandoffTargetSnapshot,
+    "base_commit" | "frozen_patch_sha256" | "frozen_git_tree_id"
+  >;
+  permissionProjection: ResolvedPermissionProjection;
+  packetPointer: HandoffArtifactPointer;
+  lifecycle: HandoffLifecycleRecord;
 }
 
 interface RecordedRoundInvocation {
@@ -3757,19 +3788,361 @@ export class RoundEngine {
     return active.length <= 1;
   }
 
+  private resolvedHandoffPermissions(
+    context: ArenaContext,
+  ): ResolvedPermissionProjection {
+    return projectResolvedPermissions({
+      policy: context.permissions,
+      now: this.now(),
+      ...(context.permissions.reducedValidationAccepted
+        ? {
+            reducedValidation: {
+              accepted: true,
+              assessmentDigest: sha256(
+                `${context.state.runId}:reduced-validation`,
+              ),
+              omittedCheckIds: [],
+            },
+          }
+        : {}),
+    });
+  }
+
+  private async runTargetedHandoffReview(
+    context: ArenaContext,
+    options: {
+      agent: ContestantId;
+      target: ContestantId;
+      round: RoundId;
+      selection: ReturnType<typeof selectMethods>;
+      worktree: string;
+      targetSnapshot: string;
+      contestantFeedback: ContestantFeedback;
+      reason: unknown;
+      promptSuffix: string;
+    },
+  ): Promise<{
+    invocation: AgentInvocation;
+    findings: HandoffFindingPayload[];
+    outcome: "valid" | "valid_empty";
+    sectionOutcomes: Record<
+      string,
+      "valid" | "valid_empty" | "partial" | "invalid"
+    >;
+    rawArtifactPath: string;
+    parsedArtifactPath: string;
+    startedAt: string;
+    finishedAt: string;
+  }> {
+    await removeSubmission(options.worktree);
+    const prompt = `${composeAttackReviewPrompt({
+      agent: options.agent,
+      target: options.target,
+      round: options.round,
+      runSpec: context.runSpec,
+      config: context.config,
+      permissions: context.permissions,
+      methodSelection: options.selection,
+      contestantFeedback: options.contestantFeedback,
+    })}\n\n${options.promptSuffix}\n${JSON.stringify(options.reason)}`;
+    const promptPath = await context.store.writeText(
+      `prompts/round-${String(options.round)}-review-${options.agent}-${options.promptSuffix.includes("blocker") ? "blocker" : "validation"}-refresh.md`,
+      prompt,
+    );
+    const startedAt = this.now().toISOString();
+    const invocation = await this.adapterFor(context, options.agent).review({
+      worktree: options.worktree,
+      contestantId: options.agent,
+      prompt,
+      promptPath,
+      transcriptPrefix: context.store.resolve(
+        `logs/round-${String(options.round)}-review-${options.agent}-${options.promptSuffix.includes("blocker") ? "blocker" : "validation"}-refresh`,
+      ),
+      timeoutMs: context.config.limits.reviewMs,
+      signal: context.controller.signal,
+      round: options.round,
+      opponent: options.target,
+      observer: context.observer,
+    });
+    const finishedAt = this.now().toISOString();
+    if (invocation.status !== "succeeded")
+      throw new Error(`Targeted handoff review refresh ${invocation.status}`);
+    const captured = await this.persistProviderSubmission(context, {
+      worktree: options.worktree,
+      sourceName: ".agent-arena-submission.json",
+      round: options.round,
+      phase: "review",
+      actor: `${options.agent}-${options.promptSuffix.includes("blocker") ? "blocker" : "validation"}-refresh`,
+      kind: "review",
+    });
+    invocation.submissionPath = captured.parsedPath;
+    if (
+      captured.parsed.outcome !== "valid" &&
+      captured.parsed.outcome !== "valid_empty"
+    )
+      throw new Error("Targeted handoff review refresh was invalid");
+    const submission = captured.parsed.value as {
+      version: 2;
+      findings: HandoffFindingPayload[];
+    };
+    await removeSubmission(options.worktree);
+    const changedPaths = await context.worktrees.changedPathsSinceSnapshot(
+      options.worktree,
+      options.targetSnapshot,
+    );
+    if (changedPaths.length > 0)
+      throw new Error(
+        `Read-only targeted refresh changed worktree paths: ${changedPaths.join(", ")}`,
+      );
+    return {
+      invocation,
+      findings: submission.findings,
+      outcome: captured.parsed.outcome,
+      sectionOutcomes: Object.fromEntries(
+        Object.entries(captured.parsed.sections).map(([key, section]) => [
+          key,
+          section.outcome,
+        ]),
+      ),
+      rawArtifactPath: captured.rawPath,
+      parsedArtifactPath: captured.parsedPath,
+      startedAt,
+      finishedAt,
+    };
+  }
+
+  private async refreshOversizedHandoff(
+    context: ArenaContext,
+    options: {
+      reviewer: ContestantId;
+      target: ContestantId;
+      round: RoundId;
+      selection: ReturnType<typeof selectMethods>;
+      worktree: string;
+      targetSnapshot: string;
+      targetIdentity: EvidenceHandoffLane["targetSnapshot"];
+      contestantFeedback: ContestantFeedback;
+      blocker: Extract<
+        ReturnType<typeof buildEvidenceHandoffPacket>,
+        { status: "handoff_blocked" }
+      >["blocker"];
+    },
+  ): Promise<EvidenceHandoffLane | undefined> {
+    const roundId = `round_${String(options.round)}`;
+    const laneId = `${options.reviewer}-to-${options.target}`;
+    const blockerPath = `rounds/${roundId}/handoffs/${laneId}/blockers/${options.blocker.packet_id}.json`;
+    await context.store.writeImmutableJson(blockerPath, options.blocker);
+    const refreshRequired = {
+      version: 2 as const,
+      record_id: stableId(
+        "handoff-packet-size-blocked",
+        options.blocker.packet_id,
+      ),
+      previous_record_id: null,
+      run_id: context.state.runId,
+      round_id: roundId,
+      lane_id: laneId,
+      reviewer_slot: options.reviewer,
+      target_slot: options.target,
+      packet_id: options.blocker.packet_id,
+      packet_digest: null,
+      state: "refresh_required" as const,
+      event: "blocking" as const,
+      reason_code: "packet_size",
+      attempt: 1 as const,
+      artifact_pointers: [],
+      diagnostic_pointer: null,
+      recorded_at: this.now().toISOString(),
+    } satisfies HandoffLifecycleRecord;
+    await persistHandoffLifecycleRecord(context.store, refreshRequired);
+
+    let refreshedReview: Awaited<
+      ReturnType<RoundEngine["runTargetedHandoffReview"]>
+    >;
+    try {
+      refreshedReview = await this.runTargetedHandoffReview(context, {
+        agent: options.reviewer,
+        target: options.target,
+        round: options.round,
+        selection: options.selection,
+        worktree: options.worktree,
+        targetSnapshot: options.targetSnapshot,
+        contestantFeedback: options.contestantFeedback,
+        reason: options.blocker,
+        promptSuffix:
+          "# Targeted packet-size blocker refresh\nThe prior valid review could not fit in a nonempty packet. Return a smaller focused v2 review for the same frozen target and policy.",
+      });
+    } catch (error) {
+      const coverageLoss = {
+        ...refreshRequired,
+        record_id: stableId(
+          "handoff-packet-size-refresh-failed",
+          options.blocker.packet_id,
+        ),
+        previous_record_id: refreshRequired.record_id,
+        state: "coverage_loss" as const,
+        event: "coverage_loss" as const,
+        reason_code: "packet_size_refresh_failed",
+        attempt: 2 as const,
+        recorded_at: this.now().toISOString(),
+      } satisfies HandoffLifecycleRecord;
+      await persistHandoffLifecycleRecord(context.store, coverageLoss);
+      context.state.warnings.push(
+        `Trusted handoff packet-size refresh failed for ${options.reviewer} against ${options.target}; lane lost coverage without a score effect: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
+    }
+
+    const permissionProjection = this.resolvedHandoffPermissions(context);
+    const refreshed = buildEvidenceHandoffPacket({
+      runId: context.state.runId,
+      roundId,
+      reviewerSlot: options.reviewer,
+      targetSlot: options.target,
+      targetSnapshot: options.targetIdentity,
+      permissionProjection,
+      findings: refreshedReview.findings,
+      taskSourceIds: context.runSpec.task.sources.map((source) => source.id),
+      capabilityIds: context.permissions.capabilities.map(
+        (capability) => capability.id,
+      ),
+    });
+    if (refreshed.status !== "packet_created") {
+      await context.store.writeImmutableJson(
+        `rounds/${roundId}/handoffs/${laneId}/blockers/${refreshed.blocker.packet_id}.json`,
+        refreshed.blocker,
+      );
+      const coverageLoss = {
+        ...refreshRequired,
+        record_id: stableId(
+          "handoff-packet-size-refresh-oversized",
+          options.blocker.packet_id,
+        ),
+        previous_record_id: refreshRequired.record_id,
+        state: "coverage_loss" as const,
+        event: "coverage_loss" as const,
+        reason_code: "refresh_packet_oversized",
+        attempt: 2 as const,
+        recorded_at: this.now().toISOString(),
+      } satisfies HandoffLifecycleRecord;
+      await persistHandoffLifecycleRecord(context.store, coverageLoss);
+      context.state.warnings.push(
+        `Trusted handoff packet-size refresh remained oversized for ${options.reviewer} against ${options.target}; lane lost coverage without a score effect`,
+      );
+      return undefined;
+    }
+
+    const packetPointer = await persistEvidenceHandoffPacket(
+      context.store,
+      roundId,
+      laneId,
+      refreshed.packet,
+    );
+    const validation = validateEvidenceHandoffPacket({
+      packet: refreshed.packet,
+      canonicalBytes: refreshed.canonicalBytes,
+      expected: {
+        runId: context.state.runId,
+        roundId,
+        reviewerSlot: options.reviewer,
+        targetSlot: options.target,
+        targetSnapshot: options.targetIdentity,
+        permissionProjection,
+      },
+      sourceFindings: refreshedReview.findings,
+      taskSourceIds: context.runSpec.task.sources.map((source) => source.id),
+      capabilityIds: context.permissions.capabilities.map(
+        (capability) => capability.id,
+      ),
+    });
+    await persistHandoffValidationOutcome(
+      context.store,
+      roundId,
+      laneId,
+      stableId("packet-size-refresh-validation", refreshed.packet.packet_id),
+      validation,
+    );
+    if (
+      validation.status !== "packet_valid" &&
+      validation.status !== "packet_valid_empty"
+    ) {
+      const coverageLoss = {
+        ...refreshRequired,
+        record_id: stableId(
+          "handoff-packet-size-refresh-invalid",
+          options.blocker.packet_id,
+        ),
+        previous_record_id: refreshRequired.record_id,
+        state: "coverage_loss" as const,
+        event: "coverage_loss" as const,
+        reason_code:
+          "diagnostic_code" in validation
+            ? validation.diagnostic_code
+            : validation.status,
+        attempt: 2 as const,
+        recorded_at: this.now().toISOString(),
+      } satisfies HandoffLifecycleRecord;
+      await persistHandoffLifecycleRecord(context.store, coverageLoss);
+      context.state.warnings.push(
+        `Trusted handoff packet-size refresh remained invalid for ${options.reviewer} against ${options.target}; lane lost coverage without a score effect`,
+      );
+      return undefined;
+    }
+
+    const packet = requireConsumableEvidenceHandoff(
+      refreshed.packet,
+      validation,
+    );
+    const lifecycle = {
+      ...refreshRequired,
+      record_id: stableId(
+        "handoff-packet-size-refreshed",
+        refreshed.packet.packet_id,
+      ),
+      previous_record_id: refreshRequired.record_id,
+      packet_id: refreshed.packet.packet_id,
+      packet_digest: refreshed.packet.packet_digest,
+      state: "validated" as const,
+      event: "refresh" as const,
+      reason_code: "packet_size_refreshed",
+      attempt: 2 as const,
+      artifact_pointers: [packetPointer],
+      recorded_at: this.now().toISOString(),
+    } satisfies HandoffLifecycleRecord;
+    await persistHandoffLifecycleRecord(context.store, lifecycle);
+    context.state.reviewInvocations.push({
+      round: options.round,
+      reviewer: options.reviewer,
+      target: options.target,
+      invocation: refreshedReview.invocation,
+      submissionStatus: "submitted",
+      findingCount: refreshed.packet.findings.length,
+      artifactPath: context.store.resolve(packetPointer.path),
+      parseOutcome: refreshedReview.outcome,
+      sectionOutcomes: refreshedReview.sectionOutcomes,
+      rawArtifactPath: refreshedReview.rawArtifactPath,
+      parsedArtifactPath: refreshedReview.parsedArtifactPath,
+      detail: `Targeted packet-size refresh completed from ${refreshedReview.startedAt} to ${refreshedReview.finishedAt}`,
+    });
+    return {
+      packet,
+      canonicalBytes: refreshed.canonicalBytes,
+      sourceFindings: refreshedReview.findings,
+      targetSnapshot: options.targetIdentity,
+      permissionProjection,
+      packetPointer,
+      lifecycle,
+    };
+  }
+
   private async collectAttackReviews(
     context: ArenaContext,
     round: RoundId,
     selection: ReturnType<typeof selectMethods>,
     reviewers: readonly ContestantId[],
     siegeDefender: ContestantId | undefined,
-  ): Promise<
-    Map<ContestantId, Omit<AttackReviewArtifact, "reviewer" | "target">>
-  > {
-    const packets = new Map<
-      ContestantId,
-      Omit<AttackReviewArtifact, "reviewer" | "target">
-    >();
+  ): Promise<Map<ContestantId, EvidenceHandoffLane>> {
+    const packets = new Map<ContestantId, EvidenceHandoffLane>();
     for (const reviewer of reviewers) {
       const contestant = getContestant(context.state, reviewer);
       const isSiegeAttacker =
@@ -3795,13 +4168,6 @@ export class RoundEngine {
       )
         continue;
       const targetPatch = await readFile(targetPatchPath);
-      const emptyPacket: Omit<AttackReviewArtifact, "reviewer" | "target"> = {
-        version: 1,
-        round,
-        targetPatchSha256: sha256(targetPatch),
-        findings: [],
-      };
-      packets.set(reviewer, emptyPacket);
       const worktree = await this.prepareWorktree(context, {
         name: `round-${String(round)}-review-${reviewer}`,
         subject: `review-worktree:${String(round)}:${reviewer}`,
@@ -3825,7 +4191,6 @@ export class RoundEngine {
           config: context.config,
           permissions: context.permissions,
           methodSelection: selection,
-          opponentPatch: targetPatch.toString("utf8"),
           contestantFeedback,
         });
         const promptPath = await context.store.writeText(
@@ -3992,9 +4357,39 @@ export class RoundEngine {
               terminalDisposition: recovered ? "recovered" : "coverage_lost",
             });
           }
+          if (
+            captured.parsed.outcome !== "valid" &&
+            captured.parsed.outcome !== "valid_empty"
+          ) {
+            await removeSubmission(worktree);
+            context.state.reviewInvocations.push({
+              round,
+              reviewer,
+              target,
+              invocation,
+              submissionStatus:
+                captured.parsed.outcome === "partial"
+                  ? "partially_submitted"
+                  : "invalid_submission",
+              findingCount: 0,
+              parseOutcome: captured.parsed.outcome,
+              sectionOutcomes: Object.fromEntries(
+                Object.entries(captured.parsed.sections).map(
+                  ([key, section]) => [key, section.outcome],
+                ),
+              ),
+              rawArtifactPath: captured.rawPath,
+              parsedArtifactPath: captured.parsedPath,
+              detail: "Review submission remained invalid after targeted retry",
+            });
+            context.state.warnings.push(
+              `Review submission from ${reviewer} against ${target} remained invalid after targeted retry; lane lost coverage without creating a handoff packet`,
+            );
+            continue;
+          }
           const submission = captured.parsed.value as {
-            version: 1;
-            findings: AttackReviewArtifact["findings"];
+            version: 2;
+            findings: HandoffFindingPayload[];
           };
           await removeSubmission(worktree);
           const changedPaths =
@@ -4007,34 +4402,105 @@ export class RoundEngine {
               `Read-only review changed worktree paths: ${changedPaths.join(", ")}`,
             );
           }
-          const artifact: AttackReviewArtifact = {
-            ...emptyPacket,
-            reviewer,
-            target,
-            findings: submission.findings,
+          const roundId = `round_${String(round)}`;
+          const laneId = `${reviewer}-to-${target}`;
+          const targetIdentity = {
+            base_commit: context.runSpec.baseCommit,
+            frozen_patch_sha256: sha256(targetPatch),
+            frozen_git_tree_id: targetSnapshot,
           };
-          const artifactPath = await context.store.writeJson(
-            `attack-reviews/round-${String(round)}/${reviewer}-against-${target}.json`,
-            artifact,
-          );
-          packets.set(reviewer, {
-            version: artifact.version,
-            round: artifact.round,
-            targetPatchSha256: artifact.targetPatchSha256,
-            findings: artifact.findings,
+          const permissionProjection = this.resolvedHandoffPermissions(context);
+          const built = buildEvidenceHandoffPacket({
+            runId: context.state.runId,
+            roundId,
+            reviewerSlot: reviewer,
+            targetSlot: target,
+            targetSnapshot: targetIdentity,
+            permissionProjection,
+            findings: submission.findings,
+            taskSourceIds: context.runSpec.task.sources.map(
+              (source) => source.id,
+            ),
+            capabilityIds: context.permissions.capabilities.map(
+              (capability) => capability.id,
+            ),
           });
+          if (built.status !== "packet_created") {
+            context.state.reviewInvocations.push({
+              round,
+              reviewer,
+              target,
+              invocation,
+              submissionStatus: "submitted",
+              findingCount: submission.findings.length,
+              parseOutcome: captured.parsed.outcome,
+              sectionOutcomes: Object.fromEntries(
+                Object.entries(captured.parsed.sections).map(
+                  ([key, section]) => [key, section.outcome],
+                ),
+              ),
+              rawArtifactPath: captured.rawPath,
+              parsedArtifactPath: captured.parsedPath,
+              detail:
+                "Valid review exceeded the packet ceiling; targeted packet-size refresh followed",
+            });
+            const refreshedLane = await this.refreshOversizedHandoff(context, {
+              reviewer,
+              target,
+              round,
+              selection,
+              worktree,
+              targetSnapshot,
+              targetIdentity,
+              contestantFeedback,
+              blocker: built.blocker,
+            });
+            if (refreshedLane) packets.set(reviewer, refreshedLane);
+            continue;
+          }
+          const packetPointer = await persistEvidenceHandoffPacket(
+            context.store,
+            roundId,
+            laneId,
+            built.packet,
+          );
+          const createdLifecycle = {
+            version: 2 as const,
+            record_id: stableId("handoff-created", built.packet.packet_id),
+            previous_record_id: null,
+            run_id: context.state.runId,
+            round_id: roundId,
+            lane_id: laneId,
+            reviewer_slot: reviewer,
+            target_slot: target,
+            packet_id: built.packet.packet_id,
+            packet_digest: built.packet.packet_digest,
+            state: "created" as const,
+            event: "creation" as const,
+            reason_code: "review_valid",
+            attempt: 1 as const,
+            artifact_pointers: [packetPointer],
+            diagnostic_pointer: null,
+            recorded_at: this.now().toISOString(),
+          };
+          await persistHandoffLifecycleRecord(context.store, createdLifecycle);
+          packets.set(reviewer, {
+            packet: built.packet,
+            canonicalBytes: built.canonicalBytes,
+            sourceFindings: submission.findings,
+            targetSnapshot: targetIdentity,
+            permissionProjection,
+            packetPointer,
+            lifecycle: createdLifecycle,
+          });
+          const artifactPath = context.store.resolve(packetPointer.path);
           context.state.reviewInvocations.push({
             round,
             reviewer,
             target,
             invocation,
-            submissionStatus:
-              captured.parsed.outcome === "partial"
-                ? "partially_submitted"
-                : captured.parsed.outcome === "invalid"
-                  ? "invalid_submission"
-                  : "submitted",
-            findingCount: artifact.findings.length,
+            submissionStatus: "submitted",
+            findingCount: built.packet.findings.length,
             artifactPath,
             parseOutcome: captured.parsed.outcome,
             sectionOutcomes: Object.fromEntries(
@@ -4896,6 +5362,7 @@ export class RoundEngine {
       config: context.config,
       permissions: context.permissions,
       methodSelection: selection,
+      allowMissingReviewPacket: true,
     });
     const sharedPromptPath = await context.store.writeText(
       `prompts/round-${String(round)}-common.md`,
@@ -4927,7 +5394,7 @@ export class RoundEngine {
           : context.config.agents;
     const reviewPackets =
       round === "reconciliation"
-        ? new Map<ContestantId, AttackReviewArtifact>()
+        ? new Map<ContestantId, EvidenceHandoffLane>()
         : await this.collectAttackReviews(
             context,
             round,
@@ -4964,7 +5431,7 @@ export class RoundEngine {
         !targetPatchPath
       )
         continue;
-      const worktree = await this.prepareWorktree(context, {
+      let worktree = await this.prepareWorktree(context, {
         name: `round-${String(round)}-attack-${agent}`,
         subject: `attack-generation-worktree:${String(round)}:${agent}`,
         patches: [targetPatchPath],
@@ -4972,15 +5439,300 @@ export class RoundEngine {
         laneId: `attack-${String(round)}-${agent}`,
       });
       try {
-        const targetSnapshot = await context.worktrees.snapshot(worktree);
-        const opponentPatch = await readFile(targetPatchPath, "utf8");
+        let targetSnapshot = await context.worktrees.snapshot(worktree);
+        const handoff = reviewPackets.get(agent);
+        if (!handoff) {
+          context.state.warnings.push(
+            `Trusted evidence handoff is missing for ${agent} against ${target}; lane lost coverage without a score effect`,
+          );
+          continue;
+        }
+        let currentPermissionProjection =
+          this.resolvedHandoffPermissions(context);
+        let handoffValidation = validateEvidenceHandoffPacket({
+          packet: handoff.packet,
+          canonicalBytes: handoff.canonicalBytes,
+          expected: {
+            runId: context.state.runId,
+            roundId: `round_${String(round)}`,
+            reviewerSlot: agent,
+            targetSlot: target,
+            targetSnapshot: {
+              base_commit: context.runSpec.baseCommit,
+              frozen_patch_sha256: sha256(await readFile(targetPatchPath)),
+              frozen_git_tree_id: targetSnapshot,
+            },
+            permissionProjection: currentPermissionProjection,
+          },
+          sourceFindings: handoff.sourceFindings,
+          taskSourceIds: context.runSpec.task.sources.map(
+            (source) => source.id,
+          ),
+          capabilityIds: context.permissions.capabilities.map(
+            (capability) => capability.id,
+          ),
+        });
+        await persistHandoffValidationOutcome(
+          context.store,
+          `round_${String(round)}`,
+          `${agent}-to-${target}`,
+          stableId("pre-invocation", handoff.packet.packet_id),
+          handoffValidation,
+        );
+        const validationReason =
+          "diagnostic_code" in handoffValidation
+            ? handoffValidation.diagnostic_code
+            : handoffValidation.status;
+        if (
+          handoffValidation.status !== "packet_valid" &&
+          handoffValidation.status !== "packet_valid_empty"
+        ) {
+          const refreshRequired = {
+            ...handoff.lifecycle,
+            record_id: stableId(
+              "handoff-refresh-required",
+              handoff.packet.packet_id,
+            ),
+            previous_record_id: handoff.lifecycle.record_id,
+            state: "refresh_required" as const,
+            event: "validation" as const,
+            reason_code: validationReason,
+            attempt: 1 as const,
+            artifact_pointers: [handoff.packetPointer],
+            recorded_at: this.now().toISOString(),
+          } satisfies HandoffLifecycleRecord;
+          await persistHandoffLifecycleRecord(context.store, refreshRequired);
+          handoff.lifecycle = refreshRequired;
+          let refreshedReview: Awaited<
+            ReturnType<RoundEngine["runTargetedHandoffReview"]>
+          >;
+          try {
+            refreshedReview = await this.runTargetedHandoffReview(context, {
+              agent,
+              target,
+              round,
+              selection,
+              worktree,
+              targetSnapshot,
+              contestantFeedback: await this.laneFeedback(
+                context,
+                agent,
+                round,
+                "review",
+              ),
+              reason: {
+                status: handoffValidation.status,
+                diagnostic_code: validationReason,
+              },
+              promptSuffix:
+                "# Targeted validation refresh\nThe prior packet failed immediate pre-invocation validation. Re-review the current target and policy; do not use attacker output.",
+            });
+          } catch (error) {
+            const coverageLoss = {
+              ...refreshRequired,
+              record_id: stableId(
+                "handoff-validation-refresh-failed",
+                handoff.packet.packet_id,
+              ),
+              previous_record_id: refreshRequired.record_id,
+              state: "coverage_loss" as const,
+              event: "coverage_loss" as const,
+              reason_code: "validation_refresh_failed",
+              attempt: 2 as const,
+              recorded_at: this.now().toISOString(),
+            } satisfies HandoffLifecycleRecord;
+            await persistHandoffLifecycleRecord(context.store, coverageLoss);
+            handoff.lifecycle = coverageLoss;
+            context.state.warnings.push(
+              `Trusted handoff validation refresh failed for ${agent} against ${target}; lane lost coverage without a score effect: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            continue;
+          }
+          const refreshedPermissionProjection =
+            this.resolvedHandoffPermissions(context);
+          const refreshed = buildEvidenceHandoffPacket({
+            runId: context.state.runId,
+            roundId: `round_${String(round)}`,
+            reviewerSlot: agent,
+            targetSlot: target,
+            targetSnapshot: {
+              base_commit: context.runSpec.baseCommit,
+              frozen_patch_sha256: sha256(await readFile(targetPatchPath)),
+              frozen_git_tree_id: targetSnapshot,
+            },
+            permissionProjection: refreshedPermissionProjection,
+            findings: refreshedReview.findings,
+            taskSourceIds: context.runSpec.task.sources.map(
+              (source) => source.id,
+            ),
+            capabilityIds: context.permissions.capabilities.map(
+              (capability) => capability.id,
+            ),
+          });
+          if (refreshed.status !== "packet_created") {
+            const coverageLoss = {
+              ...refreshRequired,
+              record_id: stableId(
+                "handoff-validation-refresh-oversized",
+                handoff.packet.packet_id,
+              ),
+              previous_record_id: refreshRequired.record_id,
+              state: "coverage_loss" as const,
+              event: "coverage_loss" as const,
+              reason_code: "refresh_packet_oversized",
+              attempt: 2 as const,
+              recorded_at: this.now().toISOString(),
+            } satisfies HandoffLifecycleRecord;
+            await persistHandoffLifecycleRecord(context.store, coverageLoss);
+            handoff.lifecycle = coverageLoss;
+            context.state.warnings.push(
+              `Trusted handoff validation refresh remained oversized for ${agent} against ${target}; lane lost coverage without a score effect`,
+            );
+            continue;
+          }
+          const refreshedPointer = await persistEvidenceHandoffPacket(
+            context.store,
+            `round_${String(round)}`,
+            `${agent}-to-${target}`,
+            refreshed.packet,
+          );
+          const refreshedValidation = validateEvidenceHandoffPacket({
+            packet: refreshed.packet,
+            canonicalBytes: refreshed.canonicalBytes,
+            expected: {
+              runId: context.state.runId,
+              roundId: `round_${String(round)}`,
+              reviewerSlot: agent,
+              targetSlot: target,
+              targetSnapshot: {
+                base_commit: context.runSpec.baseCommit,
+                frozen_patch_sha256: sha256(await readFile(targetPatchPath)),
+                frozen_git_tree_id: targetSnapshot,
+              },
+              permissionProjection: refreshedPermissionProjection,
+            },
+            sourceFindings: refreshedReview.findings,
+            taskSourceIds: context.runSpec.task.sources.map(
+              (source) => source.id,
+            ),
+            capabilityIds: context.permissions.capabilities.map(
+              (capability) => capability.id,
+            ),
+          });
+          await persistHandoffValidationOutcome(
+            context.store,
+            `round_${String(round)}`,
+            `${agent}-to-${target}`,
+            stableId("refresh-validation", refreshed.packet.packet_id),
+            refreshedValidation,
+          );
+          if (
+            refreshedValidation.status !== "packet_valid" &&
+            refreshedValidation.status !== "packet_valid_empty"
+          ) {
+            const refreshedReason =
+              "diagnostic_code" in refreshedValidation
+                ? refreshedValidation.diagnostic_code
+                : refreshedValidation.status;
+            const coverageLoss = {
+              ...refreshRequired,
+              record_id: stableId(
+                "handoff-validation-refresh-invalid",
+                refreshed.packet.packet_id,
+              ),
+              previous_record_id: refreshRequired.record_id,
+              state: "coverage_loss" as const,
+              event: "coverage_loss" as const,
+              reason_code: refreshedReason,
+              attempt: 2 as const,
+              recorded_at: this.now().toISOString(),
+            } satisfies HandoffLifecycleRecord;
+            await persistHandoffLifecycleRecord(context.store, coverageLoss);
+            handoff.lifecycle = coverageLoss;
+            context.state.warnings.push(
+              `Trusted handoff validation refresh remained invalid for ${agent} against ${target}; lane lost coverage without a score effect: ${refreshedReason}`,
+            );
+            continue;
+          }
+          const refreshedPacket = requireConsumableEvidenceHandoff(
+            refreshed.packet,
+            refreshedValidation,
+          );
+          const refreshedLifecycle = {
+            ...refreshRequired,
+            record_id: stableId(
+              "handoff-refreshed",
+              refreshed.packet.packet_id,
+            ),
+            previous_record_id: refreshRequired.record_id,
+            packet_id: refreshed.packet.packet_id,
+            packet_digest: refreshed.packet.packet_digest,
+            state: "validated" as const,
+            event: "refresh" as const,
+            reason_code: "refresh_valid",
+            attempt: 2 as const,
+            artifact_pointers: [refreshedPointer],
+            recorded_at: this.now().toISOString(),
+          } satisfies HandoffLifecycleRecord;
+          await persistHandoffLifecycleRecord(
+            context.store,
+            refreshedLifecycle,
+          );
+          context.state.reviewInvocations.push({
+            round,
+            reviewer: agent,
+            target,
+            invocation: refreshedReview.invocation,
+            submissionStatus: "submitted",
+            findingCount: refreshed.packet.findings.length,
+            artifactPath: context.store.resolve(refreshedPointer.path),
+            parseOutcome: refreshedReview.outcome,
+            sectionOutcomes: refreshedReview.sectionOutcomes,
+            rawArtifactPath: refreshedReview.rawArtifactPath,
+            parsedArtifactPath: refreshedReview.parsedArtifactPath,
+            detail: `Targeted validation refresh completed from ${refreshedReview.startedAt} to ${refreshedReview.finishedAt}`,
+          });
+          handoff.packet = refreshedPacket;
+          handoff.canonicalBytes = refreshed.canonicalBytes;
+          handoff.sourceFindings = refreshedReview.findings;
+          handoff.targetSnapshot = {
+            base_commit: context.runSpec.baseCommit,
+            frozen_patch_sha256: sha256(await readFile(targetPatchPath)),
+            frozen_git_tree_id: targetSnapshot,
+          };
+          handoff.permissionProjection = refreshedPermissionProjection;
+          handoff.packetPointer = refreshedPointer;
+          handoff.lifecycle = refreshedLifecycle;
+          handoffValidation = refreshedValidation;
+          currentPermissionProjection = refreshedPermissionProjection;
+        } else if (handoff.lifecycle.state === "created") {
+          const validatedLifecycle = {
+            ...handoff.lifecycle,
+            record_id: stableId("handoff-validated", handoff.packet.packet_id),
+            previous_record_id: handoff.lifecycle.record_id,
+            state: "validated" as const,
+            event: "validation" as const,
+            reason_code: "fingerprints_match",
+            artifact_pointers: [handoff.packetPointer],
+            recorded_at: this.now().toISOString(),
+          } satisfies HandoffLifecycleRecord;
+          await persistHandoffLifecycleRecord(
+            context.store,
+            validatedLifecycle,
+          );
+          handoff.lifecycle = validatedLifecycle;
+        }
+        const consumablePacket = requireConsumableEvidenceHandoff(
+          handoff.packet,
+          handoffValidation,
+        );
         const contestantFeedback = await this.laneFeedback(
           context,
           agent,
           round,
           "attack",
         );
-        const prompt = this.applyQueuedSteering(
+        let prompt = this.applyQueuedSteering(
           context,
           agent,
           "collect_attacks",
@@ -4993,16 +5745,13 @@ export class RoundEngine {
             config: context.config,
             permissions: context.permissions,
             methodSelection: selection,
-            opponentPatch,
-            ...(reviewPackets.get(agent)
-              ? { reviewPacket: reviewPackets.get(agent)! }
-              : {}),
+            reviewPacket: consumablePacket,
             currentHealth: contestant.finalHealth,
             contestantFeedback,
           }),
           round,
         );
-        const promptPath = await context.store.writeText(
+        let promptPath = await context.store.writeText(
           `prompts/round-${String(round)}-${agent}.md`,
           prompt,
         );
@@ -5011,7 +5760,15 @@ export class RoundEngine {
         let submissionFailure: FailureRecord | undefined;
         let finalAttemptStartedAt = this.now().toISOString();
         let finalAttemptFinishedAt = finalAttemptStartedAt;
-        for (const attemptNumber of [1, 2] as const) {
+        let submissionAttempt: 1 | 2 = 1;
+        let blockerRefreshUsed = false;
+        let handoffCoverageLost = false;
+        const handoffInvocationMetadata = () => ({
+          handoffPacketId: handoff.packet.packet_id,
+          handoffPacketDigest: handoff.packet.packet_digest,
+          handoffTargetFingerprint: handoff.packet.target_snapshot.fingerprint,
+        });
+        for (const invocationSequence of [1, 2, 3] as const) {
           const attemptStartedAt = this.now().toISOString();
           const candidate = await this.adapterFor(context, agent).attack({
             worktree,
@@ -5019,7 +5776,7 @@ export class RoundEngine {
             prompt,
             promptPath,
             transcriptPrefix: context.store.resolve(
-              `logs/round-${String(round)}-attack-${agent}-attempt-${String(attemptNumber)}`,
+              `logs/round-${String(round)}-attack-${agent}-attempt-${String(invocationSequence)}`,
             ),
             timeoutMs: context.config.limits.attackMs,
             signal: context.controller.signal,
@@ -5031,6 +5788,7 @@ export class RoundEngine {
           finalAttemptFinishedAt = attemptFinishedAt;
           invocation = candidate;
           let usableSubmission = false;
+          let blockerEnvelopeDetected = false;
           if (
             candidate.status === "succeeded" ||
             candidate.status === "timed_out"
@@ -5040,17 +5798,389 @@ export class RoundEngine {
                 path.join(worktree, ".agent-arena-submission.json"),
                 "utf8",
               );
+              const decoded = JSON.parse(raw) as unknown;
+              if (
+                decoded &&
+                typeof decoded === "object" &&
+                !Array.isArray(decoded) &&
+                "handoff_blocker" in decoded
+              ) {
+                blockerEnvelopeDetected = true;
+                const blocker = normalizeHandoffBlocker(
+                  decoded,
+                  handoff.packet,
+                  currentPermissionProjection,
+                  context.runSpec.task.sources.map((source) => source.id),
+                );
+                const blockedLifecycle = {
+                  ...handoff.lifecycle,
+                  record_id: stableId(
+                    "handoff-blocked",
+                    handoff.packet.packet_id,
+                  ),
+                  previous_record_id: handoff.lifecycle.record_id,
+                  state: "refresh_required" as const,
+                  event: "blocking" as const,
+                  reason_code: blocker.handoff_blocker.category,
+                  attempt: 1 as const,
+                  artifact_pointers: [handoff.packetPointer],
+                  recorded_at: this.now().toISOString(),
+                } satisfies HandoffLifecycleRecord;
+                await context.store.writeImmutableJson(
+                  `rounds/round_${String(round)}/handoffs/${agent}-to-${target}/blockers/${stableId("blocker", handoff.packet.packet_id)}.json`,
+                  blocker,
+                );
+                await persistHandoffLifecycleRecord(
+                  context.store,
+                  blockedLifecycle,
+                );
+                handoff.lifecycle = blockedLifecycle;
+                context.state.attackInvocations.push({
+                  round,
+                  attacker: agent,
+                  target,
+                  invocation: candidate,
+                  ...handoffInvocationMetadata(),
+                  submissionStatus: "not_submitted",
+                  attackCount: 0,
+                  detail: "Attacker returned a valid trusted-handoff blocker",
+                });
+                if (blockerRefreshUsed) {
+                  const coverageLoss = {
+                    ...blockedLifecycle,
+                    record_id: stableId(
+                      "handoff-coverage-loss",
+                      handoff.packet.packet_id,
+                    ),
+                    previous_record_id: blockedLifecycle.record_id,
+                    state: "coverage_loss" as const,
+                    event: "coverage_loss" as const,
+                    reason_code: "blocker_persisted",
+                    attempt: 2 as const,
+                    recorded_at: this.now().toISOString(),
+                  } satisfies HandoffLifecycleRecord;
+                  await persistHandoffLifecycleRecord(
+                    context.store,
+                    coverageLoss,
+                  );
+                  handoff.lifecycle = coverageLoss;
+                  handoffCoverageLost = true;
+                  await removeSubmission(worktree);
+                  break;
+                }
+                blockerRefreshUsed = true;
+                await removeSubmission(worktree);
+                await context.worktrees.remove(worktree);
+                worktree = await this.prepareWorktree(context, {
+                  name: `round-${String(round)}-attack-${agent}`,
+                  subject: `blocker-refresh-worktree:${String(round)}:${agent}`,
+                  patches: [targetPatchPath],
+                  contestantId: agent,
+                  laneId: `attack-${String(round)}-${agent}`,
+                });
+                targetSnapshot = await context.worktrees.snapshot(worktree);
+                if (
+                  targetSnapshot !== handoff.targetSnapshot.frozen_git_tree_id
+                )
+                  throw new Error(
+                    "Blocker refresh worktree does not match the frozen target",
+                  );
+                const refreshPrompt = `${composeAttackReviewPrompt({
+                  agent,
+                  target,
+                  round,
+                  runSpec: context.runSpec,
+                  config: context.config,
+                  permissions: context.permissions,
+                  methodSelection: selection,
+                  contestantFeedback,
+                })}\n\n# Targeted blocker refresh\nThe prior handoff was blocked. Re-review the current target and return a fresh v2 review submission. The blocker record is context only; do not copy secrets or provider-identifying content into findings.\n${JSON.stringify(blocker)}`;
+                const refreshPromptPath = await context.store.writeText(
+                  `prompts/round-${String(round)}-review-${agent}-blocker-refresh.md`,
+                  refreshPrompt,
+                );
+                const refreshStartedAt = this.now().toISOString();
+                const refreshInvocation = await this.adapterFor(
+                  context,
+                  agent,
+                ).review({
+                  worktree,
+                  contestantId: agent,
+                  prompt: refreshPrompt,
+                  promptPath: refreshPromptPath,
+                  transcriptPrefix: context.store.resolve(
+                    `logs/round-${String(round)}-review-${agent}-blocker-refresh`,
+                  ),
+                  timeoutMs: context.config.limits.reviewMs,
+                  signal: context.controller.signal,
+                  round,
+                  opponent: target,
+                  observer: context.observer,
+                });
+                const refreshFinishedAt = this.now().toISOString();
+                if (refreshInvocation.status !== "succeeded")
+                  throw new Error(
+                    `Targeted blocker review refresh ${refreshInvocation.status}`,
+                  );
+                const refreshCapture = await this.persistProviderSubmission(
+                  context,
+                  {
+                    worktree,
+                    sourceName: ".agent-arena-submission.json",
+                    round,
+                    phase: "review",
+                    actor: `${agent}-blocker-refresh`,
+                    kind: "review",
+                  },
+                );
+                refreshInvocation.submissionPath = refreshCapture.parsedPath;
+                const refreshSubmission = refreshCapture.parsed.value as {
+                  version: 2;
+                  findings: HandoffFindingPayload[];
+                };
+                if (
+                  refreshCapture.parsed.outcome !== "valid" &&
+                  refreshCapture.parsed.outcome !== "valid_empty"
+                )
+                  throw new Error(
+                    "Targeted blocker review refresh was invalid",
+                  );
+                await removeSubmission(worktree);
+                const refreshChangedPaths =
+                  await context.worktrees.changedPathsSinceSnapshot(
+                    worktree,
+                    targetSnapshot,
+                  );
+                if (refreshChangedPaths.length > 0)
+                  throw new Error(
+                    `Read-only blocker refresh changed worktree paths: ${refreshChangedPaths.join(", ")}`,
+                  );
+                const blockerRefreshPermissionProjection =
+                  this.resolvedHandoffPermissions(context);
+                const refreshed = buildEvidenceHandoffPacket({
+                  runId: context.state.runId,
+                  roundId: `round_${String(round)}`,
+                  reviewerSlot: agent,
+                  targetSlot: target,
+                  targetSnapshot: handoff.targetSnapshot,
+                  permissionProjection: blockerRefreshPermissionProjection,
+                  findings: refreshSubmission.findings,
+                  taskSourceIds: context.runSpec.task.sources.map(
+                    (source) => source.id,
+                  ),
+                  capabilityIds: context.permissions.capabilities.map(
+                    (capability) => capability.id,
+                  ),
+                });
+                if (refreshed.status !== "packet_created")
+                  throw new Error("Blocker refresh could not create a packet");
+                const refreshedPointer = await persistEvidenceHandoffPacket(
+                  context.store,
+                  `round_${String(round)}`,
+                  `${agent}-to-${target}`,
+                  refreshed.packet,
+                );
+                const blockerRefreshValidation = validateEvidenceHandoffPacket({
+                  packet: refreshed.packet,
+                  canonicalBytes: refreshed.canonicalBytes,
+                  expected: {
+                    runId: context.state.runId,
+                    roundId: `round_${String(round)}`,
+                    reviewerSlot: agent,
+                    targetSlot: target,
+                    targetSnapshot: handoff.targetSnapshot,
+                    permissionProjection: blockerRefreshPermissionProjection,
+                  },
+                  sourceFindings: refreshSubmission.findings,
+                  taskSourceIds: context.runSpec.task.sources.map(
+                    (source) => source.id,
+                  ),
+                  capabilityIds: context.permissions.capabilities.map(
+                    (capability) => capability.id,
+                  ),
+                });
+                await persistHandoffValidationOutcome(
+                  context.store,
+                  `round_${String(round)}`,
+                  `${agent}-to-${target}`,
+                  stableId(
+                    "blocker-refresh-validation",
+                    refreshed.packet.packet_id,
+                  ),
+                  blockerRefreshValidation,
+                );
+                const refreshedPacket = requireConsumableEvidenceHandoff(
+                  refreshed.packet,
+                  blockerRefreshValidation,
+                );
+                const refreshedLifecycle = {
+                  ...blockedLifecycle,
+                  record_id: stableId(
+                    "handoff-refreshed",
+                    refreshed.packet.packet_id,
+                  ),
+                  previous_record_id: blockedLifecycle.record_id,
+                  packet_id: refreshed.packet.packet_id,
+                  packet_digest: refreshed.packet.packet_digest,
+                  state: "validated" as const,
+                  event: "refresh" as const,
+                  reason_code: "blocker_refreshed",
+                  attempt: 2 as const,
+                  artifact_pointers: [refreshedPointer],
+                  recorded_at: this.now().toISOString(),
+                } satisfies HandoffLifecycleRecord;
+                await persistHandoffLifecycleRecord(
+                  context.store,
+                  refreshedLifecycle,
+                );
+                context.state.reviewInvocations.push({
+                  round,
+                  reviewer: agent,
+                  target,
+                  invocation: refreshInvocation,
+                  submissionStatus: "submitted",
+                  findingCount: refreshed.packet.findings.length,
+                  artifactPath: context.store.resolve(refreshedPointer.path),
+                  parseOutcome: refreshCapture.parsed.outcome,
+                  sectionOutcomes: Object.fromEntries(
+                    Object.entries(refreshCapture.parsed.sections).map(
+                      ([key, section]) => [key, section.outcome],
+                    ),
+                  ),
+                  rawArtifactPath: refreshCapture.rawPath,
+                  parsedArtifactPath: refreshCapture.parsedPath,
+                  detail: `Targeted blocker refresh completed from ${refreshStartedAt} to ${refreshFinishedAt}`,
+                });
+                handoff.packet = refreshedPacket;
+                handoff.canonicalBytes = refreshed.canonicalBytes;
+                handoff.sourceFindings = refreshSubmission.findings;
+                handoff.packetPointer = refreshedPointer;
+                handoff.lifecycle = refreshedLifecycle;
+                currentPermissionProjection =
+                  blockerRefreshPermissionProjection;
+                prompt = composePrompt({
+                  agent,
+                  target,
+                  stage: "attack",
+                  round,
+                  runSpec: context.runSpec,
+                  config: context.config,
+                  permissions: context.permissions,
+                  methodSelection: selection,
+                  reviewPacket: refreshed.packet,
+                  currentHealth: contestant.finalHealth,
+                  contestantFeedback,
+                });
+                promptPath = await context.store.writeText(
+                  `prompts/round-${String(round)}-${agent}-blocker-refresh.md`,
+                  prompt,
+                );
+                await removeSubmission(worktree);
+                continue;
+              }
               const outcome = parseFaultIsolatedSubmission(
                 "attack",
                 raw,
               ).outcome;
               usableSubmission =
                 outcome === "valid" || outcome === "valid_empty";
-            } catch {
+            } catch (error) {
+              if (handoff.lifecycle.state === "refresh_required") {
+                const coverageLoss = {
+                  ...handoff.lifecycle,
+                  record_id: stableId(
+                    "handoff-refresh-failed",
+                    handoff.packet.packet_id,
+                  ),
+                  previous_record_id: handoff.lifecycle.record_id,
+                  state: "coverage_loss" as const,
+                  event: "coverage_loss" as const,
+                  reason_code: "blocker_refresh_failed",
+                  attempt: 2 as const,
+                  recorded_at: this.now().toISOString(),
+                } satisfies HandoffLifecycleRecord;
+                await persistHandoffLifecycleRecord(
+                  context.store,
+                  coverageLoss,
+                );
+                handoff.lifecycle = coverageLoss;
+                handoffCoverageLost = true;
+                context.state.warnings.push(
+                  `Trusted handoff refresh failed for ${agent} against ${target}; lane lost coverage without a score effect: ${error instanceof Error ? error.message : String(error)}`,
+                );
+                await removeSubmission(worktree);
+                break;
+              }
+              if (blockerEnvelopeDetected) {
+                let failedCapture:
+                  | {
+                      parsed: ParsedSubmission<unknown>;
+                      rawPath: string;
+                      parsedPath: string;
+                    }
+                  | undefined;
+                try {
+                  failedCapture = await this.persistProviderSubmission(
+                    context,
+                    {
+                      worktree,
+                      sourceName: ".agent-arena-submission.json",
+                      round,
+                      phase: "attack",
+                      actor: `${agent}-invalid-blocker`,
+                      kind: "attack",
+                    },
+                  );
+                  candidate.submissionPath = failedCapture.parsedPath;
+                } catch {
+                  // Missing output is represented by the invocation record.
+                }
+                const coverageLoss = {
+                  ...handoff.lifecycle,
+                  record_id: stableId(
+                    "handoff-invalid-blocker",
+                    handoff.packet.packet_id,
+                  ),
+                  previous_record_id: handoff.lifecycle.record_id,
+                  state: "coverage_loss" as const,
+                  event: "coverage_loss" as const,
+                  reason_code: "invalid_blocker",
+                  recorded_at: this.now().toISOString(),
+                } satisfies HandoffLifecycleRecord;
+                await persistHandoffLifecycleRecord(
+                  context.store,
+                  coverageLoss,
+                );
+                handoff.lifecycle = coverageLoss;
+                handoffCoverageLost = true;
+                const detail = `Invalid trusted-handoff blocker caused coverage loss: ${error instanceof Error ? error.message : String(error)}`;
+                context.state.attackInvocations.push({
+                  round,
+                  attacker: agent,
+                  target,
+                  invocation: candidate,
+                  ...handoffInvocationMetadata(),
+                  submissionStatus: failedCapture
+                    ? "invalid_submission"
+                    : "not_submitted",
+                  attackCount: 0,
+                  ...(failedCapture
+                    ? {
+                        parseOutcome: failedCapture.parsed.outcome,
+                        rawArtifactPath: failedCapture.rawPath,
+                        parsedArtifactPath: failedCapture.parsedPath,
+                      }
+                    : {}),
+                  detail,
+                });
+                context.state.warnings.push(detail);
+                await removeSubmission(worktree);
+                break;
+              }
               usableSubmission = false;
             }
           }
-          if (usableSubmission || attemptNumber === 2) break;
+          if (usableSubmission || submissionAttempt === 2) break;
 
           let failedCapture:
             | {
@@ -5065,7 +6195,7 @@ export class RoundEngine {
               sourceName: ".agent-arena-submission.json",
               round,
               phase: "attack",
-              actor: `${agent}-attempt-1`,
+              actor: `${agent}-attempt-${String(submissionAttempt)}`,
               kind: "attack",
             });
             candidate.submissionPath = failedCapture.parsedPath;
@@ -5077,6 +6207,7 @@ export class RoundEngine {
             attacker: agent,
             target,
             invocation: candidate,
+            ...handoffInvocationMetadata(),
             submissionStatus: failedCapture ? "invalid_submission" : "not_run",
             attackCount: 0,
             ...(failedCapture
@@ -5105,8 +6236,10 @@ export class RoundEngine {
               : candidate.status,
           });
           await removeSubmission(worktree);
-          assertTargetedRetryAllowed(attemptNumber);
+          assertTargetedRetryAllowed(submissionAttempt);
+          submissionAttempt = 2;
         }
+        if (handoffCoverageLost) continue;
         // A timed-out model can still have written a complete, schema-valid
         // submission before its CLI wrapper finishes shutting down. Preserve
         // that work; failed/infrastructure invocations remain ineligible.
@@ -5133,6 +6266,7 @@ export class RoundEngine {
             attacker: agent,
             target,
             invocation,
+            ...handoffInvocationMetadata(),
             submissionStatus: "not_run",
             attackCount: 0,
             detail: `Attack generation ${invocation.status}`,
@@ -5171,7 +6305,52 @@ export class RoundEngine {
               terminalDisposition: recovered ? "recovered" : "coverage_lost",
             });
           }
+          if (captured.parsed.outcome === "invalid") {
+            await removeSubmission(worktree);
+            context.state.attackInvocations.push({
+              round,
+              attacker: agent,
+              target,
+              invocation,
+              ...handoffInvocationMetadata(),
+              submissionStatus: "invalid_submission",
+              attackCount: 0,
+              parseOutcome: captured.parsed.outcome,
+              sectionOutcomes: Object.fromEntries(
+                Object.entries(captured.parsed.sections).map(
+                  ([key, section]) => [key, section.outcome],
+                ),
+              ),
+              rawArtifactPath: captured.rawPath,
+              parsedArtifactPath: captured.parsedPath,
+              detail: "Attack submission remained invalid after targeted retry",
+            });
+            context.state.warnings.push(
+              `Attack submission from ${agent} against ${target} remained invalid after targeted retry; handoff was not consumed`,
+            );
+            continue;
+          }
           const submission = captured.parsed.value as AttackSubmission;
+          const completedEmpty = captured.parsed.outcome === "valid_empty";
+          const terminalLifecycle = {
+            ...handoff.lifecycle,
+            record_id: stableId(
+              completedEmpty ? "handoff-empty" : "handoff-consumed",
+              handoff.packet.packet_id,
+            ),
+            previous_record_id: handoff.lifecycle.record_id,
+            state: completedEmpty
+              ? ("completed_empty" as const)
+              : ("consumed" as const),
+            event: completedEmpty
+              ? ("empty_completion" as const)
+              : ("consumption" as const),
+            reason_code: completedEmpty ? "attacks_empty" : "attacks_submitted",
+            artifact_pointers: [handoff.packetPointer],
+            recorded_at: this.now().toISOString(),
+          } satisfies HandoffLifecycleRecord;
+          await persistHandoffLifecycleRecord(context.store, terminalLifecycle);
+          handoff.lifecycle = terminalLifecycle;
           this.enqueueRejectedAttacks(context, {
             parsed: captured.parsed,
             rawPath: captured.rawPath,
@@ -5297,12 +6476,11 @@ export class RoundEngine {
             attacker: agent,
             target,
             invocation,
+            ...handoffInvocationMetadata(),
             submissionStatus:
               captured.parsed.outcome === "partial"
                 ? "partially_submitted"
-                : captured.parsed.outcome === "invalid"
-                  ? "invalid_submission"
-                  : "submitted",
+                : "submitted",
             attackCount: materializable.length,
             parseOutcome: captured.parsed.outcome,
             sectionOutcomes: Object.fromEntries(
@@ -5355,6 +6533,7 @@ export class RoundEngine {
             attacker: agent,
             target,
             invocation,
+            ...handoffInvocationMetadata(),
             submissionStatus:
               (error as NodeJS.ErrnoException).code === "ENOENT"
                 ? "not_submitted"
@@ -5818,6 +6997,29 @@ export class RoundEngine {
       ]),
     );
     await this.persist(context);
+
+    for (const handoff of reviewPackets.values()) {
+      if (
+        handoff.lifecycle.state !== "created" &&
+        handoff.lifecycle.state !== "validated"
+      )
+        continue;
+      const invalidatedLifecycle = {
+        ...handoff.lifecycle,
+        record_id: stableId(
+          "handoff-invalidated-repair",
+          handoff.packet.packet_id,
+        ),
+        previous_record_id: handoff.lifecycle.record_id,
+        state: "invalidated" as const,
+        event: "invalidation" as const,
+        reason_code: "repair_started",
+        artifact_pointers: [handoff.packetPointer],
+        recorded_at: this.now().toISOString(),
+      } satisfies HandoffLifecycleRecord;
+      await persistHandoffLifecycleRecord(context.store, invalidatedLifecycle);
+      handoff.lifecycle = invalidatedLifecycle;
+    }
 
     await this.transition(context, "repair", round);
     const repairs = new Map<ContestantId, AgentInvocation>();

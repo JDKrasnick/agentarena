@@ -390,6 +390,165 @@ describe("coverage assessment", () => {
     expect(roundTwoLane?.reasonCodes).toContain("focused_description_failed");
   });
 
+  it("uses the terminal third attack invocation after a blocker refresh", () => {
+    const state = makeRunState();
+    addLaneRecords(state);
+    state.attackInvocations = state.attackInvocations.filter(
+      (entry) =>
+        !(entry.round === 2 && entry.attacker === "a" && entry.target === "b"),
+    );
+    state.attackInvocations.push(
+      {
+        round: 2,
+        attacker: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "invalid_submission",
+        attackCount: 0,
+        parseOutcome: "invalid",
+        handoffPacketId: "packet-before-refresh",
+      },
+      {
+        round: 2,
+        attacker: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "not_submitted",
+        attackCount: 0,
+        handoffPacketId: "packet-before-refresh",
+        detail: "Attacker returned a valid trusted-handoff blocker",
+      },
+      {
+        round: 2,
+        attacker: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "submitted",
+        attackCount: 0,
+        parseOutcome: "valid_empty",
+        handoffPacketId: "packet-after-refresh",
+      },
+    );
+    state.reviewInvocations.push({
+      round: 2,
+      reviewer: "a",
+      target: "b",
+      invocation: invocation("succeeded"),
+      submissionStatus: "submitted",
+      findingCount: 1,
+      parseOutcome: "valid",
+      artifactPath: "round-2-blocker-refresh.json",
+    });
+
+    const assessment = assessBattleCoverage(state);
+    const lane = assessment.requiredLanes.find(
+      (entry) => entry.id === "round-2:a->b",
+    );
+
+    expect(lane).toMatchObject({
+      finalState: "completed",
+      evidenceBasis: "explicit_empty",
+      reasonCodes: [],
+    });
+    expect(
+      lane?.stages.find((entry) => entry.stage === "attack_submission")
+        ?.attempts,
+    ).toHaveLength(3);
+  });
+
+  it("preserves every composed reviewer attempt in coverage", () => {
+    const state = makeRunState();
+    addLaneRecords(state);
+    const initialReview = state.reviewInvocations.find(
+      (entry) =>
+        entry.round === 2 && entry.reviewer === "a" && entry.target === "b",
+    )!;
+    initialReview.submissionStatus = "invalid_submission";
+    initialReview.findingCount = 0;
+    initialReview.parseOutcome = "invalid";
+    initialReview.parsedArtifactPath = "review-attempt-1.json";
+    state.reviewInvocations.push(
+      {
+        round: 2,
+        reviewer: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "submitted",
+        findingCount: 1,
+        parseOutcome: "valid",
+        artifactPath: "review-attempt-2.json",
+      },
+      {
+        round: 2,
+        reviewer: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "submitted",
+        findingCount: 1,
+        parseOutcome: "valid",
+        artifactPath: "packet-size-refresh.json",
+      },
+      {
+        round: 2,
+        reviewer: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "submitted",
+        findingCount: 1,
+        parseOutcome: "valid",
+        artifactPath: "validation-refresh.json",
+      },
+      {
+        round: 2,
+        reviewer: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "submitted",
+        findingCount: 1,
+        parseOutcome: "valid",
+        artifactPath: "blocker-refresh.json",
+      },
+    );
+
+    const assessment = assessBattleCoverage(state);
+    const attempts = assessment.requiredLanes
+      .find((entry) => entry.id === "round-2:a->b")
+      ?.stages.find((entry) => entry.stage === "review")?.attempts;
+
+    expect(attempts).toHaveLength(5);
+    expect(attempts?.map((entry) => entry.attempt)).toEqual([1, 2, 3, 4, 5]);
+    expect(attempts?.map((entry) => entry.state)).toEqual([
+      "failed",
+      "succeeded",
+      "succeeded",
+      "succeeded",
+      "succeeded",
+    ]);
+    expect(attempts?.flatMap((entry) => entry.evidencePaths)).toEqual([
+      "review-attempt-1.json",
+      "review-attempt-2.json",
+      "packet-size-refresh.json",
+      "validation-refresh.json",
+      "blocker-refresh.json",
+    ]);
+  });
+
+  it("treats an exhausted partial v2 review as failed coverage", () => {
+    const state = makeRunState();
+    addLaneRecords(state);
+    state.reviewInvocations[0]!.parseOutcome = "partial";
+    state.reviewInvocations[0]!.submissionStatus = "partially_submitted";
+
+    const assessment = assessBattleCoverage(state);
+    const lane = assessment.requiredLanes[0];
+
+    expect(lane?.finalState).toBe("unresolved");
+    expect(lane?.reasonCodes).toContain("review_partial");
+    expect(
+      lane?.stages.find((entry) => entry.stage === "review")?.finalState,
+    ).toBe("failed");
+  });
+
   it("keeps evidence-count categories mutually exclusive", () => {
     const state = makeRunState();
     addLaneRecords(state);

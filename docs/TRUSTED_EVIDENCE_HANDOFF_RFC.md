@@ -531,6 +531,7 @@ Lifecycle state is harness-owned sidecar metadata, not a mutable packet field.
 | `validated`                     | Attacker returns attacks                                           | Persist consumed digest and continue attack validation | `consumed`                |
 | `validated`                     | Attacker returns `attacks: []`                                     | Mark downstream stages not applicable                  | `completed_empty`         |
 | `validated`                     | Attacker returns valid blocker                                     | Persist blocker and use blocker-stage refresh          | `refresh_required`        |
+| `validated`                     | Attacker returns invalid blocker                                   | Record required-lane failure; no score effect          | `coverage_loss`           |
 | `validated`                     | Blocker persists or blocker refresh fails                          | Record required-lane failure; no score effect          | `coverage_loss`           |
 | `created` or `validated`        | Repair, target mutation, policy change, or round end               | Make packet permanently non-consumable                 | `invalidated`             |
 | `consumed` or `completed_empty` | Later repair, mutation, or policy change                           | Retain historical consumption; prohibit reuse          | terminal historical state |
@@ -538,6 +539,11 @@ Lifecycle state is harness-owned sidecar metadata, not a mutable packet field.
 Every transition records run, round, lane, packet ID and digest when available,
 reason code, attempt number, and artifact pointers. No stale, malformed,
 blocked, invalidated, or oversized packet can silently become `consumed`.
+Attempt numbers are stage-local: entering a new validation or blocker refresh
+records attempt 1 even when an earlier stage already refreshed the packet, and
+that stage's single targeted refresh records attempt 2. Validation and blocker
+refresh allowances are independent and do not create a lane-global retry
+ceiling.
 
 The lifecycle of one lane is a single append-only chain. Each record names its
 parent, and a parent MUST be extended exactly once: appending a second child to

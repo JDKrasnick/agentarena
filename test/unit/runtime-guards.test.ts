@@ -129,6 +129,7 @@ describe("runtime guards and deterministic prompts", () => {
       config,
       permissions,
       methodSelection: roundOne,
+      allowMissingReviewPacket: true,
     });
     const repeated = composePrompt({
       agent: "codex",
@@ -138,6 +139,7 @@ describe("runtime guards and deterministic prompts", () => {
       config,
       permissions,
       methodSelection: roundOne,
+      allowMissingReviewPacket: true,
     });
     const second = composePrompt({
       agent: "codex",
@@ -147,6 +149,7 @@ describe("runtime guards and deterministic prompts", () => {
       config,
       permissions,
       methodSelection: roundTwo,
+      allowMissingReviewPacket: true,
     });
     expect(first).toBe(repeated);
     expect(second).not.toBe(first);
@@ -222,7 +225,6 @@ describe("runtime guards and deterministic prompts", () => {
         ["typescript"],
         ["local_test_execution"],
       ),
-      opponentPatch: "diff --git a/src/service.ts b/src/service.ts",
       priorOutcomes:
         '[{"id":"attack-1","status":"landed","rootDefectId":"atomicity"}]',
     });
@@ -240,6 +242,7 @@ describe("runtime guards and deterministic prompts", () => {
     expect(prompt).toContain("Do not probe around the decision");
     expect(prompt).not.toContain("# Previously adjudicated defects");
     expect(prompt).not.toContain('"rootDefectId":"atomicity"');
+    expect(prompt).not.toContain("diff --git");
   });
 
   it("binds neutral case generation to declared direct capabilities", () => {

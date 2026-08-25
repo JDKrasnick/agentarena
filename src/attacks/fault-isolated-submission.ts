@@ -5,14 +5,21 @@ import {
   CaseSubmissionSchema,
   HouseSubmissionSchema,
   LegacyAttackSubmissionEntrySchema,
-  ReviewFindingSchema,
   type AttackSubmission,
   type CaseSubmission,
   type HouseSubmission,
-  type ReviewSubmission,
 } from "../core/types.js";
+import {
+  HandoffFindingPayloadSchema,
+  TrustedReviewSubmissionSchema,
+  type TrustedReviewSubmission,
+} from "../review/evidence-handoff.js";
 
 export const SUBMISSION_PARSER_VERSION = 1 as const;
+
+const TRUSTED_REVIEW_ENVELOPE_KEYS = new Set(
+  Object.keys(TrustedReviewSubmissionSchema.shape),
+);
 
 const LegacyAttackEntrySchema = LegacyAttackSubmissionEntrySchema.extend({
   reproduction: z.string().min(1),
@@ -497,7 +504,7 @@ function overall(
 export function parseFaultIsolatedSubmission(
   kind: "review",
   source: string,
-): ParsedSubmission<ReviewSubmission>;
+): ParsedSubmission<TrustedReviewSubmission>;
 export function parseFaultIsolatedSubmission(
   kind: "attack",
   source: string,
@@ -514,11 +521,11 @@ export function parseFaultIsolatedSubmission(
   kind: SubmissionKind,
   source: string,
 ): ParsedSubmission<
-  ReviewSubmission | AttackSubmission | HouseSubmission | CaseSubmission
+  TrustedReviewSubmission | AttackSubmission | HouseSubmission | CaseSubmission
 > {
   const empty =
     kind === "review"
-      ? { version: 1 as const, findings: [] }
+      ? { version: 2 as const, findings: [] }
       : kind === "attack"
         ? { version: 2 as const, sharedSupportPaths: [], attacks: [] }
         : kind === "house"
@@ -551,7 +558,8 @@ export function parseFaultIsolatedSubmission(
       ),
     );
   const envelope = decoded as Record<string, unknown>;
-  const supportedVersions = kind === "attack" ? [1, 2] : [1];
+  const supportedVersions =
+    kind === "attack" ? [1, 2] : kind === "review" ? [2] : [1];
   if (!supportedVersions.includes(Number(envelope.version)))
     return invalidSubmission(
       kind,
@@ -564,15 +572,41 @@ export function parseFaultIsolatedSubmission(
         supportedVersions.map(String),
       ),
     );
+  if (kind === "attack" && "handoff_blocker" in envelope) {
+    return invalidSubmission(
+      kind,
+      empty,
+      reject(
+        "$.handoff_blocker",
+        envelope.handoff_blocker,
+        "handoff_blocker_requires_refresh",
+        "A handoff blocker must be handled by the trusted handoff refresh path",
+      ),
+    );
+  }
 
   const sections: Record<string, ParsedSection> = {};
   if (kind === "review") {
+    const unknownKeys = Object.keys(envelope)
+      .filter((key) => !TRUSTED_REVIEW_ENVELOPE_KEYS.has(key))
+      .sort();
+    if (unknownKeys.length > 0)
+      return invalidSubmission(
+        kind,
+        empty,
+        reject(
+          "$",
+          unknownKeys,
+          "unknown_field",
+          `Review submission envelope contains unknown fields: ${unknownKeys.join(", ")}`,
+        ),
+      );
     sections.findings = parseEntries({
       envelope,
       key: "findings",
-      schema: ReviewFindingSchema,
-      fieldSchema: ReviewFindingSchema,
-      limit: 12,
+      schema: HandoffFindingPayloadSchema,
+      fieldSchema: HandoffFindingPayloadSchema,
+      limit: 24,
     });
   } else if (kind === "attack") {
     sections.attacks = parseEntries<unknown>({
@@ -735,8 +769,9 @@ export function parseFaultIsolatedSubmission(
   const value =
     kind === "review"
       ? {
-          version: 1 as const,
-          findings: sections.findings!.accepted as ReviewSubmission["findings"],
+          version: 2 as const,
+          findings: sections.findings!
+            .accepted as TrustedReviewSubmission["findings"],
         }
       : kind === "attack"
         ? {

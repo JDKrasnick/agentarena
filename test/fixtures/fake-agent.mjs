@@ -1,4 +1,6 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 if (process.argv.includes("--version")) {
@@ -194,43 +196,215 @@ if (stage === "provider_health_probe") {
     );
   }
 } else if (stage === "review_attacks") {
+  if (
+    process.env.AGENT_ARENA_FAKE_UNKNOWN_REVIEW_FIELD_ALWAYS === "1" &&
+    round === "1"
+  ) {
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 2,
+        findings: [],
+        provider_identity: "claude",
+      }),
+    );
+    process.exit(0);
+  }
+  if (
+    process.env.AGENT_ARENA_FAKE_INVALID_REVIEW_ALWAYS === "1" &&
+    round === "1"
+  ) {
+    await writeFile(submission, JSON.stringify({ version: 2, findings: [{}] }));
+    process.exit(0);
+  }
+  if (
+    process.env.AGENT_ARENA_FAKE_OVERSIZED_REVIEW_ONCE === "1" &&
+    round === "1" &&
+    agent === "codex" &&
+    !prompt.includes("# Targeted packet-size blocker refresh")
+  ) {
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 2,
+        findings: [
+          {
+            trust: "reviewer_hypothesis",
+            invariant: "i".repeat(1_000),
+            observations: Array.from({ length: 8 }, (_, index) => ({
+              trust: "reviewer_hypothesis",
+              statement: "o".repeat(1_000),
+              provenance: {
+                kind: "code_inspection",
+                references: [`src/slug-${String(index)}.mjs`],
+              },
+            })),
+            code_locations: [
+              {
+                path: "src/slug.mjs",
+                line_start: 1,
+                line_end: 3,
+                symbol: "slug",
+              },
+            ],
+            trigger_sequence: Array.from({ length: 12 }, () => "t".repeat(500)),
+            oracle: {
+              expected_behavior: "e".repeat(1_500),
+              task_source_ids: ["task-user"],
+              task_source_rationale: "r".repeat(1_500),
+            },
+            confidence: 90,
+            required_capability_ids: [],
+            regression_test_plan: {
+              summary: "s".repeat(1_500),
+              suggested_paths: [],
+              focused_command: "c".repeat(1_000),
+            },
+          },
+        ],
+      }),
+    );
+    process.exit(0);
+  }
+  if (
+    process.env.AGENT_ARENA_FAKE_DIRTY_BLOCKER === "1" &&
+    prompt.includes("# Targeted blocker refresh")
+  ) {
+    try {
+      await readFile(path.join(process.cwd(), ".attacker-refresh-leak"));
+      process.exit(2);
+    } catch {
+      // The blocker refresh must run in a freshly frozen target worktree.
+    }
+  }
   const source = await readFile(sourcePath, "utf8");
   const repeatedWhitespaceFinding = source.includes('replaceAll(" ", "-")')
     ? [
         {
+          trust: "reviewer_hypothesis",
           invariant: "Every run of whitespace becomes one separator",
-          codeLocation: "src/slug.mjs:slug",
-          triggerSequence: [
+          observations: [
+            {
+              trust: "reviewer_hypothesis",
+              statement:
+                "The implementation replaces individual spaces instead of whitespace runs.",
+              provenance: {
+                kind: "code_inspection",
+                references: ["src/slug.mjs:1"],
+              },
+            },
+          ],
+          code_locations: [
+            {
+              path: "src/slug.mjs",
+              line_start: 1,
+              line_end: 3,
+              symbol: "slug",
+            },
+          ],
+          trigger_sequence: [
             "Call slug with a title containing three consecutive spaces",
             "Observe the generated slug",
           ],
-          expectedBehavior: "The whitespace run becomes one hyphen",
+          oracle: {
+            expected_behavior: "The whitespace run becomes one hyphen",
+            task_source_ids: ["task-user"],
+            task_source_rationale:
+              "The frozen user task requires every whitespace run to collapse.",
+          },
           confidence: 98,
-          suggestedMinimalRegressionTest:
-            "Add test/arena-repeated-whitespace.test.mjs with a three-space title",
+          required_capability_ids: [],
+          regression_test_plan: {
+            summary: "Add a three-space title regression.",
+            suggested_paths: ["test/arena-repeated-whitespace.test.mjs"],
+            focused_command:
+              "node --test test/arena-repeated-whitespace.test.mjs",
+          },
         },
       ]
     : [
         {
+          trust: "reviewer_hypothesis",
           invariant: "Slugs are lowercase",
-          codeLocation: "src/slug.mjs:slug",
-          triggerSequence: [
+          observations: [
+            {
+              trust: "reviewer_hypothesis",
+              statement:
+                "Mixed-case input should be checked against the frozen lowercase requirement.",
+              provenance: {
+                kind: "code_inspection",
+                references: ["src/slug.mjs:1"],
+              },
+            },
+          ],
+          code_locations: [
+            {
+              path: "src/slug.mjs",
+              line_start: 1,
+              line_end: 3,
+              symbol: "slug",
+            },
+          ],
+          trigger_sequence: [
             "Call slug with uppercase characters",
             "Observe the generated slug",
           ],
-          expectedBehavior: "The result is lowercase",
+          oracle: {
+            expected_behavior: "The result is lowercase",
+            task_source_ids: ["task-user"],
+            task_source_rationale:
+              "The frozen user task requires lowercase slugs.",
+          },
           confidence: 70,
-          suggestedMinimalRegressionTest:
-            "Add test/arena-uppercase.test.mjs with mixed-case input",
+          required_capability_ids: [],
+          regression_test_plan: {
+            summary: "Add a mixed-case input regression.",
+            suggested_paths: ["test/arena-uppercase.test.mjs"],
+            focused_command: "node --test test/arena-uppercase.test.mjs",
+          },
         },
       ];
   await writeFile(
     submission,
-    JSON.stringify({ version: 1, findings: repeatedWhitespaceFinding }),
+    JSON.stringify({ version: 2, findings: repeatedWhitespaceFinding }),
   );
 } else if (stage === "collect_attacks") {
+  if (
+    process.env.AGENT_ARENA_FAKE_INVALID_ATTACK_ALWAYS === "1" &&
+    round === "1"
+  ) {
+    await writeFile(submission, JSON.stringify({ version: 2, attacks: [{}] }));
+    process.exit(0);
+  }
   const retryMarker = path.join(process.cwd(), ".agent-arena-retry-once");
+  const blockerMarker = path.join(
+    tmpdir(),
+    `agent-arena-blocker-${createHash("sha256").update(process.cwd()).digest("hex")}`,
+  );
   let emitRetryFailure = false;
+  let emitBlocker = false;
+  const emitInvalidBlocker =
+    process.env.AGENT_ARENA_FAKE_INVALID_BLOCKER === "1" &&
+    round === "2" &&
+    agent === "codex";
+  if (
+    process.env.AGENT_ARENA_FAKE_INVALID_THEN_BLOCKER === "1" &&
+    round === "2" &&
+    agent === "codex"
+  ) {
+    try {
+      const phase = await readFile(blockerMarker, "utf8");
+      if (phase === "invalid\n") {
+        emitBlocker = true;
+        await writeFile(blockerMarker, "blocker\n");
+      } else {
+        await rm(blockerMarker);
+      }
+    } catch {
+      emitRetryFailure = true;
+      await writeFile(blockerMarker, "invalid\n");
+    }
+  }
   if (
     process.env.AGENT_ARENA_FAKE_RETRY_ONCE === "1" &&
     round === "1" &&
@@ -244,7 +418,58 @@ if (stage === "provider_health_probe") {
       await writeFile(retryMarker, "retry\n");
     }
   }
-  if (emitRetryFailure) {
+  if (
+    process.env.AGENT_ARENA_FAKE_BLOCKER_ONCE === "1" &&
+    round === "2" &&
+    agent === "codex"
+  ) {
+    try {
+      await readFile(blockerMarker);
+      await rm(blockerMarker);
+    } catch {
+      emitBlocker = true;
+      await writeFile(blockerMarker, "blocker\n");
+    }
+  }
+  if (emitInvalidBlocker) {
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 2,
+        handoff_blocker: {
+          finding_ids: [`finding_${"0".repeat(64)}`],
+          category: "cited_context_missing",
+          explanation: "This blocker cites a finding outside the packet.",
+          requested_capability_ids: [],
+          requested_context: ["src/slug.mjs"],
+        },
+      }),
+    );
+  } else if (emitBlocker) {
+    if (process.env.AGENT_ARENA_FAKE_DIRTY_BLOCKER === "1")
+      await writeFile(
+        path.join(process.cwd(), ".attacker-refresh-leak"),
+        "attacker-owned bytes\n",
+      );
+    const findingId = prompt.match(
+      /"finding_id":"(finding_[a-f0-9]{64})"/,
+    )?.[1];
+    if (!findingId) throw new Error("Trusted packet finding ID is missing");
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 2,
+        handoff_blocker: {
+          finding_ids: [findingId],
+          category: "cited_context_missing",
+          explanation:
+            "The cited target context requires a fresh reviewer pass.",
+          requested_capability_ids: [],
+          requested_context: ["src/slug.mjs"],
+        },
+      }),
+    );
+  } else if (emitRetryFailure) {
     await writeFile(submission, JSON.stringify({ version: 2, attacks: [{}] }));
   } else if (prompt.includes("# Correction-only reconciliation")) {
     const candidateIds = [...prompt.matchAll(/"candidateId":\s*"([^"]+)"/g)]

@@ -29,7 +29,7 @@ function attempt(
   state: CoverageAttempt["state"],
   evidencePaths: string[] = [],
   reasonCode?: string,
-  attemptNumber: 1 | 2 | 3 = 1,
+  attemptNumber: CoverageAttempt["attempt"] = 1,
 ): CoverageAttempt {
   return {
     attempt: attemptNumber,
@@ -79,7 +79,10 @@ export function assessBattleCoverage(
         entry.reviewer === attacker &&
         entry.target === target,
     );
-    const review = reviews.slice(0, 2).at(-1);
+    // One lane can compose two ordinary review attempts with packet-size,
+    // validation, and blocker refreshes. Preserve all five audit records.
+    const reviewAttempts = reviews;
+    const review = reviewAttempts.at(-1);
     const focusedRecords = state.attackInvocations.filter(
       (entry) =>
         entry.round === round &&
@@ -87,7 +90,18 @@ export function assessBattleCoverage(
         entry.target === target &&
         entry.detail !== "Correction-only reconciliation lane",
     );
-    const focused = focusedRecords.slice(0, 2).at(-1);
+    const blockerRefreshOccurred = focusedRecords.some(
+      (entry, index) =>
+        index > 0 &&
+        Boolean(entry.handoffPacketId) &&
+        Boolean(focusedRecords[index - 1]?.handoffPacketId) &&
+        entry.handoffPacketId !== focusedRecords[index - 1]!.handoffPacketId,
+    );
+    const focusedAttemptsRecords = focusedRecords.slice(
+      0,
+      blockerRefreshOccurred ? 3 : 2,
+    );
+    const focused = focusedAttemptsRecords.at(-1);
     const attacks = state.attacks.filter(
       (entry) =>
         entry.round === round &&
@@ -119,7 +133,7 @@ export function assessBattleCoverage(
         entry.sourceRound === round &&
         entry.attemptCount === 2,
     );
-    const focusedAttempts = focusedRecords.slice(0, 2).map((record, index) =>
+    const focusedAttempts = focusedAttemptsRecords.map((record, index) =>
       attempt(
         record.parseOutcome === "valid_empty"
           ? "valid_empty"
@@ -130,7 +144,7 @@ export function assessBattleCoverage(
           (value): value is string => Boolean(value),
         ),
         record.parseOutcome ? undefined : "focused_description_failed",
-        index === 0 ? 1 : 2,
+        (index + 1) as CoverageAttempt["attempt"],
       ),
     );
     if (!focusedAttempts.length)
@@ -151,9 +165,17 @@ export function assessBattleCoverage(
     }
 
     const usableTerminal = explicitEmpty || usable.length > 0;
+    // Legacy partial reviews may already own a consumable packet artifact.
+    // Trusted v2 retries never create one from an exhausted partial parse.
+    const reviewOutcomeUsable = (
+      record: (typeof reviews)[number] | undefined,
+    ): boolean =>
+      record?.parseOutcome === "valid" ||
+      record?.parseOutcome === "valid_empty" ||
+      (record?.parseOutcome === "partial" && Boolean(record.artifactPath)) ||
+      (!coverageV2 && record?.parseOutcome === undefined);
     const reviewCompleted = Boolean(
-      review?.invocation.status === "succeeded" &&
-      review.parseOutcome !== "invalid",
+      review?.invocation.status === "succeeded" && reviewOutcomeUsable(review),
     );
     const focusedCompleted = focusedAttempts.at(-1)?.state !== "failed";
     const attackPathResolved =
@@ -232,11 +254,11 @@ export function assessBattleCoverage(
     const stages = [
       stage(
         "review",
-        reviews.length
-          ? reviews.slice(0, 2).map((record, index) =>
+        reviewAttempts.length
+          ? reviewAttempts.map((record, index) =>
               attempt(
                 record.invocation.status === "succeeded" &&
-                  record.parseOutcome !== "invalid"
+                  reviewOutcomeUsable(record)
                   ? record.parseOutcome === "valid_empty"
                     ? "valid_empty"
                     : "succeeded"
@@ -247,7 +269,7 @@ export function assessBattleCoverage(
                 record.invocation.status === "succeeded"
                   ? undefined
                   : "review_failed",
-                index === 0 ? 1 : 2,
+                (index + 1) as CoverageAttempt["attempt"],
               ),
             )
           : [attempt("failed", [], "review_missing")],
@@ -306,7 +328,7 @@ export function assessBattleCoverage(
                     : repairJudgeUnable && index === repairAttempts.length - 1
                       ? "repair_judge_unable"
                       : "repair_failed",
-                  (index + 1) as 1 | 2 | 3,
+                  (index + 1) as CoverageAttempt["attempt"],
                 ),
               )
             : [attempt("failed", [], "repair_missing")]
