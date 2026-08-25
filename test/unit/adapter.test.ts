@@ -91,6 +91,34 @@ describe("provider model selection", () => {
     expect(args).toContain('mcp_servers."selected".enabled=true');
     expect(args).toContain('mcp_servers."omitted".enabled=false');
   });
+
+  it("refuses a nonempty Claude MCP policy that cannot be strictly isolated", () => {
+    const policy = {
+      version: 1 as const,
+      mode: "configure_selection" as const,
+      inventory: [],
+      servers: [
+        {
+          provider: "claude" as const,
+          name: "github",
+          enabledInSnapshot: true,
+          authentication: "ready" as const,
+          readiness: "ready" as const,
+          role: "agent" as const,
+          requirement: "optional" as const,
+          decision: "included" as const,
+          reason: "selected",
+        },
+      ],
+      coverageGaps: [],
+      frozenAt: "2026-08-25T00:00:00.000Z",
+      policyHash: "0".repeat(64),
+    };
+
+    expect(() => providerCommand("claude", undefined, policy)).toThrow(
+      /strict-mcp-config/,
+    );
+  });
 });
 
 describe("implementation transport classification", () => {

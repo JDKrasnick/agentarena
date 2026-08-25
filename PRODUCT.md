@@ -266,6 +266,11 @@ never reset in child runs. Recovery records preserve the run-ID chain, failed
 stage, reason, probes, command and cleanup logs, exit state, authentication
 evidence, and provider-health results.
 
+Round 1 writes a post-implementation, post-validation recovery checkpoint
+before review begins. A later provider-stage continuation starts from that
+checkpoint without invoking either implementation again; partial review,
+attack, adjudication, and repair work from the failed transaction is discarded.
+
 After recovery capacity is exhausted, the first unrecovered review or attack
 failure follows ordinary coverage-loss semantics and the second unrecovered
 provider-stage failure anywhere in the chain makes the fight inconclusive.
@@ -924,6 +929,12 @@ undeclared servers are absent. Agents cannot widen MCP authority mid-run; a new
 capability requires a new approved run. Arena does not mutate global provider
 configuration or remote MCP services, and `leave_as_is` approves the discovered
 snapshot rather than future provider changes.
+
+If a provider CLI cannot construct a strict run-scoped configuration from the
+name-only frozen inventory, Arena marks that provider's named selections
+unavailable instead of reusing ambient configuration. This currently applies
+to Claude: optional selections are excluded as coverage gaps, while required
+selections block launch unless reduced validation is accepted.
 
 An agent may declare extra capabilities for an integration attack. A newly
 denied optional request becomes `capability_denied` and causes no damage or

@@ -762,6 +762,12 @@ run. New capability requires a new run and approval plan. Arena never mutates
 global provider configuration or remote MCP services; `leave_as_is` binds the
 discovered snapshot rather than future setup changes.
 
+If a provider CLI cannot construct a strict run-scoped configuration from the
+name-only frozen inventory, Arena marks that provider's named selections
+unavailable rather than falling back to ambient configuration. Claude currently
+has this limitation: optional selections become coverage gaps, and required
+selections block launch unless reduced validation is accepted.
+
 If a required capability is denied or cannot be authenticated, the fight does
 not start unless the user explicitly accepts a reduced validation contract. The
 final report must prominently list every omitted check; a reduced contract
@@ -1180,6 +1186,9 @@ Failures should be useful and recoverable:
   attack construction, repair, judge, and semantic-adjudication stages only
   when causal evidence supports infrastructure failure and no usable terminal
   result exists. Sealed rounds are retained and never replayed.
+- Round 1 persists a post-implementation, post-validation recovery checkpoint.
+  A later provider-stage child reuses those exact validated patches without
+  rerunning implementation and discards partial downstream round work.
 - Across one run chain, at most two provider-recovery continuations may be
   created and each provider may trigger at most one. The limits do not reset in
   child runs.

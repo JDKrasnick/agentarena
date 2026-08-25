@@ -19,6 +19,7 @@ import { RunSpecSchema } from "../contracts/round.js";
 import {
   FightConfigSchema,
   PermissionPolicySchema,
+  RunStateSchema,
   type AgentId,
 } from "../core/types.js";
 import type { RunState } from "../core/types.js";
@@ -38,6 +39,11 @@ import {
   withReplacementRunId,
 } from "../recovery/transport.js";
 import { reconstructRunState } from "../recovery/durable.js";
+import { decideProviderRecovery } from "../recovery/provider-policy.js";
+import { renderBattleReport } from "../reports/markdown.js";
+import { renderBattleHtml } from "../reports/html.js";
+import { renderBattleVisual } from "../reports/visual.js";
+import { renderConsoleSummary } from "../reports/console.js";
 import {
   applyMcpReadiness,
   freezeMcpPolicy,
@@ -333,6 +339,46 @@ export async function runFight(
       const terminalOutcome = parent.state.terminalOutcome;
       const providerFailure = parent.state.providerFailure;
       if (!providerFailure && !terminalOutcome) break;
+      const recoveryDecision = providerFailure
+        ? decideProviderRecovery(providerFailure, {
+            continuationsCreated,
+            recoveredProviders,
+            unrecoveredFailures: unrecoveredProviderFailures,
+          })
+        : undefined;
+      if (recoveryDecision?.action === "inconclusive") {
+        const completedAt = new Date().toISOString();
+        parent.state.status = "inconclusive";
+        parent.state.stage = "inconclusive";
+        parent.state.completedAt = completedAt;
+        parent.state.updatedAt = completedAt;
+        parent.state.warnings.push(
+          `Provider recovery is unavailable (${recoveryDecision.reason}); ${providerFailure?.stage ?? "the provider stage"} cannot be trusted.`,
+        );
+        const terminalStore = new ArtifactStore(
+          parent.state.config.artifactRoot,
+          parent.state.runId,
+          { durableV5: true },
+        );
+        await terminalStore.writeState(parent.state);
+        await terminalStore.writeText(
+          "BATTLE.md",
+          renderBattleReport(parent.state),
+        );
+        await terminalStore.writeText(
+          "BATTLE.html",
+          renderBattleHtml(parent.state),
+        );
+        await terminalStore.writeText(
+          "BATTLE.svg",
+          renderBattleVisual(parent.state),
+        );
+        outcome = {
+          state: parent.state,
+          summary: renderConsoleSummary(parent.state),
+        };
+        break;
+      }
       const parentStore = new ArtifactStore(
         parent.state.config.artifactRoot,
         parent.state.runId,
@@ -381,8 +427,10 @@ export async function runFight(
         }
       }
       if (!adapters.size) break;
+      if (recoveryDecision?.action === "ordinary_stage_semantics") break;
+      if (!providerFailure && runIds.length > 2) break;
       if (
-        runIds.length > 2 ||
+        !providerFailure &&
         [...adapters.keys()].some((provider) =>
           recoveredProviders.has(provider),
         )
@@ -435,10 +483,21 @@ export async function runFight(
       const parentSummary = await parentStore.readSummary();
       if (!parentSummary)
         throw new Error("Provider recovery is missing the parent summary");
-      const inheritedState = await reconstructRunState({
+      let inheritedState = await reconstructRunState({
         store: parentStore,
         summary: parentSummary,
       });
+      let resumeAfterInitialization = false;
+      if (providerFailure?.round === 1) {
+        const checkpoint = await parentStore.readOptionalJson(
+          "provider-recovery-checkpoint.json",
+          RunStateSchema,
+        );
+        if (checkpoint) {
+          inheritedState = checkpoint;
+          resumeAfterInitialization = true;
+        }
+      }
       const replacementArena = createArena(
         parent.state.config,
         {
@@ -458,6 +517,9 @@ export async function runFight(
           reconnaissance,
           inheritedState,
           startRound: providerFailure?.round ?? 1,
+          ...(resumeAfterInitialization
+            ? { resumeAfterInitialization: true }
+            : {}),
           ...(parent.state.pullRequestFixture
             ? { pullRequestFixture: parent.state.pullRequestFixture }
             : {}),

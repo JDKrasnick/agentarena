@@ -466,6 +466,10 @@ export function providerCommand(
         ...(resolvedModel ? { model: resolvedModel } : {}),
       };
     case "claude":
+      if (mcpPolicy && selectedMcp?.length)
+        throw new Error(
+          "Claude named MCP selections require explicit server definitions so --strict-mcp-config can isolate the run; unsafe global configuration reuse is refused",
+        );
       return {
         executable: "claude",
         args: [
@@ -833,10 +837,11 @@ export class CommandAttackVerifier implements AttackVerifier {
     },
     reason: string,
   ): void {
+    const transportFailures = result.transportFailures;
     if (
       !input.retryReason ||
-      result.failureClass !== "arena_infrastructure" ||
-      !result.transportFailures?.length
+      !transportFailures?.length ||
+      !this.isProviderInfrastructureFailure(result)
     )
       return;
     this.providerFailures.push({
@@ -844,7 +849,7 @@ export class CommandAttackVerifier implements AttackVerifier {
       provider: this.id,
       stage,
       reason,
-      causalEvidence: result.transportFailures.map(
+      causalEvidence: transportFailures.map(
         (entry) => `${entry.kind}: ${entry.detail}`,
       ),
       artifactRefs: [
@@ -855,6 +860,15 @@ export class CommandAttackVerifier implements AttackVerifier {
       ],
       usableTerminalResult: false,
     });
+  }
+
+  private isProviderInfrastructureFailure(result: CommandResult): boolean {
+    return Boolean(
+      result.transportFailures?.length &&
+      (result.timedOut ||
+        result.exitCode !== 0 ||
+        result.failureClass === "arena_infrastructure"),
+    );
   }
 
   async assess(input: AnonymizedAttackInput): Promise<AttackVerdict> {
@@ -927,8 +941,6 @@ export class CommandAttackVerifier implements AttackVerifier {
         stage: "attack-verifier",
       },
     );
-    if (result.failureClass === "arena_infrastructure")
-      throw new Error("Verifier provider infrastructure failed");
     try {
       const verdict = parseModelSubmission(
         AttackVerdictSchema,
@@ -947,6 +959,17 @@ export class CommandAttackVerifier implements AttackVerifier {
           : {}),
       };
     } catch (error) {
+      if (this.isProviderInfrastructureFailure(result)) {
+        this.recordTerminalProviderFailure(
+          "judge",
+          result,
+          input,
+          "Attack verifier provider failure persisted after the targeted retry",
+        );
+        throw new Error("Verifier provider infrastructure failed", {
+          cause: error,
+        });
+      }
       throw new Error(
         `Verifier output was invalid: ${error instanceof Error ? error.message : String(error)}`,
         { cause: error },
@@ -1067,15 +1090,6 @@ export class CommandAttackVerifier implements AttackVerifier {
         stage: "judge-fallback",
       },
     );
-    if (result.failureClass === "arena_infrastructure") {
-      this.recordTerminalProviderFailure(
-        "semantic_adjudication",
-        result,
-        input,
-        "Semantic adjudication provider failure persisted after the targeted retry",
-      );
-      throw new Error("Judge provider infrastructure failed");
-    }
     try {
       const verdict = parseModelSubmission(
         JudgeAttackVerdictSchema,
@@ -1096,6 +1110,17 @@ export class CommandAttackVerifier implements AttackVerifier {
           : {}),
       };
     } catch (error) {
+      if (this.isProviderInfrastructureFailure(result)) {
+        this.recordTerminalProviderFailure(
+          "semantic_adjudication",
+          result,
+          input,
+          "Semantic adjudication provider failure persisted after the targeted retry",
+        );
+        throw new Error("Judge provider infrastructure failed", {
+          cause: error,
+        });
+      }
       throw new Error(
         `Judge fallback output was invalid: ${error instanceof Error ? error.message : String(error)}`,
         { cause: error },
@@ -1180,15 +1205,6 @@ export class CommandAttackVerifier implements AttackVerifier {
         stage: "repair-judge",
       },
     );
-    if (result.failureClass === "arena_infrastructure") {
-      this.recordTerminalProviderFailure(
-        "judge",
-        result,
-        input,
-        "Repair judge provider failure persisted after the targeted retry",
-      );
-      throw new Error("Repair judge provider infrastructure failed");
-    }
     try {
       const verdict = parseModelSubmission(
         schema,
@@ -1196,6 +1212,17 @@ export class CommandAttackVerifier implements AttackVerifier {
       );
       return { ...verdict, packetDigest: packet.packetDigest };
     } catch (error) {
+      if (this.isProviderInfrastructureFailure(result)) {
+        this.recordTerminalProviderFailure(
+          "judge",
+          result,
+          input,
+          "Repair judge provider failure persisted after the targeted retry",
+        );
+        throw new Error("Repair judge provider infrastructure failed", {
+          cause: error,
+        });
+      }
       throw new Error(
         `Repair judge output was invalid: ${error instanceof Error ? error.message : String(error)}`,
         { cause: error },

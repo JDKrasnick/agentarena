@@ -316,6 +316,8 @@ export interface ReplacementFightOptions {
   inheritedState?: RunState;
   /** First unsealed round; earlier rounds must never be replayed. */
   startRound?: 1 | 2 | 3;
+  /** Round-one implementation and initial validation were durably retained. */
+  resumeAfterInitialization?: boolean;
 }
 
 interface ArenaContext {
@@ -928,6 +930,8 @@ export class RoundEngine {
       }
 
       await this.preflight(context);
+      if (replacement?.resumeAfterInitialization)
+        await this.transition(context, "initial_validate");
       await writeDependencyManifest({
         store,
         runSpec,
@@ -958,7 +962,7 @@ export class RoundEngine {
           snapshot,
           beforeRound,
           {
-            initialize: round === 1,
+            initialize: round === 1 && !replacement?.resumeAfterInitialization,
             ...(pullRequestFixture ? { pullRequestFixture } : {}),
           },
         );
@@ -1615,6 +1619,10 @@ export class RoundEngine {
             disposition,
           );
         }
+        await context.store.writeJson(
+          "provider-recovery-checkpoint.json",
+          context.state,
+        );
       }
       await this.runRound(context, snapshot.roundId);
       return this.persistRoundBoundary(context, snapshot, before);
@@ -4705,6 +4713,7 @@ export class RoundEngine {
           );
         }
       } catch (error) {
+        if (context.state.providerFailure) throw error;
         context.state.warnings.push(
           `Review collection failed for ${reviewer}: ${error instanceof Error ? error.message : String(error)}`,
         );
@@ -6704,6 +6713,7 @@ export class RoundEngine {
           );
         }
       } catch (error) {
+        if (context.state.providerFailure) throw error;
         context.state.warnings.push(
           `Attack collection failed for ${agent}: ${error instanceof Error ? error.message : String(error)}`,
         );

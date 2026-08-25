@@ -125,4 +125,90 @@ describe("MCP preflight policy", () => {
     ).toMatchObject({ decision: "excluded", requirement: "required" });
     expect(reduced.coverageGaps).toHaveLength(1);
   });
+
+  it("excludes Claude selections that cannot be isolated from global configuration", () => {
+    const policy = freezeMcpPolicy({
+      config: {
+        policy: "configure_selection",
+        servers: [
+          {
+            provider: "claude",
+            name: "github",
+            role: "agent",
+            requirement: "optional",
+          },
+        ],
+      },
+      inventory: [
+        {
+          provider: "claude",
+          state: "known",
+          servers: [
+            {
+              name: "github",
+              enabled: true,
+              authentication: "ready",
+              readiness: "ready",
+            },
+          ],
+          diagnosticArtifactRefs: [],
+        },
+      ],
+      reducedValidationAccepted: false,
+    });
+
+    expect(policy.servers[0]).toMatchObject({
+      provider: "claude",
+      name: "github",
+      decision: "excluded",
+      readiness: "unavailable",
+    });
+    expect(policy.coverageGaps[0]).toContain("cannot be isolated");
+
+    const afterReadiness = applyMcpReadiness(
+      policy,
+      new Map(),
+      false,
+      new Date("2026-08-25T01:00:00.000Z"),
+    );
+    expect(afterReadiness.servers[0]).toMatchObject({
+      decision: "excluded",
+      readiness: "unavailable",
+    });
+    expect(afterReadiness.coverageGaps[0]).toContain("cannot be isolated");
+  });
+
+  it("blocks required Claude selections unless reduced validation is accepted", () => {
+    expect(() =>
+      freezeMcpPolicy({
+        config: {
+          policy: "keep_configured",
+          servers: [
+            {
+              provider: "claude",
+              name: "github",
+              role: "agent",
+              requirement: "required",
+            },
+          ],
+        },
+        inventory: [
+          {
+            provider: "claude",
+            state: "known",
+            servers: [
+              {
+                name: "github",
+                enabled: true,
+                authentication: "ready",
+                readiness: "ready",
+              },
+            ],
+            diagnosticArtifactRefs: [],
+          },
+        ],
+        reducedValidationAccepted: false,
+      }),
+    ).toThrow(/Required MCP servers are unavailable/);
+  });
 });

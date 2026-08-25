@@ -286,7 +286,17 @@ export function freezeMcpPolicy(options: {
         `${right.provider}\0${right.name}`,
       ),
     );
-  const unavailableRequired = servers.filter(
+  const enforceableServers = servers.map((server) =>
+    server.provider === "claude" && server.decision === "included"
+      ? {
+          ...server,
+          readiness: "unavailable" as const,
+          reason:
+            "Claude named MCP selections cannot be isolated without explicit server definitions; the server is excluded from this run",
+        }
+      : server,
+  );
+  const unavailableRequired = enforceableServers.filter(
     (server) =>
       server.decision === "included" &&
       server.requirement === "required" &&
@@ -297,13 +307,14 @@ export function freezeMcpPolicy(options: {
       `Required MCP servers are unavailable: ${unavailableRequired.map((server) => `${server.provider}/${server.name}`).join(", ")}. Reauthenticate explicitly or accept reduced validation with those servers excluded.`,
     );
   }
-  const normalizedServers = servers.map((server) =>
+  const normalizedServers = enforceableServers.map((server) =>
     server.decision === "included" && server.readiness === "unavailable"
       ? {
           ...server,
           decision: "excluded" as const,
-          reason:
-            server.requirement === "required"
+          reason: /cannot be isolated/i.test(server.reason)
+            ? server.reason
+            : server.requirement === "required"
               ? "Required server unavailable under accepted reduced validation"
               : "Optional server unavailable during readiness checks",
         }
@@ -312,7 +323,8 @@ export function freezeMcpPolicy(options: {
   const coverageGaps = normalizedServers
     .filter(
       (server) =>
-        server.decision === "excluded" && /unavailable/i.test(server.reason),
+        server.decision === "excluded" &&
+        /unavailable|cannot be isolated/i.test(server.reason),
     )
     .map(
       (server) =>
@@ -368,7 +380,11 @@ export function applyMcpReadiness(
     config: {
       policy: policy.mode,
       servers: policy.servers
-        .filter((server) => server.decision === "included")
+        .filter(
+          (server) =>
+            server.decision === "included" ||
+            /unavailable|cannot be isolated/i.test(server.reason),
+        )
         .map((server) => ({
           provider: server.provider,
           name: server.name,
