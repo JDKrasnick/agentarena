@@ -665,7 +665,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     );
   });
 
-  it("salvages a valid review written before the provider deadline", async () => {
+  it("records salvaged review deadlines after direct completion and a retry", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = duelConfig(repositoryRoot);
     config.limits.reviewMs = 500;
@@ -674,7 +674,10 @@ describe("fake-adapter fight on a mocked real issue", () => {
         id,
         executable: process.execPath,
         args: [fixtureAgent],
-        environment: { AGENT_ARENA_FAKE_REVIEW_TIMEOUT_AFTER_WRITE: "1" },
+        environment:
+          id === "codex"
+            ? { AGENT_ARENA_FAKE_REVIEW_RETRY_THEN_TIMEOUT: "1" }
+            : { AGENT_ARENA_FAKE_REVIEW_TIMEOUT_AFTER_WRITE: "1" },
       });
     const outcome = await new Arena({
       adapters: {
@@ -710,7 +713,14 @@ describe("fake-adapter fight on a mocked real issue", () => {
           record.terminalDisposition === "recovered",
       ),
     ).toHaveLength(6);
-  }, 30_000);
+    expect(
+      outcome.state.failureRecords.filter(
+        (record) =>
+          record.category === "invalid_output" &&
+          record.terminalDisposition === "recovered",
+      ),
+    ).toHaveLength(3);
+  }, 45_000);
 
   it("refreshes a blocker from a clean frozen target worktree", async () => {
     const repositoryRoot = await createSlugRepository();

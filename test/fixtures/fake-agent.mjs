@@ -203,6 +203,18 @@ if (stage === "provider_health_probe") {
     );
   }
 } else if (stage === "review_attacks") {
+  if (process.env.AGENT_ARENA_FAKE_REVIEW_RETRY_THEN_TIMEOUT === "1") {
+    const retryMarker = path.join(
+      process.cwd(),
+      ".agent-arena-review-retry-once",
+    );
+    try {
+      await rm(retryMarker);
+    } catch {
+      await writeFile(retryMarker, "retry");
+      process.exit(0);
+    }
+  }
   if (
     process.env.AGENT_ARENA_FAKE_UNKNOWN_REVIEW_FIELD_ALWAYS === "1" &&
     round === "1"
@@ -375,7 +387,10 @@ if (stage === "provider_health_probe") {
     submission,
     JSON.stringify({ version: 2, findings: repeatedWhitespaceFinding }),
   );
-  if (process.env.AGENT_ARENA_FAKE_REVIEW_TIMEOUT_AFTER_WRITE === "1")
+  if (
+    process.env.AGENT_ARENA_FAKE_REVIEW_TIMEOUT_AFTER_WRITE === "1" ||
+    process.env.AGENT_ARENA_FAKE_REVIEW_RETRY_THEN_TIMEOUT === "1"
+  )
     await new Promise((resolve) => setTimeout(resolve, 10_000));
 } else if (stage === "collect_attacks") {
   if (

@@ -4251,7 +4251,6 @@ export class RoundEngine {
         let salvagedAtDeadline = false;
         let finalAttemptStartedAt = this.now().toISOString();
         let finalAttemptFinishedAt = finalAttemptStartedAt;
-        let finalAttemptNumber: 1 | 2 = 1;
         for (const attemptNumber of [1, 2] as const) {
           const attemptStartedAt = this.now().toISOString();
           const candidate = await this.adapterFor(context, reviewer).review({
@@ -4271,7 +4270,6 @@ export class RoundEngine {
           const attemptFinishedAt = this.now().toISOString();
           finalAttemptStartedAt = attemptStartedAt;
           finalAttemptFinishedAt = attemptFinishedAt;
-          finalAttemptNumber = attemptNumber;
           invocation = candidate;
           let usableSubmission = false;
           if (
@@ -4488,12 +4486,12 @@ export class RoundEngine {
             );
             continue;
           }
-          if (salvagedAtDeadline && !submissionFailure) {
+          if (salvagedAtDeadline) {
             await this.recordFailureAttempt(context, {
               stage: "model_invocation",
               subject: `review-deadline:${String(round)}:${reviewer}->${target}`,
               category: "timeout",
-              attempt: finalAttemptNumber,
+              attempt: 1,
               startedAt: finalAttemptStartedAt,
               finishedAt: finalAttemptFinishedAt,
               status: "succeeded",
