@@ -484,12 +484,20 @@ or private reasoning. The attacker inspects the already-frozen target in its
 assigned worktree. The packet digest and target fingerprint are included in
 invocation metadata so replay can prove which handoff was consumed.
 
-The attacker may inspect cited files, suggested test paths, nearby tests, and
-direct dependencies needed to construct a focused reproducer. This is guidance,
-not a read boundary. Broad repository rediscovery is allowed but measured and
-receives one non-blocking warning from the adapter when observable. It MUST NOT
-be blocked, scored, charged as recoil, treated as a retry, or treated as
-coverage loss.
+The trusted evidence scope consists of packet-cited files and symbols,
+suggested test or fixture paths, nearby tests, direct one-edge imports or
+importers, and repository instructions or build manifests needed to execute the
+focused command. The attacker may inspect this set without interruption. An
+observable read or search outside it is bounded exploration, not trusted
+evidence. After detecting bounded exploration, the adapter MUST pause further
+tool use and send a compact checkpoint containing the active hypothesis,
+trusted scope, evidence collected so far, and trigger reason. The attacker MUST
+acknowledge the checkpoint and choose exactly one action: return to the trusted
+scope, stop without an attack, or request a temporary exploration lease naming
+a concrete hypothesis, requested paths, and bounded tool-call allowance. The
+harness MUST record the decision before resuming and MUST checkpoint again when
+the lease is exhausted. This flow control MUST NOT be scored, charged as recoil,
+treated as a retry, or treated as coverage loss.
 
 For telemetry classification:
 
@@ -505,15 +513,14 @@ For telemetry classification:
 If any observable operation is broad, classification is `broad`; otherwise it
 is `targeted` only with complete adapter visibility, and `unknown` in every
 other case. The record includes classification, adapter visibility
-(`complete`, `partial`, or `none`), the packet digest, and whether the advisory
-warning was emitted. It MUST NOT include command arguments or file contents
-that could expose secrets. Telemetry cannot affect health, damage, recoil,
-attack validity, retry eligibility, coverage, confidence qualification, or
-selection. Missing visibility is `unknown` without warning or penalty.
-
-Whether warnings change behavior and whether enforceable read boundaries are
-practical are explicitly deferred to issue #58. Issue #20 implements the
-measurement above but does not evaluate or enforce it.
+(`complete`, `partial`, or `none`), packet digest, and ordered checkpoint
+lifecycle events for detection, interruption, acknowledgement, lease grant or
+denial, post-checkpoint action, lease exhaustion, and terminal outcome. A
+delivery attempt alone MUST NOT count as acknowledgement. Records MUST NOT
+include command arguments or file contents that could expose secrets.
+Checkpoint telemetry cannot affect health, damage, recoil, attack validity,
+retry eligibility, coverage, confidence qualification, or selection. Missing
+visibility is `unknown` without interruption or penalty.
 
 ## 10. Lifecycle state machine
 
@@ -783,17 +790,66 @@ legacy-run support outside the reviewer-handoff feature remains unchanged.
 - Invalidate packets on repair, mutation, policy change, or round transition;
   carry only adjudicated lane-safe feedback forward.
 
-### Issue #20 — telemetry
+### Issue #20 — inspection checkpoints
 
 - Record `targeted`, `broad`, or `unknown` with visibility, packet digest, and
-  advisory-warning status using section 9's precedence.
-- Emit at most one non-blocking warning for observable broad rediscovery.
+  the ordered checkpoint lifecycle using section 9's precedence.
+- Pause observable broad rediscovery until the attacker acknowledges a return,
+  stop, or bounded exploration-lease decision.
 - Redact telemetry so it stores no file contents, command arguments, secrets,
   transcripts, or provider identity.
 - Add invariants proving telemetry cannot alter health, scoring, validity,
   retries, coverage, confidence, or selection and that absent visibility is
   neutral `unknown`.
-- Leave efficacy and enforceable-boundary experiments to issue #58.
+- Evaluate checkpoint delivery and behavioral efficacy independently from game
+  outcomes; a transport write alone is not proof that a checkpoint was seen.
+
+### Issue #58 — pause–replan evaluation
+
+The first implementation is a developer-only schema-v2 experiment. It freezes
+exactly twelve existing scenarios, including one selected packet finding, packet
+digest, base commit, target patch, trusted paths, validation command, provider
+model selections, and a static token rate card. Claude uses `sonnet` in silent
+telemetry, passive-warning, and checkpoint conditions. Codex uses
+`gpt-5.6-sol` in silent telemetry and checkpoint conditions because its current
+transport cannot reliably receive the passive mid-turn message.
+
+At the first observable broad action, checkpoint mode terminates the complete
+provider process group, runs the same model from a temporary directory without
+repository context, validates a versioned `return_to_scope`, `request_lease`,
+or `stop` decision, and only then starts a compact continuation in the preserved
+worktree. A lease names at most two normalized repository-relative files and
+expires after exactly five provider tool invocations. Every invocation consumes
+the lease. Outside-scope actions stop the continuation, lease exhaustion causes
+one final checkpoint that cannot request another lease, and a third drift is a
+checkpoint-policy failure. Invalid decisions are behavioral results; transport,
+cleanup, and incomplete-stream failures retain one infrastructure retry.
+
+Every condition writes an ordered redacted lifecycle sidecar and the evaluation
+writes one immutable `evaluation.json` plus one self-contained `SUMMARY.html`.
+These artifacts exclude prompts, reasoning, command arguments, file contents,
+credentials, and provider-private transcripts. Requested and reported model
+identifiers, CLI version, token usage, estimated cost, condition order, call
+indices, scope classes, checkpoint IDs, and lease counters remain available for
+audit. Schema-v1 evaluation artifacts remain read-only renderable.
+
+Before the full comparison, checkpoint mode runs four frozen scenarios for each
+model. Any missing acknowledgement, illegal event ordering, repository action
+before acknowledgement, repository-visible checkpoint, invalid decision,
+incorrect lease enforcement, surviving process, source mutation, worktree leak,
+or incomplete accounting produces `Protocol failed` and blocks the full run.
+The full run contains 36 Claude and 24 Codex conditions, stops before a condition
+could exceed the aggregate $40 ceiling, and never substitutes the 100-call
+ceiling for a censored observation.
+
+The primary outcome is an accepted executable attack whose first executable
+test edit occurs within 60 tool calls after the first broad action. The report
+keeps completion at 20, 40, 60, and 100 calls, model breakdowns, paired seeded
+bootstrap intervals, accepted/landed attack guardrails, unusable submissions,
+and exact censored values. Passive warning is diagnostic only and cannot decide
+the cross-provider verdict. The complete verdict boundaries are frozen in the
+schema-v2 evaluator and checkpoint flow remains incapable of changing gameplay
+outcomes.
 
 ## 14. Acceptance invariants
 

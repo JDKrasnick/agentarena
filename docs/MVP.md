@@ -294,11 +294,29 @@ private implementation transcripts, private reasoning, provider identity,
 credentials, and raw frozen patch bytes. Only the reviewer that produced it
 receives it immediately before the attack instructions and inspects the target
 through the assigned worktree. Repair prompts contain verifier-confirmed tests
-rather than raw findings, and only committed attacks can land or recoil. Cited
-files, nearby tests, and direct dependencies remain inspectable. Broader
-repository rediscovery is allowed and warned about when visible, then recorded
-as `targeted`, `broad`, or `unknown`; this telemetry never affects health,
-scoring, retries, coverage, or selection.
+rather than raw findings, and only committed attacks can land or recoil.
+
+The trusted evidence scope includes packet-cited files, symbols, and test or
+fixture paths; nearby tests; direct one-hop dependencies or importers; and the
+repository instructions or build manifests required by the focused command.
+When complete adapter visibility observes a read or search outside that set,
+the checkpoint evaluator classifies it as bounded exploration, pauses further
+tool use, and requires a structured checkpoint decision: return to trusted evidence, stop
+without an attack, or request a temporary lease naming the exploration
+hypothesis, requested paths, and bounded tool-call allowance. The harness must
+record acknowledgement before resuming and checkpoint again when a lease is
+exhausted. Partial or absent visibility remains `unknown` and does not pause or
+penalize the lane. The lifecycle is telemetry only for game outcomes: it cannot
+change health, scoring, damage, recoil, attack validity, retries, coverage, or
+selection.
+
+This compact-restart checkpoint is implemented first as a developer-only
+evaluation and is not enabled in ordinary fights. Schema v2 freezes twelve
+existing scenarios, uses Claude control/passive/checkpoint and Codex
+control/checkpoint conditions, and requires a four-scenario-per-model transport
+gate before any full real-model comparison. The evaluation has a separate
+$40 aggregate ceiling and its own redacted local artifacts; it cannot affect a
+source battle's coverage, health ledger, or recommendation.
 
 Normal attacker context contains only the current lane-safe summary and active
 v2 packet. When the handoff is stale, malformed, or blocked, the attacker may

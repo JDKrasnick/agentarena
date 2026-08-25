@@ -37,6 +37,7 @@
     "test:smoke": "vitest run test/smoke",
     "test:coverage": "vitest run test/unit test/integration --coverage.enabled --coverage.reporter=text --coverage.reporter=json-summary",
     "test:live": "tsx test/live/run.ts",
+    "eval:pause-replan": "tsx src/cli.ts eval:pause-replan",
     "demo:dashboard": "tsx test/live/dashboard-demo.tsx",
     "demo:web": "npm run build:web && tsx test/live/web-dashboard-demo.ts",
     "demo:window": "npm run build && tsx test/live/web-dashboard-demo.ts --window",
