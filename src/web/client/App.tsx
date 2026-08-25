@@ -24,6 +24,7 @@ import type {
   DashboardContestant,
   DashboardState,
 } from "../../dashboard/state.js";
+import { providerActivityLabel } from "../../dashboard/provider-activity.js";
 import {
   ARENA_THEMES,
   DEFAULT_ARENA_THEME,
@@ -233,7 +234,7 @@ function Fighter({
       <dl className="fighter-facts">
         <div>
           <dt>Current move</dt>
-          <dd>{fighter.activity.replaceAll("_", " ")}</dd>
+          <dd>{providerActivityLabel(fighter)}</dd>
         </div>
         <div>
           <dt>Checks</dt>
@@ -434,7 +435,7 @@ function FighterDetail({
         <section className="workstream">
           <header>
             <h2>Agent workstream</h2>
-            <span>{fighter.activity.replaceAll("_", " ")}</span>
+            <span>{providerActivityLabel(fighter)}</span>
           </header>
           <FullAgentOutput fighter={fighter} provider={provider} />
           {round === "live" && canSteer ? (
@@ -480,6 +481,28 @@ function FighterDetail({
                         ? "Running"
                         : `${(invocation.durationMs / 1000).toFixed(1)}s`}
                     </time>
+                    {invocation.progress?.length ? (
+                      <ol className="provider-progress">
+                        {invocation.progress
+                          .slice(-20)
+                          .map((activity, index) => (
+                            <li key={`${activity.timestamp}-${String(index)}`}>
+                              <time>{activity.timestamp.slice(11, 19)}</time>{" "}
+                              {activity.label}
+                            </li>
+                          ))}
+                      </ol>
+                    ) : null}
+                    {invocation.diagnosticArtifactRefs?.length ? (
+                      <details>
+                        <summary>Diagnostic artifacts</summary>
+                        <ul>
+                          {invocation.diagnosticArtifactRefs.map((artifact) => (
+                            <li key={artifact}>{artifact}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
                   </li>
                 ))}
               </ol>
@@ -1720,7 +1743,7 @@ function LabBench({
         </div>
         <div>
           <dt>Current work</dt>
-          <dd>{fighter.activity.replaceAll("_", " ")}</dd>
+          <dd>{providerActivityLabel(fighter)}</dd>
         </div>
       </dl>
       <section>
@@ -2029,7 +2052,7 @@ export function BroadcastArena({
             />
             <ProviderDisc fighter={contestants.a} id="a" />
             <strong>{title(contestants.a.provider)}</strong>
-            <small>{contestants.a.activity.replaceAll("_", " ")}</small>
+            <small>{providerActivityLabel(contestants.a)}</small>
             <BrowserSessionAction
               sessions={state.browserSessions.filter(
                 (session) => session.contestantId === "a",
@@ -2047,7 +2070,7 @@ export function BroadcastArena({
             />
             <ProviderDisc fighter={contestants.b} id="b" />
             <strong>{title(contestants.b.provider)}</strong>
-            <small>{contestants.b.activity.replaceAll("_", " ")}</small>
+            <small>{providerActivityLabel(contestants.b)}</small>
             <BrowserSessionAction
               sessions={state.browserSessions.filter(
                 (session) => session.contestantId === "b",
@@ -2591,6 +2614,7 @@ export function App() {
     null,
   );
   const [reviewingResults, setReviewingResults] = useState(false);
+  const [, setClock] = useState(0);
   const designContract = DESIGN_CONTRACTS[theme];
 
   useEffect(() => {
@@ -2604,6 +2628,14 @@ export function App() {
       setState(JSON.parse(event.data as string) as DashboardState);
     return () => events.close();
   }, []);
+  useEffect(() => {
+    if (state.status !== "running") return;
+    const timer = window.setInterval(
+      () => setClock((value) => value + 1),
+      1_000,
+    );
+    return () => window.clearInterval(timer);
+  }, [state.status]);
 
   const hasResult = Boolean(state.result);
   const showResults =

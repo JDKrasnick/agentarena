@@ -4,6 +4,7 @@ import Link from "ink-link";
 import type { ArenaBattleControl } from "../observability/control.js";
 import type { ContestantId, Stage } from "../core/types.js";
 import type { DashboardObserver, DashboardState } from "./state.js";
+import { providerActivityLabel } from "./provider-activity.js";
 
 type View = "overview" | "a" | "b" | "rounds" | "system" | "result";
 type InkColor = "cyan" | "green" | "yellow" | "red";
@@ -318,7 +319,7 @@ function Contestant({
       </Text>
       <Text wrap="truncate-end">
         <Text dimColor> {contestant.model ?? "default model"} · </Text>
-        {contestant.activity.replaceAll("_", " ")}
+        {providerActivityLabel(contestant)}
       </Text>
       {preview ? (
         <Text
@@ -583,11 +584,18 @@ export function Dashboard({
   const [offset, setOffset] = useState(0);
   const [follow, setFollow] = useState(true);
   const [filter, setFilter] = useState<"all" | "stdout" | "stderr">("all");
+  const [, setClock] = useState(0);
 
   useEffect(
     () => observer.subscribe(() => setState(observer.snapshot())),
     [observer],
   );
+  useEffect(() => {
+    if (state.status !== "running") return;
+    const timer = setInterval(() => setClock((value) => value + 1), 1_000);
+    timer.unref();
+    return () => clearInterval(timer);
+  }, [state.status]);
   useEffect(() => {
     if (
       state.status !== "running" &&
@@ -731,6 +739,22 @@ export function Dashboard({
               .map((invocation) => `${invocation.stage}:${invocation.status}`)
               .join(" · ") || "none"}
           </Text>
+          <Text>{providerActivityLabel(state.contestants[view])}</Text>
+          {state.contestants[view].invocations
+            .at(-1)
+            ?.progress?.slice(-6)
+            .map((activity, index) => (
+              <Text dimColor key={`${activity.timestamp}-${String(index)}`}>
+                {activity.timestamp.slice(11, 19)} · {activity.label}
+              </Text>
+            ))}
+          {state.contestants[view].invocations
+            .at(-1)
+            ?.diagnosticArtifactRefs?.map((artifact) => (
+              <Text dimColor key={artifact}>
+                artifact · {artifact}
+              </Text>
+            ))}
           <Text dimColor>
             {filter} · {follow ? "following" : `scroll -${String(offset)}`}
           </Text>

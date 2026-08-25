@@ -192,7 +192,11 @@ const RunCommandSchema = z
 const RunBudgetsSchema = z
   .object({
     implementationMs: z.number().int().positive(),
-    reviewMs: z.number().int().positive(),
+    reviewMs: z
+      .number()
+      .int()
+      .positive()
+      .max(10 * 60 * 1000),
     attackMs: z.number().int().positive(),
     verifierMs: z.number().int().positive(),
     repairMs: z.number().int().positive(),

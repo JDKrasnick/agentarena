@@ -28,7 +28,14 @@ if (!agent || !stage || !submission)
 const sourcePath = path.join(process.cwd(), "src", "slug.mjs");
 
 if (stage === "provider_health_probe") {
-  process.stdout.write("AGENT_ARENA_PROVIDER_HEALTH_OK\n");
+  const sentinel = "AGENT_ARENA_PROVIDER_HEALTH_OK";
+  process.stdout.write(
+    agent === "codex"
+      ? `${JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: sentinel } })}\n`
+      : agent === "claude"
+        ? `${JSON.stringify({ type: "result", result: sentinel })}\n`
+        : `${JSON.stringify({ type: "message", role: "assistant", content: sentinel })}\n`,
+  );
 } else if (stage === "implement") {
   if (process.env.AGENT_ARENA_EMPTY_IMPLEMENTATION === "1") {
     await writeFile(
@@ -368,6 +375,8 @@ if (stage === "provider_health_probe") {
     submission,
     JSON.stringify({ version: 2, findings: repeatedWhitespaceFinding }),
   );
+  if (process.env.AGENT_ARENA_FAKE_REVIEW_TIMEOUT_AFTER_WRITE === "1")
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
 } else if (stage === "collect_attacks") {
   if (
     process.env.AGENT_ARENA_FAKE_INVALID_ATTACK_ALWAYS === "1" &&

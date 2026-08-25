@@ -665,6 +665,53 @@ describe("fake-adapter fight on a mocked real issue", () => {
     );
   });
 
+  it("salvages a valid review written before the provider deadline", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = duelConfig(repositoryRoot);
+    config.limits.reviewMs = 500;
+    const timedReviewAdapter = (id: "codex" | "claude") =>
+      new CommandAgentAdapter({
+        id,
+        executable: process.execPath,
+        args: [fixtureAgent],
+        environment: { AGENT_ARENA_FAKE_REVIEW_TIMEOUT_AFTER_WRITE: "1" },
+      });
+    const outcome = await new Arena({
+      adapters: {
+        codex: timedReviewAdapter("codex"),
+        claude: timedReviewAdapter("claude"),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+
+    const reviews = outcome.state.reviewInvocations.filter(
+      (entry) => entry.submissionStatus === "submitted",
+    );
+    expect(reviews).toHaveLength(6);
+    expect(reviews.every((review) => review.salvagedAtDeadline)).toBe(true);
+    expect(
+      reviews.every((review) => review.invocation.status === "timed_out"),
+    ).toBe(true);
+    expect(
+      reviews.every(
+        (review) =>
+          review.diagnosticArtifactRefs?.some((ref) =>
+            ref.endsWith(".stdout.log"),
+          ) &&
+          review.diagnosticArtifactRefs.some((ref) =>
+            ref.endsWith(".stderr.log"),
+          ),
+      ),
+    ).toBe(true);
+    expect(
+      outcome.state.failureRecords.filter(
+        (record) =>
+          record.category === "timeout" &&
+          record.terminalDisposition === "recovered",
+      ),
+    ).toHaveLength(6);
+  }, 30_000);
+
   it("refreshes a blocker from a clean frozen target worktree", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = duelConfig(repositoryRoot);

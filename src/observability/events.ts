@@ -69,6 +69,23 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
     durationMs: z.number().int().nonnegative(),
     contestantId: ContestantIdSchema.optional(),
     summary: z.string().min(1).optional(),
+    sessionId: z.string().min(1).optional(),
+    diagnosticArtifactRefs: z.array(z.string().min(1)).optional(),
+  }),
+  event("invocation_progress", {
+    invocationId: z.string(),
+    source: OutputSourceSchema,
+    contestantId: ContestantIdSchema.optional(),
+    kind: z.enum([
+      "message",
+      "tool_started",
+      "tool_finished",
+      "progress",
+      "result",
+    ]),
+    label: z.string().min(1).max(160),
+    toolName: z.string().min(1).max(80).optional(),
+    sessionId: z.string().min(1).optional(),
   }),
   event("output", {
     invocationId: z.string(),

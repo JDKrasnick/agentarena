@@ -83,7 +83,7 @@ limits:
   rounds: 3
   attacks_per_round: 3
   implementation_minutes: 15
-  review_minutes: 8
+  review_minutes: 10
   attack_minutes: 8
   verifier_minutes: 2
   repair_minutes: 8
@@ -95,6 +95,10 @@ delivery:
   enabled: false
   merge_enabled: false
 ```
+
+`review_minutes` defaults to `10`, accepts positive lower values, and rejects
+values above `10`. Provider progress is decoded into safe activity events and
+diagnostic artifacts; silence never ends a call before its configured deadline.
 
 `models`/`--models` is optional and follows contestant order. If omitted, each
 provider CLI chooses its configured default. This also permits model-vs-model
