@@ -26,6 +26,7 @@ import type { RunState } from "../core/types.js";
 import { discoverCapabilities } from "../permissions/policy.js";
 import { ArenaBattleControl } from "../observability/control.js";
 import type { ArenaObserver } from "../observability/events.js";
+import { PlainProgressObserver } from "../observability/plain-progress.js";
 import type { WebDashboard } from "../dashboard/web-server.js";
 import type { DesktopDashboardWindow } from "../dashboard/desktop-window.js";
 import {
@@ -110,6 +111,7 @@ function createArena(
   observability?: {
     observer?: ArenaObserver;
     battleControl?: ArenaBattleControl;
+    showProgressWithObserver?: boolean;
   },
   mcpPolicy?: FrozenMcpPolicy,
   recoveryRuntime?: {
@@ -143,9 +145,10 @@ function createArena(
           ) => recoveryRuntime.recordUnrecovered(stage),
         }
       : {}),
-    onProgress: observer
-      ? () => undefined
-      : (message) => stdout.write(`${message}\n`),
+    onProgress:
+      observer && !observability?.showProgressWithObserver
+        ? () => undefined
+        : (message) => stdout.write(`${message}\n`),
     ...(observer ? { observer } : {}),
     ...(observability?.battleControl
       ? { battleControl: observability.battleControl }
@@ -261,6 +264,7 @@ export async function runFight(
   const activeDisplay = resolveDisplayMode(display, launchWindow, interactive);
   const useDesktopDashboard = activeDisplay === "window";
   const useTerminalDashboard = activeDisplay === "terminal";
+  const usePlainProgress = activeDisplay === "plain";
   if (useTerminalDashboard && !interactive) {
     throw new Error(
       "--display terminal requires an interactive TTY; use --display plain for redirected output or CI",
@@ -311,12 +315,15 @@ export async function runFight(
     const dashboardObserver = new DashboardObserver();
     observer = dashboardObserver;
     dashboard = startDashboard(dashboardObserver, control);
+  } else if (usePlainProgress) {
+    observer = new PlainProgressObserver((line) => stdout.write(line));
   }
   const arena = createArena(
     config,
     {
       ...(observer ? { observer } : {}),
       battleControl: control,
+      ...(usePlainProgress ? { showProgressWithObserver: true } : {}),
     },
     mcpPolicy,
     recoveryRuntime,
@@ -503,6 +510,7 @@ export async function runFight(
         {
           ...(observer ? { observer } : {}),
           battleControl: control,
+          ...(usePlainProgress ? { showProgressWithObserver: true } : {}),
         },
         mcpPolicy,
         recoveryRuntime,

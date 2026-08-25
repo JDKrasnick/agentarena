@@ -37,6 +37,7 @@ import type {
   ProviderStage,
   ProviderStageFailure,
 } from "../recovery/provider-policy.js";
+import type { ProviderStreamKind } from "./provider-stream.js";
 
 async function runObservedProcess(
   request: ProcessRequest,
@@ -73,6 +74,19 @@ async function runObservedProcess(
           ? { contestantId: observation.contestantId }
           : {}),
       }),
+    onActivity: (activity) =>
+      observation.observer?.publish({
+        type: "invocation_progress",
+        invocationId,
+        source: observation.source,
+        kind: activity.kind,
+        label: activity.label,
+        ...(activity.toolName ? { toolName: activity.toolName } : {}),
+        ...(activity.sessionId ? { sessionId: activity.sessionId } : {}),
+        ...(observation.contestantId
+          ? { contestantId: observation.contestantId }
+          : {}),
+      }),
   });
   await observation.observer.publish({
     type: "invocation_finished",
@@ -86,6 +100,16 @@ async function runObservedProcess(
             ? "succeeded"
             : "failed",
     durationMs: result.durationMs,
+    ...(result.providerDiagnostics?.sessionId
+      ? { sessionId: result.providerDiagnostics.sessionId }
+      : {}),
+    diagnosticArtifactRefs: [
+      result.stdoutPath,
+      result.stderrPath,
+      ...(result.providerDiagnostics?.eventLogPath
+        ? [result.providerDiagnostics.eventLogPath]
+        : []),
+    ],
     ...(observation.contestantId
       ? { contestantId: observation.contestantId }
       : {}),
@@ -425,6 +449,7 @@ export interface CommandAdapterOptions {
   args: string[];
   model?: string;
   environment?: Record<string, string>;
+  providerStream?: ProviderStreamKind;
 }
 
 export function providerCommand(
@@ -448,8 +473,10 @@ export function providerCommand(
     case "codex":
       return {
         executable: "codex",
+        providerStream: "codex",
         args: [
           "exec",
+          "--json",
           ...(mcpPolicy
             ? (providerInventory?.servers.length ?? 0) > 0
               ? (providerInventory?.servers ?? []).flatMap((server) => [
@@ -472,12 +499,14 @@ export function providerCommand(
         );
       return {
         executable: "claude",
+        providerStream: "claude",
         args: [
           "--print",
           "--permission-mode",
           "bypassPermissions",
           "--output-format",
-          "text",
+          "stream-json",
+          "--verbose",
           ...modelArgs,
           ...(mcpPolicy && selectedMcp?.length === 0
             ? [
@@ -497,11 +526,14 @@ export function providerCommand(
         executable: "gemini",
         args: [
           "--yolo",
+          "--output-format",
+          "stream-json",
           ...modelArgs,
           ...(mcpPolicy
             ? ["--allowed-mcp-server-names", (selectedMcp ?? []).join(",")]
             : []),
         ],
+        providerStream: "gemini",
         ...(resolvedModel ? { model: resolvedModel } : {}),
       };
   }
@@ -565,6 +597,9 @@ export class CommandAgentAdapter implements AgentAdapter {
         ),
       },
       signal: input.signal,
+      ...(this.options.providerStream
+        ? { providerStream: this.options.providerStream }
+        : {}),
     });
     const finished = new Date();
     const transportFailures = command.transportFailures ?? [];
@@ -652,6 +687,9 @@ export class CommandAgentAdapter implements AgentAdapter {
         ),
       },
       signal: input.signal,
+      ...(this.options.providerStream
+        ? { providerStream: this.options.providerStream }
+        : {}),
       onOutput: (stream, text) =>
         input.observer?.publish({
           type: "output",
@@ -659,6 +697,17 @@ export class CommandAgentAdapter implements AgentAdapter {
           source: input.outputSource ?? "agent",
           stream,
           text,
+          ...(input.contestantId ? { contestantId: input.contestantId } : {}),
+        }),
+      onActivity: (activity) =>
+        input.observer?.publish({
+          type: "invocation_progress",
+          invocationId,
+          source: input.outputSource ?? "agent",
+          kind: activity.kind,
+          label: activity.label,
+          ...(activity.toolName ? { toolName: activity.toolName } : {}),
+          ...(activity.sessionId ? { sessionId: activity.sessionId } : {}),
           ...(input.contestantId ? { contestantId: input.contestantId } : {}),
         }),
     };
@@ -715,6 +764,16 @@ export class CommandAgentAdapter implements AgentAdapter {
       durationMs: invocation.durationMs,
       ...(input.contestantId ? { contestantId: input.contestantId } : {}),
       ...(summary ? { summary } : {}),
+      ...(command.providerDiagnostics?.sessionId
+        ? { sessionId: command.providerDiagnostics.sessionId }
+        : {}),
+      diagnosticArtifactRefs: [
+        command.stdoutPath,
+        command.stderrPath,
+        ...(command.providerDiagnostics?.eventLogPath
+          ? [command.providerDiagnostics.eventLogPath]
+          : []),
+      ],
     });
     return invocation;
   }
@@ -934,6 +993,9 @@ export class CommandAttackVerifier implements AttackVerifier {
         timeoutMs: input.timeoutMs,
         logPrefix: input.transcriptPrefix,
         signal: input.signal,
+        ...(this.command.providerStream
+          ? { providerStream: this.command.providerStream }
+          : {}),
       },
       {
         ...(input.observer ? { observer: input.observer } : {}),
@@ -1083,6 +1145,9 @@ export class CommandAttackVerifier implements AttackVerifier {
         timeoutMs: input.timeoutMs,
         logPrefix: input.transcriptPrefix,
         signal: input.signal,
+        ...(this.command.providerStream
+          ? { providerStream: this.command.providerStream }
+          : {}),
       },
       {
         ...(input.observer ? { observer: input.observer } : {}),
@@ -1198,6 +1263,9 @@ export class CommandAttackVerifier implements AttackVerifier {
         timeoutMs: input.timeoutMs,
         logPrefix: input.transcriptPrefix,
         signal: input.signal,
+        ...(this.command.providerStream
+          ? { providerStream: this.command.providerStream }
+          : {}),
       },
       {
         ...(input.observer ? { observer: input.observer } : {}),
@@ -1251,6 +1319,9 @@ async function invokeStructuredGenerator(
       timeoutMs: input.timeoutMs,
       logPrefix: input.transcriptPrefix,
       signal: input.signal,
+      ...(command.providerStream
+        ? { providerStream: command.providerStream }
+        : {}),
       env: {
         AGENT_ARENA_AGENT: id,
         AGENT_ARENA_STAGE: stage,

@@ -202,6 +202,19 @@ export const CommandResultSchema = z.object({
       }),
     )
     .optional(),
+  providerDiagnostics: z
+    .object({
+      sessionId: z.string().min(1).optional(),
+      eventCount: z.number().int().nonnegative(),
+      toolStartedCount: z.number().int().nonnegative(),
+      toolFinishedCount: z.number().int().nonnegative(),
+      firstActivityAt: z.string().datetime().optional(),
+      lastActivityAt: z.string().datetime().optional(),
+      currentOpenTool: z.string().min(1).optional(),
+      decodingWarnings: z.array(z.string()),
+      eventLogPath: z.string().min(1),
+    })
+    .optional(),
 });
 export type CommandResult = z.infer<typeof CommandResultSchema>;
 
@@ -561,6 +574,8 @@ export const ReviewInvocationRecordSchema = z.object({
   rawArtifactPath: z.string().optional(),
   parsedArtifactPath: z.string().optional(),
   artifactPath: z.string().optional(),
+  salvagedAtDeadline: z.boolean().optional(),
+  diagnosticArtifactRefs: z.array(z.string()).optional(),
   detail: z.string().optional(),
 });
 export type ReviewInvocationRecord = z.infer<
@@ -1005,7 +1020,8 @@ const FightConfigBaseSchema = z
         .number()
         .int()
         .positive()
-        .default(8 * 60 * 1000),
+        .max(10 * 60 * 1000)
+        .default(10 * 60 * 1000),
       attackMs: z.number().int().positive(),
       verifierMs: z.number().int().positive(),
       repairMs: z.number().int().positive(),

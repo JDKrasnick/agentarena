@@ -21,6 +21,17 @@ export interface DashboardContestant {
     round?: RoundId;
     startedAt: string;
     durationMs?: number;
+    lastActivityAt?: string;
+    currentOpenTool?: string;
+    sessionId?: string;
+    diagnosticArtifactRefs?: string[];
+    progress?: Array<{
+      kind:
+        "message" | "tool_started" | "tool_finished" | "progress" | "result";
+      label: string;
+      timestamp: string;
+      toolName?: string;
+    }>;
   }>;
   summaries: Array<{
     text: string;
@@ -190,6 +201,7 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
           stage: event.stage,
           status: "running",
           startedAt: event.timestamp,
+          progress: [],
           ...((event.round ?? state.round)
             ? { round: event.round ?? state.round }
             : {}),
@@ -204,6 +216,35 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
         });
       }
       return;
+    case "invocation_progress":
+      if (event.contestantId) {
+        const target = state.contestants[event.contestantId];
+        const invocation = target.invocations.find(
+          (entry) => entry.id === event.invocationId,
+        );
+        if (!invocation) return;
+        invocation.lastActivityAt = event.timestamp;
+        if (event.sessionId) invocation.sessionId = event.sessionId;
+        if (event.kind === "tool_started" && event.toolName)
+          invocation.currentOpenTool = event.toolName;
+        if (
+          event.kind === "tool_finished" &&
+          (!event.toolName || invocation.currentOpenTool === event.toolName)
+        )
+          delete invocation.currentOpenTool;
+        appendBounded((invocation.progress ??= []), {
+          kind: event.kind,
+          label: event.label,
+          timestamp: event.timestamp,
+          ...(event.toolName ? { toolName: event.toolName } : {}),
+        });
+        target.activity = event.toolName
+          ? event.kind === "tool_started"
+            ? `Waiting on ${event.toolName}`
+            : event.label
+          : event.label;
+      }
+      return;
     case "invocation_finished":
       if (event.contestantId) {
         const target = state.contestants[event.contestantId];
@@ -215,6 +256,9 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
         if (invocation) {
           invocation.status = event.status;
           invocation.durationMs = event.durationMs;
+          if (event.sessionId) invocation.sessionId = event.sessionId;
+          if (event.diagnosticArtifactRefs)
+            invocation.diagnosticArtifactRefs = event.diagnosticArtifactRefs;
         }
         const summary = target.summaries.find(
           (entry) => entry.invocationId === event.invocationId,

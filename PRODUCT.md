@@ -514,7 +514,21 @@ Each surviving agent receives anonymized opponent patches and changes roles from
 The MVP runs three review–attack–repair rounds after the initial implementation.
 In each round, the harness first freezes both current implementation patches.
 Each eligible reviewer then gets a dedicated read-only budget, configured by
-`review_minutes` separately from the focused test-generation budget. The review
+`review_minutes` separately from the focused test-generation budget. The budget
+defaults to 10 minutes, accepts smaller positive values, and cannot
+exceed 10 minutes. At the deadline the harness terminates the owned process
+tree, then accepts an already-written review only when fault-isolated parsing
+classifies the complete file as `valid` or `valid_empty`. The review record is
+marked salvaged while its invocation remains `timed_out`; partial, invalid, and
+missing files receive the ordinary targeted retry and may lose coverage.
+
+Provider calls emit structured operational activity independently of visible
+stdout: assistant messages, tool starts and finishes, progress, and completion.
+The harness retains redacted assistant text plus normalized event, stdout, and
+stderr artifacts, session ID when available, counts, timestamps, current open
+tool, decoding warnings, and deadline cleanup facts. Unknown provider event
+variants never fail an invocation. Activity and silence are observability only;
+neither can change judging, score, coverage, or timeout behavior. The review
 produces a v2 trusted evidence-handoff packet under
 [`docs/TRUSTED_EVIDENCE_HANDOFF_RFC.md`](docs/TRUSTED_EVIDENCE_HANDOFF_RFC.md).
 The packet contains harness-attested target and permission fingerprints plus at

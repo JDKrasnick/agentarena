@@ -7,6 +7,12 @@ import {
   ProcessTreeSupervisor,
   type ProcessCleanupResult,
 } from "./process-supervisor.js";
+import {
+  ProviderStreamDecoder,
+  type ProviderActivity,
+  type ProviderStreamDiagnostics,
+  type ProviderStreamKind,
+} from "../agents/provider-stream.js";
 
 const INHERITED_ENV = [
   "PATH",
@@ -38,6 +44,8 @@ export interface ProcessRequest {
     stream: "stdout" | "stderr",
     text: string,
   ) => void | Promise<void>;
+  providerStream?: ProviderStreamKind;
+  onActivity?: (activity: ProviderActivity) => void | Promise<void>;
 }
 
 export function minimalEnvironment(
@@ -189,6 +197,8 @@ interface SupervisedOptions {
   signal?: AbortSignal;
   secrets?: readonly string[];
   onOutput?: ProcessRequest["onOutput"];
+  providerStream?: ProviderStreamKind;
+  onActivity?: ProcessRequest["onActivity"];
 }
 
 interface SupervisedResult {
@@ -199,6 +209,9 @@ interface SupervisedResult {
   timedOut: boolean;
   spawnError?: unknown;
   deadline?: NonNullable<CommandResult["deadline"]>;
+  providerEvents?: readonly ProviderActivity[];
+  providerDiagnostics?: ProviderStreamDiagnostics;
+  providerRawOutput?: string;
 }
 
 function deadlineResult(
@@ -248,11 +261,15 @@ async function supervise(
 
   let stdout = "";
   let stderr = "";
+  let providerRawOutput = "";
   let outputQueue: Promise<void> = Promise.resolve();
   const redactors = {
     stdout: new StreamingRedactor(options.secrets),
     stderr: new StreamingRedactor(options.secrets),
   };
+  const decoder = options.providerStream
+    ? new ProviderStreamDecoder(options.providerStream)
+    : undefined;
   const publish = (stream: "stdout" | "stderr", text: string): void => {
     if (!text) return;
     if (stream === "stdout") stdout += text;
@@ -262,12 +279,32 @@ async function supervise(
     });
   };
   const flushStreams = (): void => {
+    if (decoder) publishProviderUpdate(decoder.flush());
     publish("stdout", redactors.stdout.flush());
     publish("stderr", redactors.stderr.flush());
   };
-  subprocess.stdout?.on("data", (chunk: Buffer) =>
-    publish("stdout", redactors.stdout.push(chunk.toString("utf8"))),
-  );
+  const publishProviderUpdate = (
+    update: ReturnType<ProviderStreamDecoder["push"]>,
+  ): void => {
+    for (const activity of update.activities) {
+      outputQueue = outputQueue.then(async () => {
+        await options.onActivity?.(activity);
+      });
+    }
+    for (const text of update.assistantText) {
+      publish("stdout", redactors.stdout.push(`${text}\n`));
+    }
+    for (const text of update.assistantDeltas) {
+      publish("stdout", redactors.stdout.push(text));
+    }
+  };
+  subprocess.stdout?.on("data", (chunk: Buffer) => {
+    const text = chunk.toString("utf8");
+    if (decoder) {
+      providerRawOutput += text;
+      publishProviderUpdate(decoder.push(text));
+    } else publish("stdout", redactors.stdout.push(text));
+  });
   subprocess.stderr?.on("data", (chunk: Buffer) =>
     publish("stderr", redactors.stderr.push(chunk.toString("utf8"))),
   );
@@ -322,6 +359,13 @@ async function supervise(
       ...(expiredAt !== undefined && cleanupResult !== undefined
         ? { deadline: deadlineResult(expiredAt, cleanupResult) }
         : {}),
+      ...(decoder
+        ? {
+            providerEvents: decoder.eventLog(),
+            providerDiagnostics: decoder.diagnostics(),
+            providerRawOutput,
+          }
+        : {}),
     };
   } catch (spawnError) {
     flushStreams();
@@ -336,6 +380,13 @@ async function supervise(
       spawnError,
       ...(expiredAt !== undefined && cleanupResult !== undefined
         ? { deadline: deadlineResult(expiredAt, cleanupResult) }
+        : {}),
+      ...(decoder
+        ? {
+            providerEvents: decoder.eventLog(),
+            providerDiagnostics: decoder.diagnostics(),
+            providerRawOutput,
+          }
         : {}),
     };
   } finally {
@@ -366,6 +417,12 @@ async function run(
     ...(request.signal === undefined ? {} : { signal: request.signal }),
     ...(request.secrets === undefined ? {} : { secrets: request.secrets }),
     ...(request.onOutput === undefined ? {} : { onOutput: request.onOutput }),
+    ...(request.providerStream === undefined
+      ? {}
+      : { providerStream: request.providerStream }),
+    ...(request.onActivity === undefined
+      ? {}
+      : { onActivity: request.onActivity }),
   });
   const failureClass = result.spawnError
     ? (classifySpawnError(result.spawnError) ?? "arena_infrastructure")
@@ -380,16 +437,28 @@ async function run(
   }
   const stdoutPath = `${request.logPrefix}.stdout.log`;
   const stderrPath = `${request.logPrefix}.stderr.log`;
+  const eventLogPath = `${request.logPrefix}.events.jsonl`;
   await Promise.all([
     writeFile(stdoutPath, redact(result.stdout, request.secrets), "utf8"),
     writeFile(stderrPath, redact(result.stderr, request.secrets), "utf8"),
+    ...(result.providerEvents
+      ? [
+          writeFile(
+            eventLogPath,
+            result.providerEvents
+              .map((event) => JSON.stringify(event))
+              .join("\n") + (result.providerEvents.length ? "\n" : ""),
+            "utf8",
+          ),
+        ]
+      : []),
   ]);
   const transportFailures = findTransportFailures(
-    `${result.stdout}\n${result.stderr}`,
+    `${result.providerRawOutput ?? result.stdout}\n${result.stderr}`,
     request.secrets,
   );
   const base = {
-    command,
+    command: redact(command, request.secrets),
     cwd: request.cwd,
     exitCode: result.exitCode,
     signal: result.signal,
@@ -400,6 +469,14 @@ async function run(
     stderrPath,
     ...(result.deadline ? { deadline: result.deadline } : {}),
     ...(transportFailures.length > 0 ? { transportFailures } : {}),
+    ...(result.providerDiagnostics
+      ? {
+          providerDiagnostics: {
+            ...result.providerDiagnostics,
+            eventLogPath,
+          },
+        }
+      : {}),
   };
   return failureClass ? { ...base, failureClass } : base;
 }

@@ -3979,6 +3979,7 @@ export class RoundEngine {
     parsedArtifactPath: string;
     startedAt: string;
     finishedAt: string;
+    salvagedAtDeadline: boolean;
   }> {
     await removeSubmission(options.worktree);
     const prompt = `${composeAttackReviewPrompt({
@@ -4011,7 +4012,7 @@ export class RoundEngine {
       observer: context.observer,
     });
     const finishedAt = this.now().toISOString();
-    if (invocation.status !== "succeeded")
+    if (invocation.status !== "succeeded" && invocation.status !== "timed_out")
       throw new Error(`Targeted handoff review refresh ${invocation.status}`);
     const captured = await this.persistProviderSubmission(context, {
       worktree: options.worktree,
@@ -4027,6 +4028,33 @@ export class RoundEngine {
       captured.parsed.outcome !== "valid_empty"
     )
       throw new Error("Targeted handoff review refresh was invalid");
+    if (invocation.status === "timed_out") {
+      await this.recordFailureAttempt(context, {
+        stage: "model_invocation",
+        subject: `targeted-review-deadline:${String(options.round)}:${options.agent}->${options.target}`,
+        category: "timeout",
+        attempt: 1,
+        startedAt,
+        finishedAt,
+        status: "succeeded",
+        contestantId: options.agent,
+        laneId: `round-${String(options.round)}:${options.agent}->${options.target}`,
+        terminalDisposition: "recovered",
+        diagnosticArtifactRefs: [
+          captured.rawPath,
+          captured.parsedPath,
+          ...(invocation.command
+            ? [
+                invocation.command.stdoutPath,
+                invocation.command.stderrPath,
+                ...(invocation.command.providerDiagnostics?.eventLogPath
+                  ? [invocation.command.providerDiagnostics.eventLogPath]
+                  : []),
+              ]
+            : []),
+        ],
+      });
+    }
     const submission = captured.parsed.value as {
       version: 2;
       findings: HandoffFindingPayload[];
@@ -4054,6 +4082,7 @@ export class RoundEngine {
       parsedArtifactPath: captured.parsedPath,
       startedAt,
       finishedAt,
+      salvagedAtDeadline: invocation.status === "timed_out",
     };
   }
 
@@ -4268,6 +4297,26 @@ export class RoundEngine {
       sectionOutcomes: refreshedReview.sectionOutcomes,
       rawArtifactPath: refreshedReview.rawArtifactPath,
       parsedArtifactPath: refreshedReview.parsedArtifactPath,
+      ...(refreshedReview.salvagedAtDeadline
+        ? { salvagedAtDeadline: true }
+        : {}),
+      diagnosticArtifactRefs: [
+        refreshedReview.rawArtifactPath,
+        refreshedReview.parsedArtifactPath,
+        ...(refreshedReview.invocation.command
+          ? [
+              refreshedReview.invocation.command.stdoutPath,
+              refreshedReview.invocation.command.stderrPath,
+              ...(refreshedReview.invocation.command.providerDiagnostics
+                ?.eventLogPath
+                ? [
+                    refreshedReview.invocation.command.providerDiagnostics
+                      .eventLogPath,
+                  ]
+                : []),
+            ]
+          : []),
+      ],
       detail: `Targeted packet-size refresh completed from ${refreshedReview.startedAt} to ${refreshedReview.finishedAt}`,
     });
     return {
@@ -4345,6 +4394,7 @@ export class RoundEngine {
         );
         let invocation!: AgentInvocation;
         let submissionFailure: FailureRecord | undefined;
+        let salvagedAtDeadline = false;
         let finalAttemptStartedAt = this.now().toISOString();
         let finalAttemptFinishedAt = finalAttemptStartedAt;
         for (const attemptNumber of [1, 2] as const) {
@@ -4368,7 +4418,10 @@ export class RoundEngine {
           finalAttemptFinishedAt = attemptFinishedAt;
           invocation = candidate;
           let usableSubmission = false;
-          if (candidate.status === "succeeded") {
+          if (
+            candidate.status === "succeeded" ||
+            candidate.status === "timed_out"
+          ) {
             try {
               const raw = await readFile(
                 path.join(worktree, ".agent-arena-submission.json"),
@@ -4380,6 +4433,8 @@ export class RoundEngine {
               ).outcome;
               usableSubmission =
                 outcome === "valid" || outcome === "valid_empty";
+              salvagedAtDeadline =
+                candidate.status === "timed_out" && usableSubmission;
             } catch {
               usableSubmission = false;
             }
@@ -4431,9 +4486,20 @@ export class RoundEngine {
             startedAt: attemptStartedAt,
             finishedAt: attemptFinishedAt,
             status: "failed",
-            diagnosticArtifactRefs: failedCapture
-              ? [failedCapture.rawPath, failedCapture.parsedPath]
-              : [],
+            diagnosticArtifactRefs: [
+              ...(failedCapture
+                ? [failedCapture.rawPath, failedCapture.parsedPath]
+                : []),
+              ...(candidate.command
+                ? [
+                    candidate.command.stdoutPath,
+                    candidate.command.stderrPath,
+                    ...(candidate.command.providerDiagnostics?.eventLogPath
+                      ? [candidate.command.providerDiagnostics.eventLogPath]
+                      : []),
+                  ]
+                : []),
+            ],
             cause: failedCapture
               ? JSON.stringify(failedCapture.parsed.rejections)
               : candidate.status,
@@ -4443,7 +4509,7 @@ export class RoundEngine {
         }
         invocation.contestantId = reviewer;
         invocation.role = contestant.role;
-        if (invocation.status !== "succeeded") {
+        if (invocation.status !== "succeeded" && !salvagedAtDeadline) {
           if (submissionFailure) {
             await this.recordSubmissionAttempt(context, {
               round,
@@ -4454,7 +4520,17 @@ export class RoundEngine {
               startedAt: finalAttemptStartedAt,
               finishedAt: finalAttemptFinishedAt,
               status: "failed",
-              diagnosticArtifactRefs: [],
+              diagnosticArtifactRefs: [
+                ...(invocation.command
+                  ? [
+                      invocation.command.stdoutPath,
+                      invocation.command.stderrPath,
+                      ...(invocation.command.providerDiagnostics?.eventLogPath
+                        ? [invocation.command.providerDiagnostics.eventLogPath]
+                        : []),
+                    ]
+                  : []),
+              ],
               cause: invocation.status,
               existing: submissionFailure,
               terminalDisposition: "coverage_lost",
@@ -4467,6 +4543,17 @@ export class RoundEngine {
             invocation,
             submissionStatus: "not_run",
             findingCount: 0,
+            diagnosticArtifactRefs: [
+              ...(invocation.command
+                ? [
+                    invocation.command.stdoutPath,
+                    invocation.command.stderrPath,
+                    ...(invocation.command.providerDiagnostics?.eventLogPath
+                      ? [invocation.command.providerDiagnostics.eventLogPath]
+                      : []),
+                  ]
+                : []),
+            ],
             detail: `Review generation ${invocation.status}`,
           });
           context.state.warnings.push(
@@ -4507,7 +4594,19 @@ export class RoundEngine {
               startedAt: finalAttemptStartedAt,
               finishedAt: finalAttemptFinishedAt,
               status: recovered ? "succeeded" : "failed",
-              diagnosticArtifactRefs: [captured.rawPath, captured.parsedPath],
+              diagnosticArtifactRefs: [
+                captured.rawPath,
+                captured.parsedPath,
+                ...(invocation.command
+                  ? [
+                      invocation.command.stdoutPath,
+                      invocation.command.stderrPath,
+                      ...(invocation.command.providerDiagnostics?.eventLogPath
+                        ? [invocation.command.providerDiagnostics.eventLogPath]
+                        : []),
+                    ]
+                  : []),
+              ],
               cause: JSON.stringify(captured.parsed.rejections),
               existing: submissionFailure,
               terminalDisposition: recovered ? "recovered" : "coverage_lost",
@@ -4542,6 +4641,33 @@ export class RoundEngine {
               `Review submission from ${reviewer} against ${target} remained invalid after targeted retry; lane lost coverage without creating a handoff packet`,
             );
             continue;
+          }
+          if (salvagedAtDeadline) {
+            await this.recordFailureAttempt(context, {
+              stage: "model_invocation",
+              subject: `review-deadline:${String(round)}:${reviewer}->${target}`,
+              category: "timeout",
+              attempt: 1,
+              startedAt: finalAttemptStartedAt,
+              finishedAt: finalAttemptFinishedAt,
+              status: "succeeded",
+              contestantId: reviewer,
+              laneId: `round-${String(round)}:${reviewer}->${target}`,
+              terminalDisposition: "recovered",
+              diagnosticArtifactRefs: [
+                captured.rawPath,
+                captured.parsedPath,
+                ...(invocation.command
+                  ? [
+                      invocation.command.stdoutPath,
+                      invocation.command.stderrPath,
+                      ...(invocation.command.providerDiagnostics?.eventLogPath
+                        ? [invocation.command.providerDiagnostics.eventLogPath]
+                        : []),
+                    ]
+                  : []),
+              ],
+            });
           }
           const submission = captured.parsed.value as {
             version: 2;
@@ -4667,6 +4793,20 @@ export class RoundEngine {
             ),
             rawArtifactPath: captured.rawPath,
             parsedArtifactPath: captured.parsedPath,
+            ...(salvagedAtDeadline ? { salvagedAtDeadline: true } : {}),
+            diagnosticArtifactRefs: [
+              captured.rawPath,
+              captured.parsedPath,
+              ...(invocation.command
+                ? [
+                    invocation.command.stdoutPath,
+                    invocation.command.stderrPath,
+                    ...(invocation.command.providerDiagnostics?.eventLogPath
+                      ? [invocation.command.providerDiagnostics.eventLogPath]
+                      : []),
+                  ]
+                : []),
+            ],
           });
           if (captured.parsed.rejections.length) {
             const warning = this.submissionWarning(

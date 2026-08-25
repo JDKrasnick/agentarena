@@ -5,6 +5,22 @@ import { describe, expect, it } from "vitest";
 import { loadFightConfig } from "../../src/config/load-config.js";
 
 describe("configuration", () => {
+  it("defaults review calls to ten minutes and rejects a higher limit", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-config-review-"));
+    await writeFile(path.join(root, "agent-arena.yaml"), "test: 'true'\n");
+    await expect(
+      loadFightConfig({ task: "review", repositoryRoot: root }),
+    ).resolves.toMatchObject({ limits: { reviewMs: 600_000 } });
+
+    await writeFile(
+      path.join(root, "agent-arena.yaml"),
+      "test: 'true'\nlimits:\n  review_minutes: 10.1\n",
+    );
+    await expect(
+      loadFightConfig({ task: "review", repositoryRoot: root }),
+    ).rejects.toThrow();
+  });
+
   it("loads an explicit bounded browser profile", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-config-browser-"));
     await writeFile(

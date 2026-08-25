@@ -15,6 +15,7 @@ import {
   projectEvent,
   initialDashboardState,
 } from "../../src/dashboard/state.js";
+import { providerActivityLabel } from "../../src/dashboard/provider-activity.js";
 import {
   StreamingRedactor,
   runProcess,
@@ -132,6 +133,35 @@ describe("arena observability", () => {
     expect(await readFile(result.stdoutPath, "utf8")).toBe("first second");
   });
 
+  it("separates structured provider activity from assistant output", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "arena-jsonl-"));
+    const activities: string[] = [];
+    const result = await runProcess({
+      executable: process.execPath,
+      args: [
+        "-e",
+        `process.stdout.write(${JSON.stringify(
+          '{"type":"thread.started","thread_id":"session-1"}\n{"type":"item.completed","item":{"type":"agent_message","text":"safe answer"}}\n',
+        )})`,
+      ],
+      cwd: directory,
+      timeoutMs: 5_000,
+      logPrefix: path.join(directory, "provider"),
+      providerStream: "codex",
+      onActivity: (activity) => void activities.push(activity.kind),
+    });
+
+    expect(activities).toEqual(["progress", "message"]);
+    expect(await readFile(result.stdoutPath, "utf8")).toBe("safe answer\n");
+    expect(result.providerDiagnostics).toMatchObject({
+      sessionId: "session-1",
+      eventCount: 2,
+    });
+    expect(
+      await readFile(result.providerDiagnostics!.eventLogPath, "utf8"),
+    ).toContain('"kind":"message"');
+  });
+
   it("queues non-empty steering and delimits it in a prompt", () => {
     const control = new ArenaBattleControl(new AbortController());
     expect(() => control.queueSteering("a", "  ")).toThrow(/cannot be empty/);
@@ -169,6 +199,63 @@ describe("arena observability", () => {
       { stream: "stderr", text: "working\n" },
     ]);
     expect(state.assisted).toBe(true);
+  });
+
+  it("projects active, waiting, and quiet provider states", () => {
+    const state = initialDashboardState();
+    const startedAt = "2026-08-25T12:00:00.000Z";
+    projectEvent(state, {
+      version: 1,
+      sequence: 1,
+      timestamp: startedAt,
+      type: "invocation_started",
+      invocationId: "a-review",
+      source: "agent",
+      contestantId: "a",
+      stage: "review_attacks",
+      round: 1,
+    });
+    expect(
+      providerActivityLabel(state.contestants.a, Date.parse(startedAt) + 5_000),
+    ).toContain("Active");
+
+    projectEvent(state, {
+      version: 1,
+      sequence: 2,
+      timestamp: "2026-08-25T12:00:05.000Z",
+      type: "invocation_progress",
+      invocationId: "a-review",
+      source: "agent",
+      contestantId: "a",
+      kind: "tool_started",
+      label: "Waiting on shell",
+      toolName: "shell",
+    });
+    expect(
+      providerActivityLabel(
+        state.contestants.a,
+        Date.parse(startedAt) + 12_000,
+      ),
+    ).toBe("Waiting on shell · 7s");
+
+    projectEvent(state, {
+      version: 1,
+      sequence: 3,
+      timestamp: "2026-08-25T12:00:13.000Z",
+      type: "invocation_progress",
+      invocationId: "a-review",
+      source: "agent",
+      contestantId: "a",
+      kind: "tool_finished",
+      label: "shell finished",
+      toolName: "shell",
+    });
+    expect(
+      providerActivityLabel(
+        state.contestants.a,
+        Date.parse(startedAt) + 50_000,
+      ),
+    ).toBe("No recent provider activity · 37s");
   });
 
   it("projects only active browser sessions for an operator-opened view", () => {

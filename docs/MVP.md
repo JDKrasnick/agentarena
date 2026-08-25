@@ -284,6 +284,15 @@ cross-component failures. It does not grant production access.
 
 Before focused failure analysis, each agent receives a separate
 `review_minutes` budget for read-only inspection of the opponent's frozen patch.
+The budget defaults to 10 minutes and has a 10-minute ceiling. Every provider
+and judge invocation records normalized message, tool lifecycle, progress, and
+result activity without tool arguments or private reasoning. A review deadline
+still terminates and cleans up the owned process tree. Only a complete
+schema-valid `valid` or `valid_empty` file already present after cleanup is
+salvaged into the normal handoff path; the underlying invocation stays
+`timed_out`. Partial, invalid, and missing output follow the existing one-retry
+path.
+
 The resulting v2 packet records harness-attested target and complete resolved
 permission fingerprints plus at most 12 ordered reviewer hypotheses. Each
 hypothesis includes its invariant, structured observations and provenance, code
