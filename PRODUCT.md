@@ -243,9 +243,13 @@ harness infrastructure, which outranks provider transport/authentication/MCP
 evidence, which outranks contestant timeout or invocation failure, which
 outranks patch applicability and required validation. Transport evidence
 overrides a timeout or nonzero exit only when the invocation produced no usable
-result. A transport failure cancels the peer implementation through a
-phase-local controller; the peer's diagnostics are retained and the peer is
-labeled as cancelled by the transport event rather than blamed for a failure.
+result. Aggregate provider initialization metadata is ignored for transport
+classification. Optional MCP startup warnings remain in diagnostic logs but do
+not constitute invocation-level transport evidence when the provider exits
+successfully or continues useful work. A transport failure cancels the peer
+implementation through a phase-local controller. The peer's diagnostics are
+retained, and the peer is labeled as cancelled by the transport event rather
+than blamed for a failure.
 
 Every provider-backed stage has one bounded automatic recovery path after its
 normal targeted retry establishes a causal provider infrastructure failure and

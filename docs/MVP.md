@@ -97,9 +97,13 @@ contestant; completed v1 records remain readable. Classification precedence is
 external cancellation, harness infrastructure, provider transport/MCP/auth or
 reconnect evidence, contestant timeout or failed invocation, then patch
 applicability and required validation. Transport evidence supersedes timeout or
-nonzero exit only when no usable implementation result was produced. A
-transport failure stops the peer implementation with a phase-local controller
-and records that peer as transport-cancelled rather than failed.
+nonzero exit only when no usable implementation result was produced. Aggregate
+provider initialization metadata is ignored for transport classification.
+Optional MCP startup warnings remain in diagnostic logs but do not escalate
+when the provider exits successfully or continues useful work. An
+invocation-level transport failure stops the peer implementation with a
+phase-local controller and records that peer as transport-cancelled rather than
+failed.
 
 After the normal targeted retry, every provider-backed stage may recover only
 from a causally established provider infrastructure failure that produced no

@@ -155,14 +155,44 @@ function describeError(error: unknown): string {
   }
 }
 
+function isProviderInitializationRecord(detail: string): boolean {
+  if (!detail.startsWith("{")) return false;
+  try {
+    const record = JSON.parse(detail) as Record<string, unknown>;
+    return (
+      record.type === "init" ||
+      (record.type === "system" && record.subtype === "init")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isAmbientMcpStartupWarning(detail: string): boolean {
+  return (
+    /codex_rmcp_client::oauth::refresh_transaction/i.test(detail) &&
+    /for server\s+[^\s:]+/i.test(detail)
+  );
+}
+
 function findTransportFailures(
   output: string,
   secrets: readonly string[] = [],
+  ambientMcpWasNonFatal = false,
 ): NonNullable<CommandResult["transportFailures"]> {
   const failures: NonNullable<CommandResult["transportFailures"]> = [];
   for (const line of output.split("\n")) {
     const detail = line.trim();
     if (!detail) continue;
+    // Provider init records describe every configured MCP server. An optional
+    // server may be unauthenticated or unavailable while the agent itself is
+    // healthy, so the aggregate record is not evidence of an invocation-level
+    // transport failure.
+    if (isProviderInitializationRecord(detail)) continue;
+    // Codex reports optional MCP OAuth refresh failures during startup on
+    // stderr, then continues the turn normally. Preserve that warning in the
+    // stderr artifact without promoting it to an invocation failure.
+    if (ambientMcpWasNonFatal && isAmbientMcpStartupWarning(detail)) continue;
     const kind =
       /mcp/i.test(detail) && /(oauth|refresh|expired|auth)/i.test(detail)
         ? "mcp_auth"
@@ -456,6 +486,12 @@ async function run(
   const transportFailures = findTransportFailures(
     `${result.providerRawOutput ?? result.stdout}\n${result.stderr}`,
     request.secrets,
+    result.exitCode === 0 ||
+      result.providerEvents?.some((event) =>
+        ["message", "tool_started", "tool_finished", "result"].includes(
+          event.kind,
+        ),
+      ) === true,
   );
   const base = {
     command: redact(command, request.secrets),
