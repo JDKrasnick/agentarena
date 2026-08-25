@@ -6,6 +6,7 @@ import type {
 import type { ArtifactStore } from "../artifacts/store.js";
 import { ConnectivityProbeResultSchema, type AgentId } from "../core/types.js";
 import { calculateCanonicalHash } from "../contracts/round.js";
+import { ProviderStageSchema } from "./provider-policy.js";
 
 const ProbeAttemptSchema = z.object({
   attempt: z.union([z.literal(1), z.literal(2), z.literal(3)]),
@@ -27,6 +28,9 @@ export const TransportRecoverySchema = z.object({
   ]),
   restartOrdinal: z.number().int().min(1).max(3),
   replacementRunId: z.string().min(1).optional(),
+  failedStage: ProviderStageSchema.optional(),
+  runChain: z.array(z.string().min(1)).default([]),
+  recoveryReason: z.string().min(1).optional(),
   recoveryHash: z.string().length(64),
 });
 export type TransportRecovery = z.infer<typeof TransportRecoverySchema>;
@@ -48,6 +52,9 @@ export async function probeProviderConnectivity(options: {
   cwd: string;
   signal: AbortSignal;
   now?: () => Date;
+  failedStage?: z.infer<typeof ProviderStageSchema>;
+  runChain?: readonly string[];
+  recoveryReason?: string;
 }): Promise<TransportRecovery> {
   const now = options.now ?? (() => new Date());
   const providers = [...options.adapters.keys()];
@@ -60,6 +67,11 @@ export async function probeProviderConnectivity(options: {
       probeAttempts: [],
       disposition: "restart_limit_reached",
       restartOrdinal: 3,
+      ...(options.failedStage ? { failedStage: options.failedStage } : {}),
+      runChain: [...(options.runChain ?? [options.parentRunId])],
+      ...(options.recoveryReason
+        ? { recoveryReason: options.recoveryReason }
+        : {}),
     });
   }
   if (options.signal.aborted) {
@@ -71,6 +83,11 @@ export async function probeProviderConnectivity(options: {
       probeAttempts: [],
       disposition: "cancelled",
       restartOrdinal: options.restartOrdinal,
+      ...(options.failedStage ? { failedStage: options.failedStage } : {}),
+      runChain: [...(options.runChain ?? [options.parentRunId])],
+      ...(options.recoveryReason
+        ? { recoveryReason: options.recoveryReason }
+        : {}),
     });
   }
   const deadline = Date.now() + 30_000;
@@ -111,6 +128,11 @@ export async function probeProviderConnectivity(options: {
           probeAttempts,
           disposition: "provider_recovered",
           restartOrdinal: options.restartOrdinal,
+          ...(options.failedStage ? { failedStage: options.failedStage } : {}),
+          runChain: [...(options.runChain ?? [options.parentRunId])],
+          ...(options.recoveryReason
+            ? { recoveryReason: options.recoveryReason }
+            : {}),
         });
     } finally {
       clearTimeout(timer);
@@ -125,6 +147,11 @@ export async function probeProviderConnectivity(options: {
     probeAttempts,
     disposition: options.signal.aborted ? "cancelled" : "probe_exhausted",
     restartOrdinal: options.restartOrdinal,
+    ...(options.failedStage ? { failedStage: options.failedStage } : {}),
+    runChain: [...(options.runChain ?? [options.parentRunId])],
+    ...(options.recoveryReason
+      ? { recoveryReason: options.recoveryReason }
+      : {}),
   });
 }
 
@@ -141,5 +168,10 @@ export function withReplacementRunId(
     disposition: recovery.disposition,
     restartOrdinal: recovery.restartOrdinal,
     replacementRunId,
+    ...(recovery.failedStage ? { failedStage: recovery.failedStage } : {}),
+    runChain: [...recovery.runChain, replacementRunId],
+    ...(recovery.recoveryReason
+      ? { recoveryReason: recovery.recoveryReason }
+      : {}),
   });
 }

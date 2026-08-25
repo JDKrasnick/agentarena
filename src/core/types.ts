@@ -2,6 +2,7 @@ import { z } from "zod";
 import { BrowserProbeRequestSchema } from "../contracts/browser.js";
 import { FailureRecordSchema } from "../contracts/failure.js";
 import { BrowserValidationResultSchema } from "../contracts/browser.js";
+import { ProviderStageFailureSchema } from "../recovery/provider-policy.js";
 
 export const AGENT_IDS = ["codex", "claude", "gemini"] as const;
 export const AgentIdSchema = z.enum(AGENT_IDS);
@@ -366,6 +367,26 @@ export const PermissionPolicySchema = z.object({
   reducedValidationAccepted: z.boolean(),
 });
 export type PermissionPolicy = z.infer<typeof PermissionPolicySchema>;
+
+export const McpSelectionSchema = z
+  .object({
+    provider: AgentIdSchema,
+    name: z.string().trim().min(1),
+    role: z.enum(["agent", "harness_only", "both"]).default("agent"),
+    requirement: z.enum(["required", "optional"]).default("optional"),
+  })
+  .strict();
+export type McpSelection = z.infer<typeof McpSelectionSchema>;
+
+export const McpConfigSchema = z
+  .object({
+    policy: z
+      .enum(["keep_configured", "configure_selection", "leave_as_is"])
+      .default("keep_configured"),
+    servers: z.array(McpSelectionSchema).default([]),
+  })
+  .strict();
+export type McpConfig = z.infer<typeof McpConfigSchema>;
 
 export const AgentInvocationSchema = z.object({
   agent: AgentIdSchema,
@@ -967,6 +988,10 @@ const FightConfigBaseSchema = z
       )
       .default({}),
     permissionDeny: z.array(z.string()).default([]),
+    mcp: McpConfigSchema.default({
+      policy: "keep_configured",
+      servers: [],
+    }),
     reducedValidationAccepted: z.boolean().default(false),
     nonInteractiveApproval: z.boolean().default(false),
     keepWorktrees: z.boolean().default(false),
@@ -1443,6 +1468,7 @@ const RunStateCoreSchema = z.object({
   coverageAssessment: CoverageAssessmentSchema.optional(),
   coverageDecision: CoverageDecisionSchema.optional(),
   terminalOutcome: TerminalOutcomeSchema.optional(),
+  providerFailure: ProviderStageFailureSchema.optional(),
 });
 
 export const RunStateV3Schema = RunStateCoreSchema.extend({

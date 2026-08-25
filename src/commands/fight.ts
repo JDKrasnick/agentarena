@@ -1,10 +1,13 @@
 import { createInterface } from "node:readline/promises";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { stdin, stdout } from "node:process";
 import { createBuiltInBrowserAdapters } from "../browser/builtin.js";
 import {
   CommandAttackVerifier,
   createProviderAdapter,
+  providerCommand,
 } from "../agents/adapter.js";
 import {
   loadFightConfig,
@@ -34,6 +37,15 @@ import {
   TransportRecoverySchema,
   withReplacementRunId,
 } from "../recovery/transport.js";
+import { reconstructRunState } from "../recovery/durable.js";
+import {
+  applyMcpReadiness,
+  freezeMcpPolicy,
+  inventoryProviderMcp,
+  mcpProviders,
+  selectedMcpNames,
+  type FrozenMcpPolicy,
+} from "../mcp/policy.js";
 
 export type DisplayMode =
   "auto" | "window" | "dashboard" | "terminal" | "plain";
@@ -52,12 +64,19 @@ export function resolveDisplayMode(
 
 async function approvePermissionPlan(
   config: Awaited<ReturnType<typeof loadFightConfig>>,
+  mcpPolicy: FrozenMcpPolicy,
 ) {
   if (config.permissionMode !== "confirm") return config;
   stdout.write("Agent Arena permission plan\n");
   for (const request of discoverCapabilities(config)) {
     stdout.write(
       `- ${request.id}: ${request.requirement}, ${request.risk} risk, ${request.role}, ${request.enforcement}\n  ${request.reason}\n  scopes: ${request.scopes.join(", ")}\n`,
+    );
+  }
+  stdout.write(`MCP policy: ${mcpPolicy.mode.replaceAll("_", " ")}\n`);
+  for (const server of mcpPolicy.servers) {
+    stdout.write(
+      `- ${server.provider}/${server.name}: ${server.decision}, ${server.authentication}, ${server.readiness}, ${server.role}, ${server.requirement}\n`,
     );
   }
   stdout.write(
@@ -86,20 +105,38 @@ function createArena(
     observer?: ArenaObserver;
     battleControl?: ArenaBattleControl;
   },
+  mcpPolicy?: FrozenMcpPolicy,
+  recoveryRuntime?: {
+    canRecover(provider: AgentId): boolean;
+    recordUnrecovered(stage: "review" | "attack_construction"): boolean;
+  },
 ): Arena {
   const adapters = Object.fromEntries(
     config.contestants.map((contestant) => [
       contestant.provider,
-      createProviderAdapter(contestant.provider, contestant.model),
+      createProviderAdapter(contestant.provider, contestant.model, mcpPolicy),
     ]),
   );
   const observer = observability?.observer;
   return new Arena({
     adapters,
     adapterFactory: (contestant) =>
-      createProviderAdapter(contestant.provider, contestant.model),
-    verifier: new CommandAttackVerifier(config.judge),
+      createProviderAdapter(contestant.provider, contestant.model, mcpPolicy),
+    verifier: new CommandAttackVerifier(
+      config.judge,
+      providerCommand(config.judge, undefined, mcpPolicy),
+    ),
     browserAdapters: createBuiltInBrowserAdapters(),
+    ...(mcpPolicy ? { mcpPolicy } : {}),
+    ...(recoveryRuntime
+      ? {
+          canRecoverProvider: (provider: AgentId) =>
+            recoveryRuntime.canRecover(provider),
+          recordUnrecoveredProviderFailure: (
+            stage: "review" | "attack_construction",
+          ) => recoveryRuntime.recordUnrecovered(stage),
+        }
+      : {}),
     onProgress: observer
       ? () => undefined
       : (message) => stdout.write(`${message}\n`),
@@ -108,6 +145,74 @@ function createArena(
       ? { battleControl: observability.battleControl }
       : {}),
   });
+}
+
+async function prepareMcpPolicy(
+  config: Awaited<ReturnType<typeof loadFightConfig>>,
+  signal?: AbortSignal,
+): Promise<{ policy: FrozenMcpPolicy; temporaryRoot: string }> {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "arena-mcp-"));
+  const inventory = await Promise.all(
+    mcpProviders(config).map((provider) =>
+      inventoryProviderMcp({
+        provider,
+        repositoryRoot: config.repositoryRoot,
+        logRoot: temporaryRoot,
+        ...(signal ? { signal } : {}),
+      }),
+    ),
+  );
+  return {
+    policy: freezeMcpPolicy({
+      config: config.mcp,
+      inventory: inventory.map((entry) => ({
+        ...entry,
+        // Preflight uses a temporary directory so provider output, even when
+        // already masked by the CLI, never becomes a credential-bearing run
+        // artifact. The durable inventory contains metadata only.
+        diagnosticArtifactRefs: [],
+      })),
+      reducedValidationAccepted: config.reducedValidationAccepted,
+    }),
+    temporaryRoot,
+  };
+}
+
+async function checkSelectedMcpReadiness(options: {
+  config: Awaited<ReturnType<typeof loadFightConfig>>;
+  policy: FrozenMcpPolicy;
+  temporaryRoot: string;
+  signal: AbortSignal;
+}): Promise<FrozenMcpPolicy> {
+  const readiness = new Map<AgentId, "ready" | "unavailable">();
+  await Promise.all(
+    mcpProviders(options.config).map(async (provider) => {
+      if (selectedMcpNames(options.policy, provider).length === 0) return;
+      const contestant = options.config.contestants.find(
+        (entry) => entry.provider === provider,
+      );
+      const adapter = createProviderAdapter(
+        provider,
+        contestant?.model,
+        options.policy,
+      );
+      const result = await adapter.probeConnectivity({
+        cwd: options.config.repositoryRoot,
+        transcriptPrefix: path.join(
+          options.temporaryRoot,
+          `mcp-readiness-${provider}`,
+        ),
+        timeoutMs: 15_000,
+        signal: options.signal,
+      });
+      readiness.set(provider, result.healthy ? "ready" : "unavailable");
+    }),
+  );
+  return applyMcpReadiness(
+    options.policy,
+    readiness,
+    options.config.reducedValidationAccepted,
+  );
 }
 
 export interface RunCommandResult {
@@ -131,7 +236,21 @@ export async function runFight(
 ): Promise<RunCommandResult> {
   const loadedConfig = await loadFightConfig(overrides);
   const reconnaissance = await collectFightReconnaissance(loadedConfig);
-  const config = await approvePermissionPlan(loadedConfig);
+  const mcpPreflight = await prepareMcpPolicy(loadedConfig);
+  let config: Awaited<ReturnType<typeof loadFightConfig>>;
+  let mcpPolicy: FrozenMcpPolicy;
+  try {
+    config = await approvePermissionPlan(loadedConfig, mcpPreflight.policy);
+    mcpPolicy = await checkSelectedMcpReadiness({
+      config,
+      policy: mcpPreflight.policy,
+      temporaryRoot: mcpPreflight.temporaryRoot,
+      signal: new AbortController().signal,
+    });
+  } catch (error) {
+    await rm(mcpPreflight.temporaryRoot, { recursive: true, force: true });
+    throw error;
+  }
   const interactive = Boolean(stdout.isTTY && stdin.isTTY);
   const activeDisplay = resolveDisplayMode(display, launchWindow, interactive);
   const useDesktopDashboard = activeDisplay === "window";
@@ -147,6 +266,17 @@ export async function runFight(
   let webDashboard: WebDashboard | undefined;
   let desktopWindow: DesktopDashboardWindow | undefined;
   let observer: ArenaObserver | undefined;
+  const recoveredProviders = new Set<AgentId>();
+  let continuationsCreated = 0;
+  let unrecoveredProviderFailures = 0;
+  const recoveryRuntime = {
+    canRecover: (provider: AgentId) =>
+      continuationsCreated < 2 && !recoveredProviders.has(provider),
+    recordUnrecovered: () => {
+      unrecoveredProviderFailures += 1;
+      return unrecoveredProviderFailures >= 2;
+    },
+  };
   if (useDesktopDashboard) {
     const [{ startWebDashboard }, { startDesktopDashboardWindow }] =
       await Promise.all([
@@ -176,10 +306,15 @@ export async function runFight(
     observer = dashboardObserver;
     dashboard = startDashboard(dashboardObserver, control);
   }
-  const arena = createArena(config, {
-    ...(observer ? { observer } : {}),
-    battleControl: control,
-  });
+  const arena = createArena(
+    config,
+    {
+      ...(observer ? { observer } : {}),
+      battleControl: control,
+    },
+    mcpPolicy,
+    recoveryRuntime,
+  );
   const cancel = (): void => {
     control.cancel(new Error("Interrupted"));
     void webDashboard?.close();
@@ -191,40 +326,68 @@ export async function runFight(
     const runIds = [outcome.state.runId];
     let recoveryCancelled = false;
     while (
+      outcome.state.providerFailure ||
       outcome.state.terminalOutcome?.reasonCode === "provider_transport_failure"
     ) {
       const parent = outcome;
       const terminalOutcome = parent.state.terminalOutcome;
-      if (!terminalOutcome) break;
+      const providerFailure = parent.state.providerFailure;
+      if (!providerFailure && !terminalOutcome) break;
       const parentStore = new ArtifactStore(
         parent.state.config.artifactRoot,
         parent.state.runId,
         { durableV5: true },
       );
       const affected = new Set(
-        terminalOutcome.version === 2
-          ? terminalOutcome.contestants
-              .filter(
-                (entry) => entry.reasonCode === "provider_transport_failure",
-              )
-              .map((entry) => entry.contestantId)
-          : terminalOutcome.affectedContestantIds,
-      );
-      const providerConfigs = parent.state.config.contestants.filter(
-        (contestant) => affected.has(contestant.id),
+        providerFailure?.contestantId
+          ? [providerFailure.contestantId]
+          : terminalOutcome?.version === 2
+            ? terminalOutcome.contestants
+                .filter(
+                  (entry) => entry.reasonCode === "provider_transport_failure",
+                )
+                .map((entry) => entry.contestantId)
+            : (terminalOutcome?.affectedContestantIds ?? []),
       );
       const adapters = new Map<
         AgentId,
         ReturnType<typeof createProviderAdapter>
       >();
-      for (const contestant of providerConfigs) {
-        if (!adapters.has(contestant.provider))
+      if (providerFailure) {
+        const contestant = parent.state.config.contestants.find(
+          (entry) => entry.provider === providerFailure.provider,
+        );
+        adapters.set(
+          providerFailure.provider,
+          createProviderAdapter(
+            providerFailure.provider,
+            contestant?.model,
+            mcpPolicy,
+          ),
+        );
+      } else {
+        for (const contestant of parent.state.config.contestants.filter(
+          (entry) => affected.has(entry.id),
+        )) {
+          if (adapters.has(contestant.provider)) continue;
           adapters.set(
             contestant.provider,
-            createProviderAdapter(contestant.provider, contestant.model),
+            createProviderAdapter(
+              contestant.provider,
+              contestant.model,
+              mcpPolicy,
+            ),
           );
+        }
       }
       if (!adapters.size) break;
+      if (
+        runIds.length > 2 ||
+        [...adapters.keys()].some((provider) =>
+          recoveredProviders.has(provider),
+        )
+      )
+        break;
       const restartOrdinal = runIds.length;
       let recovery = await probeProviderConnectivity({
         parentRunId: parent.state.runId,
@@ -233,6 +396,12 @@ export async function runFight(
         restartOrdinal,
         cwd: parent.state.config.repositoryRoot,
         signal: controller.signal,
+        ...(providerFailure ? { failedStage: providerFailure.stage } : {}),
+        runChain: runIds,
+        recoveryReason:
+          providerFailure?.reason ??
+          terminalOutcome?.reason ??
+          "Provider failure",
       });
       const recoveryPath = await parentStore.writeImmutableJson(
         "transport-recovery.json",
@@ -245,6 +414,8 @@ export async function runFight(
         break;
       }
       if (recovery.disposition !== "provider_recovered") break;
+      for (const provider of adapters.keys()) recoveredProviders.add(provider);
+      continuationsCreated += 1;
       const frozenRunSpec = await parentStore.readOptionalJson(
         "run-spec.json",
         RunSpecSchema,
@@ -261,10 +432,22 @@ export async function runFight(
         ) as ReconnaissanceSnapshot,
         parent.state.config,
       );
-      const replacementArena = createArena(parent.state.config, {
-        ...(observer ? { observer } : {}),
-        battleControl: control,
+      const parentSummary = await parentStore.readSummary();
+      if (!parentSummary)
+        throw new Error("Provider recovery is missing the parent summary");
+      const inheritedState = await reconstructRunState({
+        store: parentStore,
+        summary: parentSummary,
       });
+      const replacementArena = createArena(
+        parent.state.config,
+        {
+          ...(observer ? { observer } : {}),
+          battleControl: control,
+        },
+        mcpPolicy,
+        recoveryRuntime,
+      );
       outcome = await replacementArena.fightReplacement(
         parent.state.config,
         {
@@ -273,6 +456,8 @@ export async function runFight(
           runSpec: frozenRunSpec,
           permissions,
           reconnaissance,
+          inheritedState,
+          startRound: providerFailure?.round ?? 1,
           ...(parent.state.pullRequestFixture
             ? { pullRequestFixture: parent.state.pullRequestFixture }
             : {}),
@@ -304,6 +489,7 @@ export async function runFight(
     dashboard?.unmount();
     await webDashboard?.close();
     await desktopWindow?.close();
+    await rm(mcpPreflight.temporaryRoot, { recursive: true, force: true });
   }
 }
 

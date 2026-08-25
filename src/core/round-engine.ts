@@ -239,6 +239,14 @@ import {
   ArenaBattleControl,
   appendSteering,
 } from "../observability/control.js";
+import {
+  mergeMcpPermissionPolicy,
+  type FrozenMcpPolicy,
+} from "../mcp/policy.js";
+import {
+  ProviderStageFailureSchema,
+  type ProviderStage,
+} from "../recovery/provider-policy.js";
 
 export type { ReconnaissanceSnapshot } from "../task/task-contract.js";
 
@@ -268,6 +276,13 @@ export interface ArenaDependencies {
   browserAdapters?: Partial<
     Record<"playwright" | "cypress" | "custom", BrowserAdapter>
   >;
+  /** Frozen before worktree creation and shared by every provider invocation. */
+  mcpPolicy?: FrozenMcpPolicy;
+  canRecoverProvider?: (provider: AgentId) => boolean;
+  /** Returns true when an unrecovered coverage-stage failure must stop the run. */
+  recordUnrecoveredProviderFailure?: (
+    stage: "review" | "attack_construction",
+  ) => boolean;
 }
 
 /** Read-only legacy hooks kept out of the public runtime dependency surface. */
@@ -297,6 +312,10 @@ export interface ReplacementFightOptions {
   permissions: PermissionPolicy;
   reconnaissance: ReconnaissanceSnapshot;
   pullRequestFixture?: PullRequestFixture;
+  /** State reconstructed only from the parent's sealed envelope ledger. */
+  inheritedState?: RunState;
+  /** First unsealed round; earlier rounds must never be replayed. */
+  startRound?: 1 | 2 | 3;
 }
 
 interface ArenaContext {
@@ -584,12 +603,17 @@ export class RoundEngine {
         })),
       config,
     );
-    const permissions = replacement
+    let permissions = replacement
       ? PermissionPolicySchema.parse(replacement.permissions)
       : resolvePermissionPolicy(
           config,
           discoverCapabilities(config, reconnaissance),
         );
+    if (this.dependencies.mcpPolicy)
+      permissions = mergeMcpPermissionPolicy(
+        permissions,
+        this.dependencies.mcpPolicy,
+      );
     await assertReconnaissanceRepositoryInputsCurrent(reconnaissance);
     const runId = createRunId(this.now());
     const store = new ArtifactStore(config.artifactRoot, runId, {
@@ -716,6 +740,9 @@ export class RoundEngine {
             baseCommit,
             config,
             permissions,
+            ...(this.dependencies.mcpPolicy
+              ? { mcpPolicyHash: this.dependencies.mcpPolicy.policyHash }
+              : {}),
             repositoryRoot,
             sourceDirectory: store.resolve("sources"),
             ...(this.dependencies.issueResolver
@@ -750,6 +777,17 @@ export class RoundEngine {
             reconnaissance,
           });
       await store.writeImmutableJson("run-spec.json", runSpec);
+      const mcpPolicyPath = this.dependencies.mcpPolicy
+        ? await store.writeImmutableJson(
+            "mcp-policy.json",
+            this.dependencies.mcpPolicy,
+          )
+        : undefined;
+      if (
+        this.dependencies.mcpPolicy &&
+        runSpec.mcpPolicyHash !== this.dependencies.mcpPolicy.policyHash
+      )
+        throw new Error("Frozen MCP policy does not match the RunSpec");
       const repositoryIdentity =
         await resolveGitHubRepositoryIdentity(repositoryRoot);
       const targetResolution = deriveDeliveryTarget(
@@ -759,7 +797,7 @@ export class RoundEngine {
       if (targetResolution.ambiguous && targetResolution.reason)
         contractWarnings.push(targetResolution.reason);
       const startedAt = this.now().toISOString();
-      const state: RunState = {
+      let state: RunState = {
         schemaVersion: 7,
         runId,
         harnessVersion: "0.1.0",
@@ -792,6 +830,7 @@ export class RoundEngine {
           runDirectory: store.runDirectory,
           runSpec: store.resolve("run-spec.json"),
           permissions: store.resolve("permissions.json"),
+          ...(mcpPolicyPath ? { mcpPolicy: mcpPolicyPath } : {}),
           result: store.resolve("result.json"),
           battle: store.resolve("BATTLE.md"),
           battleHtml: store.resolve("BATTLE.html"),
@@ -808,6 +847,31 @@ export class RoundEngine {
         ],
         ...(pullRequestFixture ? { pullRequestFixture } : {}),
       };
+      if (replacement?.inheritedState) {
+        const inherited = structuredClone(replacement.inheritedState);
+        if (inherited.schemaVersion !== 7)
+          throw new Error("Provider recovery requires durable V7 parent state");
+        delete inherited.terminalOutcome;
+        delete inherited.providerFailure;
+        delete inherited.completedAt;
+        delete inherited.currentRound;
+        state = {
+          ...inherited,
+          runId,
+          status: "running",
+          startedAt,
+          updatedAt: startedAt,
+          stage: "preflight",
+          runSpecHash: runSpec.contentHash,
+          config,
+          artifacts: state.artifacts,
+          warnings: [
+            ...inherited.warnings,
+            `Provider recovery continued from sealed parent run ${replacement.parentRunId}; sealed rounds were retained and not replayed.`,
+          ],
+          ...(pullRequestFixture ? { pullRequestFixture } : {}),
+        };
+      }
       context = {
         config,
         store,
@@ -881,6 +945,7 @@ export class RoundEngine {
       await this.persist(context);
       let priorReplayHash: string | null = null;
       for (const round of [1, 2, 3] as const) {
+        if (replacement?.startRound && round < replacement.startRound) continue;
         if (this.shouldStop(context)) break;
         const beforeRound = structuredClone(context.state);
         const snapshot = await this.createRoundSnapshot(
@@ -898,6 +963,8 @@ export class RoundEngine {
           },
         );
         const { result } = transaction;
+        if (transaction.state.providerFailure)
+          context.state.providerFailure = transaction.state.providerFailure;
         if (result.status !== "completed" || result.terminalOutcome) {
           return this.finishTerminalRound(context, result);
         }
@@ -1434,6 +1501,12 @@ export class RoundEngine {
       commands: options.source.commands,
       budgets: options.source.budgets,
       permissions: options.source.permissions,
+      ...(options.source.browserValidation
+        ? { browserValidation: options.source.browserValidation }
+        : {}),
+      ...(options.source.mcpPolicyHash
+        ? { mcpPolicyHash: options.source.mcpPolicyHash }
+        : {}),
     };
     return RunSpecSchema.parse({
       ...withoutHash,
@@ -3045,6 +3118,66 @@ export class RoundEngine {
     return getAdapter(this.dependencies.adapters, contestant.provider);
   }
 
+  private recordProviderFailure(
+    context: ArenaContext,
+    options: {
+      contestantId: ContestantId;
+      stage: ProviderStage;
+      invocation: AgentInvocation;
+      round?: 1 | 2 | 3;
+      reason: string;
+    },
+  ): boolean {
+    const evidence = options.invocation.command?.transportFailures ?? [];
+    if (
+      !evidence.length ||
+      options.invocation.status !== "infrastructure_error"
+    )
+      return false;
+    const contestant = getContestant(context.state, options.contestantId);
+    const recoveryAvailable =
+      this.dependencies.canRecoverProvider?.(contestant.provider) ?? true;
+    if (
+      !recoveryAvailable &&
+      (options.stage === "review" || options.stage === "attack_construction") &&
+      !(
+        this.dependencies.recordUnrecoveredProviderFailure?.(options.stage) ??
+        false
+      )
+    )
+      return false;
+    context.state.providerFailure = ProviderStageFailureSchema.parse({
+      version: 1,
+      provider: contestant.provider,
+      stage: options.stage,
+      ...(options.round ? { round: options.round } : {}),
+      contestantId: options.contestantId,
+      reason: options.reason,
+      causalEvidence: evidence.map((entry) => `${entry.kind}: ${entry.detail}`),
+      artifactRefs: [
+        options.invocation.promptPath,
+        options.invocation.transcriptPath,
+        options.invocation.command?.stdoutPath,
+        options.invocation.command?.stderrPath,
+      ].filter((entry): entry is string => Boolean(entry)),
+      usableTerminalResult: false,
+    });
+    return true;
+  }
+
+  private recordVerifierProviderFailure(
+    context: ArenaContext,
+    round: RoundId,
+  ): boolean {
+    const failure = this.dependencies.verifier.consumeProviderFailure?.();
+    if (!failure) return false;
+    context.state.providerFailure = ProviderStageFailureSchema.parse({
+      ...failure,
+      ...(typeof round === "number" ? { round } : {}),
+    });
+    return true;
+  }
+
   private async laneFeedback(
     context: ArenaContext,
     contestantId: ContestantId,
@@ -3374,16 +3507,21 @@ export class RoundEngine {
               ...(implementationFailure
                 ? { existing: implementationFailure }
                 : {}),
-              ...(attempt === 2 ||
-              (invocation.status === "infrastructure_error" &&
-                invocation.command?.transportFailures?.length)
+              ...(attempt === 2
                 ? { terminalDisposition: "run_level_coverage_lost" as const }
                 : {}),
             });
             if (
+              attempt === 2 &&
               invocation.status === "infrastructure_error" &&
               invocation.command?.transportFailures?.length
             ) {
+              this.recordProviderFailure(context, {
+                contestantId: agent,
+                stage: "implementation",
+                invocation,
+                reason: `Implementation provider failure persisted after the targeted retry for ${agent}`,
+              });
               transportFailure = true;
               phaseController.abort(
                 new Error(`Provider transport failed for ${agent}`),
@@ -4326,6 +4464,16 @@ export class RoundEngine {
           context.state.warnings.push(
             `Review generation ${invocation.status} for ${reviewer} against ${target}; test generation received an empty review packet`,
           );
+          if (
+            this.recordProviderFailure(context, {
+              contestantId: reviewer,
+              stage: "review",
+              ...(typeof round === "number" ? { round } : {}),
+              invocation,
+              reason: `Review provider failure persisted after the targeted retry for ${reviewer} against ${target}`,
+            })
+          )
+            throw new Error(context.state.providerFailure?.reason);
           continue;
         }
         try {
@@ -6274,6 +6422,16 @@ export class RoundEngine {
           context.state.warnings.push(
             `Attack generation ${invocation.status} for ${agent} against ${target}; no submission was collected`,
           );
+          if (
+            this.recordProviderFailure(context, {
+              contestantId: agent,
+              stage: "attack_construction",
+              ...(typeof round === "number" ? { round } : {}),
+              invocation,
+              reason: `Attack-construction provider failure persisted after the targeted retry for ${agent} against ${target}`,
+            })
+          )
+            throw new Error(context.state.providerFailure?.reason);
           continue;
         }
         try {
@@ -6826,6 +6984,8 @@ export class RoundEngine {
           persistFailureRecord: (record) =>
             this.persistFailureRecord(context, record),
         });
+        if (this.recordVerifierProviderFailure(context, round))
+          throw new Error(context.state.providerFailure?.reason);
         if (result.status === "landed" && result.rootDefectId)
           knownRoots.add(result.rootDefectId);
         if (
@@ -6905,6 +7065,8 @@ export class RoundEngine {
               })
             : undefined;
       if (!result) continue;
+      if (this.recordVerifierProviderFailure(context, round))
+        throw new Error(context.state.providerFailure?.reason);
       if (result.status === "landed" && result.rootDefectId)
         knownRoots.add(result.rootDefectId);
       if (
@@ -7208,6 +7370,16 @@ export class RoundEngine {
             });
           }
           if (invocation.status === "infrastructure_error") {
+            if (
+              this.recordProviderFailure(context, {
+                contestantId: agent,
+                stage: "repair",
+                ...(typeof round === "number" ? { round } : {}),
+                invocation,
+                reason: `Repair provider failure persisted after the targeted retry for ${agent}`,
+              })
+            )
+              throw new Error(context.state.providerFailure?.reason);
             throw new Error(
               `Repair invocation infrastructure failed for ${agent}`,
             );
@@ -7529,6 +7701,8 @@ export class RoundEngine {
                 }
               }
             }
+            if (this.recordVerifierProviderFailure(context, round))
+              throw new Error(context.state.providerFailure?.reason);
             const decision = verdict?.decision ?? "unable";
             const rationale =
               verdict?.rationale ??
@@ -8068,6 +8242,8 @@ export class RoundEngine {
         ),
         ...this.browserValidatorOption(context, provisional),
       });
+      if (this.recordVerifierProviderFailure(context, round))
+        throw new Error(context.state.providerFailure?.reason);
       if (replay.status === "provisional_infrastructure") {
         replay.status = "execution_inconclusive";
         replay.outcomeReason =
@@ -8587,6 +8763,8 @@ export class RoundEngine {
             ),
             signal: context.controller.signal,
           });
+          if (this.recordVerifierProviderFailure(context, round))
+            throw new Error(context.state.providerFailure?.reason);
           attack.checks.push(...validation.checks);
           cases.push({
             id: stableId("case", attack.id, String(index + 1)),

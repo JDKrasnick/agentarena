@@ -247,16 +247,31 @@ result. A transport failure cancels the peer implementation through a
 phase-local controller; the peer's diagnostics are retained and the peer is
 labeled as cancelled by the transport event rather than blamed for a failure.
 
-Implementation transport failures have one bounded automatic recovery path.
+Every provider-backed stage has one bounded automatic recovery path after its
+normal targeted retry establishes a causal provider infrastructure failure and
+the stage produced no usable terminal result. Eligible stages are
+implementation, review, attack construction, repair, judge, and semantic
+adjudication. Transport-like output remains diagnostic evidence; a stale MCP
+warning cannot override a valid stage result.
+
 The failed run remains independently reportable while Agent Arena starts up to
 three fresh provider processes, each with a deterministic backend-authenticating
 sentinel prompt, within a shared 30-second window. If connectivity returns, a
-new run copies the exact frozen sources, base commit, topology, permissions,
-budgets, and configuration from its parent rather than resolving live issue or
-pull-request text again. At most two replacement runs may be created. Each
-parent stores a typed `transport-recovery.json`, and result provenance links
-the replacement to its parent. A transport failure in the third total run is
-final and does not trigger more probes.
+linked child run retains validated upstream state and sealed rounds, discards
+incomplete dependent work, and continues from the failed stage. Frozen task
+sources, base commit, topology, permissions, MCP allowlist, budgets, and
+configuration do not change. Across the complete run chain, at most two
+continuations may be created and each provider may trigger at most one; limits
+never reset in child runs. Recovery records preserve the run-ID chain, failed
+stage, reason, probes, command and cleanup logs, exit state, authentication
+evidence, and provider-health results.
+
+After recovery capacity is exhausted, the first unrecovered review or attack
+failure follows ordinary coverage-loss semantics and the second unrecovered
+provider-stage failure anywhere in the chain makes the fight inconclusive.
+Implementation, repair, correctness-critical judge work, required validation,
+and final validation remain immediately inconclusive whenever their results
+cannot be trusted.
 
 Pre-review terminal reports use outcome-specific JSON, Markdown, HTML, SVG,
 and console language. A duel forfeit creates only the eligible patch digest,
@@ -884,6 +899,32 @@ environment, network, credential, and configured-integration exposure. `--yes`
 displays the same plan and warning before recording non-interactive approval; it
 does not turn acknowledgement into confinement.
 
+Before worktree creation or any provider session, Arena inventories MCP servers
+from every selected provider setup. The consolidated plan records only provider,
+server name, enabled state, authentication readiness, requested execution role,
+and requirement level; it never reads, copies, or displays credentials. An
+inventory failure is `unknown`, never an empty inventory.
+
+The operator chooses one run-scoped MCP policy:
+
+* **Keep configured:** enable only servers already named in Arena configuration.
+* **Configure selection:** choose an explicit subset of the discovered inventory.
+* **Leave as is:** approve the exact enabled snapshot already present in each
+  provider setup. This option is unavailable when any inventory is unknown.
+
+Arena performs an isolated readiness check for the selected servers and then
+freezes the exact allowlist. An unavailable required server blocks launch unless
+the operator explicitly accepts reduced validation with that server excluded;
+an unavailable optional server is excluded and recorded as a coverage gap.
+Reauthentication is always an explicit operator action.
+
+The frozen MCP policy governs provider command configuration, tool catalogs,
+prompts, and sessions for the complete run chain. Unselected, unavailable, and
+undeclared servers are absent. Agents cannot widen MCP authority mid-run; a new
+capability requires a new approved run. Arena does not mutate global provider
+configuration or remote MCP services, and `leave_as_is` approves the discovered
+snapshot rather than future provider changes.
+
 An agent may declare extra capabilities for an integration attack. A newly
 denied optional request becomes `capability_denied` and causes no damage or
 recoil. Provisioning failure after approval is `infrastructure_error`. Reusing a
@@ -940,6 +981,14 @@ permissions:
   deny:
     - production_credentials
     - production_deploy
+
+mcp:
+  policy: keep_configured
+  servers:
+    - provider: codex
+      name: github
+      role: agent
+      requirement: optional
 ```
 
 Credentials should be test-only, scoped to an individual run, and hidden from transcripts and opponents.
@@ -1062,6 +1111,8 @@ Each run should generate:
 * `BATTLE.md`
 * An immutable `run-spec.json` with frozen source snapshots and reproducibility metadata.
 * A redacted permission manifest with approvals, denials, leases, and omitted checks.
+* A credential-free frozen MCP inventory, readiness result, exact allowlist,
+  exclusions, and coverage gaps.
 * A JSON result file.
 * The winning patch.
 * A command to apply the winner.

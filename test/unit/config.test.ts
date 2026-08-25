@@ -37,6 +37,39 @@ describe("configuration", () => {
     });
   });
 
+  it("loads a run-scoped MCP selection without credential fields", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-config-mcp-"));
+    await writeFile(
+      path.join(root, "agent-arena.yaml"),
+      [
+        "test: npm test",
+        "mcp:",
+        "  policy: configure_selection",
+        "  servers:",
+        "    - provider: codex",
+        "      name: github",
+        "      role: agent",
+        "      requirement: required",
+      ].join("\n"),
+    );
+
+    await expect(
+      loadFightConfig({ task: "Inspect an issue", repositoryRoot: root }),
+    ).resolves.toMatchObject({
+      mcp: {
+        policy: "configure_selection",
+        servers: [
+          {
+            provider: "codex",
+            name: "github",
+            role: "agent",
+            requirement: "required",
+          },
+        ],
+      },
+    });
+  });
+
   it("lets CLI values override YAML and normalizes duration limits", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-config-"));
     await writeFile(

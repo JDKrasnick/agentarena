@@ -219,12 +219,14 @@ describe("built CLI smoke flow", () => {
   it("recovers provider transport with an exact frozen-input replacement", async () => {
     const repositoryRoot = await createSlugRepository();
     const bin = await mkdtemp(path.join(os.tmpdir(), "arena-recovery-bin-"));
-    const marker = path.join(bin, "transport-failed-once");
+    const marker = path.join(bin, "provider-recovered");
     await writeFile(
       path.join(bin, "codex"),
       `#!/bin/sh
-if [ "$AGENT_ARENA_STAGE" = "implement" ] && [ ! -f "$AGENT_ARENA_TRANSPORT_MARKER" ]; then
+if [ "$AGENT_ARENA_STAGE" = "provider_health_probe" ]; then
   : > "$AGENT_ARENA_TRANSPORT_MARKER"
+fi
+if [ "$AGENT_ARENA_STAGE" = "implement" ] && [ ! -f "$AGENT_ARENA_TRANSPORT_MARKER" ]; then
   echo "MCP OAuth authentication failed" >&2
   exit 8
 fi
