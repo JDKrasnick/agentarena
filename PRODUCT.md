@@ -949,10 +949,12 @@ configuration or remote MCP services, and `leave_as_is` approves the discovered
 snapshot rather than future provider changes.
 
 If a provider CLI cannot construct a strict run-scoped configuration from the
-name-only frozen inventory, Arena marks that provider's named selections
-unavailable instead of reusing ambient configuration. This currently applies
-to Claude: optional selections are excluded as coverage gaps, while required
-selections block launch unless reduced validation is accepted.
+name-only frozen inventory, Arena fails closed instead of reusing ambient
+configuration. Claude named selections are unavailable without explicit server
+definitions. Codex additionally requires a known inventory and server names
+that its dotted configuration path can address safely. Optional Claude
+selections are excluded as coverage gaps, while required selections block
+launch unless reduced validation is accepted.
 
 An agent may declare extra capabilities for an integration attack. A newly
 denied optional request becomes `capability_denied` and causes no damage or

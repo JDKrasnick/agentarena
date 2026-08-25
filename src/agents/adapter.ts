@@ -452,6 +452,30 @@ export interface CommandAdapterOptions {
   providerStream?: ProviderStreamKind;
 }
 
+function codexMcpOverrideArgs(
+  policy: FrozenMcpPolicy,
+  selectedNames: readonly string[],
+): string[] {
+  const inventory = policy.inventory.find(
+    (entry) => entry.provider === "codex",
+  );
+  if (!inventory || inventory.state === "unknown")
+    throw new Error(
+      "Codex MCP inventory is unknown, so Arena cannot isolate the run-scoped allowlist",
+    );
+  return inventory.servers.flatMap((server) => {
+    const selected = selectedNames.includes(server.name);
+    if (server.enabled === selected) return [];
+    // Codex's dotted -c parser does not support quoted path segments. Refuse
+    // names that cannot be addressed without changing which server they name.
+    if (!/^[A-Za-z0-9_-]+$/.test(server.name))
+      throw new Error(
+        `Codex MCP server ${JSON.stringify(server.name)} cannot be isolated safely through the CLI configuration path`,
+      );
+    return ["-c", `mcp_servers.${server.name}.enabled=${String(selected)}`];
+  });
+}
+
 export function providerCommand(
   id: AgentId,
   model?: string,
@@ -478,12 +502,7 @@ export function providerCommand(
           "exec",
           "--json",
           ...(mcpPolicy
-            ? (providerInventory?.servers.length ?? 0) > 0
-              ? (providerInventory?.servers ?? []).flatMap((server) => [
-                  "-c",
-                  `mcp_servers.${JSON.stringify(server.name)}.enabled=${selectedMcp?.includes(server.name) ? "true" : "false"}`,
-                ])
-              : ["-c", "mcp_servers={}"]
+            ? codexMcpOverrideArgs(mcpPolicy, selectedMcp ?? [])
             : []),
           ...modelArgs,
           "--full-auto",

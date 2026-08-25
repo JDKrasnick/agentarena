@@ -88,8 +88,61 @@ describe("provider model selection", () => {
     };
     const args = providerCommand("codex", undefined, policy).args;
 
-    expect(args).toContain('mcp_servers."selected".enabled=true');
-    expect(args).toContain('mcp_servers."omitted".enabled=false');
+    expect(args).not.toContain("mcp_servers.selected.enabled=true");
+    expect(args).toContain("mcp_servers.omitted.enabled=false");
+  });
+
+  it("refuses Codex MCP names that its dotted configuration path cannot isolate", () => {
+    const policy = {
+      version: 1 as const,
+      mode: "keep_configured" as const,
+      inventory: [
+        {
+          provider: "codex" as const,
+          state: "known" as const,
+          servers: [
+            {
+              name: "unsafe.name",
+              enabled: true,
+              authentication: "ready" as const,
+              readiness: "ready" as const,
+            },
+          ],
+          diagnosticArtifactRefs: [],
+        },
+      ],
+      servers: [],
+      coverageGaps: [],
+      frozenAt: "2026-08-25T00:00:00.000Z",
+      policyHash: "0".repeat(64),
+    };
+
+    expect(() => providerCommand("codex", undefined, policy)).toThrow(
+      /cannot be isolated safely/,
+    );
+  });
+
+  it("refuses to treat an unknown Codex inventory as an empty allowlist", () => {
+    const policy = {
+      version: 1 as const,
+      mode: "keep_configured" as const,
+      inventory: [
+        {
+          provider: "codex" as const,
+          state: "unknown" as const,
+          servers: [],
+          diagnosticArtifactRefs: [],
+        },
+      ],
+      servers: [],
+      coverageGaps: [],
+      frozenAt: "2026-08-25T00:00:00.000Z",
+      policyHash: "0".repeat(64),
+    };
+
+    expect(() => providerCommand("codex", undefined, policy)).toThrow(
+      /inventory is unknown/,
+    );
   });
 
   it("refuses a nonempty Claude MCP policy that cannot be strictly isolated", () => {

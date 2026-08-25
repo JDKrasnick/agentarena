@@ -776,10 +776,12 @@ global provider configuration or remote MCP services; `leave_as_is` binds the
 discovered snapshot rather than future setup changes.
 
 If a provider CLI cannot construct a strict run-scoped configuration from the
-name-only frozen inventory, Arena marks that provider's named selections
-unavailable rather than falling back to ambient configuration. Claude currently
-has this limitation: optional selections become coverage gaps, and required
-selections block launch unless reduced validation is accepted.
+name-only frozen inventory, Arena fails closed rather than falling back to
+ambient configuration. Claude named selections require explicit server
+definitions. Codex requires a known inventory and server names that its dotted
+configuration path can address safely. Optional Claude selections become
+coverage gaps, and required selections block launch unless reduced validation
+is accepted.
 
 If a required capability is denied or cannot be authenticated, the fight does
 not start unless the user explicitly accepts a reduced validation contract. The
