@@ -197,6 +197,20 @@ if (stage === "provider_health_probe") {
   }
 } else if (stage === "review_attacks") {
   if (
+    process.env.AGENT_ARENA_FAKE_UNKNOWN_REVIEW_FIELD_ALWAYS === "1" &&
+    round === "1"
+  ) {
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 2,
+        findings: [],
+        provider_identity: "claude",
+      }),
+    );
+    process.exit(0);
+  }
+  if (
     process.env.AGENT_ARENA_FAKE_INVALID_REVIEW_ALWAYS === "1" &&
     round === "1"
   ) {

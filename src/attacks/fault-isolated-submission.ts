@@ -11,10 +11,15 @@ import {
 } from "../core/types.js";
 import {
   HandoffFindingPayloadSchema,
+  TrustedReviewSubmissionSchema,
   type TrustedReviewSubmission,
 } from "../review/evidence-handoff.js";
 
 export const SUBMISSION_PARSER_VERSION = 1 as const;
+
+const TRUSTED_REVIEW_ENVELOPE_KEYS = new Set(
+  Object.keys(TrustedReviewSubmissionSchema.shape),
+);
 
 const LegacyAttackEntrySchema = LegacyAttackSubmissionEntrySchema.extend({
   reproduction: z.string().min(1),
@@ -582,6 +587,20 @@ export function parseFaultIsolatedSubmission(
 
   const sections: Record<string, ParsedSection> = {};
   if (kind === "review") {
+    const unknownKeys = Object.keys(envelope)
+      .filter((key) => !TRUSTED_REVIEW_ENVELOPE_KEYS.has(key))
+      .sort();
+    if (unknownKeys.length > 0)
+      return invalidSubmission(
+        kind,
+        empty,
+        reject(
+          "$",
+          unknownKeys,
+          "unknown_field",
+          `Review submission envelope contains unknown fields: ${unknownKeys.join(", ")}`,
+        ),
+      );
     sections.findings = parseEntries({
       envelope,
       key: "findings",

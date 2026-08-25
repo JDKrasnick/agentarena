@@ -229,6 +229,27 @@ describe("fault-isolated provider submissions", () => {
     );
   });
 
+  it("rejects unknown fields on the strict v2 review envelope", () => {
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({
+        version: 2,
+        findings: [],
+        provider_identity: "claude",
+      }),
+    );
+
+    expect(parsed.outcome).toBe("invalid");
+    expect(parsed.value).toEqual({ version: 2, findings: [] });
+    expect(parsed.rejections).toEqual([
+      expect.objectContaining({
+        path: "$",
+        code: "unknown_field",
+        received: '["provider_identity"]',
+      }),
+    ]);
+  });
+
   it("reports exact paths and allowed enums while safely rendering values", () => {
     const parsed = parseFaultIsolatedSubmission(
       "attack",

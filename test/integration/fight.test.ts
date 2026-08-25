@@ -609,7 +609,9 @@ describe("fake-adapter fight on a mocked real issue", () => {
           id: "codex",
           executable: process.execPath,
           args: [fixtureAgent],
-          environment: { AGENT_ARENA_FAKE_INVALID_REVIEW_ALWAYS: "1" },
+          environment: {
+            AGENT_ARENA_FAKE_UNKNOWN_REVIEW_FIELD_ALWAYS: "1",
+          },
         }),
         claude: new CommandAgentAdapter({
           id: "claude",
@@ -624,14 +626,21 @@ describe("fake-adapter fight on a mocked real issue", () => {
       durableV5: true,
     });
 
-    expect(
-      outcome.state.reviewInvocations.find(
-        (entry) => entry.round === 1 && entry.reviewer === "a",
-      ),
-    ).toMatchObject({
-      parseOutcome: "invalid",
-      submissionStatus: "invalid_submission",
-    });
+    const invalidReviews = outcome.state.reviewInvocations.filter(
+      (entry) => entry.round === 1 && entry.reviewer === "a",
+    );
+    expect(invalidReviews).toHaveLength(2);
+    for (const invalidReview of invalidReviews)
+      expect(invalidReview).toMatchObject({
+        parseOutcome: "invalid",
+        submissionStatus: "invalid_submission",
+      });
+    const parsedReview = JSON.parse(
+      await readFile(invalidReviews.at(-1)!.parsedArtifactPath!, "utf8"),
+    ) as { rejections: Array<{ code: string }> };
+    expect(parsedReview.rejections).toEqual([
+      expect.objectContaining({ code: "unknown_field" }),
+    ]);
     await expect(
       readHandoffLifecycle(store, "round_1", "a-to-b"),
     ).resolves.toEqual([]);
