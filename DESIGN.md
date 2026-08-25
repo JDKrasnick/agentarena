@@ -181,6 +181,15 @@ recent evidence. The Inspect action is the path to the untruncated, redacted
 output stream in recorded terminal order; do not turn an overview into a second
 terminal or trim the detail source.
 
+**The Provider Activity Rule.** Every renderer projects the same normalized
+provider events without raw tool arguments or private reasoning. Activity in
+the last 30 seconds reads “Active” with its safe action label; an outstanding
+tool reads “Waiting on `<tool>`” with elapsed time; otherwise a running call
+reads “No recent provider activity” with heartbeat age. Quiet state is
+informational and never implies a timeout. Contestant detail exposes the
+normalized timeline and diagnostic artifact references, while plain output
+prints activity only when the projected state changes.
+
 **The Lifecycle Projection Rule.** Consolidate append-only attack telemetry by
 attack ID. Preserve the first recorded mounting claim, show the latest recorded
 phase, status, detail, severity, and damage, and derive repair ownership and HP

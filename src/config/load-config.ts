@@ -12,7 +12,7 @@ import {
 const DurationLimitsSchema = z
   .object({
     implementation_minutes: z.number().positive().default(15),
-    review_minutes: z.number().positive().default(8),
+    review_minutes: z.number().positive().max(10).default(10),
     attack_minutes: z.number().positive().default(8),
     verifier_minutes: z.number().positive().default(2),
     repair_minutes: z.number().positive().default(8),
@@ -26,7 +26,7 @@ const DurationLimitsSchema = z
   .strict()
   .default({
     implementation_minutes: 15,
-    review_minutes: 8,
+    review_minutes: 10,
     attack_minutes: 8,
     verifier_minutes: 2,
     repair_minutes: 8,
