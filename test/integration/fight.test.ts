@@ -8,6 +8,7 @@ import {
   CommandCaseBuilder,
   CommandHouseScout,
   RuleBasedVerifier,
+  type ReviewInput,
 } from "../../src/agents/adapter.js";
 import { Arena } from "../../src/core/arena.js";
 import { RoundEngine } from "../../src/core/round-engine.js";
@@ -19,7 +20,10 @@ import {
 } from "../../src/contracts/round.js";
 import { applyAcceptedPatch } from "../../src/commands/apply.js";
 import { resolveCoverage } from "../../src/commands/resolve-coverage.js";
-import { FightConfigSchema } from "../../src/core/types.js";
+import {
+  AgentInvocationSchema,
+  FightConfigSchema,
+} from "../../src/core/types.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
 import {
   buildRunSpec,
@@ -71,6 +75,47 @@ function duelConfig(repositoryRoot: string) {
       repairMs: 10_000,
     },
   });
+}
+
+class DeterministicTimedReviewAdapter extends CommandAgentAdapter {
+  private readonly reviewAttempts = new Map<string, number>();
+
+  constructor(
+    id: "codex" | "claude",
+    private readonly retryBeforeSalvage: boolean,
+  ) {
+    super({ id, executable: process.execPath, args: [fixtureAgent] });
+  }
+
+  override async review(input: ReviewInput) {
+    const invocation = await super.review(input);
+    const attempt = (this.reviewAttempts.get(input.worktree) ?? 0) + 1;
+    this.reviewAttempts.set(input.worktree, attempt);
+    if (this.retryBeforeSalvage && attempt === 1) {
+      await rm(path.join(input.worktree, ".agent-arena-submission.json"), {
+        force: true,
+      });
+      return invocation;
+    }
+    if (!invocation.command) throw new Error("Expected review command record");
+    return AgentInvocationSchema.parse({
+      ...invocation,
+      status: "timed_out",
+      command: {
+        ...invocation.command,
+        timedOut: true,
+        failureClass: "agent_submission",
+        deadline: {
+          expiredAt: invocation.finishedAt,
+          graceMs: 0,
+          cleanupDurationMs: 0,
+          cleanupComplete: true,
+          signalEscalation: [],
+          remainingDescendants: [],
+        },
+      },
+    });
+  }
 }
 
 describe("fake-adapter fight on a mocked real issue", () => {
@@ -668,21 +713,10 @@ describe("fake-adapter fight on a mocked real issue", () => {
   it("records salvaged review deadlines after direct completion and a retry", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = duelConfig(repositoryRoot);
-    config.limits.reviewMs = 500;
-    const timedReviewAdapter = (id: "codex" | "claude") =>
-      new CommandAgentAdapter({
-        id,
-        executable: process.execPath,
-        args: [fixtureAgent],
-        environment:
-          id === "codex"
-            ? { AGENT_ARENA_FAKE_REVIEW_RETRY_THEN_TIMEOUT: "1" }
-            : { AGENT_ARENA_FAKE_REVIEW_TIMEOUT_AFTER_WRITE: "1" },
-      });
     const outcome = await new Arena({
       adapters: {
-        codex: timedReviewAdapter("codex"),
-        claude: timedReviewAdapter("claude"),
+        codex: new DeterministicTimedReviewAdapter("codex", true),
+        claude: new DeterministicTimedReviewAdapter("claude", false),
       },
       verifier: new RuleBasedVerifier("claude"),
     }).fight(config);
@@ -720,7 +754,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
           record.terminalDisposition === "recovered",
       ),
     ).toHaveLength(3);
-  }, 45_000);
+  }, 30_000);
 
   it("refreshes a blocker from a clean frozen target worktree", async () => {
     const repositoryRoot = await createSlugRepository();
