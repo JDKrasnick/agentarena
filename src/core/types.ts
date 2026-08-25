@@ -1252,7 +1252,15 @@ export const CoverageStageNameSchema = z.enum([
 export type CoverageStageName = z.infer<typeof CoverageStageNameSchema>;
 
 export const CoverageAttemptSchema = z.object({
-  attempt: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  // Review coverage may compose two generation attempts with three distinct
+  // handoff refresh boundaries; other stages retain their smaller limits.
+  attempt: z.union([
+    z.literal(1),
+    z.literal(2),
+    z.literal(3),
+    z.literal(4),
+    z.literal(5),
+  ]),
   state: z.enum(["succeeded", "valid_empty", "failed", "not_applicable"]),
   reasonCode: z.string().min(1).optional(),
   evidencePaths: z.array(z.string()),
@@ -1262,7 +1270,7 @@ export type CoverageAttempt = z.infer<typeof CoverageAttemptSchema>;
 export const CoverageStageAssessmentSchema = z.object({
   stage: CoverageStageNameSchema,
   finalState: z.enum(["completed", "failed", "not_applicable"]),
-  attempts: z.array(CoverageAttemptSchema).min(1).max(3),
+  attempts: z.array(CoverageAttemptSchema).min(1).max(5),
 });
 
 export const CoverageLaneAssessmentSchema = z.object({

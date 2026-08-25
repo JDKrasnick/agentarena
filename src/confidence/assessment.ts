@@ -29,7 +29,7 @@ function attempt(
   state: CoverageAttempt["state"],
   evidencePaths: string[] = [],
   reasonCode?: string,
-  attemptNumber: 1 | 2 | 3 = 1,
+  attemptNumber: CoverageAttempt["attempt"] = 1,
 ): CoverageAttempt {
   return {
     attempt: attemptNumber,
@@ -79,7 +79,9 @@ export function assessBattleCoverage(
         entry.reviewer === attacker &&
         entry.target === target,
     );
-    const reviewAttempts = reviews.slice(-3);
+    // One lane can compose two ordinary review attempts with packet-size,
+    // validation, and blocker refreshes. Preserve all five audit records.
+    const reviewAttempts = reviews;
     const review = reviewAttempts.at(-1);
     const focusedRecords = state.attackInvocations.filter(
       (entry) =>
@@ -142,7 +144,7 @@ export function assessBattleCoverage(
           (value): value is string => Boolean(value),
         ),
         record.parseOutcome ? undefined : "focused_description_failed",
-        (index + 1) as 1 | 2 | 3,
+        (index + 1) as CoverageAttempt["attempt"],
       ),
     );
     if (!focusedAttempts.length)
@@ -267,7 +269,7 @@ export function assessBattleCoverage(
                 record.invocation.status === "succeeded"
                   ? undefined
                   : "review_failed",
-                (index + 1) as 1 | 2 | 3,
+                (index + 1) as CoverageAttempt["attempt"],
               ),
             )
           : [attempt("failed", [], "review_missing")],
@@ -326,7 +328,7 @@ export function assessBattleCoverage(
                     : repairJudgeUnable && index === repairAttempts.length - 1
                       ? "repair_judge_unable"
                       : "repair_failed",
-                  (index + 1) as 1 | 2 | 3,
+                  (index + 1) as CoverageAttempt["attempt"],
                 ),
               )
             : [attempt("failed", [], "repair_missing")]

@@ -456,6 +456,83 @@ describe("coverage assessment", () => {
     ).toHaveLength(3);
   });
 
+  it("preserves every composed reviewer attempt in coverage", () => {
+    const state = makeRunState();
+    addLaneRecords(state);
+    const initialReview = state.reviewInvocations.find(
+      (entry) =>
+        entry.round === 2 && entry.reviewer === "a" && entry.target === "b",
+    )!;
+    initialReview.submissionStatus = "invalid_submission";
+    initialReview.findingCount = 0;
+    initialReview.parseOutcome = "invalid";
+    initialReview.parsedArtifactPath = "review-attempt-1.json";
+    state.reviewInvocations.push(
+      {
+        round: 2,
+        reviewer: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "submitted",
+        findingCount: 1,
+        parseOutcome: "valid",
+        artifactPath: "review-attempt-2.json",
+      },
+      {
+        round: 2,
+        reviewer: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "submitted",
+        findingCount: 1,
+        parseOutcome: "valid",
+        artifactPath: "packet-size-refresh.json",
+      },
+      {
+        round: 2,
+        reviewer: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "submitted",
+        findingCount: 1,
+        parseOutcome: "valid",
+        artifactPath: "validation-refresh.json",
+      },
+      {
+        round: 2,
+        reviewer: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "submitted",
+        findingCount: 1,
+        parseOutcome: "valid",
+        artifactPath: "blocker-refresh.json",
+      },
+    );
+
+    const assessment = assessBattleCoverage(state);
+    const attempts = assessment.requiredLanes
+      .find((entry) => entry.id === "round-2:a->b")
+      ?.stages.find((entry) => entry.stage === "review")?.attempts;
+
+    expect(attempts).toHaveLength(5);
+    expect(attempts?.map((entry) => entry.attempt)).toEqual([1, 2, 3, 4, 5]);
+    expect(attempts?.map((entry) => entry.state)).toEqual([
+      "failed",
+      "succeeded",
+      "succeeded",
+      "succeeded",
+      "succeeded",
+    ]);
+    expect(attempts?.flatMap((entry) => entry.evidencePaths)).toEqual([
+      "review-attempt-1.json",
+      "review-attempt-2.json",
+      "packet-size-refresh.json",
+      "validation-refresh.json",
+      "blocker-refresh.json",
+    ]);
+  });
+
   it("treats an exhausted partial v2 review as failed coverage", () => {
     const state = makeRunState();
     addLaneRecords(state);
