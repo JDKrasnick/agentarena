@@ -219,12 +219,14 @@ describe("built CLI smoke flow", () => {
   it("recovers provider transport with an exact frozen-input replacement", async () => {
     const repositoryRoot = await createSlugRepository();
     const bin = await mkdtemp(path.join(os.tmpdir(), "arena-recovery-bin-"));
-    const marker = path.join(bin, "transport-failed-once");
+    const marker = path.join(bin, "provider-recovered");
     await writeFile(
       path.join(bin, "codex"),
       `#!/bin/sh
-if [ "$AGENT_ARENA_STAGE" = "implement" ] && [ ! -f "$AGENT_ARENA_TRANSPORT_MARKER" ]; then
+if [ "$AGENT_ARENA_STAGE" = "provider_health_probe" ]; then
   : > "$AGENT_ARENA_TRANSPORT_MARKER"
+fi
+if [ "$AGENT_ARENA_STAGE" = "implement" ] && [ ! -f "$AGENT_ARENA_TRANSPORT_MARKER" ]; then
   echo "MCP OAuth authentication failed" >&2
   exit 8
 fi
@@ -348,4 +350,139 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
     );
     expect(reconnaissance[1]).toEqual(reconnaissance[0]);
   }, 120_000);
+
+  it("retains validated implementations when round-one review recovery continues", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const bin = await mkdtemp(
+      path.join(os.tmpdir(), "arena-stage-recovery-bin-"),
+    );
+    const marker = path.join(bin, "provider-recovered");
+    const implementationCount = path.join(bin, "implementation-count");
+    await writeFile(
+      path.join(bin, "codex"),
+      `#!/bin/sh
+if [ "$AGENT_ARENA_STAGE" = "provider_health_probe" ]; then
+  : > "$AGENT_ARENA_TRANSPORT_MARKER"
+fi
+if [ "$AGENT_ARENA_STAGE" = "implement" ]; then
+  printf '1\\n' >> "$AGENT_ARENA_IMPLEMENTATION_COUNT"
+fi
+if [ "$AGENT_ARENA_STAGE" = "review_attacks" ] && [ ! -f "$AGENT_ARENA_TRANSPORT_MARKER" ]; then
+  echo "MCP OAuth authentication failed" >&2
+  exit 8
+fi
+exec "${process.execPath}" "${fixtureAgent}" "$@"
+`,
+    );
+    await writeFile(
+      path.join(bin, "claude"),
+      `#!/bin/sh
+if [ "$AGENT_ARENA_STAGE" = "implement" ]; then
+  printf '1\\n' >> "$AGENT_ARENA_IMPLEMENTATION_COUNT"
+fi
+exec "${process.execPath}" "${fixtureAgent}" "$@"
+`,
+    );
+    await Promise.all([
+      chmod(path.join(bin, "codex"), 0o755),
+      chmod(path.join(bin, "claude"), 0o755),
+    ]);
+
+    const result = await execa(
+      process.execPath,
+      [
+        cli,
+        "fight",
+        "Lowercase slugs and collapse whitespace.",
+        "--test",
+        "node --test",
+        "--agents",
+        "codex,claude",
+        "--yes",
+        "--no-window",
+      ],
+      {
+        cwd: repositoryRoot,
+        env: {
+          ...process.env,
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+          AGENT_ARENA_TRANSPORT_MARKER: marker,
+          AGENT_ARENA_IMPLEMENTATION_COUNT: implementationCount,
+        },
+        timeout: 120_000,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      (await readFile(implementationCount, "utf8")).trim().split("\n"),
+    ).toHaveLength(2);
+    expect(
+      await readdir(path.join(repositoryRoot, ".agent-arena", "runs")),
+    ).toHaveLength(2);
+  }, 150_000);
+
+  it("becomes inconclusive after the second unrecovered coverage-stage failure", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const bin = await mkdtemp(
+      path.join(os.tmpdir(), "arena-exhausted-recovery-bin-"),
+    );
+    await writeFile(
+      path.join(bin, "codex"),
+      `#!/bin/sh
+if [ "$AGENT_ARENA_STAGE" = "review_attacks" ]; then
+  echo "MCP OAuth authentication failed" >&2
+  exit 8
+fi
+exec "${process.execPath}" "${fixtureAgent}" "$@"
+`,
+    );
+    await writeFile(
+      path.join(bin, "claude"),
+      `#!/bin/sh
+exec "${process.execPath}" "${fixtureAgent}" "$@"
+`,
+    );
+    await Promise.all([
+      chmod(path.join(bin, "codex"), 0o755),
+      chmod(path.join(bin, "claude"), 0o755),
+    ]);
+
+    const result = await execa(
+      process.execPath,
+      [
+        cli,
+        "fight",
+        "Lowercase slugs and collapse whitespace.",
+        "--test",
+        "node --test",
+        "--agents",
+        "codex,claude",
+        "--yes",
+        "--no-window",
+      ],
+      {
+        cwd: repositoryRoot,
+        env: {
+          ...process.env,
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+        reject: false,
+        timeout: 120_000,
+      },
+    );
+
+    expect(result.exitCode).toBe(2);
+    const runsRoot = path.join(repositoryRoot, ".agent-arena", "runs");
+    const summaries = await Promise.all(
+      (await readdir(runsRoot)).map(
+        async (runId) =>
+          JSON.parse(
+            await readFile(path.join(runsRoot, runId, "result.json"), "utf8"),
+          ) as { status: string; provenance: { parentRunId?: string } },
+      ),
+    );
+    const child = summaries.find((entry) => entry.provenance.parentRunId);
+    expect(child?.status).toBe("inconclusive");
+  }, 150_000);
 });

@@ -32,6 +32,11 @@ import type { PriorAdjudicationContext } from "../attacks/challenges.js";
 import { runProcess, type ProcessRequest } from "../runner/process-runner.js";
 import { z } from "zod";
 import type { ArenaObserver, OutputSource } from "../observability/events.js";
+import { selectedMcpNames, type FrozenMcpPolicy } from "../mcp/policy.js";
+import type {
+  ProviderStage,
+  ProviderStageFailure,
+} from "../recovery/provider-policy.js";
 import type { ProviderStreamKind } from "./provider-stream.js";
 
 async function runObservedProcess(
@@ -221,6 +226,8 @@ export interface AttackVerifier {
   adjudicate?(input: JudgeAdjudicationInput): Promise<JudgeAttackVerdict>;
   /** Optional repair fallback used only after mechanical repair checks remain unavailable. */
   assessRepair?(input: JudgeRepairInput): Promise<JudgeRepairVerdict>;
+  /** Returns and removes the oldest causally established terminal provider failure. */
+  consumeProviderFailure?(): ProviderStageFailure | undefined;
 }
 
 export interface JudgeAdjudicationInput extends Omit<
@@ -445,15 +452,47 @@ export interface CommandAdapterOptions {
   providerStream?: ProviderStreamKind;
 }
 
+function codexMcpOverrideArgs(
+  policy: FrozenMcpPolicy,
+  selectedNames: readonly string[],
+): string[] {
+  const inventory = policy.inventory.find(
+    (entry) => entry.provider === "codex",
+  );
+  if (!inventory || inventory.state === "unknown")
+    throw new Error(
+      "Codex MCP inventory is unknown, so Arena cannot isolate the run-scoped allowlist",
+    );
+  return inventory.servers.flatMap((server) => {
+    const selected = selectedNames.includes(server.name);
+    if (server.enabled === selected) return [];
+    // Codex's dotted -c parser does not support quoted path segments. Refuse
+    // names that cannot be addressed without changing which server they name.
+    if (!/^[A-Za-z0-9_-]+$/.test(server.name))
+      throw new Error(
+        `Codex MCP server ${JSON.stringify(server.name)} cannot be isolated safely through the CLI configuration path`,
+      );
+    return ["-c", `mcp_servers.${server.name}.enabled=${String(selected)}`];
+  });
+}
+
 export function providerCommand(
   id: AgentId,
   model?: string,
+  mcpPolicy?: FrozenMcpPolicy,
 ): Omit<CommandAdapterOptions, "id"> {
   // `gpt-5.6` is the default-family name, while ChatGPT-authenticated Codex
   // CLI expects the concrete flagship model identifier.
   const resolvedModel =
     id === "codex" && model === "gpt-5.6" ? "gpt-5.6-sol" : model;
   const modelArgs = resolvedModel ? ["--model", resolvedModel] : [];
+  const selectedMcp = mcpPolicy ? selectedMcpNames(mcpPolicy, id) : undefined;
+  const providerInventory = mcpPolicy?.inventory.find(
+    (entry) => entry.provider === id,
+  );
+  const unselectedMcp = providerInventory?.servers
+    .filter((server) => !selectedMcp?.includes(server.name))
+    .map((server) => server.name);
   switch (id) {
     case "codex":
       return {
@@ -462,6 +501,9 @@ export function providerCommand(
         args: [
           "exec",
           "--json",
+          ...(mcpPolicy
+            ? codexMcpOverrideArgs(mcpPolicy, selectedMcp ?? [])
+            : []),
           ...modelArgs,
           "--full-auto",
           "--skip-git-repo-check",
@@ -470,6 +512,10 @@ export function providerCommand(
         ...(resolvedModel ? { model: resolvedModel } : {}),
       };
     case "claude":
+      if (mcpPolicy && selectedMcp?.length)
+        throw new Error(
+          "Claude named MCP selections require explicit server definitions so --strict-mcp-config can isolate the run; unsafe global configuration reuse is refused",
+        );
       return {
         executable: "claude",
         providerStream: "claude",
@@ -481,13 +527,31 @@ export function providerCommand(
           "stream-json",
           "--verbose",
           ...modelArgs,
+          ...(mcpPolicy && selectedMcp?.length === 0
+            ? [
+                "--strict-mcp-config",
+                "--mcp-config",
+                JSON.stringify({ mcpServers: {} }),
+              ]
+            : (unselectedMcp ?? []).flatMap((name) => [
+                "--disallowedTools",
+                `mcp__${name}__*`,
+              ])),
         ],
         ...(resolvedModel ? { model: resolvedModel } : {}),
       };
     case "gemini":
       return {
         executable: "gemini",
-        args: ["--yolo", "--output-format", "stream-json", ...modelArgs],
+        args: [
+          "--yolo",
+          "--output-format",
+          "stream-json",
+          ...modelArgs,
+          ...(mcpPolicy
+            ? ["--allowed-mcp-server-names", (selectedMcp ?? []).join(",")]
+            : []),
+        ],
         providerStream: "gemini",
         ...(resolvedModel ? { model: resolvedModel } : {}),
       };
@@ -668,6 +732,10 @@ export class CommandAgentAdapter implements AgentAdapter {
     };
     const command = await runProcess(request);
     const finished = new Date();
+    const usableTerminalResult = await this.hasUsableTerminalResult(
+      stage,
+      input.worktree,
+    );
     let explanation = "";
     try {
       explanation = (await readStageSubmission(input.worktree)).explanation;
@@ -688,16 +756,19 @@ export class CommandAgentAdapter implements AgentAdapter {
       status:
         input.signal.aborted && !command.transportFailures?.length
           ? "cancelled"
-          : command.transportFailures?.length &&
-              (command.timedOut || command.exitCode !== 0)
-            ? "infrastructure_error"
-            : command.failureClass === "arena_infrastructure"
+          : usableTerminalResult
+            ? "succeeded"
+            : command.transportFailures?.length &&
+                (command.timedOut || command.exitCode !== 0) &&
+                !usableTerminalResult
               ? "infrastructure_error"
-              : command.timedOut
-                ? "timed_out"
-                : command.exitCode === 0
-                  ? "succeeded"
-                  : "failed",
+              : command.failureClass === "arena_infrastructure"
+                ? "infrastructure_error"
+                : command.timedOut
+                  ? "timed_out"
+                  : command.exitCode === 0
+                    ? "succeeded"
+                    : "failed",
       command,
       promptPath: input.promptPath,
       transcriptPath: command.stdoutPath,
@@ -725,13 +796,38 @@ export class CommandAgentAdapter implements AgentAdapter {
     });
     return invocation;
   }
+
+  private async hasUsableTerminalResult(
+    stage: "implement" | "review_attacks" | "collect_attacks" | "repair",
+    worktree: string,
+  ): Promise<boolean> {
+    try {
+      const raw = await readFile(
+        path.join(worktree, ".agent-arena-submission.json"),
+        "utf8",
+      );
+      const schema =
+        stage === "review_attacks"
+          ? TrustedReviewSubmissionSchema
+          : stage === "collect_attacks"
+            ? AttackSubmissionV2Schema
+            : StageSubmissionSchema;
+      return schema.safeParse(JSON.parse(raw) as unknown).success;
+    } catch {
+      return false;
+    }
+  }
 }
 
 export function createProviderAdapter(
   id: AgentId,
   model?: string,
+  mcpPolicy?: FrozenMcpPolicy,
 ): CommandAgentAdapter {
-  return new CommandAgentAdapter({ id, ...providerCommand(id, model) });
+  return new CommandAgentAdapter({
+    id,
+    ...providerCommand(id, model, mcpPolicy),
+  });
 }
 
 const AttackVerdictSchema = z.object({
@@ -796,12 +892,61 @@ async function stageJudgeSources(
 
 export class CommandAttackVerifier implements AttackVerifier {
   private readonly command: Omit<CommandAdapterOptions, "id">;
+  private readonly providerFailures: ProviderStageFailure[] = [];
 
   constructor(
     readonly id: AgentId,
     command?: Omit<CommandAdapterOptions, "id">,
   ) {
     this.command = command ?? providerCommand(id);
+  }
+
+  consumeProviderFailure(): ProviderStageFailure | undefined {
+    return this.providerFailures.shift();
+  }
+
+  private recordTerminalProviderFailure(
+    stage: Extract<ProviderStage, "judge" | "semantic_adjudication">,
+    result: CommandResult,
+    input: {
+      retryReason?: string;
+      promptPath: string;
+      transcriptPrefix: string;
+    },
+    reason: string,
+  ): void {
+    const transportFailures = result.transportFailures;
+    if (
+      !input.retryReason ||
+      !transportFailures?.length ||
+      !this.isProviderInfrastructureFailure(result)
+    )
+      return;
+    this.providerFailures.push({
+      version: 1,
+      provider: this.id,
+      stage,
+      reason,
+      causalEvidence: transportFailures.map(
+        (entry) => `${entry.kind}: ${entry.detail}`,
+      ),
+      artifactRefs: [
+        input.promptPath,
+        input.transcriptPrefix,
+        result.stdoutPath,
+        result.stderrPath,
+      ],
+      usableTerminalResult: false,
+    });
+  }
+
+  private isProviderInfrastructureFailure(result: CommandResult): boolean {
+    return Boolean(
+      result.transportFailures?.length &&
+      (result.timedOut ||
+        result.exitCode !== 0 ||
+        result.failureClass === "arena_infrastructure"),
+    );
   }
 
   async assess(input: AnonymizedAttackInput): Promise<AttackVerdict> {
@@ -877,8 +1022,6 @@ export class CommandAttackVerifier implements AttackVerifier {
         stage: "attack-verifier",
       },
     );
-    if (result.failureClass === "arena_infrastructure")
-      throw new Error("Verifier provider infrastructure failed");
     try {
       const verdict = parseModelSubmission(
         AttackVerdictSchema,
@@ -897,6 +1040,17 @@ export class CommandAttackVerifier implements AttackVerifier {
           : {}),
       };
     } catch (error) {
+      if (this.isProviderInfrastructureFailure(result)) {
+        this.recordTerminalProviderFailure(
+          "judge",
+          result,
+          input,
+          "Attack verifier provider failure persisted after the targeted retry",
+        );
+        throw new Error("Verifier provider infrastructure failed", {
+          cause: error,
+        });
+      }
       throw new Error(
         `Verifier output was invalid: ${error instanceof Error ? error.message : String(error)}`,
         { cause: error },
@@ -1020,8 +1174,6 @@ export class CommandAttackVerifier implements AttackVerifier {
         stage: "judge-fallback",
       },
     );
-    if (result.failureClass === "arena_infrastructure")
-      throw new Error("Judge provider infrastructure failed");
     try {
       const verdict = parseModelSubmission(
         JudgeAttackVerdictSchema,
@@ -1042,6 +1194,17 @@ export class CommandAttackVerifier implements AttackVerifier {
           : {}),
       };
     } catch (error) {
+      if (this.isProviderInfrastructureFailure(result)) {
+        this.recordTerminalProviderFailure(
+          "semantic_adjudication",
+          result,
+          input,
+          "Semantic adjudication provider failure persisted after the targeted retry",
+        );
+        throw new Error("Judge provider infrastructure failed", {
+          cause: error,
+        });
+      }
       throw new Error(
         `Judge fallback output was invalid: ${error instanceof Error ? error.message : String(error)}`,
         { cause: error },
@@ -1129,8 +1292,6 @@ export class CommandAttackVerifier implements AttackVerifier {
         stage: "repair-judge",
       },
     );
-    if (result.failureClass === "arena_infrastructure")
-      throw new Error("Repair judge provider infrastructure failed");
     try {
       const verdict = parseModelSubmission(
         schema,
@@ -1138,6 +1299,17 @@ export class CommandAttackVerifier implements AttackVerifier {
       );
       return { ...verdict, packetDigest: packet.packetDigest };
     } catch (error) {
+      if (this.isProviderInfrastructureFailure(result)) {
+        this.recordTerminalProviderFailure(
+          "judge",
+          result,
+          input,
+          "Repair judge provider failure persisted after the targeted retry",
+        );
+        throw new Error("Repair judge provider infrastructure failed", {
+          cause: error,
+        });
+      }
       throw new Error(
         `Repair judge output was invalid: ${error instanceof Error ? error.message : String(error)}`,
         { cause: error },

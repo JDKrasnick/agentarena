@@ -931,6 +931,7 @@ export interface BuildRunSpecOptions extends Omit<
   baseCommit: string;
   config: FightConfig;
   permissions: PermissionPolicy;
+  mcpPolicyHash?: string;
 }
 
 function canonicalJson(value: unknown): string {
@@ -1097,6 +1098,7 @@ export async function buildRunSpec(
         scopes: capability.scopes,
       })),
     },
+    ...(options.mcpPolicyHash ? { mcpPolicyHash: options.mcpPolicyHash } : {}),
     ...(browserValidation && browserCapability
       ? {
           browserValidation: {

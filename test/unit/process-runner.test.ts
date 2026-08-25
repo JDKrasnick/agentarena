@@ -157,7 +157,7 @@ describe("process runner supervision", () => {
       executable: process.execPath,
       args: [
         "-e",
-        'console.error("MCP OAuth refresh token expired"); console.error("transport connection lost; reconnecting")',
+        'console.error("MCP authentication failed: OAuth token expired"); console.error("transport connection lost; reconnecting")',
       ],
       cwd: root,
       timeoutMs: 2_000,
@@ -169,6 +169,100 @@ describe("process runner supervision", () => {
     expect(result.transportFailures?.map((failure) => failure.kind)).toEqual([
       "mcp_auth",
       "reconnect",
+    ]);
+  });
+
+  it("does not promote optional MCP states from provider initialization", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-mcp-init-"));
+    const init = JSON.stringify({
+      type: "system",
+      subtype: "init",
+      mcpServers: [
+        { name: "vercel", status: "needs-auth" },
+        { name: "pencil", status: "failed", error: "connection failed" },
+      ],
+    });
+    const result = await runProcess({
+      executable: process.execPath,
+      args: ["-e", `console.log(${JSON.stringify(init)})`],
+      cwd: root,
+      timeoutMs: 2_000,
+      logPrefix: path.join(root, "logs", "mcp-init"),
+      providerStream: "claude",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.transportFailures).toBeUndefined();
+  });
+
+  it("keeps optional Codex MCP refresh warnings diagnostic-only", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-mcp-startup-"));
+    const warning =
+      "ERROR codex_rmcp_client::oauth::refresh_transaction: " +
+      "failed to refresh OAuth tokens for server expo: " +
+      "invalid_grant: Invalid or expired refresh token";
+    const result = await runProcess({
+      executable: process.execPath,
+      args: ["-e", `console.error(${JSON.stringify(warning)})`],
+      cwd: root,
+      timeoutMs: 2_000,
+      logPrefix: path.join(root, "logs", "mcp-startup"),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.transportFailures).toBeUndefined();
+    expect(await readFile(result.stderrPath, "utf8")).toContain(warning);
+  });
+
+  it("keeps an optional MCP warning diagnostic-only after useful provider activity", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-mcp-active-"));
+    const activity = JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: "Reviewing the target." },
+    });
+    const warning =
+      "ERROR codex_rmcp_client::oauth::refresh_transaction: " +
+      "failed to refresh OAuth tokens for server expo: " +
+      "invalid_grant: Invalid or expired refresh token";
+    const program = [
+      `console.log(${JSON.stringify(activity)})`,
+      `console.error(${JSON.stringify(warning)})`,
+      "setInterval(() => undefined, 1000)",
+    ].join(";");
+    const result = await runProcess({
+      executable: process.execPath,
+      args: ["-e", program],
+      cwd: root,
+      timeoutMs: 50,
+      logPrefix: path.join(root, "logs", "mcp-active"),
+      providerStream: "codex",
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.providerDiagnostics?.eventCount).toBeGreaterThan(0);
+    expect(result.transportFailures).toBeUndefined();
+  });
+
+  it("retains an MCP refresh failure when the provider does not continue", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-mcp-fatal-"));
+    const warning =
+      "ERROR codex_rmcp_client::oauth::refresh_transaction: " +
+      "failed to refresh OAuth tokens for server required-server: " +
+      "invalid_grant: Invalid or expired refresh token";
+    const result = await runProcess({
+      executable: process.execPath,
+      args: [
+        "-e",
+        `console.error(${JSON.stringify(warning)}); process.exit(2)`,
+      ],
+      cwd: root,
+      timeoutMs: 2_000,
+      logPrefix: path.join(root, "logs", "mcp-fatal"),
+    });
+
+    expect(result.exitCode).toBe(2);
+    expect(result.transportFailures?.map((failure) => failure.kind)).toEqual([
+      "mcp_auth",
     ]);
   });
 });

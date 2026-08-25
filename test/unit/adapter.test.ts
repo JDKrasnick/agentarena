@@ -32,6 +32,146 @@ describe("provider model selection", () => {
     );
     expect(command.model).toBe("gpt-5.6-sol");
   });
+
+  it("applies the frozen MCP allowlist without changing global configuration", () => {
+    const policy = {
+      version: 1 as const,
+      mode: "configure_selection" as const,
+      inventory: [
+        {
+          provider: "codex" as const,
+          state: "known" as const,
+          servers: [
+            {
+              name: "selected",
+              enabled: true,
+              authentication: "ready" as const,
+              readiness: "ready" as const,
+            },
+            {
+              name: "omitted",
+              enabled: true,
+              authentication: "ready" as const,
+              readiness: "ready" as const,
+            },
+          ],
+          diagnosticArtifactRefs: [],
+        },
+      ],
+      servers: [
+        {
+          provider: "codex" as const,
+          name: "selected",
+          enabledInSnapshot: true,
+          authentication: "ready" as const,
+          readiness: "ready" as const,
+          role: "agent" as const,
+          requirement: "required" as const,
+          decision: "included" as const,
+          reason: "selected",
+        },
+        {
+          provider: "codex" as const,
+          name: "omitted",
+          enabledInSnapshot: true,
+          authentication: "ready" as const,
+          readiness: "ready" as const,
+          role: "agent" as const,
+          requirement: "optional" as const,
+          decision: "excluded" as const,
+          reason: "omitted",
+        },
+      ],
+      coverageGaps: [],
+      frozenAt: "2026-08-25T00:00:00.000Z",
+      policyHash: "0".repeat(64),
+    };
+    const args = providerCommand("codex", undefined, policy).args;
+
+    expect(args).not.toContain("mcp_servers.selected.enabled=true");
+    expect(args).toContain("mcp_servers.omitted.enabled=false");
+  });
+
+  it("refuses Codex MCP names that its dotted configuration path cannot isolate", () => {
+    const policy = {
+      version: 1 as const,
+      mode: "keep_configured" as const,
+      inventory: [
+        {
+          provider: "codex" as const,
+          state: "known" as const,
+          servers: [
+            {
+              name: "unsafe.name",
+              enabled: true,
+              authentication: "ready" as const,
+              readiness: "ready" as const,
+            },
+          ],
+          diagnosticArtifactRefs: [],
+        },
+      ],
+      servers: [],
+      coverageGaps: [],
+      frozenAt: "2026-08-25T00:00:00.000Z",
+      policyHash: "0".repeat(64),
+    };
+
+    expect(() => providerCommand("codex", undefined, policy)).toThrow(
+      /cannot be isolated safely/,
+    );
+  });
+
+  it("refuses to treat an unknown Codex inventory as an empty allowlist", () => {
+    const policy = {
+      version: 1 as const,
+      mode: "keep_configured" as const,
+      inventory: [
+        {
+          provider: "codex" as const,
+          state: "unknown" as const,
+          servers: [],
+          diagnosticArtifactRefs: [],
+        },
+      ],
+      servers: [],
+      coverageGaps: [],
+      frozenAt: "2026-08-25T00:00:00.000Z",
+      policyHash: "0".repeat(64),
+    };
+
+    expect(() => providerCommand("codex", undefined, policy)).toThrow(
+      /inventory is unknown/,
+    );
+  });
+
+  it("refuses a nonempty Claude MCP policy that cannot be strictly isolated", () => {
+    const policy = {
+      version: 1 as const,
+      mode: "configure_selection" as const,
+      inventory: [],
+      servers: [
+        {
+          provider: "claude" as const,
+          name: "github",
+          enabledInSnapshot: true,
+          authentication: "ready" as const,
+          readiness: "ready" as const,
+          role: "agent" as const,
+          requirement: "optional" as const,
+          decision: "included" as const,
+          reason: "selected",
+        },
+      ],
+      coverageGaps: [],
+      frozenAt: "2026-08-25T00:00:00.000Z",
+      policyHash: "0".repeat(64),
+    };
+
+    expect(() => providerCommand("claude", undefined, policy)).toThrow(
+      /strict-mcp-config/,
+    );
+  });
 });
 
 describe("implementation transport classification", () => {
@@ -68,6 +208,16 @@ describe("implementation transport classification", () => {
 
     expect(invocation.command?.transportFailures?.[0]?.kind).toBe("mcp_auth");
     expect(invocation.status).toBe("infrastructure_error");
+  });
+
+  it("does not let an incidental MCP warning override a usable terminal result", async () => {
+    const invocation = await invoke(
+      `require("node:fs").writeFileSync(process.env.AGENT_ARENA_SUBMISSION, JSON.stringify({version: 1, explanation: "usable"})); console.error("MCP OAuth refresh token expired"); process.exit(8)`,
+    );
+
+    expect(invocation.command?.exitCode).toBe(8);
+    expect(invocation.command?.transportFailures?.[0]?.kind).toBe("mcp_auth");
+    expect(invocation.status).toBe("succeeded");
   });
 });
 

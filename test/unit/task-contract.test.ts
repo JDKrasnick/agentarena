@@ -134,6 +134,65 @@ describe("run specification", () => {
     ).toBe("target patch\n");
   });
 
+  it("records an exhausted primary-verifier provider failure for recovery", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-judge-recovery-"));
+    const fightConfig = config(
+      root,
+      ["Normalize whitespace"],
+      [],
+      "Normalize whitespace",
+    );
+    const runSpec = await buildRunSpec({
+      runId: "run-judge-recovery",
+      baseCommit: "b".repeat(40),
+      config: fightConfig,
+      permissions,
+      repositoryRoot: root,
+      sourceDirectory: path.join(root, "snapshots"),
+    });
+    const attackPath = path.join(root, "attack.diff");
+    const scriptPath = path.join(root, "judge-failure.mjs");
+    await writeFile(attackPath, "attack evidence\n");
+    await writeFile(
+      scriptPath,
+      'console.error("MCP OAuth authentication failed"); process.exit(8);\n',
+    );
+    const verifier = new CommandAttackVerifier("codex", {
+      executable: process.execPath,
+      args: [scriptPath],
+    });
+
+    await expect(
+      verifier.assess({
+        attack: {
+          claim: "Whitespace is mishandled",
+          impact: "Unstable output",
+          oracle: {
+            expectedBehavior: "Normalize whitespace",
+            rationale: "The task requires it",
+          },
+          assertionFingerprint: "whitespace",
+          patchPath: attackPath,
+        },
+        runSpec,
+        authorPassed: true,
+        targetFailed: true,
+        worktree: root,
+        promptPath: path.join(root, "verifier.prompt.md"),
+        transcriptPrefix: path.join(root, "verifier-attempt-2"),
+        timeoutMs: 1_000,
+        signal: new AbortController().signal,
+        retryReason: "Verifier provider infrastructure failed",
+      }),
+    ).rejects.toThrow(/infrastructure failed/);
+
+    expect(verifier.consumeProviderFailure()).toMatchObject({
+      provider: "codex",
+      stage: "judge",
+      usableTerminalResult: false,
+    });
+  });
+
   it("snapshots exact task sources without extracting checklist criteria", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-contract-"));
     await writeFile(path.join(root, "AGENTS.md"), "Keep changes focused.\n");

@@ -97,19 +97,37 @@ contestant; completed v1 records remain readable. Classification precedence is
 external cancellation, harness infrastructure, provider transport/MCP/auth or
 reconnect evidence, contestant timeout or failed invocation, then patch
 applicability and required validation. Transport evidence supersedes timeout or
-nonzero exit only when no usable implementation result was produced. A
-transport failure stops the peer implementation with a phase-local controller
-and records that peer as transport-cancelled rather than failed.
+nonzero exit only when no usable implementation result was produced. Aggregate
+provider initialization metadata is ignored for transport classification.
+Optional MCP startup warnings remain in diagnostic logs but do not escalate
+when the provider exits successfully or continues useful work. An
+invocation-level transport failure stops the peer implementation with a
+phase-local controller and records that peer as transport-cancelled rather than
+failed.
 
-For implementation transport failures only, the harness launches at most three
-fresh backend-authenticating sentinel probes in a shared 30-second window. A
-successful probe creates a replacement run by copying the parent's frozen task
-sources and preserving its base commit, topology, permissions, budgets, and
-configuration; live issues and pull requests are not fetched again. Each failed
-parent persists a typed `transport-recovery.json` with probe results,
-disposition, restart ordinal, and replacement run ID, while child result
-provenance identifies its parent. Two replacements are the hard cap, so a
-transport failure in the third total run ends inconclusively without probes.
+After the normal targeted retry, every provider-backed stage may recover only
+from a causally established provider infrastructure failure that produced no
+usable terminal result. This includes implementation, review, attack
+construction, repair, judge, and semantic-adjudication work. Transport-shaped
+output is diagnostic evidence rather than a verdict, so a stale MCP warning
+cannot override a valid stage result.
+
+The harness launches at most three fresh backend-authenticating sentinel probes
+in a shared 30-second window. A successful probe creates a linked child run
+that retains validated upstream state and sealed rounds, discards incomplete
+dependent work, and continues from the failed stage. Frozen task sources, base
+commit, topology, permissions, MCP allowlist, budgets, and configuration remain
+unchanged; live issues and pull requests are not fetched again. Recovery
+artifacts record probe results, failed stage, causal evidence, disposition,
+continuation ordinal, replacement run ID, and the full run-ID chain.
+
+Two continuations are the hard chain-wide cap, and one provider may trigger at
+most one continuation. After capacity is exhausted, the first unrecovered
+review or attack failure follows ordinary coverage semantics and the second
+unrecovered provider-stage failure anywhere in the chain makes the fight
+inconclusive. Implementation, repair, correctness-critical judge work,
+required validation, and final validation remain immediately inconclusive when
+their results cannot be trusted.
 
 The command layer returns the final run ID, status, and rendered summary. The
 built CLI exits `0` for a completed battle, draw, or valid duel forfeit; `2` for
@@ -422,6 +440,9 @@ unscored report finding.
   of agent or test subprocesses, GPU workloads, and mobile builds. Running a
   user-supplied Compose profile is allowed.
 - Production credentials or enterprise-grade secret management.
+- Automatic MCP reauthentication, credential inspection, global provider
+  configuration mutation, remote MCP repair, and mid-run capability expansion.
+- Replaying sealed rounds or resetting recovery budgets per child run.
 - Deployment, package release, or GitHub writes without a separately
   authenticated, patch-bound delivery decision.
 - Elo ratings, persistent leaderboards, GIFs, and hosted or interactive replay
@@ -728,6 +749,40 @@ decision is available:
 - Already listed as denied and knowingly requested again: mark the attack
   invalid and apply normal miss recoil.
 
+Before worktree creation or any provider session, Arena inventories MCP servers
+from every selected provider setup. Inventory records only provider, server
+name, enabled state, authentication readiness, requested role, and requirement
+level; credentials are never read, copied, or displayed. A failed inventory is
+recorded as `unknown`, not as an empty setup.
+
+The operator selects exactly one MCP policy for the run: `keep_configured`
+enables only servers named in Arena configuration; `configure_selection` uses
+an explicit subset of discovered servers; and `leave_as_is` approves the exact
+enabled provider snapshot. `leave_as_is` is unavailable if any provider
+inventory is unknown, so the operator must provide explicit Arena configuration
+or stop.
+
+Selected servers receive isolated readiness checks before launch. Unavailable
+required servers block the run unless the operator explicitly accepts reduced
+validation with those servers excluded. Unavailable optional servers are
+excluded and become visible coverage gaps. Reauthentication remains an
+operator action.
+
+The resulting allowlist is immutable across provider commands, tool catalogs,
+prompts, sessions, retries, and recovery children. Unselected, unavailable, and
+undeclared servers are absent, and an agent cannot add MCP authority during a
+run. New capability requires a new run and approval plan. Arena never mutates
+global provider configuration or remote MCP services; `leave_as_is` binds the
+discovered snapshot rather than future setup changes.
+
+If a provider CLI cannot construct a strict run-scoped configuration from the
+name-only frozen inventory, Arena fails closed rather than falling back to
+ambient configuration. Claude named selections require explicit server
+definitions. Codex requires a known inventory and server names that its dotted
+configuration path can address safely. Optional Claude selections become
+coverage gaps, and required selections block launch unless reduced validation
+is accepted.
+
 If a required capability is denied or cannot be authenticated, the fight does
 not start unless the user explicitly accepts a reduced validation contract. The
 final report must prominently list every omitted check; a reduced contract
@@ -990,6 +1045,13 @@ permissions:
   deny:
     - production_credentials
     - production_deploy
+mcp:
+  policy: keep_configured
+  servers:
+    - provider: codex
+      name: github
+      role: agent
+      requirement: optional
 sources:
   - github_issue: 241
   # - github_pr: 87
@@ -1069,6 +1131,9 @@ containing:
   evidence, provenance, and the pre-permission input hash.
 - `permissions.json`: requested scopes, user decisions, leases, omitted checks,
   and redacted provisioning results.
+- `mcp-policy.json`: credential-free provider inventories, the selected
+  run-scoped policy, authentication/readiness metadata, the exact frozen
+  allowlist, exclusions, coverage gaps, and policy hash.
 - `result.json`: compact schema-v8 status, stage, contestant health, outcome,
   recommendation, warnings, artifact pointers, provenance, and ordered
   applied-envelope ledger. Detailed state is rebuilt from `baseline.json` and
@@ -1105,6 +1170,9 @@ containing:
 - `rounds/<round>/failures/`: normalized bounded-failure records and diagnostic
   artifact pointers.
 - `logs/`: harness command logs and provider transcripts.
+- `transport-recovery.json`: compatibility-named provider recovery ledger with
+  the failed stage, causal evidence, health probes, chain-wide continuation
+  ordinal, replacement link, and complete run-ID chain.
 
 Generated worktrees are temporary and may be removed after the report is safely
 written. Run artifacts are retained until the user deletes them.
@@ -1129,6 +1197,16 @@ Failures should be useful and recoverable:
   report explains why, and its author takes rank-based recoil.
 - Harness-owned failures are retried in a clean worktree and never cause damage,
   recoil, healing failure, or elimination.
+- Provider recovery applies after the targeted retry to implementation, review,
+  attack construction, repair, judge, and semantic-adjudication stages only
+  when causal evidence supports infrastructure failure and no usable terminal
+  result exists. Sealed rounds are retained and never replayed.
+- Round 1 persists a post-implementation, post-validation recovery checkpoint.
+  A later provider-stage child reuses those exact validated patches without
+  rerunning implementation and discards partial downstream round work.
+- Across one run chain, at most two provider-recovery continuations may be
+  created and each provider may trigger at most one. The limits do not reset in
+  child runs.
 - An attack-level infrastructure failure receives one targeted retry before an
   eligible immutable attack may use judge fallback; unresolved coverage has no
   health effect.

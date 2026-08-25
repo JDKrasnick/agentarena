@@ -139,6 +139,30 @@ const FileConfigSchema = z
         deny: [],
         reduced_validation_accepted: false,
       }),
+    mcp: z
+      .object({
+        policy: z
+          .enum(["keep_configured", "configure_selection", "leave_as_is"])
+          .default("keep_configured"),
+        servers: z
+          .array(
+            z
+              .object({
+                provider: AgentIdSchema,
+                name: z.string().trim().min(1),
+                role: z
+                  .enum(["agent", "harness_only", "both"])
+                  .default("agent"),
+                requirement: z
+                  .enum(["required", "optional"])
+                  .default("optional"),
+              })
+              .strict(),
+          )
+          .default([]),
+      })
+      .strict()
+      .default({ policy: "keep_configured", servers: [] }),
     limits: DurationLimitsSchema,
     selection: z
       .object({ enabled: z.boolean().default(true) })
@@ -502,6 +526,7 @@ export async function loadFightConfig(
     permissionMode: overrides.permissionMode ?? file.permissions.default,
     permissionAllow,
     permissionDeny: file.permissions.deny,
+    mcp: file.mcp,
     reducedValidationAccepted:
       overrides.reducedValidationAccepted ??
       file.permissions.reduced_validation_accepted,

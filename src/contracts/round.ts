@@ -252,6 +252,7 @@ export const RunSpecSchema = z
     budgets: RunBudgetsSchema,
     permissions: RunPermissionsSchema,
     browserValidation: BrowserValidationSchema.optional(),
+    mcpPolicyHash: Sha256Schema.optional(),
     contentHash: Sha256Schema,
   })
   .strict()
