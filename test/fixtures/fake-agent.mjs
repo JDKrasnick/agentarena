@@ -8,6 +8,12 @@ if (process.argv.includes("--version")) {
   process.exit(0);
 }
 
+if (process.argv[2] === "mcp" && process.argv[3] === "list") {
+  // An empty successful listing is a known inventory with no configured MCP
+  // servers, matching the isolated smoke-test environment.
+  process.exit(0);
+}
+
 const prompt = await new Promise((resolve) => {
   let value = "";
   process.stdin.setEncoding("utf8");
