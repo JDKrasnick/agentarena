@@ -703,7 +703,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     );
   });
 
-  it("builds validation refresh packets from permissions resolved after review", async () => {
+  it("keeps validation and blocker refresh allowances independent", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = duelConfig(repositoryRoot);
     const beforeExpiry = new Date("2026-08-24T20:00:00.000Z");
@@ -739,6 +739,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
       id: "codex",
       executable: process.execPath,
       args: [fixtureAgent],
+      environment: { AGENT_ARENA_FAKE_BLOCKER_ONCE: "1" },
     });
     const claude = new CommandAgentAdapter({
       id: "claude",
@@ -748,7 +749,10 @@ describe("fake-adapter fight on a mocked real issue", () => {
     const originalCodexReview = codex.review.bind(codex);
     vi.spyOn(codex, "review").mockImplementation(async (input) => {
       const invocation = await originalCodexReview(input);
-      if (input.prompt.includes("# Targeted validation refresh"))
+      if (
+        input.round === 2 &&
+        input.prompt.includes("# Targeted validation refresh")
+      )
         clock = afterExpiries;
       return invocation;
     });
@@ -756,7 +760,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     vi.spyOn(claude, "review").mockImplementation(async (input) => {
       const invocation = await originalClaudeReview(input);
       if (
-        input.round === 1 &&
+        input.round === 2 &&
         !input.prompt.includes("# Targeted validation refresh")
       )
         clock = betweenExpiries;
@@ -776,33 +780,70 @@ describe("fake-adapter fight on a mocked real issue", () => {
     const store = new ArtifactStore(config.artifactRoot, outcome.state.runId, {
       durableV5: true,
     });
-    const firstLane = await readHandoffLifecycle(store, "round_1", "a-to-b");
+    const refreshedLane = await readHandoffLifecycle(
+      store,
+      "round_2",
+      "a-to-b",
+    );
 
-    expect(firstLane.map((record) => record.state)).toEqual([
+    expect(refreshedLane.map((record) => record.state)).toEqual([
       "created",
       "refresh_required",
       "validated",
-      "consumed",
+      "refresh_required",
+      "validated",
+      "completed_empty",
     ]);
-    expect(firstLane[1]).toMatchObject({
+    expect(refreshedLane[1]).toMatchObject({
       event: "validation",
       reason_code: "permission_fingerprint_mismatch",
+      attempt: 1,
     });
-    expect(firstLane[2]).toMatchObject({
+    expect(refreshedLane[2]).toMatchObject({
       event: "refresh",
       reason_code: "refresh_valid",
+      attempt: 2,
+    });
+    expect(refreshedLane[3]).toMatchObject({
+      event: "blocking",
+      attempt: 1,
+    });
+    expect(refreshedLane[4]).toMatchObject({
+      event: "refresh",
+      reason_code: "blocker_refreshed",
+      attempt: 2,
     });
     expect(
-      outcome.state.reviewInvocations.some(
+      outcome.state.reviewInvocations.find(
         (entry) =>
-          entry.round === 1 &&
+          entry.round === 2 &&
           entry.reviewer === "a" &&
           entry.detail?.includes("Targeted validation refresh completed"),
       ),
-    ).toBe(true);
+    ).toMatchObject({ parseOutcome: "valid", submissionStatus: "submitted" });
+    expect(
+      outcome.state.reviewInvocations.find(
+        (entry) =>
+          entry.round === 2 &&
+          entry.reviewer === "a" &&
+          entry.detail?.includes("Targeted blocker refresh completed"),
+      ),
+    ).toMatchObject({ parseOutcome: "valid", submissionStatus: "submitted" });
     expect(outcome.state.warnings.join("\n")).not.toContain(
       "Trusted handoff validation refresh remained invalid",
     );
+    expect(outcome.state.warnings.join("\n")).not.toContain(
+      "Trusted handoff refresh failed for a against b",
+    );
+    expect(
+      outcome.state.coverageAssessment?.requiredLanes.find(
+        (lane) => lane.id === "round-2:a->b",
+      ),
+    ).toMatchObject({
+      finalState: "completed",
+      evidenceBasis: "explicit_empty",
+      reasonCodes: [],
+    });
   });
 
   it("keeps blocker refresh independent from attack submission correction", async () => {
@@ -859,6 +900,26 @@ describe("fake-adapter fight on a mocked real issue", () => {
           entry.detail?.includes("Targeted blocker refresh completed"),
       ),
     ).toBe(true);
+    expect(
+      outcome.state.reviewInvocations.find(
+        (entry) =>
+          entry.round === 2 &&
+          entry.reviewer === "a" &&
+          entry.detail?.includes("Targeted blocker refresh completed"),
+      ),
+    ).toMatchObject({
+      parseOutcome: "valid",
+      submissionStatus: "submitted",
+    });
+    expect(
+      outcome.state.coverageAssessment?.requiredLanes.find(
+        (lane) => lane.id === "round-2:a->b",
+      ),
+    ).toMatchObject({
+      finalState: "completed",
+      evidenceBasis: "explicit_empty",
+      reasonCodes: [],
+    });
   });
 
   it("ends an invalid trusted-handoff blocker in coverage loss without correction", async () => {

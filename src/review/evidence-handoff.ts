@@ -1644,14 +1644,12 @@ export function assertHandoffLifecycleTransition(
   };
   const expectedEvent = expectedEvents[previous.state]?.[next.state];
   const expectedAttempt =
-    previous.state === "refresh_required" ? 2 : previous.attempt;
-  if (
-    next.event !== expectedEvent ||
-    next.attempt !== expectedAttempt ||
-    (previous.state === "refresh_required" &&
-      previous.attempt === 2 &&
-      next.state !== "coverage_loss")
-  )
+    next.state === "refresh_required"
+      ? 1
+      : previous.state === "refresh_required"
+        ? 2
+        : previous.attempt;
+  if (next.event !== expectedEvent || next.attempt !== expectedAttempt)
     throw new Error(
       `Invalid handoff lifecycle tuple: ${previous.state} -> ${next.state} via ${next.event} on attempt ${String(next.attempt)}`,
     );

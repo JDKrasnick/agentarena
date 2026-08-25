@@ -390,6 +390,72 @@ describe("coverage assessment", () => {
     expect(roundTwoLane?.reasonCodes).toContain("focused_description_failed");
   });
 
+  it("uses the terminal third attack invocation after a blocker refresh", () => {
+    const state = makeRunState();
+    addLaneRecords(state);
+    state.attackInvocations = state.attackInvocations.filter(
+      (entry) =>
+        !(entry.round === 2 && entry.attacker === "a" && entry.target === "b"),
+    );
+    state.attackInvocations.push(
+      {
+        round: 2,
+        attacker: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "invalid_submission",
+        attackCount: 0,
+        parseOutcome: "invalid",
+        handoffPacketId: "packet-before-refresh",
+      },
+      {
+        round: 2,
+        attacker: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "not_submitted",
+        attackCount: 0,
+        handoffPacketId: "packet-before-refresh",
+        detail: "Attacker returned a valid trusted-handoff blocker",
+      },
+      {
+        round: 2,
+        attacker: "a",
+        target: "b",
+        invocation: invocation("succeeded"),
+        submissionStatus: "submitted",
+        attackCount: 0,
+        parseOutcome: "valid_empty",
+        handoffPacketId: "packet-after-refresh",
+      },
+    );
+    state.reviewInvocations.push({
+      round: 2,
+      reviewer: "a",
+      target: "b",
+      invocation: invocation("succeeded"),
+      submissionStatus: "submitted",
+      findingCount: 1,
+      parseOutcome: "valid",
+      artifactPath: "round-2-blocker-refresh.json",
+    });
+
+    const assessment = assessBattleCoverage(state);
+    const lane = assessment.requiredLanes.find(
+      (entry) => entry.id === "round-2:a->b",
+    );
+
+    expect(lane).toMatchObject({
+      finalState: "completed",
+      evidenceBasis: "explicit_empty",
+      reasonCodes: [],
+    });
+    expect(
+      lane?.stages.find((entry) => entry.stage === "attack_submission")
+        ?.attempts,
+    ).toHaveLength(3);
+  });
+
   it("treats an exhausted partial v2 review as failed coverage", () => {
     const state = makeRunState();
     addLaneRecords(state);

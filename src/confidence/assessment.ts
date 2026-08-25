@@ -79,7 +79,8 @@ export function assessBattleCoverage(
         entry.reviewer === attacker &&
         entry.target === target,
     );
-    const review = reviews.slice(0, 2).at(-1);
+    const reviewAttempts = reviews.slice(-3);
+    const review = reviewAttempts.at(-1);
     const focusedRecords = state.attackInvocations.filter(
       (entry) =>
         entry.round === round &&
@@ -87,7 +88,18 @@ export function assessBattleCoverage(
         entry.target === target &&
         entry.detail !== "Correction-only reconciliation lane",
     );
-    const focused = focusedRecords.slice(0, 2).at(-1);
+    const blockerRefreshOccurred = focusedRecords.some(
+      (entry, index) =>
+        index > 0 &&
+        Boolean(entry.handoffPacketId) &&
+        Boolean(focusedRecords[index - 1]?.handoffPacketId) &&
+        entry.handoffPacketId !== focusedRecords[index - 1]!.handoffPacketId,
+    );
+    const focusedAttemptsRecords = focusedRecords.slice(
+      0,
+      blockerRefreshOccurred ? 3 : 2,
+    );
+    const focused = focusedAttemptsRecords.at(-1);
     const attacks = state.attacks.filter(
       (entry) =>
         entry.round === round &&
@@ -119,7 +131,7 @@ export function assessBattleCoverage(
         entry.sourceRound === round &&
         entry.attemptCount === 2,
     );
-    const focusedAttempts = focusedRecords.slice(0, 2).map((record, index) =>
+    const focusedAttempts = focusedAttemptsRecords.map((record, index) =>
       attempt(
         record.parseOutcome === "valid_empty"
           ? "valid_empty"
@@ -130,7 +142,7 @@ export function assessBattleCoverage(
           (value): value is string => Boolean(value),
         ),
         record.parseOutcome ? undefined : "focused_description_failed",
-        index === 0 ? 1 : 2,
+        (index + 1) as 1 | 2 | 3,
       ),
     );
     if (!focusedAttempts.length)
@@ -240,8 +252,8 @@ export function assessBattleCoverage(
     const stages = [
       stage(
         "review",
-        reviews.length
-          ? reviews.slice(0, 2).map((record, index) =>
+        reviewAttempts.length
+          ? reviewAttempts.map((record, index) =>
               attempt(
                 record.invocation.status === "succeeded" &&
                   reviewOutcomeUsable(record)
@@ -255,7 +267,7 @@ export function assessBattleCoverage(
                 record.invocation.status === "succeeded"
                   ? undefined
                   : "review_failed",
-                index === 0 ? 1 : 2,
+                (index + 1) as 1 | 2 | 3,
               ),
             )
           : [attempt("failed", [], "review_missing")],

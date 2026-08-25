@@ -3825,6 +3825,12 @@ export class RoundEngine {
     invocation: AgentInvocation;
     findings: HandoffFindingPayload[];
     outcome: "valid" | "valid_empty";
+    sectionOutcomes: Record<
+      string,
+      "valid" | "valid_empty" | "partial" | "invalid"
+    >;
+    rawArtifactPath: string;
+    parsedArtifactPath: string;
     startedAt: string;
     finishedAt: string;
   }> {
@@ -3892,6 +3898,14 @@ export class RoundEngine {
       invocation,
       findings: submission.findings,
       outcome: captured.parsed.outcome,
+      sectionOutcomes: Object.fromEntries(
+        Object.entries(captured.parsed.sections).map(([key, section]) => [
+          key,
+          section.outcome,
+        ]),
+      ),
+      rawArtifactPath: captured.rawPath,
+      parsedArtifactPath: captured.parsedPath,
       startedAt,
       finishedAt,
     };
@@ -4104,6 +4118,10 @@ export class RoundEngine {
       submissionStatus: "submitted",
       findingCount: refreshed.packet.findings.length,
       artifactPath: context.store.resolve(packetPointer.path),
+      parseOutcome: refreshedReview.outcome,
+      sectionOutcomes: refreshedReview.sectionOutcomes,
+      rawArtifactPath: refreshedReview.rawArtifactPath,
+      parsedArtifactPath: refreshedReview.parsedArtifactPath,
       detail: `Targeted packet-size refresh completed from ${refreshedReview.startedAt} to ${refreshedReview.finishedAt}`,
     });
     return {
@@ -5479,6 +5497,7 @@ export class RoundEngine {
             state: "refresh_required" as const,
             event: "validation" as const,
             reason_code: validationReason,
+            attempt: 1 as const,
             artifact_pointers: [handoff.packetPointer],
             recorded_at: this.now().toISOString(),
           } satisfies HandoffLifecycleRecord;
@@ -5667,6 +5686,10 @@ export class RoundEngine {
             submissionStatus: "submitted",
             findingCount: refreshed.packet.findings.length,
             artifactPath: context.store.resolve(refreshedPointer.path),
+            parseOutcome: refreshedReview.outcome,
+            sectionOutcomes: refreshedReview.sectionOutcomes,
+            rawArtifactPath: refreshedReview.rawArtifactPath,
+            parsedArtifactPath: refreshedReview.parsedArtifactPath,
             detail: `Targeted validation refresh completed from ${refreshedReview.startedAt} to ${refreshedReview.finishedAt}`,
           });
           handoff.packet = refreshedPacket;
@@ -5799,7 +5822,7 @@ export class RoundEngine {
                   state: "refresh_required" as const,
                   event: "blocking" as const,
                   reason_code: blocker.handoff_blocker.category,
-                  attempt: handoff.lifecycle.attempt,
+                  attempt: 1 as const,
                   artifact_pointers: [handoff.packetPointer],
                   recorded_at: this.now().toISOString(),
                 } satisfies HandoffLifecycleRecord;
@@ -6018,6 +6041,14 @@ export class RoundEngine {
                   submissionStatus: "submitted",
                   findingCount: refreshed.packet.findings.length,
                   artifactPath: context.store.resolve(refreshedPointer.path),
+                  parseOutcome: refreshCapture.parsed.outcome,
+                  sectionOutcomes: Object.fromEntries(
+                    Object.entries(refreshCapture.parsed.sections).map(
+                      ([key, section]) => [key, section.outcome],
+                    ),
+                  ),
+                  rawArtifactPath: refreshCapture.rawPath,
+                  parsedArtifactPath: refreshCapture.parsedPath,
                   detail: `Targeted blocker refresh completed from ${refreshStartedAt} to ${refreshFinishedAt}`,
                 });
                 handoff.packet = refreshedPacket;
