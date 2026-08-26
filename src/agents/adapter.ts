@@ -503,7 +503,11 @@ export function providerCommand(
           "exec",
           "--json",
           ...(mcpPolicy
-            ? codexMcpOverrideArgs(mcpPolicy, selectedMcp ?? [])
+            ? [
+                "-c",
+                "features.apps=false",
+                ...codexMcpOverrideArgs(mcpPolicy, selectedMcp ?? []),
+              ]
             : []),
           ...modelArgs,
           "--full-auto",

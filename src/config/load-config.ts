@@ -207,7 +207,7 @@ export interface CliConfigOverrides {
   challenger?: string;
   acceptanceCriteria?: string[];
   nonInteractiveApproval?: boolean;
-  acceptMcpPolicy?: boolean;
+  reviewMcp?: boolean;
   reducedValidationAccepted?: boolean;
   keepWorktrees?: boolean;
 }

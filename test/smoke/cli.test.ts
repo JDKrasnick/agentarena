@@ -43,7 +43,8 @@ describe("built CLI smoke flow", () => {
       cwd: repositoryRoot,
       env,
     });
-    expect(fightHelp.stdout).toContain("--accept-mcp-policy");
+    expect(fightHelp.stdout).not.toContain("--accept-mcp-policy");
+    expect(fightHelp.stdout).toContain("--review-mcp");
     const fight = await execa(
       process.execPath,
       [
@@ -57,7 +58,6 @@ describe("built CLI smoke flow", () => {
         "--models",
         "codex-test-model,claude-test-model",
         "--yes",
-        "--accept-mcp-policy",
         "--no-window",
       ],
       { cwd: repositoryRoot, env, timeout: 60_000 },
@@ -73,8 +73,9 @@ describe("built CLI smoke flow", () => {
       "Permission plan approved noninteractively via --yes.",
     );
     expect(fight.stdout).toContain(
-      "Final MCP policy accepted noninteractively via --accept-mcp-policy.",
+      "Continuing automatically with only MCP servers that passed isolated readiness and authentication checks",
     );
+    expect(fight.stdout).toContain("Use --review-mcp");
     const runsRoot = path.join(repositoryRoot, ".agent-arena", "runs");
     const [runId] = await readdir(runsRoot);
     expect(runId).toBeTruthy();
@@ -86,7 +87,7 @@ describe("built CLI smoke flow", () => {
     };
     expect(mcpPolicy.approval).toMatchObject({
       policyHash: mcpPolicy.policyHash,
-      mode: "flag",
+      mode: "automatic_ready",
     });
     const result = JSON.parse(
       await readFile(path.join(runsRoot, runId!, "result.json"), "utf8"),
@@ -235,7 +236,7 @@ describe("built CLI smoke flow", () => {
     });
   }, 90_000);
 
-  it("blocks a non-interactive fight until the final MCP policy is accepted", async () => {
+  it("defaults a non-interactive fight to the readiness-filtered MCP policy", async () => {
     const repositoryRoot = await createSlugRepository();
     const bin = await mkdtemp(path.join(os.tmpdir(), "arena-mcp-gate-bin-"));
     for (const executable of ["codex", "claude"]) {
@@ -267,16 +268,51 @@ describe("built CLI smoke flow", () => {
       { cwd: repositoryRoot, env, reject: false },
     );
 
-    expect(fight.exitCode).toBe(1);
+    expect(fight.exitCode).toBe(0);
     expect(fight.stdout).toContain(
       "Final MCP policy after isolated readiness checks",
     );
-    expect(fight.stderr).toContain(
-      "Final MCP policy requires an explicit decision",
+    expect(fight.stdout).toContain("Use --review-mcp");
+    const [runId] = await readdir(
+      path.join(repositoryRoot, ".agent-arena", "runs"),
     );
-    await expect(
-      readdir(path.join(repositoryRoot, ".agent-arena", "runs")),
-    ).rejects.toThrow();
+    const policy = JSON.parse(
+      await readFile(
+        path.join(
+          repositoryRoot,
+          ".agent-arena",
+          "runs",
+          runId!,
+          "mcp-policy.json",
+        ),
+        "utf8",
+      ),
+    ) as { servers: Array<{ decision: string }>; approval: { mode: string } };
+    expect(
+      policy.servers.every((server) => server.decision === "excluded"),
+    ).toBe(true);
+    expect(policy.approval.mode).toBe("automatic_ready");
+
+    const manualReview = await execa(
+      process.execPath,
+      [
+        cli,
+        "fight",
+        "Lowercase slugs and collapse whitespace.",
+        "--test",
+        "node --test",
+        "--agents",
+        "codex,claude",
+        "--yes",
+        "--review-mcp",
+        "--no-window",
+      ],
+      { cwd: repositoryRoot, env, reject: false },
+    );
+    expect(manualReview.exitCode).toBe(1);
+    expect(manualReview.stderr).toContain(
+      "--review-mcp requires an interactive TTY",
+    );
   });
 
   it("recovers provider transport with an exact frozen-input replacement", async () => {
@@ -317,7 +353,6 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
         "--agents",
         "codex,claude",
         "--yes",
-        "--accept-mcp-policy",
         "--no-window",
       ],
       {
@@ -463,7 +498,6 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
         "--agents",
         "codex,claude",
         "--yes",
-        "--accept-mcp-policy",
         "--no-window",
       ],
       {
@@ -533,7 +567,6 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
         "--agents",
         "codex,claude",
         "--yes",
-        "--accept-mcp-policy",
         "--no-window",
       ],
       { cwd: repositoryRoot, env, timeout: 150_000 },
@@ -644,7 +677,6 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
         "--agents",
         "codex,claude",
         "--yes",
-        "--accept-mcp-policy",
         "--no-window",
       ],
       {

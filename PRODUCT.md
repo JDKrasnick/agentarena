@@ -936,22 +936,31 @@ The operator chooses one run-scoped MCP policy:
   provider setup. This option is unavailable when any inventory is unknown.
 
 Arena performs an isolated readiness check for the selected servers and then
-freezes the exact allowlist. An unavailable required server blocks launch unless
-the operator explicitly accepts reduced validation with that server excluded;
-an unavailable optional server is excluded and recorded as a coverage gap.
-Reauthentication is always an explicit operator action.
+freezes the exact allowlist. Ready, authenticated servers remain included by
+default. Unavailable servers are excluded and recorded as coverage gaps,
+including servers configured as required. Reauthentication is always an
+explicit operator action.
 
-Each isolated MCP readiness probe performs a read-only discovery operation
-against the selected server; general provider connectivity alone cannot mark an
-MCP server ready. After readiness, Arena displays the exact frozen policy hash,
+Each isolated MCP readiness probe runs sequentially and performs a read-only
+discovery operation against the selected server; general provider connectivity
+alone cannot mark an MCP server ready. Approval is invalid while any requested
+server remains unknown or an included server is not ready. After readiness,
+Arena displays the exact frozen policy hash,
 every requested server's inclusion and readiness, and all resulting coverage
-gaps. The battle cannot create worktrees or start contestant or judge sessions
-until the operator accepts that final policy. Interactive runs default to no;
-non-interactive runs must pass `--accept-mcp-policy`. The earlier `--yes`
-approval does not cover a post-readiness policy. Unselected server identities
-are omitted from this final decision, and unavailable servers are never exposed
-to agents. Operators authenticate desired servers through the provider CLI;
-Arena never reads, copies, or performs MCP authentication.
+gaps. Before creating worktrees or starting contestant or judge sessions, Arena
+warns that it will continue automatically with only servers that passed those
+checks. `--review-mcp` instead opens an interactive per-server review: ready
+servers require an allow/deny choice, and failed servers let the operator
+authenticate with the provider CLI and retry or skip. Arena never performs the
+authentication itself. Unselected server identities are omitted from this final
+policy, and unavailable or denied servers are never exposed to agents.
+Operators authenticate desired servers through the provider CLI;
+Arena never reads, copies, or performs MCP authentication. Excluded MCP records
+remain in the operator-only policy artifact for audit but are removed from the
+run permission manifest, immutable run specification, and every model prompt.
+Codex Apps/connectors are a separate MCP-backed authority surface, so Arena
+disables that feature for frozen-policy sessions rather than allowing connected
+apps to bypass the named server allowlist.
 
 The current MVP has no harness-mediated MCP execution path. A server requested
 with the `harness_only` role is therefore unavailable: optional servers are
