@@ -6,6 +6,7 @@ import {
   reportContestants,
   reportDefects,
   reportOutcome,
+  reportOutcomeTotals,
   reportRounds,
   truncateReportText,
 } from "./presentation.js";
@@ -65,6 +66,7 @@ export function renderBattleVisual(state: RunState): string {
     })
     .join("\n");
   const defects = reportDefects(state);
+  const outcomeTotals = reportOutcomeTotals(state);
   const defectLines = defects.length
     ? defects
         .slice(0, 3)
@@ -126,6 +128,7 @@ export function renderBattleVisual(state: RunState): string {
 <rect width="1240" height="1040" fill="#070c12"/><text x="54" y="72" class="title">AGENT ARENA — EVIDENCE-LINKED BATTLE REPLAY</text><text x="54" y="112" class="muted">${escapeXml(verdict)} · ${escapeXml(state.ranking?.reason ?? "run incomplete")}</text>
 ${state.coverageAssessment ? `<text x="54" y="138" class="muted">Coverage ${escapeXml(state.coverageAssessment.confidence)} · ${String(state.coverageAssessment.counts.completed)} completed · ${String(state.coverageAssessment.counts.degraded)} degraded · ${String(state.coverageAssessment.counts.unresolved)} unresolved / ${String(state.coverageAssessment.counts.required)}</text>` : ""}
 ${blocks}
+<text x="54" y="378" class="muted">Competitive landings ${String(outcomeTotals.competitiveLandings)} · Shared defects ${String(outcomeTotals.sharedDefects)} · Schema-rejected findings ${String(outcomeTotals.schemaRejectedFindings)}</text>
 <text x="54" y="410" class="title">DECISIVE DEFECTS</text><rect x="54" y="438" width="1132" height="${defects.length ? 56 + Math.min(defects.length, 3) * 42 : 98}" rx="16" fill="#121b26" stroke="#294056"/>${defectLines}
 <text x="54" y="650" class="title">ROUND DIGEST</text>${rounds}
 <text x="54" y="835" class="title">EFFORT AND DECISION LEDGER</text><text x="54" y="858" class="muted">${escapeXml(budgetLine)}</text>${decisionLines}

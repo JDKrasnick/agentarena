@@ -9,6 +9,7 @@ import {
   reportCheckStatus,
   reportContestants,
   reportDefects,
+  reportOutcomeTotals,
   reportRounds,
   resolveArtifactHref,
 } from "./presentation.js";
@@ -386,6 +387,7 @@ export function renderBattleReport(state: RunState): string {
     "kind" in state.arenaOutcome &&
     state.arenaOutcome.kind === "non_discriminating",
   );
+  const outcomeTotals = reportOutcomeTotals(state);
   const lines = [
     "# Agent Arena Battle Report",
     "",
@@ -477,6 +479,8 @@ export function renderBattleReport(state: RunState): string {
     `Decision basis: ${state.arenaOutcome && "decisionBasis" in state.arenaOutcome ? state.arenaOutcome.decisionBasis : "legacy_unknown"}`,
     "",
     `Evidence counts: ${String(competitiveDefects.length)} competitive landing(s) · ${String(sharedDefects.length)} shared QA defect(s) · ${String(state.coverageAssessment?.evidenceCounts.explicitEmpty ?? 0)} explicit-empty lane(s)`,
+    "",
+    `Competitive landings: **${String(outcomeTotals.competitiveLandings)}** · Shared defects: **${String(outcomeTotals.sharedDefects)}** · Schema-rejected findings: **${String(outcomeTotals.schemaRejectedFindings)}**`,
     "",
     "## Attack-lane coverage",
     "",

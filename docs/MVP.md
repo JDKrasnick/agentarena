@@ -37,9 +37,12 @@ assertion fingerprints and normalized browser family, profile, target, and
 non-assert action sequences also supply likely prior decisions to the same
 judge call, bounded to six same-target records. The judge returns an
 independent, affirm, overturn, or unresolved relationship with its rationale.
-Affirmations never score twice; overturns append recoil refunds or defect-damage
-corrections and mark withdrawn defects superseded; unresolved challenges keep
-the prior score temporarily but prevent full-confidence completion.
+Affirmations never score twice, but their reproducers join the canonical
+defect's repair and final-verification set. A failing affirm after healing
+reactivates the existing canonical damage without adding damage. Overturns
+append recoil refunds or defect-damage corrections and mark withdrawn defects
+superseded; unresolved challenges keep the prior score temporarily but prevent
+full-confidence completion.
 
 Unresolved required coverage preserves the health-ledger leader as provisional
 but publishes no champion or recommended patch. `agent-arena
@@ -936,11 +939,13 @@ runs.
 Before fault isolation, the provider boundary normalizes only harmless,
 auditable variance: NFC/LF/outer whitespace, published enum case, known
 snake/camel aliases, set ordering and duplicates, omitted untrusted review
-labels, and `execution` as an alias for tool-summary provenance. The persisted
-value always uses the canonical schema. Unknown or conflicting fields, absent
-semantic evidence, and ambiguous numeric or enum values remain errors. A
-partially valid review retains its accepted findings immediately rather than
-asking a retry to reproduce them.
+labels, `execution` as an alias for tool-summary provenance, and deterministic
+UTF-8-safe truncation of oversized descriptive review fields. The persisted
+value always uses the canonical schema and records the normalization. Commands,
+paths, identifiers, unknown or conflicting fields, absent semantic evidence,
+and ambiguous numeric or enum values remain errors. A partially valid review
+retains its accepted findings immediately rather than asking a retry to
+reproduce them.
 
 ### Conservative attack acceptance
 
@@ -969,11 +974,12 @@ additional evidence, not ground truth.
 
 Every mechanically landed defect keeps its executable reproducer. After each
 repair attempt the harness runs the required check, every active reproducer,
-and every previously healed defect's regression check. A repair heals only the
-exact active damage whose evidence now passes. For judge-based defects whose
-mechanics remain unavailable, an immutable digest-bound repair judgment records
-`repaired`, `not_repaired`, or `unable`; `unable` leaves damage active and
-degrades coverage.
+every score-neutral affirming variant for the same canonical defect, and every
+previously healed defect's regression check. A repair heals only when all
+accepted reproducers for that canonical defect pass. For judge-based defects
+whose mechanics remain unavailable, an immutable digest-bound repair judgment
+records `repaired`, `not_repaired`, or `unable`; `unable` leaves damage active
+and degrades coverage.
 
 ### Bounded failure handling and judge fallback
 
@@ -1219,7 +1225,8 @@ Every fight creates a self-contained directory under `.agent-arena/runs/<run-id>
 containing:
 
 - `BATTLE.md`: complete evidence-linked narrative, phase replay, decisions, and
-  final test matrix.
+  final test matrix, with separate competitive-landing, shared-defect, and
+  schema-rejected-finding totals.
 - `BATTLE.html`: responsive, clickable dossier generated from the same run data.
 - `BATTLE.svg`: deterministic share image with the result and round digest.
 - `run-spec.json`: exact task text, explicit acceptance criteria, frozen sources,

@@ -36,6 +36,12 @@ export type ReportOutcome =
   | { kind: "non_discriminating" }
   | { kind: "incomplete" };
 
+export interface ReportOutcomeTotals {
+  competitiveLandings: number;
+  sharedDefects: number;
+  schemaRejectedFindings: number;
+}
+
 function invocationPaths(invocation: AgentInvocation | undefined): string[] {
   if (!invocation) return [];
   return [
@@ -96,6 +102,30 @@ export function reportOutcome(state: RunState): ReportOutcome {
   return state.ranking.winner
     ? { kind: "winner", winner: state.ranking.winner }
     : { kind: "incomplete" };
+}
+
+export function reportOutcomeTotals(state: RunState): ReportOutcomeTotals {
+  return {
+    competitiveLandings: state.attacks.filter(
+      (attack) =>
+        attack.status === "landed" &&
+        attack.adjudication?.relationship !== "affirm" &&
+        (attack.adjudication?.scoreEffect === undefined ||
+          attack.adjudication.scoreEffect === "damage" ||
+          attack.adjudication.scoreEffect === "damage_upgrade"),
+    ).length,
+    sharedDefects: state.attacks.filter(
+      (attack) => attack.status === "shared_defect",
+    ).length,
+    schemaRejectedFindings: state.submissionArtifacts.reduce(
+      (sum, artifact) =>
+        sum +
+        (artifact.kind === "review"
+          ? (artifact.schemaRejectedFindingCount ?? 0)
+          : 0),
+      0,
+    ),
+  };
 }
 
 export function reportDefects(state: RunState): ReportDefect[] {

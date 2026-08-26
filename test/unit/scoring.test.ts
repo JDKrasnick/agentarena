@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyChallengeCorrections,
   challengeCorrectionRecoil,
+  defectEvidenceAttacks,
   healDefect,
   normalizeAttackAdjudication,
   PARTIAL_DAMAGE_BY_SEVERITY,
@@ -504,5 +505,80 @@ describe("ledger scoring", () => {
     ).contestants.b!;
     expect(regressed.finalHealth).toBe(95);
     expect(regressed.healthLedger.canonicalDefects?.[0]?.status).toBe("active");
+  });
+
+  it("reactivates healed damage for an affirm without scoring it twice", () => {
+    const original = attacks()[0]!;
+    original.adjudication = normalizeAttackAdjudication(original);
+    const landed = resolveRound(
+      { a: contestant("a"), b: contestant("b") },
+      [original],
+      1,
+    ).contestants.b!;
+    const healed = healDefect(landed, "root", 1);
+    const affirm: Attack = {
+      ...original,
+      id: "affirm-variant",
+      round: 2,
+      adjudication: {
+        ...original.adjudication,
+        id: "adjudication:affirm-variant",
+        relationship: "affirm",
+        priorAdjudicationId: original.adjudication.id,
+        scoreEffect: "none",
+        exactAmount: 0,
+      },
+    };
+
+    const affirmed = resolveRound(
+      { a: contestant("a"), b: healed },
+      [affirm],
+      2,
+    );
+    expect(affirmed.contestants.b).toMatchObject({
+      finalHealth: 70,
+      healthLedger: {
+        activeDefects: [
+          { rootDefectId: "root", attackId: "affirm-variant", damage: 30 },
+        ],
+        canonicalDefects: [
+          {
+            rootDefectId: "root",
+            status: "active",
+            repairAttemptsUsed: 0,
+            repairAttemptIds: [],
+            regressionResets: 1,
+          },
+        ],
+      },
+    });
+    expect(affirmed.eventsApplied).toBe(1);
+
+    const repeated = resolveRound(affirmed.contestants, [affirm], 2);
+    expect(repeated.contestants.b?.finalHealth).toBe(70);
+    expect(repeated.eventsApplied).toBe(0);
+  });
+
+  it("selects every accepted reproducer for a canonical defect", () => {
+    const original = attacks()[0]!;
+    const affirm = {
+      ...original,
+      id: "affirm-variant",
+      round: 2 as const,
+    };
+    const shared = {
+      ...original,
+      id: "shared-variant",
+      status: "shared_defect" as const,
+    };
+    const unrelated = { ...original, id: "other", rootDefectId: "other" };
+
+    expect(
+      defectEvidenceAttacks(
+        [original, affirm, shared, unrelated],
+        "b",
+        "root",
+      ).map((attack) => attack.id),
+    ).toEqual(["land", "affirm-variant", "shared-variant"]);
   });
 });

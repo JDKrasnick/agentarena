@@ -247,6 +247,38 @@ function extractJson(source: string): unknown {
   }
 }
 
+function truncateUtf8WithEllipsis(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
+  const ellipsis = "…";
+  const contentBudget = maxBytes - Buffer.byteLength(ellipsis, "utf8");
+  let bytes = 0;
+  let prefix = "";
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (bytes + characterBytes > contentBudget) break;
+    prefix += character;
+    bytes += characterBytes;
+  }
+  return `${prefix.trimEnd()}${ellipsis}`;
+}
+
+function reviewDescriptiveTextLimit(
+  prefix: readonly PropertyKey[],
+  path: readonly PropertyKey[],
+): number | undefined {
+  if (prefix[0] !== "findings") return undefined;
+  const key = String(path.at(-1) ?? "");
+  const parent = String(path.at(-2) ?? "");
+  if (key === "statement" || key === "invariant") return 1_000;
+  if (key === "expected_behavior" || key === "task_source_rationale")
+    return 1_500;
+  if (key === "symbol") return 300;
+  if (key === "summary" && parent === "regression_test_plan") return 1_500;
+  if (/^\d+$/u.test(key) && parent === "trigger_sequence") return 500;
+  if (/^\d+$/u.test(key) && parent === "references") return 300;
+  return undefined;
+}
+
 function normalizeEntry(
   value: unknown,
   prefix: PropertyKey[],
@@ -364,6 +396,20 @@ function normalizeEntry(
     if (normalizedText !== text) {
       record(path, text, normalizedText, "v1.text.nfc_lf_trim");
       text = normalizedText;
+    }
+    const descriptiveLimit = reviewDescriptiveTextLimit(prefix, path);
+    if (
+      descriptiveLimit !== undefined &&
+      Buffer.byteLength(text, "utf8") > descriptiveLimit
+    ) {
+      const truncated = truncateUtf8WithEllipsis(text, descriptiveLimit);
+      record(
+        path,
+        text,
+        truncated,
+        `v1.review.text.truncate_utf8_${String(descriptiveLimit)}`,
+      );
+      text = truncated;
     }
     if (
       prefix[0] === "findings" &&

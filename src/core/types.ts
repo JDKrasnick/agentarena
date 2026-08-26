@@ -551,6 +551,7 @@ export const SubmissionArtifactRecordSchema = z.object({
   rawSha256: z.string().length(64),
   rawArtifactPath: z.string().min(1),
   parsedArtifactPath: z.string().min(1),
+  schemaRejectedFindingCount: z.number().int().nonnegative().optional(),
 });
 export type SubmissionArtifactRecord = z.infer<
   typeof SubmissionArtifactRecordSchema
