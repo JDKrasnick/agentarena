@@ -768,6 +768,17 @@ validation with those servers excluded. Unavailable optional servers are
 excluded and become visible coverage gaps. Reauthentication remains an
 operator action.
 
+Each isolated MCP readiness probe performs a read-only discovery operation
+against the selected server; a healthy provider backend alone is insufficient.
+Arena then displays the exact frozen policy hash, requested-server readiness,
+exclusions, and coverage gaps and requires a second explicit decision before it
+creates worktrees or invokes contestants or judges. Interactive confirmation
+defaults to no. Non-interactive callers must pass `--accept-mcp-policy`; the
+earlier `--yes` capability approval is insufficient. The final prompt omits
+unselected server identities, and unavailable servers never enter agent
+sessions. Users authenticate desired servers through the provider CLI; Arena
+does not read, copy, or perform MCP authentication.
+
 The MVP does not yet provide harness-mediated MCP execution. A `harness_only`
 MCP selection is unavailable, so optional servers become coverage gaps and
 required servers use the same reduced-validation gate. These servers are never
@@ -1138,7 +1149,8 @@ containing:
   and redacted provisioning results.
 - `mcp-policy.json`: credential-free provider inventories, the selected
   run-scoped policy, authentication/readiness metadata, the exact frozen
-  allowlist, exclusions, coverage gaps, and policy hash.
+  allowlist, exclusions, coverage gaps, policy hash, and the hash-bound final
+  operator decision.
 - `result.json`: compact schema-v8 status, stage, contestant health, outcome,
   recommendation, warnings, artifact pointers, provenance, and ordered
   applied-envelope ledger. Detailed state is rebuilt from `baseline.json` and
@@ -1282,8 +1294,9 @@ The MVP is ready when a new user can:
 1. Install the CLI and run one documented command in a small TypeScript or Python
    Git repository.
 2. Observe two supported agents working from the same commit in isolation.
-3. Review one explicit permission plan and see which capabilities are agent,
-   harness-only, approved, or denied.
+3. Review one explicit capability plan, then accept the exact post-readiness
+   MCP policy before any battle agent starts; both decisions show which
+   capabilities are agent, harness-only, approved, unavailable, or denied.
 4. Receive two independently generated implementation patches.
 5. Observe three attack–repair rounds unless an early elimination ends the
    fight, with at most one retry for each distinct failure.

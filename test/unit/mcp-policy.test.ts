@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  approveMcpPolicy,
   applyMcpReadiness,
+  FrozenMcpPolicySchema,
   freezeMcpPolicy,
   mcpServerIdentity,
   parseMcpInventory,
@@ -256,5 +258,32 @@ describe("MCP preflight policy", () => {
         reducedValidationAccepted: false,
       }),
     ).toThrow(/Required MCP servers are unavailable/);
+  });
+
+  it("records an explicit decision bound to the final policy hash", () => {
+    const policy = freezeMcpPolicy({
+      config: { policy: "keep_configured", servers: [] },
+      inventory,
+      reducedValidationAccepted: false,
+      now: new Date("2026-08-25T00:00:00.000Z"),
+    });
+    const approved = approveMcpPolicy(
+      policy,
+      "flag",
+      new Date("2026-08-25T01:00:00.000Z"),
+    );
+
+    expect(approved.policyHash).toBe(policy.policyHash);
+    expect(approved.approval).toEqual({
+      policyHash: policy.policyHash,
+      mode: "flag",
+      acceptedAt: "2026-08-25T01:00:00.000Z",
+    });
+    expect(() =>
+      FrozenMcpPolicySchema.parse({
+        ...approved,
+        approval: { ...approved.approval, policyHash: "0".repeat(64) },
+      }),
+    ).toThrow(/bind the frozen policy hash/);
   });
 });

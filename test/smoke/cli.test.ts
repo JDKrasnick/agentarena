@@ -39,6 +39,11 @@ describe("built CLI smoke flow", () => {
     expect(help.stdout).toContain("review");
     expect(help.stdout).toContain("defend");
     expect(help.stdout).toContain("resume");
+    const fightHelp = await execa(process.execPath, [cli, "fight", "--help"], {
+      cwd: repositoryRoot,
+      env,
+    });
+    expect(fightHelp.stdout).toContain("--accept-mcp-policy");
     const fight = await execa(
       process.execPath,
       [
@@ -52,6 +57,7 @@ describe("built CLI smoke flow", () => {
         "--models",
         "codex-test-model,claude-test-model",
         "--yes",
+        "--accept-mcp-policy",
         "--no-window",
       ],
       { cwd: repositoryRoot, env, timeout: 60_000 },
@@ -66,9 +72,22 @@ describe("built CLI smoke flow", () => {
     expect(fight.stdout).toContain(
       "Permission plan approved noninteractively via --yes.",
     );
+    expect(fight.stdout).toContain(
+      "Final MCP policy accepted noninteractively via --accept-mcp-policy.",
+    );
     const runsRoot = path.join(repositoryRoot, ".agent-arena", "runs");
     const [runId] = await readdir(runsRoot);
     expect(runId).toBeTruthy();
+    const mcpPolicy = JSON.parse(
+      await readFile(path.join(runsRoot, runId!, "mcp-policy.json"), "utf8"),
+    ) as {
+      policyHash: string;
+      approval?: { policyHash: string; mode: string };
+    };
+    expect(mcpPolicy.approval).toMatchObject({
+      policyHash: mcpPolicy.policyHash,
+      mode: "flag",
+    });
     const result = JSON.parse(
       await readFile(path.join(runsRoot, runId!, "result.json"), "utf8"),
     ) as {
@@ -216,6 +235,50 @@ describe("built CLI smoke flow", () => {
     });
   }, 90_000);
 
+  it("blocks a non-interactive fight until the final MCP policy is accepted", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const bin = await mkdtemp(path.join(os.tmpdir(), "arena-mcp-gate-bin-"));
+    for (const executable of ["codex", "claude"]) {
+      const target = path.join(bin, executable);
+      await writeFile(
+        target,
+        `#!/bin/sh\nexec "${process.execPath}" "${fixtureAgent}" "$@"\n`,
+      );
+      await chmod(target, 0o755);
+    }
+    const env = {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+    };
+
+    const fight = await execa(
+      process.execPath,
+      [
+        cli,
+        "fight",
+        "Lowercase slugs and collapse whitespace.",
+        "--test",
+        "node --test",
+        "--agents",
+        "codex,claude",
+        "--yes",
+        "--no-window",
+      ],
+      { cwd: repositoryRoot, env, reject: false },
+    );
+
+    expect(fight.exitCode).toBe(1);
+    expect(fight.stdout).toContain(
+      "Final MCP policy after isolated readiness checks",
+    );
+    expect(fight.stderr).toContain(
+      "Final MCP policy requires an explicit decision",
+    );
+    await expect(
+      readdir(path.join(repositoryRoot, ".agent-arena", "runs")),
+    ).rejects.toThrow();
+  });
+
   it("recovers provider transport with an exact frozen-input replacement", async () => {
     const repositoryRoot = await createSlugRepository();
     const bin = await mkdtemp(path.join(os.tmpdir(), "arena-recovery-bin-"));
@@ -254,6 +317,7 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
         "--agents",
         "codex,claude",
         "--yes",
+        "--accept-mcp-policy",
         "--no-window",
       ],
       {
@@ -399,6 +463,7 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
         "--agents",
         "codex,claude",
         "--yes",
+        "--accept-mcp-policy",
         "--no-window",
       ],
       {
@@ -468,6 +533,7 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
         "--agents",
         "codex,claude",
         "--yes",
+        "--accept-mcp-policy",
         "--no-window",
       ],
       { cwd: repositoryRoot, env, timeout: 150_000 },
@@ -578,6 +644,7 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
         "--agents",
         "codex,claude",
         "--yes",
+        "--accept-mcp-policy",
         "--no-window",
       ],
       {

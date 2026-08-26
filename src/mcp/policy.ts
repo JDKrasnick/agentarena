@@ -61,8 +61,24 @@ export const FrozenMcpPolicySchema = z
     coverageGaps: z.array(z.string()),
     frozenAt: z.string().datetime(),
     policyHash: z.string().regex(/^[a-f0-9]{64}$/),
+    approval: z
+      .object({
+        policyHash: z.string().regex(/^[a-f0-9]{64}$/),
+        mode: z.enum(["interactive", "flag"]),
+        acceptedAt: z.string().datetime(),
+      })
+      .strict()
+      .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((policy, context) => {
+    if (policy.approval && policy.approval.policyHash !== policy.policyHash)
+      context.addIssue({
+        code: "custom",
+        path: ["approval", "policyHash"],
+        message: "MCP approval must bind the frozen policy hash",
+      });
+  });
 export type FrozenMcpPolicy = z.infer<typeof FrozenMcpPolicySchema>;
 
 type InventoryRunner = (
@@ -178,7 +194,24 @@ export async function inventoryProviderMcp(options: {
 }
 
 function hashPolicy(value: Omit<FrozenMcpPolicy, "policyHash">): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  const { approval: _approval, ...authority } = value;
+  void _approval;
+  return createHash("sha256").update(JSON.stringify(authority)).digest("hex");
+}
+
+export function approveMcpPolicy(
+  policy: FrozenMcpPolicy,
+  mode: "interactive" | "flag",
+  now = new Date(),
+): FrozenMcpPolicy {
+  return FrozenMcpPolicySchema.parse({
+    ...policy,
+    approval: {
+      policyHash: policy.policyHash,
+      mode,
+      acceptedAt: now.toISOString(),
+    },
+  });
 }
 
 export function freezeMcpPolicy(options: {

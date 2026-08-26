@@ -600,10 +600,13 @@ export class CommandAgentAdapter implements AgentAdapter {
   ): Promise<ConnectivityProbeResult> {
     const started = new Date();
     const sentinel = "AGENT_ARENA_PROVIDER_HEALTH_OK";
+    const prompt = input.mcpServerName
+      ? `MCP readiness check for the isolated server ${JSON.stringify(input.mcpServerName)}. Before responding, perform a read-only MCP discovery operation against that exact server, such as listing its resources. Respond with exactly ${sentinel} if and only if that MCP operation succeeds. Otherwise, do not output the sentinel.`
+      : `Provider connectivity health check. Respond with exactly ${sentinel}.`;
     const command = await runProcess({
       executable: this.options.executable,
       args: this.options.args,
-      input: `Provider connectivity health check. Respond with exactly ${sentinel}.`,
+      input: prompt,
       cwd: input.cwd,
       timeoutMs: input.timeoutMs,
       logPrefix: input.transcriptPrefix,
@@ -850,7 +853,7 @@ function mcpFailuresForServer(
     .filter(
       (line) =>
         line.toLowerCase().includes(normalizedName) &&
-        /(oauth|auth(?:entication)?|invalid_grant|expired|needs[- ]auth|unavailable|connection\s+(?:error|failed|closed|lost)|failed\s+to\s+(?:connect|refresh))/i.test(
+        /(oauth|auth(?:entication)?|invalid_grant|expired|needs[- ]auth|unavailable|not\s+ready|connection\s+(?:error|failed|closed|lost)|failed\s+to\s+(?:connect|refresh|start|initialize)|startup\s+failed)/i.test(
           line,
         ),
     )
