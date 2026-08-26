@@ -195,10 +195,12 @@ import {
   FinalizationRecordSchema,
   RoundEnvelopeSchema,
   type AppliedEnvelope,
+  type CheckpointDescriptor,
 } from "../recovery/contracts.js";
 import {
   applyEnvelopeExactlyOnce,
   readBrowserBaseline,
+  readContinuationCheckpoint,
   sealRoundEnvelope,
   writeBaseline,
   writeBrowserBaseline,
@@ -318,6 +320,8 @@ export interface ReplacementFightOptions {
   startRound?: 1 | 2 | 3;
   /** Round-one implementation and initial validation were durably retained. */
   resumeAfterInitialization?: boolean;
+  /** Last sealed parent boundary that anchors the child's first round. */
+  continuationCheckpoint?: CheckpointDescriptor;
 }
 
 interface ArenaContext {
@@ -335,6 +339,7 @@ interface ArenaContext {
   roundInvocations: RecordedRoundInvocation[];
   priorEnvelopeHash: string | null;
   appliedEnvelopes: AppliedEnvelope[];
+  continuationCheckpoint?: CheckpointDescriptor;
   browserBaseline?: BrowserValidationResult;
 }
 
@@ -779,6 +784,26 @@ export class RoundEngine {
             reconnaissance,
           });
       await store.writeImmutableJson("run-spec.json", runSpec);
+      const continuationCheckpointPath = replacement?.continuationCheckpoint
+        ? await store.writeImmutableJson(
+            "continuation-checkpoint.json",
+            replacement.continuationCheckpoint,
+          )
+        : undefined;
+      if (replacement?.continuationCheckpoint) {
+        if (
+          replacement.continuationCheckpoint.runId !== replacement.parentRunId
+        )
+          throw new Error("Provider continuation checkpoint parent mismatch");
+        if (
+          typeof replacement.continuationCheckpoint.roundId !== "number" ||
+          replacement.continuationCheckpoint.roundId !==
+            (replacement.startRound ?? 1) - 1
+        )
+          throw new Error(
+            "Provider continuation checkpoint does not precede the resumed round",
+          );
+      }
       const mcpPolicyPath = this.dependencies.mcpPolicy
         ? await store.writeImmutableJson(
             "mcp-policy.json",
@@ -833,6 +858,9 @@ export class RoundEngine {
           runSpec: store.resolve("run-spec.json"),
           permissions: store.resolve("permissions.json"),
           ...(mcpPolicyPath ? { mcpPolicy: mcpPolicyPath } : {}),
+          ...(continuationCheckpointPath
+            ? { continuationCheckpoint: continuationCheckpointPath }
+            : {}),
           result: store.resolve("result.json"),
           battle: store.resolve("BATTLE.md"),
           battleHtml: store.resolve("BATTLE.html"),
@@ -889,6 +917,13 @@ export class RoundEngine {
         roundInvocations: [],
         priorEnvelopeHash: null,
         appliedEnvelopes: [],
+        ...(replacement?.continuationCheckpoint
+          ? {
+              priorEnvelopeHash:
+                replacement.continuationCheckpoint.envelopeHash,
+              continuationCheckpoint: replacement.continuationCheckpoint,
+            }
+          : {}),
       };
       control.onQueue((note) => {
         void observer.publish({
@@ -925,12 +960,21 @@ export class RoundEngine {
             ...summary.provenance,
             parentRunId: replacement.parentRunId,
             transportRestartOrdinal: replacement.restartOrdinal,
+            ...(replacement.continuationCheckpoint
+              ? {
+                  parentCheckpointHash:
+                    replacement.continuationCheckpoint.checkpointHash,
+                }
+              : {}),
           },
         });
       }
 
       await this.preflight(context);
-      if (replacement?.resumeAfterInitialization)
+      if (
+        replacement?.resumeAfterInitialization ||
+        (replacement?.startRound ?? 1) > 1
+      )
         await this.transition(context, "initial_validate");
       await writeDependencyManifest({
         store,
@@ -947,7 +991,8 @@ export class RoundEngine {
         now: this.now(),
       });
       await this.persist(context);
-      let priorReplayHash: string | null = null;
+      let priorReplayHash: string | null =
+        replacement?.continuationCheckpoint?.replayHash ?? null;
       for (const round of [1, 2, 3] as const) {
         if (replacement?.startRound && round < replacement.startRound) continue;
         if (this.shouldStop(context)) break;
@@ -1177,6 +1222,11 @@ export class RoundEngine {
     }
 
     const envelopes = await readEnvelopeChain(store);
+    const continuationCheckpoint = await readContinuationCheckpoint(store);
+    const continuationRound =
+      typeof continuationCheckpoint?.roundId === "number"
+        ? continuationCheckpoint.roundId
+        : 0;
     let ledger = [...summary.appliedEnvelopes];
     if (summary.terminalOutcome) {
       state.terminalOutcome = TerminalOutcomeSchema.parse(
@@ -1308,7 +1358,9 @@ export class RoundEngine {
     }
 
     const nextRound = ([1, 2, 3] as const).find(
-      (roundId) => !envelopes.some((envelope) => envelope.roundId === roundId),
+      (roundId) =>
+        roundId > continuationRound &&
+        !envelopes.some((envelope) => envelope.roundId === roundId),
     );
     if (nextRound) {
       try {
@@ -1380,8 +1432,12 @@ export class RoundEngine {
       control,
       emittedEvents: this.projectedStateEventKeys(state),
       roundInvocations: [],
-      priorEnvelopeHash: envelopes.at(-1)?.envelopeHash ?? null,
+      priorEnvelopeHash:
+        envelopes.at(-1)?.envelopeHash ??
+        continuationCheckpoint?.envelopeHash ??
+        null,
       appliedEnvelopes: ledger,
+      ...(continuationCheckpoint ? { continuationCheckpoint } : {}),
       ...(browserBaseline ? { browserBaseline } : {}),
     };
     control.onQueue((note) => {
@@ -1399,8 +1455,12 @@ export class RoundEngine {
       });
     });
     try {
-      let priorReplayHash = envelopes.at(-1)?.replayHash ?? null;
+      let priorReplayHash =
+        envelopes.at(-1)?.replayHash ??
+        continuationCheckpoint?.replayHash ??
+        null;
       for (const round of [1, 2, 3] as const) {
+        if (round <= continuationRound) continue;
         if (envelopes.some((envelope) => envelope.roundId === round)) continue;
         if (this.shouldStop(context)) break;
         const beforeRound = structuredClone(context.state);
@@ -1871,6 +1931,12 @@ export class RoundEngine {
       state: context.state,
       envelope,
       ledger: context.appliedEnvelopes,
+      ...(context.continuationCheckpoint
+        ? {
+            initialPriorEnvelopeHash:
+              context.continuationCheckpoint.envelopeHash,
+          }
+        : {}),
     });
     context.appliedEnvelopes = application.ledger;
     context.priorEnvelopeHash = envelope.envelopeHash;

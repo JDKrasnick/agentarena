@@ -39,7 +39,10 @@ import {
   TransportRecoverySchema,
   withReplacementRunId,
 } from "../recovery/transport.js";
-import { reconstructRunState } from "../recovery/durable.js";
+import {
+  readCheckpointDescriptor,
+  reconstructRunState,
+} from "../recovery/durable.js";
 import { decideProviderRecovery } from "../recovery/provider-policy.js";
 import { renderBattleReport } from "../reports/markdown.js";
 import { renderBattleHtml } from "../reports/html.js";
@@ -49,8 +52,9 @@ import {
   applyMcpReadiness,
   freezeMcpPolicy,
   inventoryProviderMcp,
+  isolateMcpPolicyForReadiness,
+  mcpServerIdentity,
   mcpProviders,
-  selectedMcpNames,
   type FrozenMcpPolicy,
 } from "../mcp/policy.js";
 
@@ -193,29 +197,35 @@ async function checkSelectedMcpReadiness(options: {
   temporaryRoot: string;
   signal: AbortSignal;
 }): Promise<FrozenMcpPolicy> {
-  const readiness = new Map<AgentId, "ready" | "unavailable">();
+  const readiness = new Map<string, "ready" | "unavailable">();
   await Promise.all(
-    mcpProviders(options.config).map(async (provider) => {
-      if (selectedMcpNames(options.policy, provider).length === 0) return;
-      const contestant = options.config.contestants.find(
-        (entry) => entry.provider === provider,
-      );
-      const adapter = createProviderAdapter(
-        provider,
-        contestant?.model,
-        options.policy,
-      );
-      const result = await adapter.probeConnectivity({
-        cwd: options.config.repositoryRoot,
-        transcriptPrefix: path.join(
-          options.temporaryRoot,
-          `mcp-readiness-${provider}`,
-        ),
-        timeoutMs: 15_000,
-        signal: options.signal,
-      });
-      readiness.set(provider, result.healthy ? "ready" : "unavailable");
-    }),
+    options.policy.servers
+      .filter((server) => server.decision === "included")
+      .map(async (server, index) => {
+        const provider = server.provider;
+        const contestant = options.config.contestants.find(
+          (entry) => entry.provider === provider,
+        );
+        const adapter = createProviderAdapter(
+          provider,
+          contestant?.model,
+          isolateMcpPolicyForReadiness(options.policy, provider, server.name),
+        );
+        const result = await adapter.probeConnectivity({
+          cwd: options.config.repositoryRoot,
+          transcriptPrefix: path.join(
+            options.temporaryRoot,
+            `mcp-readiness-${provider}-${String(index + 1)}`,
+          ),
+          timeoutMs: 15_000,
+          signal: options.signal,
+          mcpServerName: server.name,
+        });
+        readiness.set(
+          mcpServerIdentity(provider, server.name),
+          result.healthy ? "ready" : "unavailable",
+        );
+      }),
   );
   return applyMcpReadiness(
     options.policy,
@@ -494,6 +504,14 @@ export async function runFight(
         store: parentStore,
         summary: parentSummary,
       });
+      const lastAppliedEnvelope = parentSummary.appliedEnvelopes.at(-1);
+      const continuationCheckpoint =
+        lastAppliedEnvelope && typeof lastAppliedEnvelope.roundId === "number"
+          ? await readCheckpointDescriptor(
+              parentStore,
+              lastAppliedEnvelope.roundId,
+            )
+          : undefined;
       let resumeAfterInitialization = false;
       if (providerFailure?.round === 1) {
         const checkpoint = await parentStore.readOptionalJson(
@@ -525,6 +543,7 @@ export async function runFight(
           reconnaissance,
           inheritedState,
           startRound: providerFailure?.round ?? 1,
+          ...(continuationCheckpoint ? { continuationCheckpoint } : {}),
           ...(resumeAfterInitialization
             ? { resumeAfterInitialization: true }
             : {}),

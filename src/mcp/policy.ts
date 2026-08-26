@@ -286,16 +286,23 @@ export function freezeMcpPolicy(options: {
         `${right.provider}\0${right.name}`,
       ),
     );
-  const enforceableServers = servers.map((server) =>
-    server.provider === "claude" && server.decision === "included"
-      ? {
-          ...server,
-          readiness: "unavailable" as const,
-          reason:
-            "Claude named MCP selections cannot be isolated without explicit server definitions; the server is excluded from this run",
-        }
-      : server,
-  );
+  const enforceableServers = servers.map((server) => {
+    if (server.decision === "included" && server.role === "harness_only")
+      return {
+        ...server,
+        readiness: "unavailable" as const,
+        reason:
+          "Harness-only MCP execution is not implemented; the server is excluded from provider agent sessions",
+      };
+    if (server.provider === "claude" && server.decision === "included")
+      return {
+        ...server,
+        readiness: "unavailable" as const,
+        reason:
+          "Claude named MCP selections cannot be isolated without explicit server definitions; the server is excluded from this run",
+      };
+    return server;
+  });
   const unavailableRequired = enforceableServers.filter(
     (server) =>
       server.decision === "included" &&
@@ -312,7 +319,7 @@ export function freezeMcpPolicy(options: {
       ? {
           ...server,
           decision: "excluded" as const,
-          reason: /cannot be isolated/i.test(server.reason)
+          reason: /cannot be isolated|not implemented/i.test(server.reason)
             ? server.reason
             : server.requirement === "required"
               ? "Required server unavailable under accepted reduced validation"
@@ -324,7 +331,7 @@ export function freezeMcpPolicy(options: {
     .filter(
       (server) =>
         server.decision === "excluded" &&
-        /unavailable|cannot be isolated/i.test(server.reason),
+        /unavailable|cannot be isolated|not implemented/i.test(server.reason),
     )
     .map(
       (server) =>
@@ -356,9 +363,57 @@ export function selectedMcpNames(
     .map((server) => server.name);
 }
 
+/** MCP servers that a contestant or judge provider may use directly. */
+export function agentMcpNames(
+  policy: FrozenMcpPolicy,
+  provider: AgentId,
+): string[] {
+  return policy.servers
+    .filter(
+      (server) =>
+        server.provider === provider &&
+        server.decision === "included" &&
+        (server.role === "agent" || server.role === "both"),
+    )
+    .map((server) => server.name);
+}
+
+export function mcpServerIdentity(provider: AgentId, name: string): string {
+  return `${provider}\0${name}`;
+}
+
+/** Restrict a readiness invocation to one selected server. */
+export function isolateMcpPolicyForReadiness(
+  policy: FrozenMcpPolicy,
+  provider: AgentId,
+  name: string,
+): FrozenMcpPolicy {
+  const draft = {
+    ...policy,
+    servers: policy.servers.map((server) =>
+      server.provider === provider && server.name === name
+        ? server
+        : server.decision === "included"
+          ? {
+              ...server,
+              decision: "excluded" as const,
+              reason: "Excluded from this isolated MCP readiness probe",
+            }
+          : server,
+    ),
+    coverageGaps: [],
+  };
+  const { policyHash: _policyHash, ...withoutHash } = draft;
+  void _policyHash;
+  return FrozenMcpPolicySchema.parse({
+    ...withoutHash,
+    policyHash: hashPolicy(withoutHash),
+  });
+}
+
 export function applyMcpReadiness(
   policy: FrozenMcpPolicy,
-  readiness: ReadonlyMap<AgentId, "ready" | "unavailable">,
+  readiness: ReadonlyMap<string, "ready" | "unavailable">,
   reducedValidationAccepted: boolean,
   now?: Date,
 ): FrozenMcpPolicy {
@@ -371,8 +426,12 @@ export function applyMcpReadiness(
           selected.provider === provider.provider &&
           selected.name === server.name &&
           selected.decision === "included",
-      ) && readiness.has(provider.provider)
-        ? { readiness: readiness.get(provider.provider)! }
+      ) && readiness.has(mcpServerIdentity(provider.provider, server.name))
+        ? {
+            readiness: readiness.get(
+              mcpServerIdentity(provider.provider, server.name),
+            )!,
+          }
         : {}),
     })),
   }));
@@ -383,7 +442,9 @@ export function applyMcpReadiness(
         .filter(
           (server) =>
             server.decision === "included" ||
-            /unavailable|cannot be isolated/i.test(server.reason),
+            /unavailable|cannot be isolated|not implemented/i.test(
+              server.reason,
+            ),
         )
         .map((server) => ({
           provider: server.provider,

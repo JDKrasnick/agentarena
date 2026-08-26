@@ -422,6 +422,125 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
     ).toHaveLength(2);
   }, 150_000);
 
+  it("anchors a round-two recovery child to the sealed parent replay", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const bin = await mkdtemp(
+      path.join(os.tmpdir(), "arena-round-two-recovery-bin-"),
+    );
+    const marker = path.join(bin, "provider-recovered");
+    await writeFile(
+      path.join(bin, "codex"),
+      `#!/bin/sh
+if [ "$AGENT_ARENA_STAGE" = "provider_health_probe" ]; then
+  : > "$AGENT_ARENA_TRANSPORT_MARKER"
+fi
+if [ "$AGENT_ARENA_STAGE" = "review_attacks" ] && [ "$AGENT_ARENA_ROUND" = "2" ] && [ ! -f "$AGENT_ARENA_TRANSPORT_MARKER" ]; then
+  echo "MCP OAuth authentication failed" >&2
+  exit 8
+fi
+exec "${process.execPath}" "${fixtureAgent}" "$@"
+`,
+    );
+    await writeFile(
+      path.join(bin, "claude"),
+      `#!/bin/sh
+exec "${process.execPath}" "${fixtureAgent}" "$@"
+`,
+    );
+    await Promise.all([
+      chmod(path.join(bin, "codex"), 0o755),
+      chmod(path.join(bin, "claude"), 0o755),
+    ]);
+    const env = {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+      AGENT_ARENA_TRANSPORT_MARKER: marker,
+    };
+
+    const fight = await execa(
+      process.execPath,
+      [
+        cli,
+        "fight",
+        "Lowercase slugs and collapse whitespace.",
+        "--test",
+        "node --test",
+        "--agents",
+        "codex,claude",
+        "--yes",
+        "--no-window",
+      ],
+      { cwd: repositoryRoot, env, timeout: 150_000 },
+    );
+
+    expect(fight.exitCode).toBe(0);
+    const runsRoot = path.join(repositoryRoot, ".agent-arena", "runs");
+    const runs = await Promise.all(
+      (await readdir(runsRoot)).map(async (runId) => ({
+        runId,
+        summary: JSON.parse(
+          await readFile(path.join(runsRoot, runId, "result.json"), "utf8"),
+        ) as {
+          appliedEnvelopes: Array<{ roundId: number; replayHash: string }>;
+          provenance: {
+            parentRunId?: string;
+            parentCheckpointHash?: string;
+          };
+        },
+      })),
+    );
+    const child = runs.find((run) => run.summary.provenance.parentRunId);
+    expect(child).toBeTruthy();
+    const parentRunId = child!.summary.provenance.parentRunId!;
+    const parentCheckpoint = JSON.parse(
+      await readFile(
+        path.join(runsRoot, parentRunId, "checkpoints", "1.json"),
+        "utf8",
+      ),
+    ) as {
+      checkpointHash: string;
+      envelopeHash: string;
+      replayHash: string;
+    };
+    const continuationCheckpoint = JSON.parse(
+      await readFile(
+        path.join(runsRoot, child!.runId, "continuation-checkpoint.json"),
+        "utf8",
+      ),
+    ) as typeof parentCheckpoint;
+    const roundTwoSnapshot = JSON.parse(
+      await readFile(
+        path.join(runsRoot, child!.runId, "rounds", "2", "snapshot.json"),
+        "utf8",
+      ),
+    ) as { priorReplayHash: string | null };
+    const roundTwoEnvelope = JSON.parse(
+      await readFile(
+        path.join(runsRoot, child!.runId, "rounds", "2", "envelope.json"),
+        "utf8",
+      ),
+    ) as { priorEnvelopeHash: string | null };
+
+    expect(continuationCheckpoint).toEqual(parentCheckpoint);
+    expect(child!.summary.provenance.parentCheckpointHash).toBe(
+      parentCheckpoint.checkpointHash,
+    );
+    expect(roundTwoSnapshot.priorReplayHash).toBe(parentCheckpoint.replayHash);
+    expect(roundTwoEnvelope.priorEnvelopeHash).toBe(
+      parentCheckpoint.envelopeHash,
+    );
+    expect(
+      child!.summary.appliedEnvelopes.map((entry) => entry.roundId),
+    ).toEqual([2, 3]);
+
+    const resumed = await execa(
+      process.execPath,
+      [cli, "resume", child!.runId, "--display", "json"],
+      { cwd: repositoryRoot, env },
+    );
+    expect(JSON.parse(resumed.stdout)).toMatchObject({ status: "complete" });
+  }, 180_000);
+
   it("becomes inconclusive after the second unrecovered coverage-stage failure", async () => {
     const repositoryRoot = await createSlugRepository();
     const bin = await mkdtemp(

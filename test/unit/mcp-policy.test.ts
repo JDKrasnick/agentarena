@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyMcpReadiness,
   freezeMcpPolicy,
+  mcpServerIdentity,
   parseMcpInventory,
 } from "../../src/mcp/policy.js";
 
@@ -112,18 +113,63 @@ describe("MCP preflight policy", () => {
       reducedValidationAccepted: false,
     });
     expect(() =>
-      applyMcpReadiness(initial, new Map([["codex", "unavailable"]]), false),
+      applyMcpReadiness(
+        initial,
+        new Map([[mcpServerIdentity("codex", "expo"), "unavailable"]]),
+        false,
+      ),
     ).toThrow(/Required MCP servers are unavailable/);
 
     const reduced = applyMcpReadiness(
       initial,
-      new Map([["codex", "unavailable"]]),
+      new Map([[mcpServerIdentity("codex", "expo"), "unavailable"]]),
       true,
     );
     expect(
       reduced.servers.find((server) => server.name === "expo"),
     ).toMatchObject({ decision: "excluded", requirement: "required" });
     expect(reduced.coverageGaps).toHaveLength(1);
+  });
+
+  it("excludes harness-only selections from provider agent sessions", () => {
+    const policy = freezeMcpPolicy({
+      config: {
+        policy: "configure_selection",
+        servers: [
+          {
+            provider: "gemini",
+            name: "secrets",
+            role: "harness_only",
+            requirement: "optional",
+          },
+        ],
+      },
+      inventory: [
+        {
+          provider: "gemini",
+          state: "known",
+          servers: [
+            {
+              name: "secrets",
+              enabled: true,
+              authentication: "ready",
+              readiness: "ready",
+            },
+          ],
+          diagnosticArtifactRefs: [],
+        },
+      ],
+      reducedValidationAccepted: false,
+    });
+
+    expect(policy.servers[0]).toMatchObject({
+      role: "harness_only",
+      decision: "excluded",
+      readiness: "unavailable",
+    });
+    expect(policy.coverageGaps[0]).toContain(
+      "Harness-only MCP execution is not implemented",
+    );
   });
 
   it("excludes Claude selections that cannot be isolated from global configuration", () => {
