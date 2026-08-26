@@ -11,6 +11,7 @@ import { renderBattleVisual } from "../../src/reports/visual.js";
 import {
   reportCheckStatus,
   reportDefects,
+  reportOutcomeTotals,
   resolveArtifactHref,
 } from "../../src/reports/presentation.js";
 import { makeRunState } from "../helpers/run-state.js";
@@ -220,6 +221,75 @@ describe("battle reports", () => {
     expect(html).toContain("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;");
     expect(html).not.toContain("<script>alert");
     expect(renderBattleVisual(state)).not.toContain("<script>alert");
+  });
+
+  it("separates competitive, shared, and schema-rejected outcome totals", () => {
+    const state = makeRunState();
+    const competitive = attack(state);
+    competitive.adjudication = {
+      version: 1,
+      id: "adjudication:competitive",
+      verdict: "valid",
+      canonicalDefectId: "logout-defect",
+      severity: "high",
+      rationale: "verified",
+      evidenceBasis: "mechanical",
+      duplicateState: "unique",
+      relationship: "independent",
+      retryArtifactRefs: [],
+      diagnosticArtifactRefs: [],
+      multiplier: 1,
+      scoreEffect: "damage",
+      exactAmount: 30,
+    };
+    const competitiveAdjudication = competitive.adjudication;
+    if (!competitiveAdjudication)
+      throw new Error("Fixture adjudication is missing");
+    const affirm = attack(state, { id: "affirm", round: 2 });
+    affirm.adjudication = {
+      ...competitiveAdjudication,
+      id: "adjudication:affirm",
+      relationship: "affirm",
+      priorAdjudicationId: competitiveAdjudication.id,
+      scoreEffect: "none",
+      exactAmount: 0,
+    };
+    const shared = attack(state, {
+      id: "shared",
+      status: "shared_defect",
+      targets: ["a", "b"],
+      damage: undefined,
+      damageActive: false,
+    });
+    state.attacks = [competitive, affirm, shared];
+    state.submissionArtifacts = [
+      {
+        round: 1,
+        phase: "review",
+        actor: "a",
+        kind: "review",
+        outcome: "partial",
+        rawSha256: "a".repeat(64),
+        rawArtifactPath: `${state.artifacts.runDirectory}/submissions/raw.txt`,
+        parsedArtifactPath: `${state.artifacts.runDirectory}/submissions/parsed.json`,
+        schemaRejectedFindingCount: 2,
+      },
+    ];
+
+    expect(reportOutcomeTotals(state)).toEqual({
+      competitiveLandings: 1,
+      sharedDefects: 1,
+      schemaRejectedFindings: 2,
+    });
+    expect(renderConsoleSummary(state)).toContain(
+      "Attack outcomes: 1 competitive landing · 1 shared defect · 2 schema-rejected findings",
+    );
+    expect(renderBattleReport(state)).toContain(
+      "Competitive landings: **1** · Shared defects: **1** · Schema-rejected findings: **2**",
+    );
+    expect(renderBattleHtml(state)).toContain(
+      "Competitive landings</dt><dd>1</dd><dt>Shared defects</dt><dd>1</dd><dt>Schema-rejected findings</dt><dd>2</dd>",
+    );
   });
 
   it("renders an incomplete outcome without inventing a draw or winner", () => {

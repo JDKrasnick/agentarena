@@ -9,6 +9,7 @@ import {
   reportCheckStatus,
   reportContestants,
   reportDefects,
+  reportOutcomeTotals,
   reportRounds,
   resolveArtifactHref,
 } from "./presentation.js";
@@ -371,6 +372,7 @@ export function renderBattleReport(state: RunState): string {
   }
   const contestants = reportContestants(state);
   const defects = reportDefects(state);
+  const outcomeTotals = reportOutcomeTotals(state);
   const lines = [
     "# Agent Arena Battle Report",
     "",
@@ -427,6 +429,8 @@ export function renderBattleReport(state: RunState): string {
     }),
     "",
     `Deciding factors: ${state.arenaOutcome?.decidingFactors.join(", ") || "none"}`,
+    "",
+    `Competitive landings: **${String(outcomeTotals.competitiveLandings)}** · Shared defects: **${String(outcomeTotals.sharedDefects)}** · Schema-rejected findings: **${String(outcomeTotals.schemaRejectedFindings)}**`,
     "",
     "## Attack-lane coverage",
     "",

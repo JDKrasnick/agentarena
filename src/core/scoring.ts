@@ -243,6 +243,20 @@ export interface RoundResolution {
   eventsApplied: number;
 }
 
+/** Every accepted reproducer that must pass before a canonical defect heals. */
+export function defectEvidenceAttacks(
+  attacks: readonly Attack[],
+  target: ContestantId,
+  rootDefectId: string,
+): Attack[] {
+  return attacks.filter(
+    (attack) =>
+      attack.rootDefectId === rootDefectId &&
+      attack.targets.includes(target) &&
+      (attack.status === "landed" || attack.status === "shared_defect"),
+  );
+}
+
 function cloneContestant(contestant: ContestantResult): ContestantResult {
   return structuredClone(contestant);
 }
@@ -458,6 +472,43 @@ export function resolveRound(
             defect.rootDefectId === adjudication.canonicalDefectId &&
             defect.status !== "superseded",
         );
+        if (canonical && adjudication.relationship === "affirm") {
+          if (canonical.status === "healed") {
+            canonical.status = "active";
+            canonical.repairAttemptsUsed = 0;
+            canonical.repairAttemptIds = [];
+            canonical.regressionResets += 1;
+            ledger.activeDefects.push({
+              rootDefectId: canonical.rootDefectId,
+              attackId: attack.id,
+              damage: canonical.currentDamage,
+              severity: canonical.baseSeverity,
+              multiplier: canonical.currentMultiplier,
+            });
+            contestant.healthEvents.push({
+              attackId: attack.id,
+              adjudicationId: adjudication.id,
+              round,
+              type: "target_damage",
+              amount: -canonical.currentDamage,
+              reason: `Affirmed reproducer reactivated ${canonical.rootDefectId}`,
+            });
+            eventsApplied += 1;
+          }
+          if (
+            !canonical.evidenceHistory.some(
+              (entry) => entry.attackId === attack.id,
+            )
+          ) {
+            canonical.evidenceHistory.push({
+              attackId: attack.id,
+              basis: adjudication.evidenceBasis,
+              multiplier: canonical.currentMultiplier,
+              rationale: adjudication.rationale,
+            });
+          }
+          continue;
+        }
         if (!canonical) {
           if (adjudication.scoreEffect !== "damage") continue;
           const newCanonical = {

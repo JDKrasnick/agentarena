@@ -6,6 +6,7 @@ import {
   reportCheckStatus,
   reportContestants,
   reportDefects,
+  reportOutcomeTotals,
   truncateReportText,
 } from "./presentation.js";
 
@@ -59,6 +60,7 @@ export function renderConsoleSummary(
   }
   const contestants = reportContestants(state);
   const defects = reportDefects(state);
+  const outcomeTotals = reportOutcomeTotals(state);
   const unresolved = defects.filter((defect) => defect.active);
   const browserAttackArtifacts = [
     ...new Set(
@@ -128,6 +130,7 @@ export function renderConsoleSummary(
           ),
         ]
       : []),
+    `Attack outcomes: ${String(outcomeTotals.competitiveLandings)} competitive landing · ${String(outcomeTotals.sharedDefects)} shared defect · ${String(outcomeTotals.schemaRejectedFindings)} schema-rejected findings`,
     "",
     "Contestant   Required suite  Final HP  Unresolved  Recoil",
     ...contestants.map((contestant) => {

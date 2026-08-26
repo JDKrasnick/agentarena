@@ -299,6 +299,49 @@ describe("fault-isolated provider submissions", () => {
     );
   });
 
+  it("safely truncates oversized descriptive review text by UTF-8 bytes", () => {
+    const finding = reviewFinding();
+    finding.observations[0]!.statement = `Evidence ${"🧪".repeat(400)}`;
+
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({ version: 2, findings: [finding] }),
+    );
+
+    expect(parsed.outcome).toBe("valid");
+    const statement = parsed.value.findings[0]?.observations[0]?.statement;
+    expect(statement).toBeDefined();
+    expect(Buffer.byteLength(statement ?? "", "utf8")).toBeLessThanOrEqual(
+      1_000,
+    );
+    expect(statement).toMatch(/…$/u);
+    expect(parsed.normalizations).toContainEqual(
+      expect.objectContaining({
+        path: "$.findings[0].observations[0].statement",
+        rule: "v1.review.text.truncate_utf8_1000",
+      }),
+    );
+  });
+
+  it("keeps command fields strict instead of truncating executable semantics", () => {
+    const finding = reviewFinding();
+    finding.regression_test_plan.focused_command = "x".repeat(1_001);
+
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({ version: 2, findings: [finding] }),
+    );
+
+    expect(parsed.outcome).toBe("invalid");
+    expect(parsed.rejections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "$.findings[0].regression_test_plan.focused_command",
+        }),
+      ]),
+    );
+  });
+
   it("preserves valid review siblings when another finding is malformed", () => {
     const parsed = parseFaultIsolatedSubmission(
       "review",

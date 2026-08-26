@@ -205,7 +205,10 @@ Later attacks may explicitly challenge a prior adjudication or match one by
 assertion identity and normalized browser actions. The existing neutral judge
 receives up to six same-target decisions and classifies the new evidence as
 independent, affirming, overturning, or unresolved. Affirmations do not repeat
-damage or recoil; overturns preserve both immutable decisions and append score
+damage or recoil, but each affirmed reproducer joins the canonical defect's
+repair and final-verification set. If an affirmed variant still fails after the
+defect was healed, Arena reactivates the existing canonical damage without
+adding new damage. Overturns preserve both immutable decisions and append score
 corrections; unresolved conflicts remain score-neutral and make coverage
 provisional. A browser pass against a changed target patch is repair evidence,
 not proof that the earlier observation was wrong.
@@ -743,9 +746,11 @@ A lightweight verifier agent may help evaluate disputed attacks, but determinist
 The term **harness** should refer to deterministic orchestration and execution: worktrees, patches, processes, retries, and recorded pass/fail results. The **attack verifier** performs the narrow semantic judgment about oracle support, relevance, root-defect identity, and severity. Together they form the arena adjudication pipeline.
 
 Each mechanically landed defect retains its executable reproducer. Repair
-validation reruns every active reproducer and each healed-defect regression
-check after every attempt. Judge-based defects use immutable digest-bound repair
-judgments only when mechanical confirmation remains unavailable.
+validation reruns every accepted reproducer for the canonical defect, including
+score-neutral affirming variants, and each healed-defect regression check after
+every attempt. The defect heals only when the complete set passes. Judge-based
+defects use immutable digest-bound repair judgments only when mechanical
+confirmation remains unavailable.
 
 Harness-owned failures must never change health, but a true target defect must not be dismissed merely because it looks infrastructural. Git, filesystem, process-launch, environment, service, or provider failures are first retried in a clean worktree with author, target, base, and service-health controls.
 
@@ -1190,6 +1195,8 @@ Duration: 11m 14s
 Each run should generate:
 
 * `BATTLE.md`
+* Separate competitive-landing, shared-defect, and schema-rejected-finding
+  totals in the console and battle reports.
 * An immutable `run-spec.json` with frozen source snapshots and reproducibility metadata.
 * A redacted permission manifest with approvals, denials, leases, and omitted checks.
 * A credential-free frozen MCP inventory, readiness result, exact allowlist,
