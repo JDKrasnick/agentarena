@@ -49,6 +49,7 @@ import { renderBattleHtml } from "../reports/html.js";
 import { renderBattleVisual } from "../reports/visual.js";
 import { renderConsoleSummary } from "../reports/console.js";
 import {
+  approveMcpPolicy,
   applyMcpReadiness,
   freezeMcpPolicy,
   inventoryProviderMcp,
@@ -85,7 +86,11 @@ async function approvePermissionPlan(
     );
   }
   stdout.write(`MCP policy: ${mcpPolicy.mode.replaceAll("_", " ")}\n`);
-  for (const server of mcpPolicy.servers) {
+  for (const server of mcpPolicy.servers.filter(
+    (entry) =>
+      entry.decision === "included" ||
+      entry.reason !== "Not selected for this run",
+  )) {
     stdout.write(
       `- ${server.provider}/${server.name}: ${server.decision}, ${server.authentication}, ${server.readiness}, ${server.role}, ${server.requirement}\n`,
     );
@@ -105,6 +110,66 @@ async function approvePermissionPlan(
     if (!/^y(?:es)?$/i.test(answer.trim()))
       throw new Error("Permission plan was not approved");
     return FightConfigSchema.parse({ ...config, nonInteractiveApproval: true });
+  } finally {
+    readline.close();
+  }
+}
+
+export function renderFinalMcpPolicy(policy: FrozenMcpPolicy): string {
+  const requested = policy.servers.filter(
+    (server) =>
+      server.decision === "included" ||
+      server.reason !== "Not selected for this run",
+  );
+  const lines = [
+    "Final MCP policy after isolated readiness checks",
+    `Policy hash: ${policy.policyHash}`,
+  ];
+  if (!requested.length) {
+    lines.push(
+      "- No MCP servers will be exposed to contestant or judge sessions.",
+    );
+  } else {
+    for (const server of requested) {
+      lines.push(
+        `- ${server.provider}/${server.name}: ${server.decision}, ${server.authentication}, ${server.readiness}, ${server.role}, ${server.requirement}`,
+      );
+      if (server.decision === "excluded") lines.push(`  ${server.reason}`);
+    }
+  }
+  if (policy.coverageGaps.length) {
+    lines.push("Coverage gaps:");
+    for (const gap of policy.coverageGaps) lines.push(`- ${gap}`);
+  }
+  lines.push(
+    "Authenticate or repair any excluded server with its provider CLI, then rerun to request it. Agent Arena never reads or copies MCP credentials.",
+  );
+  return `${lines.join("\n")}\n`;
+}
+
+async function approveFinalMcpPolicy(
+  policy: FrozenMcpPolicy,
+  acceptedByFlag: boolean,
+): Promise<FrozenMcpPolicy> {
+  stdout.write(renderFinalMcpPolicy(policy));
+  if (acceptedByFlag) {
+    stdout.write(
+      "Final MCP policy accepted noninteractively via --accept-mcp-policy.\n",
+    );
+    return approveMcpPolicy(policy, "flag");
+  }
+  if (!stdin.isTTY || !stdout.isTTY)
+    throw new Error(
+      "Final MCP policy requires an explicit decision. Rerun interactively or pass --accept-mcp-policy to accept the displayed policy.",
+    );
+  const readline = createInterface({ input: stdin, output: stdout });
+  try {
+    const answer = await readline.question(
+      `Start the battle with MCP policy ${policy.policyHash}? [y/N] `,
+    );
+    if (!/^y(?:es)?$/i.test(answer.trim()))
+      throw new Error("Final MCP policy was not approved");
+    return approveMcpPolicy(policy, "interactive");
   } finally {
     readline.close();
   }
@@ -266,6 +331,10 @@ export async function runFight(
       temporaryRoot: mcpPreflight.temporaryRoot,
       signal: new AbortController().signal,
     });
+    mcpPolicy = await approveFinalMcpPolicy(
+      mcpPolicy,
+      overrides.acceptMcpPolicy ?? false,
+    );
   } catch (error) {
     await rm(mcpPreflight.temporaryRoot, { recursive: true, force: true });
     throw error;

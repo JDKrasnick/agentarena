@@ -129,6 +129,10 @@ program
   .option("--quality-verifier <agent>", "Deprecated; ignored for new runs")
   .option("--maintainer <agent>", "Deprecated; ignored for new runs")
   .option("--yes", "Approve the displayed confirm-mode plan noninteractively")
+  .option(
+    "--accept-mcp-policy",
+    "Accept the finalized post-readiness MCP policy without prompting",
+  )
   .option("--accept-reduced-validation", "Allow required capability denials")
   .option("--keep-worktrees", "Preserve temporary worktrees for debugging")
   .addOption(
@@ -163,6 +167,7 @@ program
         qualityVerifier?: string;
         maintainer?: string;
         yes?: boolean;
+        acceptMcpPolicy?: boolean;
         acceptReducedValidation?: boolean;
         keepWorktrees?: boolean;
         display: "auto" | "window" | "dashboard" | "terminal" | "plain";
@@ -199,6 +204,7 @@ program
             : {}),
           ...(options.maintainer ? { maintainer: options.maintainer } : {}),
           nonInteractiveApproval: options.yes ?? false,
+          acceptMcpPolicy: options.acceptMcpPolicy ?? false,
           reducedValidationAccepted: options.acceptReducedValidation ?? false,
           keepWorktrees: options.keepWorktrees ?? false,
         },
@@ -243,6 +249,10 @@ program
   .option("--quality-verifier <agent>", "Deprecated; ignored for new runs")
   .option("--maintainer <agent>", "Deprecated; ignored for new runs")
   .option("--yes", "Approve the displayed confirm-mode plan noninteractively")
+  .option(
+    "--accept-mcp-policy",
+    "Accept the finalized post-readiness MCP policy without prompting",
+  )
   .option("--accept-reduced-validation", "Allow required capability denials")
   .option("--keep-worktrees", "Preserve temporary worktrees for debugging")
   .addOption(
@@ -271,6 +281,7 @@ program
       qualityVerifier?: string;
       maintainer?: string;
       yes?: boolean;
+      acceptMcpPolicy?: boolean;
       acceptReducedValidation?: boolean;
       keepWorktrees?: boolean;
       display: "auto" | "window" | "dashboard" | "terminal" | "plain";
@@ -299,6 +310,7 @@ program
             : {}),
           ...(options.maintainer ? { maintainer: options.maintainer } : {}),
           nonInteractiveApproval: options.yes ?? false,
+          acceptMcpPolicy: options.acceptMcpPolicy ?? false,
           reducedValidationAccepted: options.acceptReducedValidation ?? false,
           keepWorktrees: options.keepWorktrees ?? false,
         },

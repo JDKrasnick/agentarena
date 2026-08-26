@@ -333,6 +333,27 @@ describe("provider connectivity probing", () => {
       expect.objectContaining({ kind: "mcp_auth", detail: warning }),
     ]);
   });
+
+  it("fails a scoped MCP probe when the selected server never becomes ready", async () => {
+    const warning =
+      "resources/list failed: MCP server 'google' was not ready for this step";
+    const result = await probe(
+      `console.log("AGENT_ARENA_PROVIDER_HEALTH_OK"); console.error(${JSON.stringify(warning)})`,
+      "google",
+    );
+
+    expect(result.healthy).toBe(false);
+    expect(result.transportFailures).toEqual([
+      expect.objectContaining({ kind: "transport", detail: warning }),
+    ]);
+  });
+
+  it("requires a scoped probe to perform read-only discovery against the named server", async () => {
+    const script = `let input = ""; process.stdin.on("data", (chunk) => input += chunk); process.stdin.on("end", () => { if (input.includes("read-only MCP discovery") && input.includes("google")) console.log("AGENT_ARENA_PROVIDER_HEALTH_OK"); });`;
+    const result = await probe(script, "google");
+
+    expect(result.healthy).toBe(true);
+  });
 });
 
 describe("structured model-output recovery", () => {

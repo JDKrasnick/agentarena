@@ -941,6 +941,18 @@ the operator explicitly accepts reduced validation with that server excluded;
 an unavailable optional server is excluded and recorded as a coverage gap.
 Reauthentication is always an explicit operator action.
 
+Each isolated MCP readiness probe performs a read-only discovery operation
+against the selected server; general provider connectivity alone cannot mark an
+MCP server ready. After readiness, Arena displays the exact frozen policy hash,
+every requested server's inclusion and readiness, and all resulting coverage
+gaps. The battle cannot create worktrees or start contestant or judge sessions
+until the operator accepts that final policy. Interactive runs default to no;
+non-interactive runs must pass `--accept-mcp-policy`. The earlier `--yes`
+approval does not cover a post-readiness policy. Unselected server identities
+are omitted from this final decision, and unavailable servers are never exposed
+to agents. Operators authenticate desired servers through the provider CLI;
+Arena never reads, copies, or performs MCP authentication.
+
 The current MVP has no harness-mediated MCP execution path. A server requested
 with the `harness_only` role is therefore unavailable: optional servers are
 excluded as coverage gaps, and required servers follow the same reduced-
@@ -1148,7 +1160,7 @@ Each run should generate:
 * An immutable `run-spec.json` with frozen source snapshots and reproducibility metadata.
 * A redacted permission manifest with approvals, denials, leases, and omitted checks.
 * A credential-free frozen MCP inventory, readiness result, exact allowlist,
-  exclusions, and coverage gaps.
+  exclusions, coverage gaps, and hash-bound operator acceptance.
 * A JSON result file.
 * The winning patch.
 * A command to apply the winner.
