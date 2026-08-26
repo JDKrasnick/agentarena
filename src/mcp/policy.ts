@@ -64,7 +64,13 @@ export const FrozenMcpPolicySchema = z
     approval: z
       .object({
         policyHash: z.string().regex(/^[a-f0-9]{64}$/),
-        mode: z.enum(["interactive", "flag"]),
+        // Legacy modes remain readable for runs created by earlier gate behavior.
+        mode: z.enum([
+          "interactive",
+          "automatic_ready",
+          "default_exclusion",
+          "flag",
+        ]),
         acceptedAt: z.string().datetime(),
       })
       .strict()
@@ -72,12 +78,30 @@ export const FrozenMcpPolicySchema = z
   })
   .strict()
   .superRefine((policy, context) => {
-    if (policy.approval && policy.approval.policyHash !== policy.policyHash)
+    if (!policy.approval) return;
+    if (policy.approval.policyHash !== policy.policyHash)
       context.addIssue({
         code: "custom",
         path: ["approval", "policyHash"],
         message: "MCP approval must bind the frozen policy hash",
       });
+    for (const [index, server] of policy.servers.entries()) {
+      const requested = server.reason !== "Not selected for this run";
+      if (requested && server.readiness === "unknown")
+        context.addIssue({
+          code: "custom",
+          path: ["servers", index, "readiness"],
+          message:
+            "Every requested MCP server must be resolved before approval",
+        });
+      if (server.decision === "included" && server.readiness !== "ready")
+        context.addIssue({
+          code: "custom",
+          path: ["servers", index, "decision"],
+          message:
+            "Only ready MCP servers may be included in an approved policy",
+        });
+    }
   });
 export type FrozenMcpPolicy = z.infer<typeof FrozenMcpPolicySchema>;
 
@@ -201,7 +225,7 @@ function hashPolicy(value: Omit<FrozenMcpPolicy, "policyHash">): string {
 
 export function approveMcpPolicy(
   policy: FrozenMcpPolicy,
-  mode: "interactive" | "flag",
+  mode: "interactive" | "automatic_ready",
   now = new Date(),
 ): FrozenMcpPolicy {
   return FrozenMcpPolicySchema.parse({
@@ -211,6 +235,50 @@ export function approveMcpPolicy(
       mode,
       acceptedAt: now.toISOString(),
     },
+  });
+}
+
+/** Remove selected MCP servers that the operator declines during manual review. */
+export function excludeMcpServers(
+  policy: FrozenMcpPolicy,
+  identities: ReadonlySet<string>,
+  now = new Date(),
+): FrozenMcpPolicy {
+  const newlyExcluded = policy.servers.filter(
+    (server) =>
+      server.decision === "included" &&
+      identities.has(mcpServerIdentity(server.provider, server.name)),
+  );
+  const reason = "Not approved by the operator; excluded from this run";
+  const draft = {
+    ...policy,
+    servers: policy.servers.map((server) =>
+      server.decision === "included" &&
+      identities.has(mcpServerIdentity(server.provider, server.name))
+        ? { ...server, decision: "excluded" as const, reason }
+        : server,
+    ),
+    coverageGaps: [
+      ...new Set([
+        ...policy.coverageGaps,
+        ...newlyExcluded.map(
+          (server) =>
+            `${server.provider}/${server.name} (${server.requirement}): ${reason}`,
+        ),
+      ]),
+    ],
+    frozenAt: now.toISOString(),
+  };
+  const {
+    policyHash: _policyHash,
+    approval: _approval,
+    ...withoutAuthority
+  } = draft;
+  void _policyHash;
+  void _approval;
+  return FrozenMcpPolicySchema.parse({
+    ...withoutAuthority,
+    policyHash: hashPolicy(withoutAuthority),
   });
 }
 
@@ -336,17 +404,6 @@ export function freezeMcpPolicy(options: {
       };
     return server;
   });
-  const unavailableRequired = enforceableServers.filter(
-    (server) =>
-      server.decision === "included" &&
-      server.requirement === "required" &&
-      server.readiness === "unavailable",
-  );
-  if (unavailableRequired.length && !options.reducedValidationAccepted) {
-    throw new Error(
-      `Required MCP servers are unavailable: ${unavailableRequired.map((server) => `${server.provider}/${server.name}`).join(", ")}. Reauthenticate explicitly or accept reduced validation with those servers excluded.`,
-    );
-  }
   const normalizedServers = enforceableServers.map((server) =>
     server.decision === "included" && server.readiness === "unavailable"
       ? {
@@ -355,7 +412,7 @@ export function freezeMcpPolicy(options: {
           reason: /cannot be isolated|not implemented/i.test(server.reason)
             ? server.reason
             : server.requirement === "required"
-              ? "Required server unavailable under accepted reduced validation"
+              ? "Required server unavailable and excluded from this run"
               : "Optional server unavailable during readiness checks",
         }
       : server,
@@ -511,20 +568,19 @@ export function mergeMcpPermissionPolicy(
       ...permissions.capabilities.filter(
         (capability) => !capability.id.startsWith("mcp_server_"),
       ),
-      ...mcp.servers.map((server) => ({
-        id: `mcp_server_${server.provider}_${createHash("sha256").update(server.name).digest("hex").slice(0, 16)}`,
-        reason: `${server.reason}; frozen by MCP policy ${mcp.policyHash}`,
-        risk: "high" as const,
-        requirement: server.requirement,
-        role: server.role,
-        enforcement: "advisory" as const,
-        mode: permissions.defaultMode,
-        scopes: [`provider:${server.provider}`, `server:${server.name}`],
-        status:
-          server.decision === "included"
-            ? ("approved" as const)
-            : ("unavailable" as const),
-      })),
+      ...mcp.servers
+        .filter((server) => server.decision === "included")
+        .map((server) => ({
+          id: `mcp_server_${server.provider}_${createHash("sha256").update(server.name).digest("hex").slice(0, 16)}`,
+          reason: `${server.reason}; frozen by MCP policy ${mcp.policyHash}`,
+          risk: "high" as const,
+          requirement: server.requirement,
+          role: server.role,
+          enforcement: "advisory" as const,
+          mode: permissions.defaultMode,
+          scopes: [`provider:${server.provider}`, `server:${server.name}`],
+          status: "approved" as const,
+        })),
     ],
   });
 }

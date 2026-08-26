@@ -19,6 +19,7 @@ import {
   removeSubmission,
 } from "../agents/adapter.js";
 import {
+  agentVisibleRunSpec,
   composeAttackReviewPrompt,
   composeNeutralCasePrompt,
   composePrompt,
@@ -6963,7 +6964,7 @@ export class RoundEngine {
             "Use the ordinary oracle and determinism rules. The assigned worktree contains this candidate patch; execute every probe against it. Do not infer contestant identity.",
             "",
             "# Immutable run specification",
-            JSON.stringify(context.runSpec, null, 2),
+            JSON.stringify(agentVisibleRunSpec(context.runSpec, true), null, 2),
             "",
             "# Method pack",
             JSON.stringify(selection, null, 2),

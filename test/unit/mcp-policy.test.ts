@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   approveMcpPolicy,
   applyMcpReadiness,
+  excludeMcpServers,
   FrozenMcpPolicySchema,
   freezeMcpPolicy,
+  mergeMcpPermissionPolicy,
   mcpServerIdentity,
   parseMcpInventory,
 } from "../../src/mcp/policy.js";
@@ -98,7 +100,7 @@ describe("MCP preflight policy", () => {
     ).toThrow(/leave_as_is is unavailable/);
   });
 
-  it("blocks an unavailable required server unless reduced validation excludes it", () => {
+  it("excludes an unavailable required server and records the coverage gap", () => {
     const initial = freezeMcpPolicy({
       config: {
         policy: "configure_selection",
@@ -114,23 +116,15 @@ describe("MCP preflight policy", () => {
       inventory,
       reducedValidationAccepted: false,
     });
-    expect(() =>
-      applyMcpReadiness(
-        initial,
-        new Map([[mcpServerIdentity("codex", "expo"), "unavailable"]]),
-        false,
-      ),
-    ).toThrow(/Required MCP servers are unavailable/);
-
-    const reduced = applyMcpReadiness(
+    const resolved = applyMcpReadiness(
       initial,
       new Map([[mcpServerIdentity("codex", "expo"), "unavailable"]]),
-      true,
+      false,
     );
     expect(
-      reduced.servers.find((server) => server.name === "expo"),
+      resolved.servers.find((server) => server.name === "expo"),
     ).toMatchObject({ decision: "excluded", requirement: "required" });
-    expect(reduced.coverageGaps).toHaveLength(1);
+    expect(resolved.coverageGaps).toHaveLength(1);
   });
 
   it("excludes harness-only selections from provider agent sessions", () => {
@@ -226,38 +220,42 @@ describe("MCP preflight policy", () => {
     expect(afterReadiness.coverageGaps[0]).toContain("cannot be isolated");
   });
 
-  it("blocks required Claude selections unless reduced validation is accepted", () => {
-    expect(() =>
-      freezeMcpPolicy({
-        config: {
-          policy: "keep_configured",
-          servers: [
-            {
-              provider: "claude",
-              name: "github",
-              role: "agent",
-              requirement: "required",
-            },
-          ],
-        },
-        inventory: [
+  it("excludes required Claude selections that cannot be isolated", () => {
+    const policy = freezeMcpPolicy({
+      config: {
+        policy: "keep_configured",
+        servers: [
           {
             provider: "claude",
-            state: "known",
-            servers: [
-              {
-                name: "github",
-                enabled: true,
-                authentication: "ready",
-                readiness: "ready",
-              },
-            ],
-            diagnosticArtifactRefs: [],
+            name: "github",
+            role: "agent",
+            requirement: "required",
           },
         ],
-        reducedValidationAccepted: false,
-      }),
-    ).toThrow(/Required MCP servers are unavailable/);
+      },
+      inventory: [
+        {
+          provider: "claude",
+          state: "known",
+          servers: [
+            {
+              name: "github",
+              enabled: true,
+              authentication: "ready",
+              readiness: "ready",
+            },
+          ],
+          diagnosticArtifactRefs: [],
+        },
+      ],
+      reducedValidationAccepted: false,
+    });
+    expect(policy.servers[0]).toMatchObject({
+      decision: "excluded",
+      requirement: "required",
+      readiness: "unavailable",
+    });
+    expect(policy.coverageGaps).toHaveLength(1);
   });
 
   it("records an explicit decision bound to the final policy hash", () => {
@@ -269,14 +267,14 @@ describe("MCP preflight policy", () => {
     });
     const approved = approveMcpPolicy(
       policy,
-      "flag",
+      "interactive",
       new Date("2026-08-25T01:00:00.000Z"),
     );
 
     expect(approved.policyHash).toBe(policy.policyHash);
     expect(approved.approval).toEqual({
       policyHash: policy.policyHash,
-      mode: "flag",
+      mode: "interactive",
       acceptedAt: "2026-08-25T01:00:00.000Z",
     });
     expect(() =>
@@ -285,5 +283,105 @@ describe("MCP preflight policy", () => {
         approval: { ...approved.approval, policyHash: "0".repeat(64) },
       }),
     ).toThrow(/bind the frozen policy hash/);
+  });
+
+  it("refuses approval while a requested MCP connection is unresolved", () => {
+    const unresolved = freezeMcpPolicy({
+      config: {
+        policy: "keep_configured",
+        servers: [
+          {
+            provider: "codex",
+            name: "expo",
+            role: "agent",
+            requirement: "optional",
+          },
+        ],
+      },
+      inventory,
+      reducedValidationAccepted: false,
+    });
+
+    expect(() => approveMcpPolicy(unresolved, "interactive")).toThrow(
+      /must be resolved before approval/,
+    );
+  });
+
+  it("adds only ready included MCP servers to the run permission manifest", () => {
+    const initial = freezeMcpPolicy({
+      config: {
+        policy: "keep_configured",
+        servers: [
+          {
+            provider: "codex",
+            name: "expo",
+            role: "agent",
+            requirement: "optional",
+          },
+        ],
+      },
+      inventory,
+      reducedValidationAccepted: false,
+    });
+    const resolved = applyMcpReadiness(
+      initial,
+      new Map([[mcpServerIdentity("codex", "expo"), "ready"]]),
+      false,
+    );
+    const permissions = mergeMcpPermissionPolicy(
+      {
+        defaultMode: "confirm",
+        reducedValidationAccepted: false,
+        capabilities: [],
+      },
+      approveMcpPolicy(resolved, "automatic_ready"),
+    );
+
+    expect(permissions.capabilities).toHaveLength(1);
+    expect(permissions.capabilities[0]?.scopes).toContain("server:expo");
+    expect(JSON.stringify(permissions)).not.toContain("server:unused");
+  });
+
+  it("excludes every selected MCP server when access is not approved", () => {
+    const initial = freezeMcpPolicy({
+      config: {
+        policy: "keep_configured",
+        servers: [
+          {
+            provider: "codex",
+            name: "expo",
+            role: "agent",
+            requirement: "optional",
+          },
+        ],
+      },
+      inventory,
+      reducedValidationAccepted: false,
+    });
+    const resolved = applyMcpReadiness(
+      initial,
+      new Map([[mcpServerIdentity("codex", "expo"), "ready"]]),
+      false,
+    );
+    const excluded = approveMcpPolicy(
+      excludeMcpServers(
+        resolved,
+        new Set([mcpServerIdentity("codex", "expo")]),
+        new Date("2026-08-25T01:00:00.000Z"),
+      ),
+      "interactive",
+      new Date("2026-08-25T01:00:01.000Z"),
+    );
+
+    expect(
+      excluded.servers.find((server) => server.name === "expo"),
+    ).toMatchObject({
+      decision: "excluded",
+      reason: "Not approved by the operator; excluded from this run",
+    });
+    expect(excluded.coverageGaps).toContain(
+      "codex/expo (optional): Not approved by the operator; excluded from this run",
+    );
+    expect(excluded.approval?.mode).toBe("interactive");
   });
 });

@@ -80,8 +80,17 @@ function executionArchitecture(
 }
 
 export function permissionContext(permissions: PermissionPolicy): string {
+  const agentVisiblePermissions = {
+    ...permissions,
+    capabilities: permissions.capabilities.filter(
+      (capability) =>
+        !capability.id.startsWith("mcp_server_") ||
+        (capability.status === "approved" &&
+          (capability.role === "agent" || capability.role === "both")),
+    ),
+  };
   return [
-    JSON.stringify(permissions, null, 2),
+    JSON.stringify(agentVisiblePermissions, null, 2),
     "",
     "Permission interpretation:",
     "- Use a capability only when status is approved and role is agent or both.",
@@ -110,16 +119,32 @@ export interface PromptContext {
   allowMissingReviewPacket?: boolean;
 }
 
-function roleSafeRunSpec(runSpec: RunSpec): object {
+export function agentVisibleRunSpec(
+  runSpec: RunSpec,
+  hideContestantProviders = false,
+): object {
   return {
     ...runSpec,
-    topology: {
-      ...runSpec.topology,
-      contestants: runSpec.topology.contestants.map((contestant) => ({
-        id: contestant.id,
-        role: contestant.role,
-        startingPatch: contestant.startingPatch,
-      })),
+    ...(hideContestantProviders
+      ? {
+          topology: {
+            ...runSpec.topology,
+            contestants: runSpec.topology.contestants.map((contestant) => ({
+              id: contestant.id,
+              role: contestant.role,
+              startingPatch: contestant.startingPatch,
+            })),
+          },
+        }
+      : {}),
+    permissions: {
+      ...runSpec.permissions,
+      capabilities: runSpec.permissions.capabilities.filter(
+        (capability) =>
+          !capability.id.startsWith("mcp_server_") ||
+          (capability.decision === "approved" &&
+            (capability.role === "agent" || capability.role === "both")),
+      ),
     },
   };
 }
@@ -148,9 +173,7 @@ export function composePrompt(context: PromptContext): string {
     "",
     "# Immutable run specification",
     JSON.stringify(
-      context.stage === "attack"
-        ? roleSafeRunSpec(context.runSpec)
-        : context.runSpec,
+      agentVisibleRunSpec(context.runSpec, context.stage === "attack"),
       null,
       2,
     ),
@@ -236,7 +259,7 @@ export function composeAttackReviewPrompt(
     `Target slot: ${context.target}`,
     "",
     "# Immutable run specification",
-    JSON.stringify(roleSafeRunSpec(context.runSpec), null, 2),
+    JSON.stringify(agentVisibleRunSpec(context.runSpec, true), null, 2),
     "",
     `Required validation command: ${context.config.testCommand}`,
     `Time limit: ${String(context.config.limits.reviewMs)} ms`,
@@ -291,7 +314,7 @@ export function composeNeutralCasePrompt(input: {
     "The harness will run your case against both frozen patches and separately adjudicate the oracle.",
     "",
     "# Immutable run specification",
-    JSON.stringify(input.runSpec, null, 2),
+    JSON.stringify(agentVisibleRunSpec(input.runSpec, true), null, 2),
     "",
     "# Available permissions and enforcement",
     permissionContext(input.permissions),

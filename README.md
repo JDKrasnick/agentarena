@@ -52,11 +52,13 @@ agent-arena fight \
 The preflight permission plan labels every capability as enforced, brokered, or advisory. Native execution appears as a required, high-risk advisory capability because provider and repository subprocesses may inherit the current account's filesystem, environment, network, credentials, and configured integrations. `--yes` still displays the confirm-mode plan before accepting it noninteractively. `auto` approves only exact safe-allowlist matches with enforced or brokered boundaries; it never silently grants production credentials or deployment access.
 
 After isolated MCP readiness checks, Arena displays the exact final MCP policy
-and requires a second decision before creating worktrees or starting battle
-agents. Non-interactive callers must pass `--accept-mcp-policy`; `--yes` does not
-accept this post-readiness result. Authenticate requested servers with their
-provider CLI before rerunning. Arena never reads or copies MCP credentials, and
-the final decision prompt omits unrelated unselected server identities.
+before creating worktrees or starting battle agents. By default, Arena warns and
+continues with only the servers that passed readiness and authentication checks;
+all others are excluded and hidden from agents. Use `--review-mcp` for an
+interactive per-server flow: approve or deny ready servers, or authenticate a
+failed server through its provider CLI and ask Arena to retry it. Arena never
+reads or copies MCP credentials, and the final policy omits unrelated unselected
+server identities.
 
 An optional `agent-arena.yaml` stores repeatable settings:
 

@@ -51,6 +51,7 @@ import { renderConsoleSummary } from "../reports/console.js";
 import {
   approveMcpPolicy,
   applyMcpReadiness,
+  excludeMcpServers,
   freezeMcpPolicy,
   inventoryProviderMcp,
   isolateMcpPolicyForReadiness,
@@ -147,32 +148,21 @@ export function renderFinalMcpPolicy(policy: FrozenMcpPolicy): string {
   return `${lines.join("\n")}\n`;
 }
 
-async function approveFinalMcpPolicy(
+function approveFinalMcpPolicy(
   policy: FrozenMcpPolicy,
-  acceptedByFlag: boolean,
-): Promise<FrozenMcpPolicy> {
+  manuallyReviewed: boolean,
+): FrozenMcpPolicy {
   stdout.write(renderFinalMcpPolicy(policy));
-  if (acceptedByFlag) {
+  if (manuallyReviewed) {
     stdout.write(
-      "Final MCP policy accepted noninteractively via --accept-mcp-policy.\n",
+      "Manual MCP review complete; only ready servers approved during review will be exposed to agents.\n",
     );
-    return approveMcpPolicy(policy, "flag");
-  }
-  if (!stdin.isTTY || !stdout.isTTY)
-    throw new Error(
-      "Final MCP policy requires an explicit decision. Rerun interactively or pass --accept-mcp-policy to accept the displayed policy.",
-    );
-  const readline = createInterface({ input: stdin, output: stdout });
-  try {
-    const answer = await readline.question(
-      `Start the battle with MCP policy ${policy.policyHash}? [y/N] `,
-    );
-    if (!/^y(?:es)?$/i.test(answer.trim()))
-      throw new Error("Final MCP policy was not approved");
     return approveMcpPolicy(policy, "interactive");
-  } finally {
-    readline.close();
   }
+  stdout.write(
+    "WARNING: Continuing automatically with only MCP servers that passed isolated readiness and authentication checks. Unavailable servers are excluded and hidden from agents. Use --review-mcp for per-server approval and authentication retries before battle.\n",
+  );
+  return approveMcpPolicy(policy, "automatic_ready");
 }
 
 function createArena(
@@ -261,42 +251,74 @@ async function checkSelectedMcpReadiness(options: {
   policy: FrozenMcpPolicy;
   temporaryRoot: string;
   signal: AbortSignal;
+  manualReview: boolean;
 }): Promise<FrozenMcpPolicy> {
+  if (options.manualReview && (!stdin.isTTY || !stdout.isTTY))
+    throw new Error("--review-mcp requires an interactive TTY");
   const readiness = new Map<string, "ready" | "unavailable">();
-  await Promise.all(
-    options.policy.servers
-      .filter((server) => server.decision === "included")
-      .map(async (server, index) => {
-        const provider = server.provider;
-        const contestant = options.config.contestants.find(
-          (entry) => entry.provider === provider,
-        );
-        const adapter = createProviderAdapter(
-          provider,
-          contestant?.model,
-          isolateMcpPolicyForReadiness(options.policy, provider, server.name),
-        );
+  const declined = new Set<string>();
+  const selected = options.policy.servers.filter(
+    (server) => server.decision === "included",
+  );
+  const readline = options.manualReview
+    ? createInterface({ input: stdin, output: stdout })
+    : undefined;
+  try {
+    for (const [index, server] of selected.entries()) {
+      const provider = server.provider;
+      const identity = mcpServerIdentity(provider, server.name);
+      const contestant = options.config.contestants.find(
+        (entry) => entry.provider === provider,
+      );
+      const adapter = createProviderAdapter(
+        provider,
+        contestant?.model,
+        isolateMcpPolicyForReadiness(options.policy, provider, server.name),
+      );
+      let attempt = 0;
+      while (true) {
+        attempt += 1;
         const result = await adapter.probeConnectivity({
           cwd: options.config.repositoryRoot,
           transcriptPrefix: path.join(
             options.temporaryRoot,
-            `mcp-readiness-${provider}-${String(index + 1)}`,
+            `mcp-readiness-${provider}-${String(index + 1)}-${String(attempt)}`,
           ),
           timeoutMs: 15_000,
           signal: options.signal,
           mcpServerName: server.name,
         });
-        readiness.set(
-          mcpServerIdentity(provider, server.name),
-          result.healthy ? "ready" : "unavailable",
+        if (result.healthy) {
+          readiness.set(identity, "ready");
+          if (readline) {
+            const answer = await readline.question(
+              `Allow ready MCP server ${provider}/${server.name} for this battle? [Y/n] `,
+            );
+            if (/^n(?:o)?$/i.test(answer.trim())) declined.add(identity);
+          }
+          break;
+        }
+        if (!readline) {
+          readiness.set(identity, "unavailable");
+          break;
+        }
+        stdout.write(
+          `${provider}/${server.name} is not ready or authenticated. Authenticate it with the ${provider} CLI; Agent Arena will not read or copy credentials.\n`,
         );
-      }),
-  );
-  return applyMcpReadiness(
-    options.policy,
-    readiness,
-    options.config.reducedValidationAccepted,
-  );
+        const answer = await readline.question(
+          "Press Enter to retry, or type s to skip this server: ",
+        );
+        if (/^s(?:kip)?$/i.test(answer.trim())) {
+          readiness.set(identity, "unavailable");
+          break;
+        }
+      }
+    }
+  } finally {
+    readline?.close();
+  }
+  const resolved = applyMcpReadiness(options.policy, readiness, true);
+  return declined.size ? excludeMcpServers(resolved, declined) : resolved;
 }
 
 export interface RunCommandResult {
@@ -330,11 +352,9 @@ export async function runFight(
       policy: mcpPreflight.policy,
       temporaryRoot: mcpPreflight.temporaryRoot,
       signal: new AbortController().signal,
+      manualReview: overrides.reviewMcp ?? false,
     });
-    mcpPolicy = await approveFinalMcpPolicy(
-      mcpPolicy,
-      overrides.acceptMcpPolicy ?? false,
-    );
+    mcpPolicy = approveFinalMcpPolicy(mcpPolicy, overrides.reviewMcp ?? false);
   } catch (error) {
     await rm(mcpPreflight.temporaryRoot, { recursive: true, force: true });
     throw error;

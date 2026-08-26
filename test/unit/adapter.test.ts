@@ -88,6 +88,7 @@ describe("provider model selection", () => {
     };
     const args = providerCommand("codex", undefined, policy).args;
 
+    expect(args).toEqual(expect.arrayContaining(["-c", "features.apps=false"]));
     expect(args).not.toContain("mcp_servers.selected.enabled=true");
     expect(args).toContain("mcp_servers.omitted.enabled=false");
   });

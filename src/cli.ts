@@ -130,8 +130,8 @@ program
   .option("--maintainer <agent>", "Deprecated; ignored for new runs")
   .option("--yes", "Approve the displayed confirm-mode plan noninteractively")
   .option(
-    "--accept-mcp-policy",
-    "Accept the finalized post-readiness MCP policy without prompting",
+    "--review-mcp",
+    "Interactively approve ready MCP servers and retry authentication failures",
   )
   .option("--accept-reduced-validation", "Allow required capability denials")
   .option("--keep-worktrees", "Preserve temporary worktrees for debugging")
@@ -167,7 +167,7 @@ program
         qualityVerifier?: string;
         maintainer?: string;
         yes?: boolean;
-        acceptMcpPolicy?: boolean;
+        reviewMcp?: boolean;
         acceptReducedValidation?: boolean;
         keepWorktrees?: boolean;
         display: "auto" | "window" | "dashboard" | "terminal" | "plain";
@@ -204,7 +204,7 @@ program
             : {}),
           ...(options.maintainer ? { maintainer: options.maintainer } : {}),
           nonInteractiveApproval: options.yes ?? false,
-          acceptMcpPolicy: options.acceptMcpPolicy ?? false,
+          reviewMcp: options.reviewMcp ?? false,
           reducedValidationAccepted: options.acceptReducedValidation ?? false,
           keepWorktrees: options.keepWorktrees ?? false,
         },
@@ -250,8 +250,8 @@ program
   .option("--maintainer <agent>", "Deprecated; ignored for new runs")
   .option("--yes", "Approve the displayed confirm-mode plan noninteractively")
   .option(
-    "--accept-mcp-policy",
-    "Accept the finalized post-readiness MCP policy without prompting",
+    "--review-mcp",
+    "Interactively approve ready MCP servers and retry authentication failures",
   )
   .option("--accept-reduced-validation", "Allow required capability denials")
   .option("--keep-worktrees", "Preserve temporary worktrees for debugging")
@@ -281,7 +281,7 @@ program
       qualityVerifier?: string;
       maintainer?: string;
       yes?: boolean;
-      acceptMcpPolicy?: boolean;
+      reviewMcp?: boolean;
       acceptReducedValidation?: boolean;
       keepWorktrees?: boolean;
       display: "auto" | "window" | "dashboard" | "terminal" | "plain";
@@ -310,7 +310,7 @@ program
             : {}),
           ...(options.maintainer ? { maintainer: options.maintainer } : {}),
           nonInteractiveApproval: options.yes ?? false,
-          acceptMcpPolicy: options.acceptMcpPolicy ?? false,
+          reviewMcp: options.reviewMcp ?? false,
           reducedValidationAccepted: options.acceptReducedValidation ?? false,
           keepWorktrees: options.keepWorktrees ?? false,
         },

@@ -173,6 +173,95 @@ describe("runtime guards and deterministic prompts", () => {
     );
   });
 
+  it("removes excluded MCP identities from every model-facing prompt", () => {
+    const promptRunSpec = RunSpecSchema.parse({
+      ...runSpec,
+      permissions: {
+        ...runSpec.permissions,
+        capabilities: [
+          {
+            id: "mcp_server_codex_node",
+            reason: "Ready and selected",
+            risk: "high",
+            requirement: "optional",
+            role: "agent",
+            enforcement: "advisory",
+            decision: "approved",
+            scopes: ["provider:codex", "server:node_repl"],
+          },
+          {
+            id: "mcp_server_codex_hidden",
+            reason: "Not selected for this run",
+            risk: "high",
+            requirement: "optional",
+            role: "agent",
+            enforcement: "advisory",
+            decision: "unavailable",
+            scopes: ["provider:codex", "server:hidden-unauthed"],
+          },
+        ],
+      },
+    });
+    const promptPermissions = {
+      defaultMode: "confirm" as const,
+      reducedValidationAccepted: false,
+      capabilities: [
+        {
+          id: "mcp_server_codex_node",
+          reason: "Ready and selected",
+          risk: "high" as const,
+          requirement: "optional" as const,
+          role: "agent" as const,
+          enforcement: "advisory" as const,
+          mode: "confirm" as const,
+          scopes: ["provider:codex", "server:node_repl"],
+          status: "approved" as const,
+        },
+        {
+          id: "mcp_server_codex_hidden",
+          reason: "Not selected for this run",
+          risk: "high" as const,
+          requirement: "optional" as const,
+          role: "agent" as const,
+          enforcement: "advisory" as const,
+          mode: "confirm" as const,
+          scopes: ["provider:codex", "server:hidden-unauthed"],
+          status: "unavailable" as const,
+        },
+      ],
+    };
+    const rendered = [
+      composePrompt({
+        agent: "a",
+        stage: "implement",
+        runSpec: promptRunSpec,
+        config,
+        permissions: promptPermissions,
+      }),
+      composeAttackReviewPrompt({
+        agent: "a",
+        target: "b",
+        round: 1,
+        runSpec: promptRunSpec,
+        config,
+        permissions: promptPermissions,
+        methodSelection: selectMethods(1, ["typescript"], []),
+      }),
+      composeNeutralCasePrompt({
+        runSpec: promptRunSpec,
+        permissions: promptPermissions,
+        failure: { claim: "example" },
+        outputPath: ".agent-arena-submission.json",
+      }),
+    ];
+
+    for (const prompt of rendered) {
+      expect(prompt).toContain("server:node_repl");
+      expect(prompt).not.toContain("hidden-unauthed");
+      expect(prompt).not.toContain("mcp_server_codex_hidden");
+    }
+  });
+
   it("injects execution architecture and enforceable permission semantics into review", () => {
     const reviewPermissions = {
       defaultMode: "confirm" as const,
