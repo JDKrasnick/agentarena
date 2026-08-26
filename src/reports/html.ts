@@ -75,6 +75,8 @@ function attackEffect(attack: Attack): string {
     return attack.damageActive
       ? `${String(amount)} HP remains active`
       : `${String(amount)} HP repaired`;
+  if (attack.status === "shared_defect")
+    return "Shared repair target · no HP change";
   if (attack.recoil) return `${String(attack.recoil)} HP recoil`;
   return "No health change";
 }
@@ -226,9 +228,11 @@ export function renderBattleHtml(state: RunState): string {
               ? attack.damageActive
                 ? "fail"
                 : "pass"
-              : attack.recoil
-                ? "warn"
-                : "muted";
+              : attack.status === "shared_defect"
+                ? "pass"
+                : attack.recoil
+                  ? "warn"
+                  : "muted";
           const target = attack.targets
             .map((id) => contestantLabel(state.config.contestants, id))
             .join(", ");
@@ -254,8 +258,9 @@ export function renderBattleHtml(state: RunState): string {
   const roundRows = rounds
     .map((round) => {
       const attacksForRound = round.attacks;
-      const landedForRound = attacksForRound.filter(
-        (attack) => attack.status === "landed",
+      const provenForRound = attacksForRound.filter(
+        (attack) =>
+          attack.status === "landed" || attack.status === "shared_defect",
       );
       const recoil = attacksForRound.reduce(
         (sum, attack) => sum + (attack.recoil ?? 0),
@@ -291,7 +296,7 @@ export function renderBattleHtml(state: RunState): string {
           : round.id === "reconciliation"
             ? "Reconciliation"
             : `Round ${String(round.id)}`;
-      return `<tr><th>${label}<span class="subtle">${focus}</span></th><td>${String(attacksForRound.length)} submitted · ${String(landedForRound.length)} proven · ${String(recoil)} HP recoil</td><td>${escapeHtml(health)} HP</td><td>${link(state, "Open report", state.artifacts.battle)}</td></tr>`;
+      return `<tr><th>${label}<span class="subtle">${focus}</span></th><td>${String(attacksForRound.length)} submitted · ${String(provenForRound.length)} proven · ${String(recoil)} HP recoil</td><td>${escapeHtml(health)} HP</td><td>${link(state, "Open report", state.artifacts.battle)}</td></tr>`;
     })
     .join("\n");
   const phaseReplay = rounds

@@ -78,7 +78,10 @@ and runs initial validation; only successful initialization continues into the
 ordinary attack–repair phases. Lower-level mechanisms perform narrow operations
 and cannot import either orchestration layer.
 
-The boundary carries only strict, versioned, JSON-safe contracts:
+The boundary carries only canonical, versioned, JSON-safe contracts. Provider
+submissions first pass through a narrow audited normalizer for unambiguous
+presentation variance; missing or contradictory semantic evidence still fails
+closed:
 
 - `RunSpec` freezes the task and sources, base commit, battle topology,
   commands, budgets, permissions, and content hash.
@@ -328,14 +331,20 @@ cross-component failures. It does not grant production access.
 
 Before focused failure analysis, each agent receives a separate
 `review_minutes` budget for read-only inspection of the opponent's frozen patch.
-The budget defaults to 10 minutes and has a 10-minute ceiling. Every provider
+The budget defaults to 30 minutes and has a 30-minute ceiling. Every provider
 and judge invocation records normalized message, tool lifecycle, progress, and
 result activity without tool arguments or private reasoning. A review deadline
 still terminates and cleans up the owned process tree. Only a complete
-schema-valid `valid` or `valid_empty` file already present after cleanup is
-salvaged into the normal handoff path; the underlying invocation stays
-`timed_out`. Partial, invalid, and missing output follow the existing one-retry
-path.
+schema-valid `valid`, `valid_empty`, or `partial` file with at least one
+accepted finding already present after cleanup is salvaged into the normal
+handoff path; the underlying invocation stays `timed_out`. Invalid, empty
+partial, and missing output follow the existing one-retry path.
+
+Implementation defaults to 45 minutes. Focused attack generation, verifier or
+judge work, and repair calls default to 30 minutes each. Hard deadlines are
+last-ditch process-safety backstops, while heartbeat activity is the normal
+operational signal. Operators may still configure smaller positive budgets for
+deliberately cost-bounded runs.
 
 The resulting v2 packet records harness-attested target and complete resolved
 permission fingerprints plus at most 12 ordered reviewer hypotheses. Each
@@ -417,25 +426,18 @@ authoritative oracle. House-generated probes must be surfaced during a normal
 round so the target receives a repair opportunity; a novel final-validation
 finding is reported but cannot change the winner.
 
-### Deferred shared-defect extension
+### Shared-defect repair
 
-Differential contestant attacks cannot expose a defect shared by both patches.
-Neutral house probes remain a readable legacy artifact and a possible future
-extension; new MVP runs do not invoke or score them.
+A contestant reproducer that stably fails on both frozen patches is not useful
+differential scoring evidence, but it can still improve both implementations.
+After the neutral judge confirms the oracle and relevance, Arena records a
+`shared_defect`, expands its targets to both contestants, and gives both the
+same repair opportunity. Shared defects apply neither damage nor recoil and do
+not break ties; their reproducers run in both repair paths and remain visible in
+the report.
 
-Historically, a house attack came from the same versioned method packs and official task
-contract, but has no contestant author. It must pass the ordinary determinism,
-relevance, oracle, root-defect, and severity checks. It is evaluated
-independently against both frozen patches and may land on either or both. Each
-affected contestant takes the same severity damage for the shared root defect
-and receives the same evidence and repair opportunity. House attacks have no
-rank and cannot cause recoil. They are resolved in the same simultaneous event
-batch as contestant attacks and cannot duplicate or stack existing defect
-damage.
-
-The cap keeps the neutral lane from overtaking the core agent-versus-agent
-experiment. A house lead that is not promoted during rounds 2 or 3 is an
-unscored report finding.
+Neutral house probes remain readable legacy artifacts. New MVP runs do not
+invoke them.
 
 ## MVP boundaries
 
@@ -931,15 +933,25 @@ still-malformed second attempt is discarded permanently and recorded as lost
 coverage. No correction queue or later reconciliation round exists for new
 runs.
 
+Before fault isolation, the provider boundary normalizes only harmless,
+auditable variance: NFC/LF/outer whitespace, published enum case, known
+snake/camel aliases, set ordering and duplicates, omitted untrusted review
+labels, and `execution` as an alias for tool-summary provenance. The persisted
+value always uses the canonical schema. Unknown or conflicting fields, absent
+semantic evidence, and ambiguous numeric or enum values remain errors. A
+partially valid review retains its accepted findings immediately rather than
+asking a retry to reproduce them.
+
 ### Conservative attack acceptance
 
-An attack lands only when:
+A submitted reproducer becomes scored or repairable only when:
 
 - The test overlay was captured relative to a frozen target-patched Git tree and
   applies cleanly after the same target patch in the verifier worktree.
 - The attack runs consistently twice.
 - It passes against the attacker's current implementation and fails against the
-  targeted opponent's current implementation.
+  targeted opponent's current implementation, or it fails on both and is
+  classified as a health-neutral shared defect after semantic adjudication.
 - It does not modify production code.
 - It proves a new root defect that has not already dealt damage.
 - Its expected output or invariant is clearly supported by the frozen task or source text.
@@ -1143,10 +1155,11 @@ sources:
 effort: auto
 limits:
   attacks_per_round: 3
-  implementation_minutes: 15
-  attack_minutes: 8
-  verifier_minutes: 2
-  repair_minutes: 8
+  implementation_minutes: 45
+  review_minutes: 30
+  attack_minutes: 30
+  verifier_minutes: 30
+  repair_minutes: 30
 selection:
   enabled: true
 review:
@@ -1278,8 +1291,9 @@ Failures should be useful and recoverable:
   independently.
 - If both implementations still fail required validation after round 1's repair,
   there is no winner.
-- If an attack is invalid, flaky, blocked, or self-defeating, it misses, the
-  report explains why, and its author takes rank-based recoil.
+- If an attack is invalid, flaky, blocked, or only self-defeating, it misses,
+  the report explains why, and its author takes rank-based recoil. A verified
+  defect shared by both patches instead triggers neutral repair with no recoil.
 - Harness-owned failures are retried in a clean worktree and never cause damage,
   recoil, healing failure, or elimination.
 - Provider recovery applies after the targeted retry to implementation, review,

@@ -142,6 +142,28 @@ export function normalizeAttackAdjudication(
           : DAMAGE_BY_SEVERITY[attack.severity],
     });
   }
+  if (
+    attack.status === "shared_defect" &&
+    attack.rootDefectId &&
+    attack.severity
+  ) {
+    return AdjudicationRecordSchema.parse({
+      version: 1,
+      id,
+      verdict: "valid",
+      canonicalDefectId: attack.rootDefectId,
+      severity: attack.severity,
+      rationale:
+        attack.severityRationale ?? attack.outcomeReason ?? attack.claim,
+      evidenceBasis: basis,
+      duplicateState: "unique",
+      retryArtifactRefs,
+      diagnosticArtifactRefs,
+      multiplier: 0,
+      scoreEffect: "none",
+      exactAmount: 0,
+    });
+  }
   if (attack.status === "duplicate" && attack.rootDefectId && attack.severity) {
     const multiplier = basis === "partial_judge" ? 0.35 : 1;
     const recoil = expectedRecoil(attack);

@@ -101,7 +101,12 @@ export function reportOutcome(state: RunState): ReportOutcome {
 export function reportDefects(state: RunState): ReportDefect[] {
   const grouped = new Map<string, Attack[]>();
   for (const attack of state.attacks) {
-    if (attack.status !== "landed" && attack.status !== "duplicate") continue;
+    if (
+      attack.status !== "landed" &&
+      attack.status !== "shared_defect" &&
+      attack.status !== "duplicate"
+    )
+      continue;
     const id = attack.rootDefectId ?? attack.id;
     grouped.set(id, [...(grouped.get(id) ?? []), attack]);
   }

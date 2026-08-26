@@ -3451,13 +3451,15 @@ export class RoundEngine {
         status:
           attack.status === "landed"
             ? ("landed" as const)
-            : attack.status === "judge_unable"
-              ? ("execution_inconclusive" as const)
-              : attack.status === "capability_denied" ||
-                  attack.status === "infrastructure_error" ||
-                  attack.status === "execution_inconclusive"
-                ? attack.status
-                : ("missed" as const),
+            : attack.status === "shared_defect"
+              ? ("shared_defect" as const)
+              : attack.status === "judge_unable"
+                ? ("execution_inconclusive" as const)
+                : attack.status === "capability_denied" ||
+                    attack.status === "infrastructure_error" ||
+                    attack.status === "execution_inconclusive"
+                  ? attack.status
+                  : ("missed" as const),
         ...(attack.rootDefectId ? { defectId: attack.rootDefectId } : {}),
         ...(attack.adjudication ? { adjudication: attack.adjudication } : {}),
         artifactIds: [
@@ -5449,12 +5451,12 @@ export class RoundEngine {
                 path.join(worktree, ".agent-arena-submission.json"),
                 "utf8",
               );
-              const outcome = parseFaultIsolatedSubmission(
-                "review",
-                raw,
-              ).outcome;
+              const outcome = parseFaultIsolatedSubmission("review", raw);
               usableSubmission =
-                outcome === "valid" || outcome === "valid_empty";
+                outcome.outcome === "valid" ||
+                outcome.outcome === "valid_empty" ||
+                (outcome.outcome === "partial" &&
+                  (outcome.sections.findings?.accepted.length ?? 0) > 0);
               salvagedAtDeadline =
                 candidate.status === "timed_out" && usableSubmission;
             } catch {
@@ -5606,7 +5608,9 @@ export class RoundEngine {
           if (submissionFailure) {
             const recovered =
               captured.parsed.outcome === "valid" ||
-              captured.parsed.outcome === "valid_empty";
+              captured.parsed.outcome === "valid_empty" ||
+              (captured.parsed.outcome === "partial" &&
+                (captured.parsed.sections.findings?.accepted.length ?? 0) > 0);
             submissionFailure = await this.recordSubmissionAttempt(context, {
               round,
               actor: reviewer,
@@ -5636,7 +5640,11 @@ export class RoundEngine {
           }
           if (
             captured.parsed.outcome !== "valid" &&
-            captured.parsed.outcome !== "valid_empty"
+            captured.parsed.outcome !== "valid_empty" &&
+            !(
+              captured.parsed.outcome === "partial" &&
+              (captured.parsed.sections.findings?.accepted.length ?? 0) > 0
+            )
           ) {
             await removeSubmission(worktree);
             context.state.reviewInvocations.push({
@@ -7131,6 +7139,7 @@ export class RoundEngine {
             signal: context.controller.signal,
             round,
             opponent: target,
+            observer: context.observer,
           });
           const attemptFinishedAt = this.now().toISOString();
           finalAttemptStartedAt = attemptStartedAt;
@@ -8212,7 +8221,10 @@ export class RoundEngine {
         });
         if (this.recordVerifierProviderFailure(context, round))
           throw new Error(context.state.providerFailure?.reason);
-        if (result.status === "landed" && result.rootDefectId)
+        if (
+          (result.status === "landed" || result.status === "shared_defect") &&
+          result.rootDefectId
+        )
           knownRoots.add(result.rootDefectId);
         if (
           result.status === "landed" &&
@@ -8297,7 +8309,10 @@ export class RoundEngine {
       if (!result) continue;
       if (this.recordVerifierProviderFailure(context, round))
         throw new Error(context.state.providerFailure?.reason);
-      if (result.status === "landed" && result.rootDefectId)
+      if (
+        (result.status === "landed" || result.status === "shared_defect") &&
+        result.rootDefectId
+      )
         knownRoots.add(result.rootDefectId);
       if (
         result.status === "landed" &&
@@ -8422,22 +8437,25 @@ export class RoundEngine {
       const currentPatch = contestant.currentPatchPath;
       const activeAttackCandidates = context.state.attacks.filter(
         (attack) =>
-          attack.status === "landed" &&
           attack.targets.includes(agent) &&
           attack.rootDefectId !== undefined &&
-          contestant.healthLedger.activeDefects.some((defect) => {
-            if (defect.rootDefectId !== attack.rootDefectId) return false;
-            const canonical = contestant.healthLedger.canonicalDefects?.find(
-              (entry) => entry.rootDefectId === defect.rootDefectId,
-            );
-            return (
-              (canonical?.repairAttemptsUsed ?? 0) <
-              (canonical?.repairAllowance ??
-                (defect.severity === "critical" || defect.severity === "high"
-                  ? 3
-                  : 2))
-            );
-          }),
+          ((attack.status === "shared_defect" && attack.round === round) ||
+            (attack.status === "landed" &&
+              contestant.healthLedger.activeDefects.some((defect) => {
+                if (defect.rootDefectId !== attack.rootDefectId) return false;
+                const canonical =
+                  contestant.healthLedger.canonicalDefects?.find(
+                    (entry) => entry.rootDefectId === defect.rootDefectId,
+                  );
+                return (
+                  (canonical?.repairAttemptsUsed ?? 0) <
+                  (canonical?.repairAllowance ??
+                    (defect.severity === "critical" ||
+                    defect.severity === "high"
+                      ? 3
+                      : 2))
+                );
+              }))),
       );
       const activeAttacks = [
         ...new Map(
@@ -8502,6 +8520,7 @@ export class RoundEngine {
           | undefined;
         for (const attemptNumber of [1, 2, 3] as const) {
           const remainingAttacks = activeAttacks.filter((attack) => {
+            if (attack.status === "shared_defect") return true;
             const canonical = contestant.healthLedger.canonicalDefects?.find(
               (entry) => entry.rootDefectId === attack.rootDefectId,
             );
@@ -10180,10 +10199,10 @@ export class RoundEngine {
         if (contestant.status !== "eliminated") {
           for (const attack of context.state.attacks.filter(
             (candidate) =>
-              candidate.status === "landed" &&
+              (candidate.status === "landed" ||
+                candidate.status === "shared_defect") &&
               candidate.targets.includes(agent) &&
-              candidate.rootDefectId &&
-              candidate.damage,
+              candidate.rootDefectId,
           )) {
             const finalCases =
               attack.caseBundle?.cases.filter(

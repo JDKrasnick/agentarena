@@ -598,6 +598,10 @@ async function assessWithRetry(
   options: Omit<ValidateAttackOptions, "authorPatch" | "targetPatch">,
   attack: Attack,
   worktree: string,
+  mechanics: { authorPassed: boolean; targetFailed: boolean } = {
+    authorPassed: true,
+    targetFailed: true,
+  },
 ): Promise<AttackAssessment> {
   const promptPath = path.join(options.logRoot, "verifier.prompt.md");
   const causalDigest = createHash("sha256")
@@ -617,8 +621,8 @@ async function assessWithRetry(
       const verdict = await options.verifier.assess({
         attack: anonymizeAttackForVerifier(attack),
         runSpec: options.runSpec,
-        authorPassed: true,
-        targetFailed: true,
+        authorPassed: mechanics.authorPassed,
+        targetFailed: mechanics.targetFailed,
         worktree,
         promptPath,
         transcriptPrefix,
@@ -721,6 +725,13 @@ export async function validateAttack(
   options: ValidateAttackOptions,
 ): Promise<Attack> {
   const attack = structuredClone(options.attack);
+  const sharedTargets = [
+    ...(attack.origin.kind === "contestant" ? [attack.origin.contestant] : []),
+    ...attack.targets,
+  ].filter(
+    (contestant, index, contestants) =>
+      contestants.indexOf(contestant) === index,
+  );
   attack.targetPatchDigest = createHash("sha256")
     .update(await readFile(options.targetPatch))
     .digest("hex");
@@ -918,7 +929,11 @@ export async function validateAttack(
         "Attack or required validation was flaky",
       );
     }
-    if (!authorFocused.passed || !authorFull.passed) {
+    const focusedSharedFailure = !authorFocused.passed && !targetFocused.passed;
+    if (
+      (!authorFocused.passed || !authorFull.passed) &&
+      !focusedSharedFailure
+    ) {
       return withOutcome(
         attack,
         "self_defeating",
@@ -1027,12 +1042,34 @@ export async function validateAttack(
           "execution_inconclusive",
           "Comparative browser failure could not be attributed to a contestant against the frozen baseline",
         );
-      if (authorProbe.status === "failed")
-        return withOutcome(
-          attack,
-          "self_defeating",
-          "Agent-chosen browser probe fails on its author's patch",
-        );
+      if (authorProbe.status === "failed") {
+        if (targetProbe.status !== "failed")
+          return withOutcome(
+            attack,
+            "self_defeating",
+            "Agent-chosen browser probe fails on its author's patch",
+          );
+        const verdict = await assessWithRetry(options, attack, target, {
+          authorPassed: false,
+          targetFailed: true,
+        });
+        recordAssessmentRelationship(attack, verdict);
+        if (!verdict.oracleSupported)
+          return withOutcome(attack, "unproven", verdict.oracleRationale);
+        if (!verdict.relevant)
+          return withOutcome(attack, "invalid", verdict.rationale);
+        return {
+          ...attack,
+          targets: sharedTargets,
+          status: "shared_defect",
+          rootDefectId: verdict.rootDefectId,
+          severity: verdict.severity,
+          damageActive: false,
+          evidenceProvenance: "mechanical",
+          severityRationale: verdict.rationale,
+          outcomeReason: `Stable failure on both patches; ${verdict.rationale}`,
+        };
+      }
       if (targetProbe.status === "verified")
         return withOutcome(
           attack,
@@ -1048,13 +1085,33 @@ export async function validateAttack(
       );
     }
 
-    const verdict = await assessWithRetry(options, attack, target);
+    const verdict = await assessWithRetry(
+      options,
+      attack,
+      target,
+      focusedSharedFailure
+        ? { authorPassed: false, targetFailed: true }
+        : undefined,
+    );
     recordAssessmentRelationship(attack, verdict);
     if (!verdict.oracleSupported) {
       return withOutcome(attack, "unproven", verdict.oracleRationale);
     }
     if (!verdict.relevant)
       return withOutcome(attack, "invalid", verdict.rationale);
+    if (focusedSharedFailure) {
+      return {
+        ...attack,
+        targets: sharedTargets,
+        status: "shared_defect",
+        rootDefectId: verdict.rootDefectId,
+        severity: verdict.severity,
+        damageActive: false,
+        evidenceProvenance: "mechanical",
+        severityRationale: verdict.rationale,
+        outcomeReason: `Stable failure on both patches; ${verdict.rationale}`,
+      };
+    }
     if (options.knownRootDefects.has(verdict.rootDefectId)) {
       return {
         ...withOutcome(

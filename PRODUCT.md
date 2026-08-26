@@ -171,8 +171,11 @@ Arena -> RoundEngine -> mechanisms
   validation, repair, and scoring. They do not depend upward on `RoundEngine` or
   `Arena`.
 
-Only versioned, strict, serializable data crosses the Arena–RoundEngine
-boundary. Runtime services, callbacks, worktree objects, abort controllers, and
+Only versioned, canonical, serializable data crosses the Arena–RoundEngine
+boundary. LLM-facing parsers accept and record unambiguous presentation-level
+variance—such as whitespace, enum case, known field aliases, and set ordering—
+before validating the canonical contract. They never invent missing semantic
+facts. Runtime services, callbacks, worktree objects, abort controllers, and
 mutable `RunState` stay outside it. `ContestantFeedback` is a deliberately
 limited projection: a lane sees its health, accepted attacks and visible
 reproducers, its own attack outcomes, and healed or unresolved defect IDs, but
@@ -545,12 +548,17 @@ low signal, but their continued rounds receive the same pivot instruction.
 In each round, the harness first freezes both current implementation patches.
 Each eligible reviewer then gets a dedicated read-only budget, configured by
 `review_minutes` separately from the focused test-generation budget. The budget
-defaults to 10 minutes, accepts smaller positive values, and cannot
-exceed 10 minutes. At the deadline the harness terminates the owned process
+defaults to 30 minutes, accepts smaller positive values, and cannot
+exceed 30 minutes. At the deadline the harness terminates the owned process
 tree, then accepts an already-written review only when fault-isolated parsing
-classifies the complete file as `valid` or `valid_empty`. The review record is
-marked salvaged while its invocation remains `timed_out`; partial, invalid, and
-missing files receive the ordinary targeted retry and may lose coverage.
+classifies the complete file as `valid`, `valid_empty`, or a `partial` with at
+least one accepted finding. The review record is marked salvaged while its
+invocation remains `timed_out`; invalid, empty partial, and missing files
+receive the ordinary targeted retry and may lose coverage.
+Implementation defaults to 45 minutes. Focused attack generation, verifier or
+judge work, and repair calls default to 30 minutes each. These deadlines are
+last-ditch process-safety backstops; heartbeat activity is the normal operational
+signal. Explicit positive lower budgets remain available for cost-bounded runs.
 
 Provider calls emit structured operational activity independently of visible
 stdout: assistant messages, tool starts and finishes, progress, and completion.
@@ -702,6 +710,15 @@ valid siblings continue normally. A missing, timed-out, tampered, or malformed
 second attempt is permanently recorded as lost coverage. No correction work is
 carried into another round.
 
+LLM-facing normalization is deliberately softer than persisted contracts.
+Known snake/camel field aliases, normalized text, case-insensitive published
+enums, sorted unique set fields, omitted untrusted review labels, and the
+`execution` provenance alias are canonicalized with an audit record. Unknown
+or contradictory fields, missing evidence, invalid numbers, and unsupported
+semantic values remain rejected. A partially valid review immediately keeps
+its accepted findings; rejected siblings cannot force the model to rewrite or
+discard them.
+
 Case-judge worktrees start from the frozen base implementation. The case judge
 receives an anonymized failure description and immutable RunSpec, snapshots
 that tree before generation, captures its test-only overlay, and replays it in
@@ -749,7 +766,14 @@ reads that text and decides whether it clearly supports the claim; the presence
 of a source ID is never sufficient by itself. Unsupported or ambiguous
 expectations are `unproven`, deal no target damage, and count as a miss.
 
-A submitted attack that does not land causes recoil damage to its author. Rank 1 costs 5 HP on a miss, rank 2 costs 10 HP, and rank 3 costs 15 HP. Invalid, flaky, unrelated, duplicate, self-defeating, and blocked attacks all miss. Harness infrastructure failures cause no recoil.
+When the same stable focused reproducer fails on both contestant patches and
+the judge confirms its oracle and relevance, Arena records a `shared_defect`.
+It expands the repair target to both patches, applies no damage or recoil, and
+reruns the reproducer during both repair paths. This turns useful common-mode
+evidence into a neutral quality improvement without pretending it distinguishes
+the contestants.
+
+A submitted attack that does not land causes recoil damage to its author. Rank 1 costs 5 HP on a miss, rank 2 costs 10 HP, and rank 3 costs 15 HP. Invalid, flaky, unrelated, duplicate, one-sided self-defeating, and blocked attacks all miss. A verified shared defect and harness infrastructure failures cause no recoil.
 
 A lightweight verifier agent may help evaluate disputed attacks, but deterministic execution should remain the primary source of truth.
 
@@ -1178,8 +1202,8 @@ Game mechanics should map directly to real engineering events:
 
 * **Damage:** A verified failing test, weighted by defect severity.
 * **Critical hit:** A catastrophic defect dealing 50 HP.
-* **Shared hit:** A neutral house attack proves the same defect against both
-  patches and damages both without recoil.
+* **Shared defect:** A verified contestant reproducer fails on both patches and
+  triggers repair for both without damage or recoil.
 * **Block:** An attack successfully disproved; its author takes rank-based recoil.
 * **Recoil:** A missed rank 1, 2, or 3 attack costs its author 5, 10, or 15 HP.
 * **Holdout:** A repair passes the visible reproducer but remains damaged because

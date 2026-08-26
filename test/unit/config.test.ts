@@ -65,7 +65,7 @@ describe("configuration", () => {
 
     await writeFile(
       path.join(root, "agent-arena.yaml"),
-      "test: 'true'\nlimits:\n  review_minutes: 10.1\n",
+      "test: 'true'\nlimits:\n  review_minutes: 30.1\n",
     );
     await expect(
       loadFightConfig({ task: "review", repositoryRoot: root }),

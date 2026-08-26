@@ -658,6 +658,6 @@ describe("round boundary contracts", () => {
           },
         ],
       }),
-    ).toThrow(/Only a landed or duplicate/);
+    ).toThrow(/Only a landed, shared-defect, or duplicate/);
   });
 });

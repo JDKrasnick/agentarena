@@ -250,6 +250,69 @@ describe("fault-isolated provider submissions", () => {
     ]);
   });
 
+  it("canonicalizes harmless review schema variance with an audit trail", () => {
+    const finding = reviewFinding();
+    delete (finding as { trust?: string }).trust;
+    delete (finding.observations[0] as { trust?: string }).trust;
+    finding.observations[0]!.provenance.kind = "execution";
+    finding.oracle.task_source_ids = ["task-z", "task-user", "task-user"];
+    const varied = {
+      ...finding,
+      codeLocations: finding.code_locations.map((location) => ({
+        path: location.path,
+        lineStart: location.line_start,
+        lineEnd: location.line_end,
+        symbol: location.symbol,
+      })),
+      code_locations: undefined,
+      requiredCapabilityIds: ["shell", "filesystem", "shell"],
+      required_capability_ids: undefined,
+    };
+    delete (varied as { code_locations?: unknown }).code_locations;
+    delete (varied as { required_capability_ids?: unknown })
+      .required_capability_ids;
+
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({ version: 2, findings: [varied] }),
+    );
+
+    expect(parsed.outcome).toBe("valid");
+    expect(parsed.value.findings[0]).toMatchObject({
+      trust: "reviewer_hypothesis",
+      observations: [
+        {
+          trust: "reviewer_hypothesis",
+          provenance: { kind: "tool_summary" },
+        },
+      ],
+      oracle: { task_source_ids: ["task-user", "task-z"] },
+      required_capability_ids: ["filesystem", "shell"],
+    });
+    expect(parsed.normalizations.map((entry) => entry.rule)).toEqual(
+      expect.arrayContaining([
+        "v1.review.trust.default_untrusted",
+        "v1.review.provenance.execution_alias",
+        "v1.array.task_source_ids.sort_dedupe",
+        "v1.field_alias.codeLocations_to_code_locations",
+      ]),
+    );
+  });
+
+  it("preserves valid review siblings when another finding is malformed", () => {
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({
+        version: 2,
+        findings: [reviewFinding(), { invariant: "missing evidence" }],
+      }),
+    );
+
+    expect(parsed.outcome).toBe("partial");
+    expect(parsed.value.findings).toHaveLength(1);
+    expect(parsed.sections.findings?.accepted).toHaveLength(1);
+  });
+
   it("reports exact paths and allowed enums while safely rendering values", () => {
     const parsed = parseFaultIsolatedSubmission(
       "attack",
