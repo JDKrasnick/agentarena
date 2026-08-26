@@ -263,8 +263,9 @@ describe("PR battle modes", () => {
       repositoryRoot,
     });
     expect(resumed.state.status).toBe("complete");
-    expect(resumed.state.contestants.a?.currentPatchPath).toBe(
-      resumed.state.pullRequestFixture?.patchPath,
+    expect(resumed.state.contestants.a?.implementation).toBeUndefined();
+    expect(resumed.state.contestants.a?.currentPatchPath).toContain(
+      `${path.sep}patches${path.sep}a-round-`,
     );
     expect(resumed.state.contestants.a?.checks[0]?.id).toBe("initial-required");
   });

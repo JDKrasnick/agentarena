@@ -379,7 +379,15 @@ if (stage === "provider_health_probe") {
       ];
   await writeFile(
     submission,
-    JSON.stringify({ version: 2, findings: repeatedWhitespaceFinding }),
+    JSON.stringify({
+      version: 2,
+      findings:
+        process.env.AGENT_ARENA_FAKE_PARTIAL_REVIEW === "1" &&
+        round === "1" &&
+        agent === "codex"
+          ? [...repeatedWhitespaceFinding, { invariant: "missing evidence" }]
+          : repeatedWhitespaceFinding,
+    }),
   );
   if (process.env.AGENT_ARENA_FAKE_REVIEW_TIMEOUT_AFTER_WRITE === "1")
     await new Promise((resolve) => setTimeout(resolve, 10_000));

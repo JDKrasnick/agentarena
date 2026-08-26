@@ -218,6 +218,13 @@ describe("fake-adapter fight on a mocked real issue", () => {
         }),
       ]),
     );
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "invocation_started" &&
+          event.stage === "collect_attacks",
+      ),
+    ).toHaveLength(6);
     const durableSummary = JSON.parse(
       await readFile(outcome.state.artifacts.result!, "utf8"),
     ) as {
@@ -754,6 +761,43 @@ describe("fake-adapter fight on a mocked real issue", () => {
           record.terminalDisposition === "recovered",
       ),
     ).toHaveLength(3);
+  }, 30_000);
+
+  it("keeps accepted review findings without retrying malformed siblings", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = duelConfig(repositoryRoot);
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_PARTIAL_REVIEW: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+
+    const reviews = outcome.state.reviewInvocations.filter(
+      (entry) => entry.round === 1 && entry.reviewer === "a",
+    );
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toMatchObject({
+      submissionStatus: "submitted",
+      findingCount: 1,
+      parseOutcome: "partial",
+    });
+    expect(reviews[0]?.artifactPath).toBeTruthy();
+    expect(
+      outcome.state.attackInvocations.some(
+        (entry) => entry.round === 1 && entry.attacker === "a",
+      ),
+    ).toBe(true);
   }, 30_000);
 
   it("refreshes a blocker from a clean frozen target worktree", async () => {

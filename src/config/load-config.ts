@@ -11,11 +11,11 @@ import {
 
 const DurationLimitsSchema = z
   .object({
-    implementation_minutes: z.number().positive().default(15),
-    review_minutes: z.number().positive().max(10).default(10),
-    attack_minutes: z.number().positive().default(8),
-    verifier_minutes: z.number().positive().default(2),
-    repair_minutes: z.number().positive().default(8),
+    implementation_minutes: z.number().positive().default(45),
+    review_minutes: z.number().positive().max(30).default(30),
+    attack_minutes: z.number().positive().default(30),
+    verifier_minutes: z.number().positive().default(30),
+    repair_minutes: z.number().positive().default(30),
     rounds: z.literal(3).default(3),
     attacks_per_round: z.literal(3).default(3),
     /** @deprecated Accepted and ignored for legacy configuration. */
@@ -25,11 +25,11 @@ const DurationLimitsSchema = z
   })
   .strict()
   .default({
-    implementation_minutes: 15,
-    review_minutes: 10,
-    attack_minutes: 8,
-    verifier_minutes: 2,
-    repair_minutes: 8,
+    implementation_minutes: 45,
+    review_minutes: 30,
+    attack_minutes: 30,
+    verifier_minutes: 30,
+    repair_minutes: 30,
     rounds: 3,
     attacks_per_round: 3,
     held_out_cases_per_defect: 2,

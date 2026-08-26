@@ -104,7 +104,7 @@ export function selectRecommendedPatch(
       contestantId: smallest[0]!.contestantId,
       reason: "patch_size",
       rationale: [
-        `Equal-correctness patches were tied on active defect damage; selected the smaller ${String(smallestPatchSize)}-byte patch.`,
+        `Equally validated patches were tied on active defect damage; selected the smaller ${String(smallestPatchSize)}-byte patch.`,
       ],
       comparison,
     });

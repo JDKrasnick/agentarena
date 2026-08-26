@@ -640,6 +640,7 @@ export const AttackStatusSchema = z.enum([
   "invalid",
   "duplicate",
   "self_defeating",
+  "shared_defect",
   "unproven",
   "capability_denied",
   "blocked",
@@ -1020,8 +1021,8 @@ const FightConfigBaseSchema = z
         .number()
         .int()
         .positive()
-        .max(10 * 60 * 1000)
-        .default(10 * 60 * 1000),
+        .max(30 * 60 * 1000)
+        .default(30 * 60 * 1000),
       attackMs: z.number().int().positive(),
       verifierMs: z.number().int().positive(),
       repairMs: z.number().int().positive(),

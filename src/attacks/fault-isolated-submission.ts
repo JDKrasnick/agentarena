@@ -252,12 +252,102 @@ function normalizeEntry(
   prefix: PropertyKey[],
 ): { value: unknown; normalizations: SubmissionNormalization[] } {
   const normalizations: SubmissionNormalization[] = [];
+  const record = (
+    path: PropertyKey[],
+    original: unknown,
+    normalized: unknown,
+    rule: string,
+  ): void => {
+    normalizations.push({
+      path: jsonPath(path),
+      original,
+      normalized,
+      rule,
+    });
+  };
+  const aliasObjectKeys = (
+    current: Record<string, unknown>,
+    path: PropertyKey[],
+  ): Record<string, unknown> => {
+    const aliases =
+      prefix[0] === "findings"
+        ? {
+            codeLocations: "code_locations",
+            triggerSequence: "trigger_sequence",
+            requiredCapabilityIds: "required_capability_ids",
+            regressionTestPlan: "regression_test_plan",
+            expectedBehavior: "expected_behavior",
+            taskSourceIds: "task_source_ids",
+            taskSourceRationale: "task_source_rationale",
+            lineStart: "line_start",
+            lineEnd: "line_end",
+            suggestedPaths: "suggested_paths",
+            focusedCommand: "focused_command",
+          }
+        : {
+            proposed_severity: "proposedSeverity",
+            focused_command: "focusedCommand",
+            required_capabilities: "requiredCapabilities",
+            browser_probe: "browserProbe",
+            challenge_adjudication_id: "challengeAdjudicationId",
+          };
+    const result = { ...current };
+    for (const [alias, canonical] of Object.entries(aliases)) {
+      if (!(alias in result) || canonical in result) continue;
+      result[canonical] = result[alias];
+      delete result[alias];
+      record(
+        [...path, alias],
+        alias,
+        canonical,
+        `v1.field_alias.${alias}_to_${canonical}`,
+      );
+    }
+    const isReviewFinding =
+      prefix[0] === "findings" &&
+      (path.length === 2 ||
+        (path.length >= 4 && path.at(-2) === "observations"));
+    if (isReviewFinding && result.trust === undefined) {
+      result.trust = "reviewer_hypothesis";
+      record(
+        [...path, "trust"],
+        undefined,
+        "reviewer_hypothesis",
+        "v1.review.trust.default_untrusted",
+      );
+    }
+    return result;
+  };
   const visit = (current: unknown, path: PropertyKey[]): unknown => {
-    if (Array.isArray(current))
-      return current.map((entry, index) => visit(entry, [...path, index]));
+    if (Array.isArray(current)) {
+      const visited = current.map((entry, index) =>
+        visit(entry, [...path, index]),
+      );
+      const key = String(path.at(-1) ?? "");
+      if (
+        [
+          "task_source_ids",
+          "required_capability_ids",
+          "suggested_paths",
+          "requiredCapabilities",
+          "paths",
+        ].includes(key) &&
+        visited.every((entry): entry is string => typeof entry === "string")
+      ) {
+        const normalized = [...new Set(visited)].sort((left, right) =>
+          left < right ? -1 : left > right ? 1 : 0,
+        );
+        if (JSON.stringify(normalized) !== JSON.stringify(visited)) {
+          record(path, visited, normalized, `v1.array.${key}.sort_dedupe`);
+          return normalized;
+        }
+      }
+      return visited;
+    }
     if (current && typeof current === "object") {
+      const aliased = aliasObjectKeys(current as Record<string, unknown>, path);
       return Object.fromEntries(
-        Object.entries(current).map(([key, entry]) => [
+        Object.entries(aliased).map(([key, entry]) => [
           key,
           visit(entry, [...path, key]),
         ]),
@@ -265,41 +355,63 @@ function normalizeEntry(
     }
     if (typeof current !== "string") return current;
     const key = String(path.at(-1) ?? "");
+    let text = current;
+    const normalizedText = text
+      .replaceAll("\r\n", "\n")
+      .replaceAll("\r", "\n")
+      .normalize("NFC")
+      .trim();
+    if (normalizedText !== text) {
+      record(path, text, normalizedText, "v1.text.nfc_lf_trim");
+      text = normalizedText;
+    }
+    if (
+      prefix[0] === "findings" &&
+      key === "kind" &&
+      text.toLowerCase() === "execution"
+    ) {
+      record(
+        path,
+        text,
+        "tool_summary",
+        "v1.review.provenance.execution_alias",
+      );
+      return "tool_summary";
+    }
     if (key === "proposedSeverity") {
-      const normalized = current.trim().toLowerCase();
+      const normalized = text.toLowerCase();
       if (
         ["critical", "high", "medium", "low"].includes(normalized) &&
-        normalized !== current
+        normalized !== text
       ) {
-        normalizations.push({
-          path: jsonPath(path),
-          original: current,
+        record(
+          path,
+          text,
           normalized,
-          rule: "v1.enum.proposedSeverity.casefold_trim",
-        });
+          "v1.enum.proposedSeverity.casefold_trim",
+        );
         return normalized;
       }
     }
     if (key === "category") {
-      const normalized = current.trim().toLowerCase();
+      const normalized = text.toLowerCase();
       const alias =
         normalized === "state" || normalized === "lifecycle"
           ? "state_lifecycle"
           : normalized;
-      if (BugCategorySchema.safeParse(alias).success && alias !== current) {
-        normalizations.push({
-          path: jsonPath(path),
-          original: current,
-          normalized: alias,
-          rule:
-            normalized === alias
-              ? "v1.enum.category.casefold_trim"
-              : "v1.enum.category.state_lifecycle_alias",
-        });
+      if (BugCategorySchema.safeParse(alias).success && alias !== text) {
+        record(
+          path,
+          text,
+          alias,
+          normalized === alias
+            ? "v1.enum.category.casefold_trim"
+            : "v1.enum.category.state_lifecycle_alias",
+        );
         return alias;
       }
     }
-    return current;
+    return text;
   };
   return { value: visit(value, prefix), normalizations };
 }

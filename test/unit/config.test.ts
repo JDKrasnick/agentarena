@@ -5,16 +5,24 @@ import { describe, expect, it } from "vitest";
 import { loadFightConfig } from "../../src/config/load-config.js";
 
 describe("configuration", () => {
-  it("defaults review calls to ten minutes and rejects a higher limit", async () => {
+  it("uses last-ditch provider deadlines and rejects a higher review limit", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-config-review-"));
     await writeFile(path.join(root, "agent-arena.yaml"), "test: 'true'\n");
     await expect(
       loadFightConfig({ task: "review", repositoryRoot: root }),
-    ).resolves.toMatchObject({ limits: { reviewMs: 600_000 } });
+    ).resolves.toMatchObject({
+      limits: {
+        implementationMs: 2_700_000,
+        reviewMs: 1_800_000,
+        attackMs: 1_800_000,
+        verifierMs: 1_800_000,
+        repairMs: 1_800_000,
+      },
+    });
 
     await writeFile(
       path.join(root, "agent-arena.yaml"),
-      "test: 'true'\nlimits:\n  review_minutes: 10.1\n",
+      "test: 'true'\nlimits:\n  review_minutes: 30.1\n",
     );
     await expect(
       loadFightConfig({ task: "review", repositoryRoot: root }),

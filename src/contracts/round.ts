@@ -196,7 +196,7 @@ const RunBudgetsSchema = z
       .number()
       .int()
       .positive()
-      .max(10 * 60 * 1000),
+      .max(30 * 60 * 1000),
     attackMs: z.number().int().positive(),
     verifierMs: z.number().int().positive(),
     repairMs: z.number().int().positive(),
@@ -458,6 +458,7 @@ const ReplayAttackSchema = z
     target: ContestantIdSchema,
     status: z.enum([
       "landed",
+      "shared_defect",
       "missed",
       "capability_denied",
       "infrastructure_error",
@@ -776,6 +777,7 @@ const OwnAttackOutcomeSchema = z
     target: ContestantIdSchema,
     status: z.enum([
       "landed",
+      "shared_defect",
       "duplicate",
       "missed",
       "capability_denied",
@@ -784,6 +786,7 @@ const OwnAttackOutcomeSchema = z
     ]),
     reason: z.enum([
       "landed",
+      "shared_defect",
       "oracle_not_supported",
       "duplicate_root_defect",
       "target_did_not_fail",
@@ -799,13 +802,15 @@ const OwnAttackOutcomeSchema = z
   .strict()
   .superRefine((outcome, context) => {
     const hasCanonicalDefect =
-      outcome.status === "landed" || outcome.status === "duplicate";
+      outcome.status === "landed" ||
+      outcome.status === "shared_defect" ||
+      outcome.status === "duplicate";
     if (hasCanonicalDefect && !outcome.defectId) {
       context.addIssue({
         code: "custom",
         path: ["defectId"],
         message:
-          "A landed or duplicate own attack must expose its canonical defect ID",
+          "A landed, shared-defect, or duplicate own attack must expose its canonical defect ID",
       });
     }
     if (!hasCanonicalDefect && outcome.defectId) {
@@ -813,7 +818,7 @@ const OwnAttackOutcomeSchema = z
         code: "custom",
         path: ["defectId"],
         message:
-          "Only a landed or duplicate own attack may expose a canonical defect ID",
+          "Only a landed, shared-defect, or duplicate own attack may expose a canonical defect ID",
       });
     }
   });

@@ -221,12 +221,14 @@ export function assessBattleCoverage(
           : [],
       ),
     );
-    const hasLanded = usable.some((entry) => entry.status === "landed");
+    const hasRepairableDefect = usable.some(
+      (entry) => entry.status === "landed" || entry.status === "shared_defect",
+    );
     const targetRound = state.contestants[target]?.rounds.find(
       (entry) => entry.round === round,
     );
     const repairRequired =
-      hasLanded && targetRound?.postAttackStatus !== "downed";
+      hasRepairableDefect && targetRound?.postAttackStatus !== "downed";
     const repairAttempts =
       targetRound?.repairAttempts ??
       (targetRound?.repair ? [targetRound.repair] : []);

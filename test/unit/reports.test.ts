@@ -92,6 +92,31 @@ describe("battle reports", () => {
     expect(report).toContain("### Still needed");
   });
 
+  it("projects initial and round required checks into their causal sections", () => {
+    const state = makeRunState();
+    for (const contestant of Object.values(state.contestants)) {
+      contestant.initialPatchPath = `${state.artifacts.runDirectory}/patches/${contestant.id}-initial.diff`;
+      contestant.checks = [
+        { id: "initial-required", kind: "required", status: "passed" },
+        ...([1, 2, 3] as const).map((round) => ({
+          id: `round-${String(round)}-required`,
+          kind: "required" as const,
+          status: "passed" as const,
+        })),
+        { id: "final-required", kind: "required", status: "passed" },
+      ];
+    }
+
+    const report = renderBattleReport(state);
+
+    expect(report).toContain(
+      "| Codex | not run | [initial patch](./patches/a-initial.diff) | PASS |",
+    );
+    expect(report).toContain("- Codex — round-1-required: PASS.");
+    expect(report).toContain("- Claude — round-3-required: PASS.");
+    expect(report).not.toContain("No round-scoped check result was recorded.");
+  });
+
   it("keeps the terminal verdict tied to validation and unresolved defects", () => {
     const summary = renderConsoleSummary(
       makeRunState({ claudeDamage: 30, claudeHealth: 65 }),
@@ -117,6 +142,8 @@ describe("battle reports", () => {
     expect(html).toContain("Verified test coverage");
     expect(html).toContain("Attack ledger — bugs found, misses, and repairs");
     expect(html).toContain("Health starts at 100");
+    expect(html).toContain("tie between equally validated patches");
+    expect(html).not.toContain("equal-correctness");
     expect(html).toContain('href="./BATTLE.md"');
   });
 

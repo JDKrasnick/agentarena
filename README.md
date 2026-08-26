@@ -91,11 +91,11 @@ integration:
 limits:
   rounds: 3
   attacks_per_round: 3
-  implementation_minutes: 15
-  review_minutes: 10
-  attack_minutes: 8
-  verifier_minutes: 2
-  repair_minutes: 8
+  implementation_minutes: 45
+  review_minutes: 30
+  attack_minutes: 30
+  verifier_minutes: 30
+  repair_minutes: 30
 selection:
   enabled: true
 review:
@@ -105,9 +105,10 @@ delivery:
   merge_enabled: false
 ```
 
-`review_minutes` defaults to `10`, accepts positive lower values, and rejects
-values above `10`. Provider progress is decoded into safe activity events and
-diagnostic artifacts; silence never ends a call before its configured deadline.
+Implementation defaults to 45 minutes and all later provider stages default to
+30 minutes. These hard deadlines are last-ditch process-safety backstops;
+heartbeat activity remains the primary operational signal. Explicit positive
+lower values remain supported, while `review_minutes` rejects values above `30`.
 
 `models`/`--models` is optional and follows contestant order. If omitted, each
 provider CLI chooses its configured default. This also permits model-vs-model

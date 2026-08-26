@@ -81,6 +81,34 @@ function attacks(): Attack[] {
 }
 
 describe("ledger scoring", () => {
+  it("records a shared defect without damage or recoil", () => {
+    const shared: Attack = {
+      ...attacks()[0]!,
+      id: "shared",
+      targets: ["a", "b"],
+      status: "shared_defect",
+      damage: undefined,
+      damageActive: false,
+    };
+    shared.adjudication = normalizeAttackAdjudication(shared);
+
+    const resolved = resolveRound(
+      { a: contestant("a"), b: contestant("b") },
+      [shared],
+      1,
+    );
+
+    expect(shared.adjudication).toMatchObject({
+      verdict: "valid",
+      scoreEffect: "none",
+      exactAmount: 0,
+      multiplier: 0,
+    });
+    expect(resolved.contestants.a?.finalHealth).toBe(100);
+    expect(resolved.contestants.b?.finalHealth).toBe(100);
+    expect(resolved.eventsApplied).toBe(0);
+  });
+
   it("refunds recoil and applies replacement damage for an overturned rejection", () => {
     const rejected = {
       ...attacks()[1]!,

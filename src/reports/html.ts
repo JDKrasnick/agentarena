@@ -75,6 +75,8 @@ function attackEffect(attack: Attack): string {
     return attack.damageActive
       ? `${String(amount)} HP remains active`
       : `${String(amount)} HP repaired`;
+  if (attack.status === "shared_defect")
+    return "Shared repair target · no HP change";
   if (attack.recoil) return `${String(attack.recoil)} HP recoil`;
   return "No health change";
 }
@@ -197,9 +199,11 @@ export function renderBattleHtml(state: RunState): string {
               ? attack.damageActive
                 ? "fail"
                 : "pass"
-              : attack.recoil
-                ? "warn"
-                : "muted";
+              : attack.status === "shared_defect"
+                ? "pass"
+                : attack.recoil
+                  ? "warn"
+                  : "muted";
           const target = attack.targets
             .map((id) => contestantLabel(state.config.contestants, id))
             .join(", ");
@@ -225,8 +229,9 @@ export function renderBattleHtml(state: RunState): string {
   const roundRows = rounds
     .map((round) => {
       const attacksForRound = round.attacks;
-      const landedForRound = attacksForRound.filter(
-        (attack) => attack.status === "landed",
+      const provenForRound = attacksForRound.filter(
+        (attack) =>
+          attack.status === "landed" || attack.status === "shared_defect",
       );
       const recoil = attacksForRound.reduce(
         (sum, attack) => sum + (attack.recoil ?? 0),
@@ -258,7 +263,7 @@ export function renderBattleHtml(state: RunState): string {
           : round.id === "reconciliation"
             ? "Reconciliation"
             : `Round ${String(round.id)}`;
-      return `<tr><th>${label}<span class="subtle">${focus}</span></th><td>${String(attacksForRound.length)} submitted · ${String(landedForRound.length)} proven · ${String(recoil)} HP recoil</td><td>${escapeHtml(health)} HP</td><td>${link(state, "Open report", state.artifacts.battle)}</td></tr>`;
+      return `<tr><th>${label}<span class="subtle">${focus}</span></th><td>${String(attacksForRound.length)} submitted · ${String(provenForRound.length)} proven · ${String(recoil)} HP recoil</td><td>${escapeHtml(health)} HP</td><td>${link(state, "Open report", state.artifacts.battle)}</td></tr>`;
     })
     .join("\n");
   const phaseReplay = rounds
@@ -348,7 +353,7 @@ export function renderBattleHtml(state: RunState): string {
 <section class="section"><h2>Final decision</h2><div class="contestants">${contestantCards}</div></section>
 ${laneCoverage}
 ${terminalNotice}
-<section class="section decision"><div class="callout"><strong>${escapeHtml(decisionHeading)}</strong><p>${escapeHtml(state.ranking?.reason ?? "No final ranking reason was recorded.")}</p><p class="note">The champion is determined by remaining health. Health starts at 100, then subtracts missed-attack recoil and active, un-repaired defect damage. Patch quality only breaks an equal-correctness tie.</p></div><div class="score"><dl><dt>Verified required suites</dt><dd>${requiredPassed ? chip("Both pass", "pass") : chip("Review failures", "fail")}</dd><dt>Proven defects</dt><dd>${String(defects.length)} (${String(unresolved.length)} unresolved, ${String(repaired.length)} repaired)</dd><dt>Deciding factors</dt><dd>${escapeHtml(state.arenaOutcome?.decidingFactors.join(", ") || "ranking")}</dd><dt>Recommended patch</dt><dd>${escapeHtml(recommendation)}</dd></dl></div></section>
+<section class="section decision"><div class="callout"><strong>${escapeHtml(decisionHeading)}</strong><p>${escapeHtml(state.ranking?.reason ?? "No final ranking reason was recorded.")}</p><p class="note">The champion is determined by remaining health. Health starts at 100, then subtracts missed-attack recoil and active, un-repaired defect damage. Patch quality only breaks a tie between equally validated patches.</p></div><div class="score"><dl><dt>Verified required suites</dt><dd>${requiredPassed ? chip("Both pass", "pass") : chip("Review failures", "fail")}</dd><dt>Proven defects</dt><dd>${String(defects.length)} (${String(unresolved.length)} unresolved, ${String(repaired.length)} repaired)</dd><dt>Deciding factors</dt><dd>${escapeHtml(state.arenaOutcome?.decidingFactors.join(", ") || "ranking")}</dd><dt>Recommended patch</dt><dd>${escapeHtml(recommendation)}</dd></dl></div></section>
 <section class="section"><h2>Verified test coverage</h2><p class="note">These results apply to each named final patch in this run. “Not run” is intentionally not shown as a pass. Open stdout/stderr to inspect the harness evidence.</p><div class="table-wrap" tabindex="0"><table><caption>Recorded checks by contestant and exact command</caption><thead><tr><th>Check / command</th>${contestants.map((contestant) => `<th>${escapeHtml(contestantLabel(state.config.contestants, contestant.id))}</th>`).join("")}</tr></thead><tbody>${coverageRows}</tbody></table></div></section>
 <section class="section"><h2>What happened in each round</h2><div class="table-wrap" tabindex="0"><table><caption>Round outcomes and health after repair</caption><thead><tr><th>Investigation</th><th>Attack outcome</th><th>Health after repair</th><th>Artifacts</th></tr></thead><tbody>${roundRows}</tbody></table></div></section>
 <section class="section" aria-labelledby="phase-heading"><h2 id="phase-heading">Phase replay</h2>${phaseReplay}</section>

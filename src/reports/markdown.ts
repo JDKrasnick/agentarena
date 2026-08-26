@@ -20,6 +20,8 @@ function attackOwner(attack: Attack): string {
 function attackEffect(attack: Attack): string {
   if (attack.status === "landed")
     return `${String(attack.adjudication?.exactAmount ?? attack.damage ?? 0)} damage (${(attack.adjudication?.evidenceBasis ?? attack.evidenceProvenance ?? "legacy_unknown").replaceAll("_", " ")})`;
+  if (attack.status === "shared_defect")
+    return "shared defect; repair both patches with no health effect";
   if (attack.recoil !== undefined) return `${String(attack.recoil)} recoil`;
   return "no health effect";
 }
@@ -88,13 +90,16 @@ function roundDigest(
 ): string[] {
   return reportRounds(state).map((round) => {
     const attacks = round.attacks;
-    const landed = attacks.filter((attack) => attack.status === "landed");
-    const summary = landed.length
-      ? landed
+    const proven = attacks.filter(
+      (attack) =>
+        attack.status === "landed" || attack.status === "shared_defect",
+    );
+    const summary = proven.length
+      ? proven
           .map((attack) => `${attack.severity ?? "unrated"} ${attack.claim}`)
           .join("; ")
       : attacks.length
-        ? `${String(attacks.length)} attack(s), none landed`
+        ? `${String(attacks.length)} attack(s), none proven`
         : "No submitted attacks";
     const health = contestants
       .map((contestant) => {
@@ -162,12 +167,35 @@ function implementationReplay(
     "| --- | --- | --- | --- |",
     ...contestants.map((contestant) => {
       const checks = contestant.checks.filter(
-        (check) => check.kind === "baseline",
+        (check) => check.kind === "baseline" || check.id === "initial-required",
       );
       return `| ${contestantLabel(state.config.contestants, contestant.id)} | ${invocationEvidence(state, contestant.implementation)} | ${artifactLink(state, "initial patch", contestant.initialPatchPath)} | ${checks.length ? checks.map((check) => checkCell(state, check)).join("<br>") : "NOT RUN"} |`;
     }),
     "",
   ];
+}
+
+function roundValidationRows(
+  state: RunState,
+  round: ReturnType<typeof reportRounds>[number],
+): string[] {
+  const attackChecks = round.attacks.flatMap((attack) =>
+    attack.checks.map((check) => `- ${check.id}: ${checkCell(state, check)}.`),
+  );
+  const contestantChecks =
+    typeof round.id === "number"
+      ? round.contestants.flatMap(({ contestant }) =>
+          contestant.checks
+            .filter((check) =>
+              check.id.startsWith(`round-${String(round.id)}-`),
+            )
+            .map(
+              (check) =>
+                `- ${contestantLabel(state.config.contestants, contestant.id)} — ${check.id}: ${checkCell(state, check)}.`,
+            ),
+        )
+      : [];
+  return [...contestantChecks, ...attackChecks];
 }
 
 function roundReplay(state: RunState): string[] {
@@ -191,6 +219,7 @@ function roundReplay(state: RunState): string[] {
     const invocations = state.attackInvocations.filter(
       (record) => record.round === round.id,
     );
+    const validationRows = roundValidationRows(state, round);
     return [
       `## ${title}`,
       "",
@@ -229,10 +258,8 @@ function roundReplay(state: RunState): string[] {
       "",
       "### Validation",
       "",
-      ...(round.attacks.flatMap((attack) => attack.checks).length
-        ? round.attacks
-            .flatMap((attack) => attack.checks)
-            .map((check) => `- ${check.id}: ${checkCell(state, check)}.`)
+      ...(validationRows.length
+        ? validationRows
         : ["- No round-scoped check result was recorded."]),
       "",
       "### Health ledger",

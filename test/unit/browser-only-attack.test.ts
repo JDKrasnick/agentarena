@@ -293,6 +293,49 @@ describe("browser-only attacks", () => {
     expect(validateBrowser).toHaveBeenCalledTimes(2);
   });
 
+  it("turns a semantically valid failure on both patches into a neutral shared defect", async () => {
+    const validateBrowser = vi.fn<ValidateBrowser>((_tree, probe, subject) =>
+      Promise.resolve({
+        status: "failed",
+        reason: "application_failure",
+        failureAttribution: "contestant_application",
+        provisionAttempts: 1,
+        probes: [
+          {
+            probeId: probe.id,
+            family: probe.family,
+            profile: probe.profile,
+            status: "failed",
+            contextId: `${subject}-${probe.id}`,
+            requiredCapabilityIds: ["browser_dom_validation"],
+            blockedOrigins: [],
+            artifacts: [],
+          },
+        ],
+        artifacts: [],
+      }),
+    );
+    const assess = vi.fn<AttackVerifier["assess"]>((input) =>
+      verifier.assess(input),
+    );
+
+    const result = await validate({
+      id: "browser-shared-dialog",
+      validateBrowser,
+      verifier: { ...verifier, assess },
+    });
+
+    expect(result).toMatchObject({
+      status: "shared_defect",
+      targets: ["a", "b"],
+      rootDefectId: "settings-dialog",
+      damageActive: false,
+    });
+    expect(assess).toHaveBeenCalledWith(
+      expect.objectContaining({ authorPassed: false, targetFailed: true }),
+    );
+  });
+
   it("retries an invalid inferred relationship and retains the valid link", async () => {
     const assess = vi
       .fn<AttackVerifier["assess"]>()

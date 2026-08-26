@@ -69,4 +69,19 @@ describe("recommended patch selection", () => {
       requiredValidationPassed: false,
     });
   });
+
+  it("describes a patch-size tie-break without claiming equal correctness", () => {
+    const state = makeRunState();
+    state.contestants.a!.patchSize = 1;
+    state.contestants.b!.patchSize = 2;
+
+    const recommendation = selectRecommendedPatch({
+      contestants: state.contestants,
+      championId: "a",
+    });
+
+    expect(recommendation.rationale).toEqual([
+      "Equally validated patches were tied on active defect damage; selected the smaller 1-byte patch.",
+    ]);
+  });
 });
