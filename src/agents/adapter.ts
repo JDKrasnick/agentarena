@@ -32,7 +32,7 @@ import type { PriorAdjudicationContext } from "../attacks/challenges.js";
 import { runProcess, type ProcessRequest } from "../runner/process-runner.js";
 import { z } from "zod";
 import type { ArenaObserver, OutputSource } from "../observability/events.js";
-import { selectedMcpNames, type FrozenMcpPolicy } from "../mcp/policy.js";
+import { agentMcpNames, type FrozenMcpPolicy } from "../mcp/policy.js";
 import type {
   ProviderStage,
   ProviderStageFailure,
@@ -143,6 +143,7 @@ export interface ConnectivityProbeInput {
   transcriptPrefix: string;
   timeoutMs: number;
   signal: AbortSignal;
+  mcpServerName?: string;
 }
 
 export interface ReviewInput extends InvocationInput {
@@ -486,7 +487,7 @@ export function providerCommand(
   const resolvedModel =
     id === "codex" && model === "gpt-5.6" ? "gpt-5.6-sol" : model;
   const modelArgs = resolvedModel ? ["--model", resolvedModel] : [];
-  const selectedMcp = mcpPolicy ? selectedMcpNames(mcpPolicy, id) : undefined;
+  const selectedMcp = mcpPolicy ? agentMcpNames(mcpPolicy, id) : undefined;
   const providerInventory = mcpPolicy?.inventory.find(
     (entry) => entry.provider === id,
   );
@@ -621,7 +622,26 @@ export class CommandAgentAdapter implements AgentAdapter {
         : {}),
     });
     const finished = new Date();
-    const transportFailures = command.transportFailures ?? [];
+    let stderr = "";
+    try {
+      stderr = await readFile(command.stderrPath, "utf8");
+    } catch {
+      // Missing diagnostics make a scoped MCP readiness probe fail closed.
+    }
+    const scopedMcpFailures = input.mcpServerName
+      ? mcpFailuresForServer(stderr, input.mcpServerName)
+      : [];
+    const transportFailures = [
+      ...(command.transportFailures ?? []),
+      ...scopedMcpFailures,
+    ].filter(
+      (failure, index, failures) =>
+        failures.findIndex(
+          (candidate) =>
+            candidate.kind === failure.kind &&
+            candidate.detail === failure.detail,
+        ) === index,
+    );
     let response = "";
     try {
       response = await readFile(command.stdoutPath, "utf8");
@@ -817,6 +837,32 @@ export class CommandAgentAdapter implements AgentAdapter {
       return false;
     }
   }
+}
+
+function mcpFailuresForServer(
+  stderr: string,
+  serverName: string,
+): NonNullable<CommandResult["transportFailures"]> {
+  const normalizedName = serverName.toLowerCase();
+  return stderr
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line.toLowerCase().includes(normalizedName) &&
+        /(oauth|auth(?:entication)?|invalid_grant|expired|needs[- ]auth|unavailable|connection\s+(?:error|failed|closed|lost)|failed\s+to\s+(?:connect|refresh))/i.test(
+          line,
+        ),
+    )
+    .slice(0, 20)
+    .map((detail) => ({
+      kind: /oauth|auth(?:entication)?|invalid_grant|expired|needs[- ]auth/i.test(
+        detail,
+      )
+        ? ("mcp_auth" as const)
+        : ("transport" as const),
+      detail: detail.slice(0, 512),
+    }));
 }
 
 export function createProviderAdapter(

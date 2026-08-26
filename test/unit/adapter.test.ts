@@ -172,6 +172,76 @@ describe("provider model selection", () => {
       /strict-mcp-config/,
     );
   });
+
+  it("keeps harness-only MCP selections out of every provider tool catalog", () => {
+    const server = {
+      name: "secrets",
+      enabled: true,
+      authentication: "ready" as const,
+      readiness: "ready" as const,
+    };
+    const selection = {
+      name: server.name,
+      enabledInSnapshot: true,
+      authentication: server.authentication,
+      readiness: server.readiness,
+      role: "harness_only" as const,
+      requirement: "optional" as const,
+      decision: "included" as const,
+      reason: "selected",
+    };
+    const base = {
+      version: 1 as const,
+      mode: "configure_selection" as const,
+      coverageGaps: [],
+      frozenAt: "2026-08-25T00:00:00.000Z",
+      policyHash: "0".repeat(64),
+    };
+    const codex = providerCommand("codex", undefined, {
+      ...base,
+      inventory: [
+        {
+          provider: "codex" as const,
+          state: "known" as const,
+          servers: [server],
+          diagnosticArtifactRefs: [],
+        },
+      ],
+      servers: [{ provider: "codex" as const, ...selection }],
+    });
+    const claude = providerCommand("claude", undefined, {
+      ...base,
+      inventory: [
+        {
+          provider: "claude" as const,
+          state: "known" as const,
+          servers: [server],
+          diagnosticArtifactRefs: [],
+        },
+      ],
+      servers: [{ provider: "claude" as const, ...selection }],
+    });
+    const gemini = providerCommand("gemini", undefined, {
+      ...base,
+      inventory: [
+        {
+          provider: "gemini" as const,
+          state: "known" as const,
+          servers: [server],
+          diagnosticArtifactRefs: [],
+        },
+      ],
+      servers: [{ provider: "gemini" as const, ...selection }],
+    });
+
+    expect(codex.args).toContain("mcp_servers.secrets.enabled=false");
+    expect(claude.args).toEqual(
+      expect.arrayContaining(["--strict-mcp-config"]),
+    );
+    expect(gemini.args).toEqual(
+      expect.arrayContaining(["--allowed-mcp-server-names", ""]),
+    );
+  });
 });
 
 describe("implementation transport classification", () => {
@@ -222,7 +292,7 @@ describe("implementation transport classification", () => {
 });
 
 describe("provider connectivity probing", () => {
-  async function probe(script: string) {
+  async function probe(script: string, mcpServerName?: string) {
     const cwd = await mkdtemp(path.join(os.tmpdir(), "arena-probe-"));
     return new CommandAgentAdapter({
       id: "codex",
@@ -233,6 +303,7 @@ describe("provider connectivity probing", () => {
       transcriptPrefix: path.join(cwd, "probe"),
       timeoutMs: 2_000,
       signal: new AbortController().signal,
+      ...(mcpServerName ? { mcpServerName } : {}),
     });
   }
 
@@ -247,6 +318,20 @@ describe("provider connectivity probing", () => {
     expect(empty.healthy).toBe(false);
     expect(unrelated.healthy).toBe(false);
     expect(unrelated.reason).toContain("did not return the exact");
+  });
+
+  it("fails a scoped MCP probe when that server reports a nonfatal auth error", async () => {
+    const warning =
+      "failed to refresh OAuth tokens for server expo: invalid_grant: expired refresh token";
+    const result = await probe(
+      `console.log("AGENT_ARENA_PROVIDER_HEALTH_OK"); console.error(${JSON.stringify(warning)})`,
+      "expo",
+    );
+
+    expect(result.healthy).toBe(false);
+    expect(result.transportFailures).toEqual([
+      expect.objectContaining({ kind: "mcp_auth", detail: warning }),
+    ]);
   });
 });
 

@@ -768,6 +768,11 @@ validation with those servers excluded. Unavailable optional servers are
 excluded and become visible coverage gaps. Reauthentication remains an
 operator action.
 
+The MVP does not yet provide harness-mediated MCP execution. A `harness_only`
+MCP selection is unavailable, so optional servers become coverage gaps and
+required servers use the same reduced-validation gate. These servers are never
+enabled in contestant or judge sessions.
+
 The resulting allowlist is immutable across provider commands, tool catalogs,
 prompts, sessions, retries, and recovery children. Unselected, unavailable, and
 undeclared servers are absent, and an agent cannot add MCP authority during a

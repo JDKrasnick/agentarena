@@ -140,6 +140,49 @@ export async function readBaseline(store: ArtifactStore): Promise<RunBaseline> {
   return baseline;
 }
 
+export async function readCheckpointDescriptor(
+  store: ArtifactStore,
+  roundId: CheckpointDescriptor["roundId"],
+): Promise<CheckpointDescriptor> {
+  const checkpoint = CheckpointDescriptorSchema.parse(
+    JSON.parse(
+      await readFile(
+        store.resolve(`checkpoints/${String(roundId)}.json`),
+        "utf8",
+      ),
+    ),
+  );
+  if (checkpoint.checkpointHash !== calculateCheckpointHash(checkpoint))
+    throw new Error(`Checkpoint ${String(roundId)} hash mismatch`);
+  if (checkpoint.runId !== store.runId)
+    throw new Error("Checkpoint run identity mismatch");
+  return checkpoint;
+}
+
+export async function readContinuationCheckpoint(
+  store: ArtifactStore,
+): Promise<CheckpointDescriptor | undefined> {
+  try {
+    const checkpoint = CheckpointDescriptorSchema.parse(
+      JSON.parse(
+        await readFile(store.resolve("continuation-checkpoint.json"), "utf8"),
+      ),
+    );
+    if (checkpoint.checkpointHash !== calculateCheckpointHash(checkpoint))
+      throw new Error("Continuation checkpoint hash mismatch");
+    if (checkpoint.runId === store.runId)
+      throw new Error("Continuation checkpoint must belong to a parent run");
+    if (typeof checkpoint.roundId !== "number")
+      throw new Error(
+        "Provider continuation requires a normal-round checkpoint",
+      );
+    return checkpoint;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 interface BrowserBaselineIdentity {
   runId: string;
   baseCommit: string;
@@ -344,9 +387,23 @@ export async function readEnvelopeChain(
   store: ArtifactStore,
 ): Promise<RoundEnvelope[]> {
   const envelopes: RoundEnvelope[] = [];
+  const continuation = await readContinuationCheckpoint(store);
+  const continuationRound =
+    typeof continuation?.roundId === "number" ? continuation.roundId : 0;
   let missingEarlier = false;
   for (const roundId of [1, 2, 3, "recovery", "reconciliation"] as const) {
     const envelope = await readEnvelopeAt(store, roundId);
+    if (
+      continuation &&
+      typeof roundId === "number" &&
+      roundId <= continuationRound
+    ) {
+      if (envelope)
+        throw new Error(
+          `Continuation child duplicated sealed parent round ${String(roundId)}`,
+        );
+      continue;
+    }
     if (!envelope) {
       // Normal rounds are contiguous authority. Recovery is optional, so a
       // reconciliation envelope may legitimately follow round 3 directly.
@@ -356,14 +413,18 @@ export async function readEnvelopeChain(
     if (missingEarlier)
       throw new Error(`Broken envelope chain before round ${String(roundId)}`);
     const previous = envelopes.at(-1);
-    if (envelope.priorEnvelopeHash !== (previous?.envelopeHash ?? null))
+    if (
+      envelope.priorEnvelopeHash !==
+      (previous?.envelopeHash ?? continuation?.envelopeHash ?? null)
+    )
       throw new Error(
         `Broken envelope digest chain at round ${String(roundId)}`,
       );
     if (envelope.runId !== store.runId)
       throw new Error("Envelope run identity mismatch");
     if (
-      envelope.result.replay.priorReplayHash !== (previous?.replayHash ?? null)
+      envelope.result.replay.priorReplayHash !==
+      (previous?.replayHash ?? continuation?.replayHash ?? null)
     )
       throw new Error(`Broken replay digest chain at round ${String(roundId)}`);
     envelopes.push(envelope);
@@ -490,6 +551,7 @@ export async function applyEnvelopeExactlyOnce(options: {
   state: RunState;
   envelope: RoundEnvelope;
   ledger: readonly AppliedEnvelope[];
+  initialPriorEnvelopeHash?: string | null;
 }): Promise<{ applied: boolean; ledger: AppliedEnvelope[] }> {
   const existing = options.ledger.find(
     (entry) => entry.roundId === options.envelope.roundId,
@@ -506,7 +568,7 @@ export async function applyEnvelopeExactlyOnce(options: {
   const expectedPrevious = options.ledger.at(-1);
   if (
     options.envelope.priorEnvelopeHash !==
-    (expectedPrevious?.envelopeHash ?? null)
+    (expectedPrevious?.envelopeHash ?? options.initialPriorEnvelopeHash ?? null)
   )
     throw new Error("Cannot apply an out-of-order round envelope");
   const deltaBytes = await readDurableArtifact(
@@ -599,6 +661,16 @@ export async function reconstructRunState(options: {
           ? RunStateV6Schema.parse(baselineState)
           : RunStateV7Schema.parse(baselineState);
   let ledger: AppliedEnvelope[] = [];
+  const continuation = await readContinuationCheckpoint(options.store);
+  if (
+    continuation &&
+    (options.summary.provenance.parentRunId !== continuation.runId ||
+      options.summary.provenance.parentCheckpointHash !==
+        continuation.checkpointHash)
+  )
+    throw new Error("Continuation checkpoint conflicts with run provenance");
+  if (!continuation && options.summary.provenance.parentCheckpointHash)
+    throw new Error("Run provenance references a missing parent checkpoint");
   const envelopes = await readEnvelopeChain(options.store);
   for (const [index, expected] of options.summary.appliedEnvelopes.entries()) {
     const envelope = envelopes[index];
@@ -611,6 +683,9 @@ export async function reconstructRunState(options: {
       state,
       envelope,
       ledger,
+      ...(continuation
+        ? { initialPriorEnvelopeHash: continuation.envelopeHash }
+        : {}),
     });
     ledger = application.ledger;
   }

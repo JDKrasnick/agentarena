@@ -941,6 +941,11 @@ the operator explicitly accepts reduced validation with that server excluded;
 an unavailable optional server is excluded and recorded as a coverage gap.
 Reauthentication is always an explicit operator action.
 
+The current MVP has no harness-mediated MCP execution path. A server requested
+with the `harness_only` role is therefore unavailable: optional servers are
+excluded as coverage gaps, and required servers follow the same reduced-
+validation gate. Harness-only servers are never enabled in an agent session.
+
 The frozen MCP policy governs provider command configuration, tool catalogs,
 prompts, and sessions for the complete run chain. Unselected, unavailable, and
 undeclared servers are absent. Agents cannot widen MCP authority mid-run; a new
