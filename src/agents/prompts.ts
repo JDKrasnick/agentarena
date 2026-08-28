@@ -122,6 +122,7 @@ export interface PromptContext {
   contestantFeedback?: ContestantFeedback;
   allowMissingReviewPacket?: boolean;
   deadlineAt?: string;
+  roundPivotInstruction?: string;
 }
 
 export function agentVisibleRunSpec(
@@ -215,6 +216,12 @@ export function composePrompt(context: PromptContext): string {
       "# Deterministic method pack",
       JSON.stringify(context.methodSelection ?? {}, null, 2),
     );
+    if (context.roundPivotInstruction)
+      common.push(
+        "",
+        "# Required low-signal pivot",
+        context.roundPivotInstruction,
+      );
     if (context.round === 3) {
       common.push(
         "",
@@ -300,6 +307,9 @@ export function composeAttackReviewPrompt(
     "",
     "# Deterministic method pack",
     JSON.stringify(context.methodSelection ?? {}, null, 2),
+    ...(context.roundPivotInstruction
+      ? ["", "# Required low-signal pivot", context.roundPivotInstruction]
+      : []),
     ...(context.contestantFeedback
       ? [
           "",

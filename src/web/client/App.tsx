@@ -597,7 +597,7 @@ export function FullAgentOutput({
   );
 }
 
-function ResultScreen({
+export function ResultScreen({
   state,
   onReview,
   onOpenFighter,
@@ -609,7 +609,13 @@ function ResultScreen({
   if (!state.result) return null;
   const championId = state.result.championId;
   const recommendedId = state.result.recommendedId;
-  const landed = state.attacks.filter((attack) => attack.phase === "landed");
+  const nonDiscriminating = state.result.outcomeKind === "non_discriminating";
+  const landed = state.attacks.filter(
+    (attack) => attack.phase === "landed" && attack.evidenceClass !== "shared",
+  );
+  const shared = state.attacks.filter(
+    (attack) => attack.phase === "landed" && attack.evidenceClass === "shared",
+  );
   const repairs = (
     Object.entries(state.contestants) as Array<
       [ContestantId, DashboardContestant]
@@ -630,11 +636,13 @@ function ResultScreen({
     (state.result.coverageConfidence === "provisional"
       ? "Coverage was unresolved, so no champion or recommendation is published."
       : "Review the evidence-backed result before merging.");
-  const resultHeading = championId
-    ? `Fighter ${championId.toUpperCase()} won the arena.`
-    : recommendedId
-      ? `Patch ${recommendedId.toUpperCase()} is recommended for review.`
-      : "No competitive winner was published.";
+  const resultHeading = nonDiscriminating
+    ? "Non-discriminating battle."
+    : championId
+      ? `Fighter ${championId.toUpperCase()} won the arena.`
+      : recommendedId
+        ? `Patch ${recommendedId.toUpperCase()} is recommended for review.`
+        : "No competitive winner was published.";
 
   return (
     <section className="results-screen" aria-live="polite">
@@ -659,9 +667,13 @@ function ResultScreen({
 
       <dl className="result-summary">
         <div>
-          <dt>Arena champion</dt>
+          <dt>Arena result</dt>
           <dd>
-            {championId ? `Fighter ${championId.toUpperCase()}` : "Withheld"}
+            {nonDiscriminating
+              ? "No champion"
+              : championId
+                ? `Fighter ${championId.toUpperCase()}`
+                : "Withheld"}
           </dd>
         </div>
         <div>
@@ -679,6 +691,14 @@ function ResultScreen({
         <div>
           <dt>Rounds completed</dt>
           <dd>{state.result.roundsCompleted ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Evidence signal</dt>
+          <dd>
+            {state.result.competitiveLandingCount ?? 0} competitive ·{" "}
+            {state.result.sharedDefectCount ?? 0} shared ·{" "}
+            {state.result.explicitEmptyLaneCount ?? 0} empty lanes
+          </dd>
         </div>
         <div>
           <dt>Run integrity</dt>
@@ -731,8 +751,8 @@ function ResultScreen({
       <div className="result-evidence">
         <section>
           <header>
-            <h2>Defects caught</h2>
-            <span>{landed.length}</span>
+            <h2>Competitive landings</h2>
+            <span>{state.result.competitiveLandingCount ?? landed.length}</span>
           </header>
           {landed.length ? (
             <ol>
@@ -747,7 +767,30 @@ function ResultScreen({
               ))}
             </ol>
           ) : (
-            <p>No attacks produced a verified defect.</p>
+            <p>
+              No contestant-authored differential attack produced a verified
+              defect.
+            </p>
+          )}
+        </section>
+        <section>
+          <header>
+            <h2>Shared QA defects</h2>
+            <span>{state.result.sharedDefectCount ?? shared.length}</span>
+          </header>
+          {shared.length ? (
+            <ol>
+              {shared.map((attack, index) => (
+                <li key={`${attack.id}-shared-${String(index)}`}>
+                  <strong>{attackDisplayLabel(attack)}</strong>
+                  <span>
+                    Neutral evidence · {attack.severity ?? "verified"}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p>No shared neutral defect was recorded.</p>
           )}
         </section>
         <section>
@@ -777,7 +820,11 @@ function ResultScreen({
         <p>
           {state.result.terminalOutcome
             ? `${state.result.terminalOutcome.reasonCode}: ${state.result.terminalOutcome.reason}`
-            : "The recommendation is evidence-backed; inspect the winning patch before merging."}
+            : nonDiscriminating
+              ? recommendedId
+                ? "The arena produced no champion; the recommended patch comes only from a separate identity-blind quality comparison."
+                : "The arena produced no champion or automatic recommendation. Inspect either eligible patch and record an explicit choice."
+              : "The recommendation is evidence-backed; inspect the selected patch before merging."}
         </p>
         <div>
           {state.links.map((link) => (

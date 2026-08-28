@@ -4,8 +4,9 @@
 
 Agent Arena is a local command-line tool that asks two coding agents to solve the
 same repository task, then runs a task-scaled sequence in which they attack the opposing
-solution and repair their own. It recommends the solution with the strongest
-test evidence and the most remaining health.
+solution and repair their own. It publishes a winner only when the competitive
+evidence differentiates the solutions, and otherwise preserves the exact result
+and any independent recommendation without overstating it.
 
 The MVP exists to prove one idea:
 
@@ -48,6 +49,14 @@ while `inconclusive` finalizes without a winner or recommendation. Legacy runs
 without an assessment are labeled legacy/unknown rather than assigned a new
 confidence claim. Required capability gaps stay visible even when the user
 accepted a reduced validation contract.
+
+Complete duel or catch-up coverage can instead produce a successful
+`non_discriminating` result: both final patches must be applicable and pass
+required validation, active defect damage must be equal, and no still-valid
+contestant-authored differential landing may exist. Repaired competitive
+landings still discriminate, while later-overturned decisions do not. This is
+not a draw and publishes no champion; recoil, raw HP, shared neutral findings,
+repair history, and patch size remain visible evidence only.
 
 This release is a dependable local demonstration of that loop. It is not a
 general-purpose agent platform.
@@ -302,6 +311,14 @@ including partial-judge damage, or an active accepted defect with repair
 allowance remaining. Findings outside that scope are recorded with no scoring
 effect. `--rounds 1..5` is an exact fixed override using medium timings; it
 disables adaptive behavior and cannot be combined with `--effort auto`.
+
+Every adaptive decision persists competitive landings, shared findings,
+explicit-empty lanes, low-signal state, and its consecutive streak. A first
+low-signal boundary makes any already-planned next round pivot to its distinct
+theme and forbids repeated claims or probe shapes without new evidence. A
+second consecutive low-signal boundary stops with `repeated_low_signal`.
+Competitive evidence, unresolved adjudication, or active damage resets the
+streak. Fixed rounds remain exact and carry the pivot without stopping early.
 
 Round 3 is the proactive integration round, but integration is not deferred until
 then. Required repository integration tests run during baseline and after every
@@ -1039,6 +1056,14 @@ fight ends early. Otherwise, after the adaptive or fixed plan completes:
 2. Lower final patch size wins only as a tie-breaker.
 3. If still tied, the result is a draw.
 
+Those steps apply only after competitive evidence has differentiated the
+battle. With complete required bidirectional coverage, two eligible,
+required-valid patches with equal active defect damage and zero still-valid
+contestant differential landings produce `non_discriminating`: `winner` is
+null, `draw` is false, stable contestant order is retained, and no champion is
+published. Siege, forfeits, eliminations, infrastructure outcomes, and coverage
+gaps keep their existing classifications.
+
 Cost and duration are shown but do not affect health. The verifier's constrained
 relevance, root-defect, and severity verdict is the only model-assisted
 adjudication step. Execution determines the behavioral pass/fail outcome, and
@@ -1046,9 +1071,18 @@ the published damage and recoil tables determine its numeric effect.
 
 ### The user owns the merge
 
-Agent Arena distinguishes the health-ledger arena champion from the
-correctness-first recommended patch. A patch cannot be applied until a human
-accepts an exact contestant, base commit, prompt, and full patch digest.
+Agent Arena distinguishes an arena champion from an independently recommended
+patch. A non-discriminating battle has no champion. With selection enabled, one
+fresh identity-blind invocation of the configured judge may compare anonymized,
+equally correct patches using the frozen task contract, final validation, and
+recorded quality facts under the frozen MCP policy. A decisive verdict may
+recommend a patch without changing the competitive result. Equivalent,
+inconclusive, disabled, or twice-failed comparison produces no recommendation,
+and neither patch size nor the raw ledger may supply a fallback. A patch cannot
+be applied until a human accepts an exact contestant, base commit, prompt, and
+full patch digest. `--selection champion` is unavailable for this result. A
+decisive independent recommendation may be selected normally; without one,
+both eligible patches remain available only by explicit contestant selection.
 `agent-arena apply` refuses pending, rejected, stale, or mismatched decisions
 and retains the clean-tree and `git apply --check` guards.
 
@@ -1182,7 +1216,7 @@ containing:
   run-scoped policy, authentication/readiness metadata, the exact frozen
   allowlist, exclusions, coverage gaps, policy hash, and the hash-bound final
   operator decision.
-- `result.json`: compact schema-v8 status, stage, contestant health, outcome,
+- `result.json`: compact schema-v10 status, stage, contestant health, outcome,
   recommendation, warnings, artifact pointers, provenance, and ordered
   applied-envelope ledger. Detailed state is rebuilt from `baseline.json` and
   `rounds/<round>/envelope.json`; the immutable `finalization.json` projection
@@ -1339,12 +1373,13 @@ The MVP is ready when a new user can:
    malformed ranks remain isolated from valid siblings.
 9. See integration discovery select the simplest sufficient environment and
    record any escalation.
-10. Receive a deterministic final matrix, recommendation or draw, and complete
+10. Receive a deterministic final matrix, winner, draw, or non-discriminating
+    result, any independent recommendation, and complete
    Markdown, HTML, SVG, and JSON artifacts.
 11. See deterministic harness accommodations applied symmetrically, validated,
    and recorded without affecting health.
-12. Apply the recommended patch with a command and independently rerun the
-    tests.
+12. Explicitly accept an eligible patch, apply that digest-bound choice with a
+    command, and independently rerun the tests.
 
 The launch demo should additionally show an adversarial test finding a real
 defect that the repository's existing tests missed. That is the clearest proof

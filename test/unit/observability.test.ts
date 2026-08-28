@@ -499,4 +499,30 @@ describe("arena observability", () => {
       reason: "Cancelled by operator",
     });
   });
+
+  it("projects non-discriminating completion evidence without a champion", () => {
+    const state = initialDashboardState();
+    projectEvent(state, {
+      version: 1,
+      sequence: 1,
+      timestamp: new Date().toISOString(),
+      type: "battle_completed",
+      status: "complete",
+      roundsCompleted: 1,
+      outcomeKind: "non_discriminating",
+      decisionBasis: "no_differentiator",
+      competitiveLandingCount: 0,
+      sharedDefectCount: 1,
+      explicitEmptyLaneCount: 5,
+    });
+
+    expect(state.result).toMatchObject({
+      outcomeKind: "non_discriminating",
+      decisionBasis: "no_differentiator",
+      competitiveLandingCount: 0,
+      sharedDefectCount: 1,
+      explicitEmptyLaneCount: 5,
+    });
+    expect(state.result).not.toHaveProperty("championId");
+  });
 });

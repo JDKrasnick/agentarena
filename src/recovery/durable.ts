@@ -20,6 +20,7 @@ import {
   RunStateV6Schema,
   RunStateV7Schema,
   RunStateV8Schema,
+  RunStateV9Schema,
   OperatorInterventionSchema,
   type CheckResult,
   type RunState,
@@ -36,6 +37,7 @@ import {
   RunSummaryV7Schema,
   RunSummaryV8Schema,
   RunSummaryV9Schema,
+  RunSummaryV10Schema,
   type RunSummaryV5,
   type AppliedEnvelope,
   type BrowserBaselineRecord,
@@ -47,6 +49,7 @@ import {
   type RunSummaryV7,
   type RunSummaryV8,
   type RunSummaryV9,
+  type RunSummaryV10,
 } from "./contracts.js";
 
 function hashWithout(value: object, field: string): string {
@@ -116,9 +119,10 @@ export async function writeBaseline(options: {
     options.state.schemaVersion !== 5 &&
     options.state.schemaVersion !== 6 &&
     options.state.schemaVersion !== 7 &&
-    options.state.schemaVersion !== 8
+    options.state.schemaVersion !== 8 &&
+    options.state.schemaVersion !== 9
   )
-    throw new Error("Only v5-v8 runtime state can seed a durable baseline");
+    throw new Error("Only v5-v9 runtime state can seed a durable baseline");
   const draft = {
     version: 1 as const,
     runId: options.state.runId,
@@ -655,7 +659,12 @@ export async function applyEnvelopeExactlyOnce(options: {
 export async function reconstructRunState(options: {
   store: ArtifactStore;
   summary:
-    RunSummaryV5 | RunSummaryV6 | RunSummaryV7 | RunSummaryV8 | RunSummaryV9;
+    | RunSummaryV5
+    | RunSummaryV6
+    | RunSummaryV7
+    | RunSummaryV8
+    | RunSummaryV9
+    | RunSummaryV10;
 }): Promise<RunState> {
   const baseline = await readBaseline(options.store);
   if (options.summary.baseline) {
@@ -679,7 +688,9 @@ export async function reconstructRunState(options: {
           ? RunStateV6Schema.parse(baselineState)
           : baselineState.schemaVersion === 7
             ? RunStateV7Schema.parse(baselineState)
-            : RunStateV8Schema.parse(baselineState);
+            : baselineState.schemaVersion === 8
+              ? RunStateV8Schema.parse(baselineState)
+              : RunStateV9Schema.parse(baselineState);
   let ledger: AppliedEnvelope[] = [];
   const continuation = await readContinuationCheckpoint(options.store);
   if (
@@ -722,7 +733,10 @@ export async function reconstructRunState(options: {
   if (options.summary.completedAt)
     state.completedAt = options.summary.completedAt;
   state.warnings = [...options.summary.warnings];
-  if (options.summary.schemaVersion === 9) {
+  if (
+    options.summary.schemaVersion === 9 ||
+    options.summary.schemaVersion === 10
+  ) {
     state.adaptiveDecisions = structuredClone(
       options.summary.adaptiveDecisions,
     );
@@ -865,23 +879,28 @@ export async function reconstructRunState(options: {
         ? RunStateV6Schema.parse(state)
         : state.schemaVersion === 7
           ? RunStateV7Schema.parse(state)
-          : RunStateV8Schema.parse(state);
+          : state.schemaVersion === 8
+            ? RunStateV8Schema.parse(state)
+            : RunStateV9Schema.parse(state);
 }
 
 export async function buildRunSummary(options: {
   store: ArtifactStore;
   state: RunState;
   appliedEnvelopes: readonly AppliedEnvelope[];
-  provenance?: RunSummaryV9["provenance"];
-}): Promise<RunSummaryV6 | RunSummaryV7 | RunSummaryV8 | RunSummaryV9> {
+  provenance?: RunSummaryV10["provenance"];
+}): Promise<
+  RunSummaryV6 | RunSummaryV7 | RunSummaryV8 | RunSummaryV9 | RunSummaryV10
+> {
   if (
     options.state.schemaVersion !== 5 &&
     options.state.schemaVersion !== 6 &&
     options.state.schemaVersion !== 7 &&
-    options.state.schemaVersion !== 8
+    options.state.schemaVersion !== 8 &&
+    options.state.schemaVersion !== 9
   )
     throw new Error(
-      "Only v5-v8 runtime state may be written as a durable summary",
+      "Only v5-v9 runtime state may be written as a durable summary",
     );
   const baselinePath = options.store.resolve("baseline.json");
   let baseline: { path: string; sha256: string } | undefined;
@@ -925,13 +944,15 @@ export async function buildRunSummary(options: {
     }),
   );
   const schemaVersion =
-    options.state.schemaVersion === 8
-      ? 9
-      : options.state.schemaVersion === 7
-        ? 8
-        : options.state.schemaVersion === 6
-          ? 7
-          : 6;
+    options.state.schemaVersion === 9
+      ? 10
+      : options.state.schemaVersion === 8
+        ? 9
+        : options.state.schemaVersion === 7
+          ? 8
+          : options.state.schemaVersion === 6
+            ? 7
+            : 6;
   const summary = {
     schemaVersion,
     runId: options.state.runId,
@@ -968,7 +989,7 @@ export async function buildRunSummary(options: {
     ...(options.state.coverageDecision
       ? { coverageDecision: options.state.coverageDecision }
       : {}),
-    ...(options.state.schemaVersion === 8
+    ...(options.state.schemaVersion >= 8
       ? {
           effort: {
             mode: options.state.config.effortMode,
@@ -997,13 +1018,15 @@ export async function buildRunSummary(options: {
         options.state.integrity !== "assisted",
     },
   };
-  return schemaVersion === 9
-    ? RunSummaryV9Schema.parse(summary)
-    : schemaVersion === 8
-      ? RunSummaryV8Schema.parse(summary)
-      : schemaVersion === 7
-        ? RunSummaryV7Schema.parse(summary)
-        : RunSummaryV6Schema.parse(summary);
+  return schemaVersion === 10
+    ? RunSummaryV10Schema.parse(summary)
+    : schemaVersion === 9
+      ? RunSummaryV9Schema.parse(summary)
+      : schemaVersion === 8
+        ? RunSummaryV8Schema.parse(summary)
+        : schemaVersion === 7
+          ? RunSummaryV7Schema.parse(summary)
+          : RunSummaryV6Schema.parse(summary);
 }
 
 export async function writeCheckpoint(options: {

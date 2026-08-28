@@ -12,11 +12,43 @@ import {
   DeveloperDashboardArena,
   FullAgentOutput,
   NightTransitArena,
+  ResultScreen,
   RetroTacticsArena,
   TestLabArena,
 } from "../../src/web/client/App.js";
 
 describe("dashboard UI contracts", () => {
+  it("renders non-discriminating evidence and an independent recommendation without winner styling", () => {
+    const state = initialDashboardState();
+    state.status = "complete";
+    state.contestants.a.provider = "codex";
+    state.contestants.b.provider = "claude";
+    state.result = {
+      roundsCompleted: 1,
+      outcomeKind: "non_discriminating",
+      decisionBasis: "independent_patch_quality",
+      competitiveLandingCount: 0,
+      sharedDefectCount: 1,
+      explicitEmptyLaneCount: 5,
+      recommendedId: "b",
+      recommendationReason:
+        "Independent identity-blind quality comparison preferred Patch B.",
+    };
+
+    const markup = renderToStaticMarkup(
+      <ResultScreen
+        state={state}
+        onReview={() => undefined}
+        onOpenFighter={() => undefined}
+      />,
+    );
+    expect(markup).toContain("Non-discriminating battle.");
+    expect(markup).toContain("No champion");
+    expect(markup).toContain("Patch B");
+    expect(markup).toContain("0 competitive · 1 shared · 5 empty lanes");
+    expect(markup).not.toContain("is-winner");
+  });
+
   it("renders an operator-triggered browser link only for an active session", () => {
     expect(
       renderToStaticMarkup(

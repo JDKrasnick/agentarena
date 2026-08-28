@@ -2,7 +2,7 @@
 
 ## Overview
 
-Agent Arena is an open-source developer tool that runs multiple coding agents against the same software task, allows them to attack one another’s implementations with executable evidence, gives each agent an opportunity to repair its patch, and selects a winner based primarily on test results.
+Agent Arena is an open-source developer tool that runs multiple coding agents against the same software task, allows them to attack one another’s implementations with executable evidence, gives each agent an opportunity to repair its patch, and publishes the strongest competitive conclusion the evidence supports.
 
 The central idea is:
 
@@ -13,8 +13,11 @@ fresh, identity-blind judge adapter. The harness owns execution, retries,
 permission planning and stage gating, and deterministic selection; the judge
 owns semantic validity, canonical defect identity, frozen severity, fallback
 adjudication, and repair judgments when mechanics remain unavailable. House
-scouting, case-building, quality comparison, held-out sibling generation, and
-harness maintenance are legacy-only extensions and are not invoked by new runs.
+scouting, case-building, held-out sibling generation, and harness maintenance
+are legacy-only extensions and are not invoked by new runs. The one permitted
+new-run quality comparison is a fresh post-validation invocation of the same
+configured judge role, used only when a duel or catch-up result is
+non-discriminating.
 
 Champion and patch-recommendation language is conditional on coverage. Duel
 and catch-up require both attack directions in every executed round; siege
@@ -42,19 +45,19 @@ battle configuration and invocation metadata.
 
 The agents then receive their opponents’ solutions and attempt to break them. A credible attack must include evidence such as a failing test, reproducible command, integration failure, security issue, benchmark, or static-analysis result.
 
-Contestants may defend their solution by disproving the attack, repairing their patch, or conceding the defect. The harness reruns all valid tests and produces an evidence-backed winner.
+Contestants may defend their solution by disproving the attack, repairing their patch, or conceding the defect. The harness reruns all valid tests and produces an evidence-backed winner, draw, or non-discriminating result.
 
 The user receives:
 
 * Multiple completed implementations.
 * Additional adversarial tests.
-* A recommended patch.
+* A recommended patch when correctness or independent quality evidence differentiates one.
 * Cost and duration comparisons.
 * A replayable battle report.
 * A deterministic visual battle replay generated from the recorded evidence,
   including a clickable HTML dossier with test coverage, attack evidence,
   scoring, and handoff.
-* A command to apply the winning solution.
+* A command to review and apply an explicitly accepted solution.
 
 Fights automatically launch the React battle observatory in a dedicated
 Electron window. `--no-window` opts out, selecting Ink in an interactive TTY
@@ -92,7 +95,7 @@ round state and a direct return to the live arena. It does not claim to rewind,
 rerun, pause, or mutate live execution; durable resume remains the recovery
 mechanism for sealed runs.
 Completion automatically opens an evidence-backed success screen with both
-final fighter states, the arena champion and recommended patch, landed defects,
+final fighter states, the arena outcome and any independent recommendation, landed defects,
 verified health-restoring improvements, and the next human-review command. Its
 product-value statement is derived from recorded attack and repair evidence,
 not unverified agent narration.
@@ -180,8 +183,8 @@ configuration, invalid schemas, and programming invariants.
 
 `Arena` has no direct mechanism imports. Durable recovery treats the immutable
 preflight baseline and sealed per-round envelopes as authority. `result.json`
-is a compact schema-v8 summary with an ordered applied-envelope ledger. Runtime
-state is V7 and round snapshots, results, replays, envelopes, and state deltas
+is a compact schema-v10 summary with an ordered applied-envelope ledger. Runtime
+state is V9 and round snapshots, results, replays, envelopes, and state deltas
 are V4. Resume
 validates the digest chain and runtime drift, applies a sealed boundary exactly
 once, and never reruns an interrupted unsealed round under the original run ID.
@@ -531,6 +534,14 @@ override only their named phase. `--effort` may pin a profile. `--rounds 1..5`
 runs exactly that many rounds with medium phase timings and disables adaptive
 stopping and extension; it is rejected with `--effort auto`.
 
+Each adaptive boundary durably records competitive landings, shared defects,
+explicit-empty lanes, and the consecutive low-signal count. One low-signal
+round causes any already-scheduled next round to retain its distinct theme and
+add a mandatory non-repetition pivot. Two consecutive low-signal rounds stop
+with `repeated_low_signal`; competitive evidence, unresolved adjudication, or
+active damage resets the streak. Exact `--rounds` battles never stop early for
+low signal, but their continued rounds receive the same pivot instruction.
+
 In each round, the harness first freezes both current implementation patches.
 Each eligible reviewer then gets a dedicated read-only budget, configured by
 `review_minutes` separately from the focused test-generation budget. The budget
@@ -818,20 +829,35 @@ Health is calculated from a ledger: `100 - permanent recoil - active distinct de
 
 Attackers may propose a severity, but they do not control damage. A neutral verifier should apply the published rubric to anonymized executable evidence, choose the lowest level fully supported, and provide a saved rationale. Ambiguous High or Critical ratings should be capped at Medium. The harness then calculates health deterministically from landed tests, persisted severity verdicts, recoil, and repair results.
 
-After the adaptive or fixed round plan completes, the surviving contestant with the most HP wins. Patch simplicity may break an HP tie; otherwise the result is a draw. If only one contestant survives earlier, the fight ends early. Cost and duration are reported but do not change health.
+After the adaptive or fixed round plan completes, ordinary competitive battles
+award the surviving contestant with the most HP. Patch simplicity may break an
+HP tie; otherwise the result is a draw. If only one contestant survives earlier,
+the fight ends early. Cost and duration are reported but do not change health.
 
-The **arena champion** remains this health-ledger result. After final
-validation, Agent Arena separately derives deterministic patch-quality facts
-and may ask a neutral, identity-blind verifier to compare equally correct
-patches. The resulting **recommended patch** is correctness-first: failed or
-inapplicable patches are removed, less active defect damage always wins, quality
-may decide only equal-correctness patches, and an equivalent or inconclusive
-quality verdict falls back to the arena champion. Quality never changes HP,
-damage, healing, recoil, or the champion.
+A completed duel or catch-up is instead **non-discriminating** when every
+required attack direction has a usable terminal result, both applicable final
+patches pass required validation, their active defect damage is equal, and no
+still-valid contestant-authored differential attack landed. Repaired contestant
+landings still discriminate; later-overturned decisions do not. The result has
+no champion and is not a draw. Raw HP, recoil, shared neutral defects, repair
+history, and patch size stay visible but cannot manufacture a champion.
+
+For ordinary competitive results, the **arena champion** remains the
+health-ledger result. A non-discriminating result has no champion. With selection
+enabled, Agent Arena may run one fresh, identity-blind comparison using the
+configured judge, frozen MCP policy, anonymized patches, final validation,
+frozen task contract, and deterministic quality facts. A decisive verdict may
+create an independent `implementation_quality` recommendation. An equivalent,
+inconclusive, disabled, or twice-failed comparison creates no recommendation;
+patch size and the arena ledger cannot break that tie. Quality never changes
+HP, damage, healing, recoil, coverage, run success, or champion status.
 
 Every completed run produces a stable review prompt with all eligible patch
 choices and full SHA-256 digests. Applying a patch requires a current human
 decision bound to the run, prompt, contestant, base commit, and exact digest.
+For a non-discriminating result, `--selection champion` is unavailable. A
+decisive independent recommendation may be selected normally; otherwise both
+eligible patches remain explicit human choices.
 Acceptance does not authorize commits, pushes, pull-request writes, issue
 closure, or merge.
 
@@ -854,7 +880,8 @@ The final report should include a patch-versus-test matrix:
 | Final health                  |   95 HP |   60 HP |   85 HP |
 | Result                        |  Winner | Survived | Survived |
 
-The user remains responsible for reviewing and merging the winning patch.
+The user remains responsible for reviewing the evidence, explicitly accepting
+an eligible patch, and deciding whether to merge it.
 
 ---
 
@@ -1158,6 +1185,8 @@ Game mechanics should map directly to real engineering events:
 * **Heal:** A repaired patch restores the exact HP lost to that attack.
 * **Elimination:** A required check remains failing and health becomes 0.
 * **Draw:** Multiple patches finish with equal HP and tie-breakers.
+* **Non-discriminating:** Complete bidirectional coverage finds no effective
+  competitive landing; raw HP remains visible but no champion is awarded.
 
 Example terminal output:
 
@@ -1197,8 +1226,8 @@ Each run should generate:
 * A credential-free frozen MCP inventory, readiness result, exact allowlist,
   exclusions, coverage gaps, and hash-bound operator acceptance.
 * A JSON result file.
-* The winning patch.
-* A command to apply the winner.
+* Every eligible final patch and any independent recommendation.
+* A command to review and apply an exact accepted patch.
 * An HTML battle replay.
 * Cost and timing summaries.
 * A model win/loss record.

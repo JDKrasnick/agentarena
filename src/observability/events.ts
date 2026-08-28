@@ -151,6 +151,7 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
     attackerId: ContestantIdSchema.optional(),
     targetId: ContestantIdSchema.optional(),
     claim: z.string().optional(),
+    evidenceClass: z.enum(["competitive", "shared"]).optional(),
   }),
   event("attack_revised", {
     attackId: z.string(),
@@ -167,6 +168,7 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
     targetId: ContestantIdSchema.optional(),
     severity: z.string().optional(),
     damage: z.number().multipleOf(0.25).optional(),
+    evidenceClass: z.enum(["competitive", "shared"]).optional(),
   }),
   event("health_changed", {
     contestantId: ContestantIdSchema,
@@ -212,6 +214,18 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
     roundsCompleted: z.number().int().min(0).max(5).optional(),
     /** Absent when coverage is unresolved and no champion may be published. */
     championId: ContestantIdSchema.optional(),
+    outcomeKind: z.enum(["winner", "draw", "non_discriminating"]).optional(),
+    decisionBasis: z
+      .enum([
+        "competitive_evidence",
+        "independent_patch_quality",
+        "fallback_tie_break",
+        "no_differentiator",
+      ])
+      .optional(),
+    competitiveLandingCount: z.number().int().nonnegative().optional(),
+    sharedDefectCount: z.number().int().nonnegative().optional(),
+    explicitEmptyLaneCount: z.number().int().nonnegative().optional(),
     recommendedId: ContestantIdSchema.optional(),
     recommendationReason: z.string().optional(),
     coverageConfidence: z

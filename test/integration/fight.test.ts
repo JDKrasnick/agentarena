@@ -43,6 +43,7 @@ import {
 } from "../../src/review/evidence-handoff.js";
 import { readHandoffLifecycle } from "../../src/review/evidence-handoff-store.js";
 import { resolvePermissionPolicy } from "../../src/permissions/policy.js";
+import type { PatchQualityVerifierInput } from "../../src/quality/verifier.js";
 
 const fixtureAgent = fileURLToPath(
   new URL("../fixtures/fake-agent.mjs", import.meta.url),
@@ -123,6 +124,8 @@ class DeterministicTimedReviewAdapter extends CommandAgentAdapter {
 }
 
 class ConvergedEmptyLaneAdapter extends CommandAgentAdapter {
+  readonly seenPrompts: string[] = [];
+
   override async implement(input: ImplementInput) {
     const invocation = await super.implement(input);
     await writeFile(
@@ -133,6 +136,7 @@ class ConvergedEmptyLaneAdapter extends CommandAgentAdapter {
   }
 
   override async review(input: ReviewInput) {
+    this.seenPrompts.push(input.prompt);
     const invocation = await super.review(input);
     await writeFile(
       path.join(input.worktree, ".agent-arena-submission.json"),
@@ -142,6 +146,7 @@ class ConvergedEmptyLaneAdapter extends CommandAgentAdapter {
   }
 
   override async attack(input: AttackInput) {
+    this.seenPrompts.push(input.prompt);
     const invocation = await super.attack(input);
     await writeFile(
       path.join(input.worktree, ".agent-arena-submission.json"),
@@ -257,7 +262,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     const convergedRoot = await createSlugRepository();
     const convergedConfig = FightConfigSchema.parse({
       ...duelConfig(convergedRoot),
-      effortMode: "low",
+      effortMode: "ultra-low",
       fixedRounds: false,
       rounds: 1,
     });
@@ -279,14 +284,87 @@ describe("fake-adapter fight on a mocked real issue", () => {
 
     expect(converged.state.adaptiveDecisions).toHaveLength(1);
     expect(converged.state.adaptiveDecisions[0]).toMatchObject({
+      version: 2,
       round: 1,
       action: "stop",
       reason: "adaptive_convergence",
       convergence: { passed: true },
+      signal: {
+        competitiveLandings: 0,
+        sharedDefects: 0,
+        explicitEmptyLanes: 2,
+        lowSignal: true,
+        consecutiveLowSignalCount: 1,
+      },
     });
     expect(converged.state.adaptiveCompletion).toMatchObject({
       kind: "adaptive_coverage",
       reason: "adaptive_convergence",
+    });
+    expect(converged.state.arenaOutcome).toMatchObject({
+      version: 2,
+      kind: "non_discriminating",
+      decisionBasis: "no_differentiator",
+      competitiveLandingCount: 0,
+      sharedDefectCount: 0,
+    });
+    expect(converged.state.arenaOutcome).not.toHaveProperty("championId");
+    expect(converged.state.ranking).toMatchObject({
+      winner: null,
+      draw: false,
+      order: ["a", "b"],
+    });
+    expect(converged.state.patchRecommendation).toMatchObject({
+      reason: "no_differentiator",
+    });
+    expect(converged.state.patchRecommendation).not.toHaveProperty(
+      "contestantId",
+    );
+    const completionEvent = (
+      await readFile(converged.state.artifacts.events!, "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => ArenaEventSchema.parse(JSON.parse(line)))
+      .find((event) => event.type === "battle_completed");
+    expect(completionEvent).toMatchObject({
+      type: "battle_completed",
+      status: "complete",
+      outcomeKind: "non_discriminating",
+      decisionBasis: "no_differentiator",
+      competitiveLandingCount: 0,
+      sharedDefectCount: 0,
+      explicitEmptyLaneCount: 2,
+    });
+    expect(completionEvent).not.toHaveProperty("championId");
+    const durableResult = JSON.parse(
+      await readFile(converged.state.artifacts.result!, "utf8"),
+    ) as {
+      schemaVersion: number;
+      outcome?: Record<string, unknown>;
+      adaptiveDecisions?: Array<{
+        version?: unknown;
+        signal?: {
+          lowSignal?: unknown;
+          consecutiveLowSignalCount?: unknown;
+        };
+      }>;
+    };
+    expect(durableResult).toMatchObject({
+      schemaVersion: 10,
+      outcome: {
+        version: 2,
+        kind: "non_discriminating",
+        decisionBasis: "no_differentiator",
+      },
+    });
+    expect(durableResult.outcome).not.toHaveProperty("championId");
+    expect(durableResult.adaptiveDecisions?.[0]).toMatchObject({
+      version: 2,
+      signal: {
+        lowSignal: true,
+        consecutiveLowSignalCount: 1,
+      },
     });
 
     const evidenceRoot = await createSlugRepository();
@@ -296,7 +374,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         "Collapse every run of whitespace to one hyphen",
         "Return a lowercase slug",
       ],
-      effortMode: "low",
+      effortMode: "ultra-low",
       fixedRounds: false,
       rounds: 1,
     });
@@ -324,6 +402,351 @@ describe("fake-adapter fight on a mocked real issue", () => {
       extensionQualified: true,
     });
     expect(evidence.state.adaptiveDecisions.at(-1)?.action).toBe("stop");
+  }, 60_000);
+
+  it("uses a fresh anonymized judge comparison only to recommend a non-discriminating patch", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      effortMode: "ultra-low",
+      fixedRounds: false,
+      rounds: 1,
+    });
+    const compare = vi.fn((input: PatchQualityVerifierInput) => {
+      void input;
+      return Promise.resolve({
+        version: 1 as const,
+        verdict: "patch_b" as const,
+        criteria: [],
+        rationale: ["Patch B keeps the narrower production boundary."],
+      });
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new ConvergedEmptyLaneAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new ConvergedEmptyLaneAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+      qualityVerifier: { id: "fixture-quality", compare },
+    }).fight(config);
+
+    expect(compare).toHaveBeenCalledOnce();
+    const input = compare.mock.calls[0]![0];
+    expect(input).not.toHaveProperty("runSpec");
+    expect(input.taskContract.task).toBe("Normalize slug whitespace.");
+    expect(Object.keys(input.finalValidation).sort()).toEqual([
+      "patch_a",
+      "patch_b",
+    ]);
+    expect(input.patches.map((patch) => patch.label).sort()).toEqual([
+      "patch_a",
+      "patch_b",
+    ]);
+    expect(input.patches[0].facts).not.toHaveProperty("contestantId");
+    expect(outcome.state.arenaOutcome).toMatchObject({
+      kind: "non_discriminating",
+      decisionBasis: "independent_patch_quality",
+    });
+    expect(outcome.state.arenaOutcome).not.toHaveProperty("championId");
+    expect(outcome.state.patchRecommendation?.contestantId).toMatch(/^[ab]$/u);
+    expect(outcome.state.patchRecommendation?.reason).toBe(
+      "implementation_quality",
+    );
+    expect(
+      outcome.state.reviewPrompt?.choices.flatMap((choice) => choice.badges),
+    ).not.toContain("arena_champion");
+    const review = await reviewRun({
+      runId: outcome.state.runId,
+      repositoryRoot,
+    });
+    const firstChoice = review.choices[0];
+    if (!firstChoice) throw new Error("Expected a reviewable patch");
+    await expect(
+      recordReviewDecision({
+        runId: outcome.state.runId,
+        repositoryRoot,
+        promptId: review.promptId,
+        decision: "accept",
+        selection: "champion",
+        expectedBaseCommit: review.baseCommit,
+        approval: {
+          channel: "api",
+          promptId: review.promptId,
+          provenance: {
+            kind: "direct_tty",
+            confirmedPatchSha256: firstChoice.patchSha256,
+          },
+        },
+        idempotencyKey: "non-discriminating-champion-unavailable",
+      }),
+    ).rejects.toThrow("missing or ineligible");
+  }, 60_000);
+
+  it("pivots a planned second round and stops after two consecutive low-signal rounds", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      effortMode: "medium",
+      fixedRounds: false,
+      rounds: 2,
+      selectionEnabled: false,
+    });
+    const codex = new ConvergedEmptyLaneAdapter({
+      id: "codex",
+      executable: process.execPath,
+      args: [fixtureAgent],
+    });
+    const claude = new ConvergedEmptyLaneAdapter({
+      id: "claude",
+      executable: process.execPath,
+      args: [fixtureAgent],
+    });
+    const outcome = await new Arena({
+      adapters: { codex, claude },
+      verifier: new RuleBasedVerifier("codex"),
+    }).fight(config);
+
+    expect(outcome.state.adaptiveDecisions).toHaveLength(2);
+    const [firstDecision, secondDecision] = outcome.state.adaptiveDecisions;
+    expect(firstDecision).toMatchObject({
+      round: 1,
+      action: "continue",
+      reason: "planned_rounds_remaining",
+    });
+    expect(
+      firstDecision && "signal" in firstDecision
+        ? firstDecision.signal
+        : undefined,
+    ).toMatchObject({
+      lowSignal: true,
+      consecutiveLowSignalCount: 1,
+    });
+    expect(secondDecision).toMatchObject({
+      round: 2,
+      action: "stop",
+      reason: "repeated_low_signal",
+    });
+    expect(
+      secondDecision && "signal" in secondDecision
+        ? secondDecision.signal
+        : undefined,
+    ).toMatchObject({
+      lowSignal: true,
+      consecutiveLowSignalCount: 2,
+    });
+    const secondRoundPrompts = [
+      ...codex.seenPrompts,
+      ...claude.seenPrompts,
+    ].filter((prompt) => prompt.includes("# Round 2 brief"));
+    expect(secondRoundPrompts.length).toBeGreaterThan(0);
+    expect(
+      secondRoundPrompts.every((prompt) =>
+        prompt.includes("# Required low-signal pivot"),
+      ),
+    ).toBe(true);
+    expect(
+      secondRoundPrompts.every((prompt) =>
+        prompt.includes("Do not repeat a prior claim"),
+      ),
+    ).toBe(true);
+    expect(outcome.state.adaptiveCompletion).toMatchObject({
+      reason: "repeated_low_signal",
+    });
+  }, 60_000);
+
+  it("keeps a non-discriminating battle complete when the quality comparison fails twice", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      effortMode: "low",
+      fixedRounds: false,
+      rounds: 1,
+    });
+    const compare = vi.fn((input: PatchQualityVerifierInput) => {
+      void input;
+      return Promise.reject(new Error("fixture quality transport failure"));
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new ConvergedEmptyLaneAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new ConvergedEmptyLaneAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+      qualityVerifier: { id: "fixture-failing-quality", compare },
+    }).fight(config);
+
+    expect(compare).toHaveBeenCalledTimes(2);
+    expect(outcome.state.status).toBe("complete");
+    expect(outcome.state.arenaOutcome).toMatchObject({
+      kind: "non_discriminating",
+      decisionBasis: "no_differentiator",
+    });
+    expect(outcome.state.patchRecommendation).toMatchObject({
+      reason: "no_differentiator",
+      qualityVerdict: "inconclusive",
+    });
+    expect(outcome.state.patchRecommendation).not.toHaveProperty(
+      "contestantId",
+    );
+    expect(outcome.state.failureRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "model_invocation",
+          subject: "quality-verifier",
+          terminalDisposition: "advisory_unavailable",
+          attempts: [
+            expect.objectContaining({ attempt: 1, status: "failed" }),
+            expect.objectContaining({ attempt: 2, status: "failed" }),
+          ],
+        }),
+      ]),
+    );
+  }, 60_000);
+
+  it("leaves low-effort equivalent and selection-disabled battles unrecommended", async () => {
+    const equivalentRoot = await createSlugRepository();
+    const equivalentCompare = vi.fn((input: PatchQualityVerifierInput) => {
+      void input;
+      return Promise.resolve({
+        version: 1 as const,
+        verdict: "equivalent" as const,
+        criteria: [],
+        rationale: ["The anonymized implementations are equivalent."],
+      });
+    });
+    const equivalent = await new Arena({
+      adapters: {
+        codex: new ConvergedEmptyLaneAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new ConvergedEmptyLaneAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+      qualityVerifier: {
+        id: "fixture-equivalent-quality",
+        compare: equivalentCompare,
+      },
+    }).fight(
+      FightConfigSchema.parse({
+        ...duelConfig(equivalentRoot),
+        effortMode: "low",
+        fixedRounds: false,
+        rounds: 1,
+      }),
+    );
+    expect(equivalentCompare).toHaveBeenCalledOnce();
+    expect(equivalent.state.status).toBe("complete");
+    expect(equivalent.state.arenaOutcome).toMatchObject({
+      kind: "non_discriminating",
+    });
+    expect(equivalent.state.patchRecommendation).toMatchObject({
+      reason: "no_differentiator",
+      qualityVerdict: "equivalent",
+    });
+    expect(equivalent.state.patchRecommendation).not.toHaveProperty(
+      "contestantId",
+    );
+    const equivalentReview = await reviewRun({
+      runId: equivalent.state.runId,
+      repositoryRoot: equivalentRoot,
+    });
+    const explicitChoice = equivalentReview.choices.find(
+      (choice) => choice.contestantId === "a",
+    );
+    if (!explicitChoice) throw new Error("Expected explicit patch A choice");
+    await expect(
+      recordReviewDecision({
+        runId: equivalent.state.runId,
+        repositoryRoot: equivalentRoot,
+        promptId: equivalentReview.promptId,
+        decision: "accept",
+        selection: "a",
+        expectedPatchSha256: explicitChoice.patchSha256,
+        expectedBaseCommit: equivalentReview.baseCommit,
+        approval: {
+          channel: "api",
+          promptId: equivalentReview.promptId,
+          provenance: {
+            kind: "direct_tty",
+            confirmedPatchSha256: explicitChoice.patchSha256,
+          },
+        },
+        idempotencyKey: "non-discriminating-explicit-choice",
+      }),
+    ).resolves.toMatchObject({
+      status: "accepted",
+      selectedContestantId: "a",
+      selectionSource: "contestant",
+    });
+
+    const disabledRoot = await createSlugRepository();
+    const disabledCompare = vi.fn((input: PatchQualityVerifierInput) => {
+      void input;
+      return Promise.reject(
+        new Error("selection-disabled comparator must not run"),
+      );
+    });
+    const disabled = await new Arena({
+      adapters: {
+        codex: new ConvergedEmptyLaneAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new ConvergedEmptyLaneAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+      qualityVerifier: {
+        id: "fixture-disabled-quality",
+        compare: disabledCompare,
+      },
+    }).fight(
+      FightConfigSchema.parse({
+        ...duelConfig(disabledRoot),
+        effortMode: "low",
+        fixedRounds: false,
+        rounds: 1,
+        selectionEnabled: false,
+      }),
+    );
+    expect(disabledCompare).not.toHaveBeenCalled();
+    expect(disabled.state.status).toBe("complete");
+    expect(disabled.state.arenaOutcome).toMatchObject({
+      kind: "non_discriminating",
+    });
+    expect(disabled.state.patchRecommendation).toMatchObject({
+      reason: "no_differentiator",
+      qualityVerdict: "inconclusive",
+    });
+    expect(disabled.state.patchRecommendation).not.toHaveProperty(
+      "contestantId",
+    );
   }, 60_000);
 
   it("isolates two slots that use the same provider", async () => {
@@ -1696,7 +2119,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         "utf8",
       ),
     ) as { schemaVersion: number; stage: string };
-    expect(result).toMatchObject({ schemaVersion: 9, stage: "complete" });
+    expect(result).toMatchObject({ schemaVersion: 10, stage: "complete" });
     const roundDirectory = path.join(
       outcome.state.artifacts.runDirectory!,
       "rounds",
@@ -1791,8 +2214,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       contentHash: string;
       task: { sources: Array<{ kind: string; snapshotPath: string }> };
     };
-    expect(outcome.state.schemaVersion).toBe(8);
-    if (outcome.state.schemaVersion !== 8) throw new Error("expected v8 state");
+    expect(outcome.state.schemaVersion).toBe(9);
+    if (outcome.state.schemaVersion !== 9) throw new Error("expected v9 state");
     expect(outcome.state.runSpecHash).toBe(runSpec.contentHash);
     const issueSnapshot = runSpec.task.sources.find(
       (source) => source.kind === "issue",

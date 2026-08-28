@@ -282,7 +282,24 @@ export const RoundConsumptionSchema = z
   })
   .strict();
 
-export const AdaptiveRoundDecisionSchema = z
+export const AdaptiveRoundDecisionReasonSchema = z.enum([
+  "fixed_rounds_remaining",
+  "fixed_rounds_complete",
+  "planned_rounds_remaining",
+  "strong_evidence_despite_budget_pressure",
+  "extension_qualified",
+  "adaptive_convergence",
+  "planned_effort_complete",
+  "round_time_budget_exhausted",
+  "round_invocation_budget_exhausted",
+  "round_token_budget_exhausted",
+  "extension_not_qualified",
+  "extension_limit_reached",
+  "terminal_condition",
+  "repeated_low_signal",
+]);
+
+const AdaptiveRoundDecisionV1Schema = z
   .object({
     version: z.literal(1),
     round: z.number().int().min(1).max(5),
@@ -291,26 +308,41 @@ export const AdaptiveRoundDecisionSchema = z
     extensionQualified: z.boolean(),
     extensionTriggerDefectIds: z.array(z.string().min(1)),
     action: z.enum(["continue", "stop"]),
-    reason: z.enum([
-      "fixed_rounds_remaining",
-      "fixed_rounds_complete",
-      "planned_rounds_remaining",
-      "strong_evidence_despite_budget_pressure",
-      "extension_qualified",
-      "adaptive_convergence",
-      "planned_effort_complete",
-      "round_time_budget_exhausted",
-      "round_invocation_budget_exhausted",
-      "round_token_budget_exhausted",
-      "extension_not_qualified",
-      "extension_limit_reached",
-      "terminal_condition",
-    ]),
+    reason: AdaptiveRoundDecisionReasonSchema,
     skippedBriefs: z.array(z.string().min(1)),
     decidedAt: z.string().datetime(),
   })
   .strict();
+export const LowSignalTelemetrySchema = z
+  .object({
+    competitiveLandings: z.number().int().nonnegative(),
+    sharedDefects: z.number().int().nonnegative(),
+    explicitEmptyLanes: z.number().int().nonnegative(),
+    lowSignal: z.boolean(),
+    consecutiveLowSignalCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export const AdaptiveRoundDecisionV2Schema = AdaptiveRoundDecisionV1Schema.omit(
+  { version: true },
+).extend({
+  version: z.literal(2),
+  signal: LowSignalTelemetrySchema,
+});
+export const AdaptiveRoundDecisionSchema = z.union([
+  AdaptiveRoundDecisionV1Schema,
+  AdaptiveRoundDecisionV2Schema,
+]);
 export type AdaptiveRoundDecision = z.infer<typeof AdaptiveRoundDecisionSchema>;
+
+export function nextLowSignalCount(
+  lowSignal: boolean,
+  previousDecision?: AdaptiveRoundDecision,
+): number {
+  if (!lowSignal) return 0;
+  return previousDecision?.version === 2 && previousDecision.signal.lowSignal
+    ? previousDecision.signal.consecutiveLowSignalCount + 1
+    : 1;
+}
 
 export function decideAdaptiveRound(input: {
   round: 1 | 2 | 3 | 4 | 5;
@@ -318,6 +350,8 @@ export function decideAdaptiveRound(input: {
   profile: EffortProfile;
   convergencePassed: boolean;
   extensionQualified: boolean;
+  lowSignal?: boolean;
+  consecutiveLowSignalCount?: number;
   terminalCondition?: boolean;
   pressureReason?: Extract<
     AdaptiveRoundDecision["reason"],
@@ -332,7 +366,12 @@ export function decideAdaptiveRound(input: {
     return input.round < input.fixedRounds
       ? { action: "continue", reason: "fixed_rounds_remaining" }
       : { action: "stop", reason: "fixed_rounds_complete" };
-  if (input.convergencePassed)
+  if ((input.consecutiveLowSignalCount ?? 0) >= 2)
+    return { action: "stop", reason: "repeated_low_signal" };
+  if (
+    input.convergencePassed &&
+    !(input.lowSignal && input.round < input.profile.plannedRounds)
+  )
     return { action: "stop", reason: "adaptive_convergence" };
   if (input.round < input.profile.plannedRounds) {
     if (input.pressureReason && input.extensionQualified)

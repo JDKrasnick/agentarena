@@ -40,6 +40,7 @@ export const FailureDispositionSchema = z.enum([
   "judge_partial",
   "judge_rejected",
   "judge_unable",
+  "advisory_unavailable",
   "coverage_lost",
   "run_level_coverage_lost",
 ]);

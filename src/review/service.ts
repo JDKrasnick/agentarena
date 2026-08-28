@@ -156,9 +156,9 @@ export async function recordReviewDecision(
       : options.selection === "recommended"
         ? state.patchRecommendation?.contestantId
         : options.selection === "champion"
-          ? (state.arenaOutcome?.championId ??
-            state.ranking?.winner ??
-            undefined)
+          ? state.arenaOutcome
+            ? state.arenaOutcome.championId
+            : state.ranking?.winner
           : options.selection;
   const choice = selected
     ? prompt.choices.find((candidate) => candidate.contestantId === selected)

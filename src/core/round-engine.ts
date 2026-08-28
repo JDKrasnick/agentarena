@@ -75,6 +75,11 @@ import { renderBattleHtml } from "../reports/html.js";
 import { renderBattleReport } from "../reports/markdown.js";
 import { renderBattleVisual } from "../reports/visual.js";
 import { deriveArenaOutcome } from "../outcomes/derive-outcome.js";
+import {
+  competitiveLandings,
+  explicitEmptyLaneCount,
+  sharedDefects,
+} from "../outcomes/evidence.js";
 import { collectPatchQualityFacts } from "../quality/collect-facts.js";
 import { isManifestPath } from "../quality/manifest-adapters.js";
 import {
@@ -118,6 +123,7 @@ import type { RunSpec } from "../contracts/round.js";
 import {
   resolveEffortProfile,
   decideAdaptiveRound,
+  nextLowSignalCount,
   scoreEffort,
   TaskEffortAssessmentV1Schema,
   unavailableTokenTelemetry,
@@ -599,6 +605,24 @@ export class RoundEngine {
       null,
       2,
     );
+  }
+
+  private lowSignalPivotInstruction(
+    context: ArenaContext,
+    round: RoundId,
+  ): string | undefined {
+    if (typeof round !== "number" || round <= 1) return undefined;
+    const previous = context.state.adaptiveDecisions.find(
+      (decision) => decision.round === round - 1,
+    );
+    if (
+      !previous ||
+      previous.action !== "continue" ||
+      !("signal" in previous) ||
+      !previous.signal.lowSignal
+    )
+      return undefined;
+    return `Round ${String(round - 1)} completed with low signal. Use this round's distinct investigation theme as a deliberate pivot. Do not repeat a prior claim, cited invariant, input family, or probe shape unless new concrete evidence changes the hypothesis.`;
   }
 
   private profileWithOverrides(
@@ -1094,7 +1118,7 @@ export class RoundEngine {
         contractWarnings.push(targetResolution.reason);
       const startedAt = this.now().toISOString();
       let state: RunState = {
-        schemaVersion: 8,
+        schemaVersion: 9,
         runId,
         harnessVersion: "0.1.0",
         status: "running",
@@ -1149,8 +1173,8 @@ export class RoundEngine {
       };
       if (replacement?.inheritedState) {
         const inherited = structuredClone(replacement.inheritedState);
-        if (inherited.schemaVersion !== 8)
-          throw new Error("Provider recovery requires durable V8 parent state");
+        if (inherited.schemaVersion !== 9)
+          throw new Error("Provider recovery requires durable V9 parent state");
         delete inherited.terminalOutcome;
         delete inherited.providerFailure;
         delete inherited.completedAt;
@@ -1393,9 +1417,9 @@ export class RoundEngine {
     });
     await store.initialize();
     const summary = await store.readSummary();
-    if (!summary || summary.schemaVersion !== 9)
+    if (!summary || summary.schemaVersion !== 10)
       throw new Error(
-        "Interrupted runs older than adaptive schema v9 cannot resume; restart the fight. Completed legacy artifacts remain readable.",
+        "Interrupted runs older than outcome schema v10 cannot resume; restart the fight. Completed legacy artifacts remain readable.",
       );
     await appendRecoveryEvent({
       store,
@@ -1403,9 +1427,9 @@ export class RoundEngine {
       now: this.now(),
     });
     let state = await store.readState();
-    if (state.schemaVersion !== 8)
+    if (state.schemaVersion !== 9)
       throw new Error(
-        "Interrupted pre-V8 runs are read-only legacy artifacts and cannot continue; restart the fight to create a V8 run",
+        "Interrupted pre-V9 runs are read-only legacy artifacts and cannot continue; restart the fight to create a V9 run",
       );
     const config = FightConfigSchema.parse({
       ...state.config,
@@ -2511,6 +2535,24 @@ export class RoundEngine {
           .filter((check) => ["required", "focused"].includes(check.kind))
           .every((check) => check.status === "passed"),
       );
+    const competitiveLandingCount = competitiveLandings(
+      context.state,
+      round,
+    ).length;
+    const sharedDefectCount = sharedDefects(context.state, round).length;
+    const explicitEmptyLanes = explicitEmptyLaneCount(context.state, round);
+    const lowSignal =
+      intactExecutedLaneCoverage &&
+      !unresolved &&
+      competitiveLandingCount === 0 &&
+      zeroActiveDamage;
+    const priorDecision = context.state.adaptiveDecisions
+      .filter((decision) => decision.round < round)
+      .sort((left, right) => right.round - left.round)[0];
+    const consecutiveLowSignalCount = nextLowSignalCount(
+      lowSignal,
+      priorDecision,
+    );
     const convergence = {
       intactExecutedLaneCoverage,
       noUnresolvedAdjudication: !unresolved,
@@ -2567,6 +2609,8 @@ export class RoundEngine {
       profile,
       convergencePassed: convergence.passed,
       extensionQualified,
+      lowSignal,
+      consecutiveLowSignalCount,
       terminalCondition: this.shouldStop(context),
       ...(pressureReason ? { pressureReason } : {}),
       ...(context.runSpec.effort.fixedRounds
@@ -2586,7 +2630,7 @@ export class RoundEngine {
     const skippedBriefs =
       action === "stop" ? briefs.slice(round, profile.maxRounds) : [];
     const decision: AdaptiveRoundDecision = {
-      version: 1,
+      version: 2,
       round,
       consumption,
       convergence,
@@ -2594,6 +2638,13 @@ export class RoundEngine {
       extensionTriggerDefectIds,
       action,
       reason,
+      signal: {
+        competitiveLandings: competitiveLandingCount,
+        sharedDefects: sharedDefectCount,
+        explicitEmptyLanes,
+        lowSignal,
+        consecutiveLowSignalCount,
+      },
       skippedBriefs,
       decidedAt: finishedAt.toISOString(),
     };
@@ -3710,6 +3761,10 @@ export class RoundEngine {
           ? { attackerId: attack.origin.contestant }
           : {}),
         ...(attack.targets[0] ? { targetId: attack.targets[0] } : {}),
+        evidenceClass:
+          attack.origin.kind === "contestant"
+            ? ("competitive" as const)
+            : ("shared" as const),
       };
       const key = `attack:${attack.id}:${attack.status}`;
       if (!emitted.has(key)) {
@@ -3833,6 +3888,17 @@ export class RoundEngine {
       ),
       ...(context.state.arenaOutcome?.championId
         ? { championId: context.state.arenaOutcome.championId }
+        : {}),
+      ...(context.state.arenaOutcome && "kind" in context.state.arenaOutcome
+        ? {
+            outcomeKind: context.state.arenaOutcome.kind,
+            decisionBasis: context.state.arenaOutcome.decisionBasis,
+            competitiveLandingCount:
+              context.state.arenaOutcome.competitiveLandingCount,
+            sharedDefectCount: context.state.arenaOutcome.sharedDefectCount,
+            explicitEmptyLaneCount:
+              context.state.arenaOutcome.explicitEmptyLaneCount,
+          }
         : {}),
       ...(context.state.patchRecommendation?.contestantId
         ? { recommendedId: context.state.patchRecommendation.contestantId }
@@ -4744,6 +4810,14 @@ export class RoundEngine {
       agent: options.agent,
       target: options.target,
       round: options.round,
+      ...(this.lowSignalPivotInstruction(context, options.round)
+        ? {
+            roundPivotInstruction: this.lowSignalPivotInstruction(
+              context,
+              options.round,
+            )!,
+          }
+        : {}),
       runSpec: context.runSpec,
       config: context.config,
       permissions: context.permissions,
@@ -5144,6 +5218,14 @@ export class RoundEngine {
           agent: reviewer,
           target,
           round,
+          ...(this.lowSignalPivotInstruction(context, round)
+            ? {
+                roundPivotInstruction: this.lowSignalPivotInstruction(
+                  context,
+                  round,
+                )!,
+              }
+            : {}),
           runSpec: context.runSpec,
           config: context.config,
           permissions: context.permissions,
@@ -6430,6 +6512,14 @@ export class RoundEngine {
       agent: context.config.agents[0] ?? "a",
       stage: "attack",
       round,
+      ...(this.lowSignalPivotInstruction(context, round)
+        ? {
+            roundPivotInstruction: this.lowSignalPivotInstruction(
+              context,
+              round,
+            )!,
+          }
+        : {}),
       runSpec: context.runSpec,
       config: context.config,
       permissions: context.permissions,
@@ -6814,6 +6904,14 @@ export class RoundEngine {
             target,
             stage: "attack",
             round,
+            ...(this.lowSignalPivotInstruction(context, round)
+              ? {
+                  roundPivotInstruction: this.lowSignalPivotInstruction(
+                    context,
+                    round,
+                  )!,
+                }
+              : {}),
             runSpec: context.runSpec,
             config: context.config,
             permissions: context.permissions,
@@ -6966,6 +7064,14 @@ export class RoundEngine {
                   agent,
                   target,
                   round,
+                  ...(this.lowSignalPivotInstruction(context, round)
+                    ? {
+                        roundPivotInstruction: this.lowSignalPivotInstruction(
+                          context,
+                          round,
+                        )!,
+                      }
+                    : {}),
                   runSpec: context.runSpec,
                   config: context.config,
                   permissions: context.permissions,
@@ -7146,6 +7252,14 @@ export class RoundEngine {
                   target,
                   stage: "attack",
                   round,
+                  ...(this.lowSignalPivotInstruction(context, round)
+                    ? {
+                        roundPivotInstruction: this.lowSignalPivotInstruction(
+                          context,
+                          round,
+                        )!,
+                      }
+                    : {}),
                   runSpec: context.runSpec,
                   config: context.config,
                   permissions: context.permissions,
@@ -8177,6 +8291,14 @@ export class RoundEngine {
           agent,
           stage: "repair",
           round,
+          ...(this.lowSignalPivotInstruction(context, round)
+            ? {
+                roundPivotInstruction: this.lowSignalPivotInstruction(
+                  context,
+                  round,
+                )!,
+              }
+            : {}),
           runSpec: context.runSpec,
           config: context.config,
           permissions: context.permissions,
@@ -10128,7 +10250,18 @@ export class RoundEngine {
   }
 
   private async finalizeRecommendation(context: ArenaContext): Promise<void> {
-    context.state.arenaOutcome = deriveArenaOutcome(context.state);
+    await this.finalizeCoverage(context);
+    const arenaOutcome = deriveArenaOutcome(context.state);
+    context.state.arenaOutcome = arenaOutcome;
+    if (arenaOutcome.kind === "non_discriminating") {
+      context.state.ranking = {
+        winner: null,
+        draw: false,
+        order: [...context.config.agents].sort(),
+        reason:
+          "Non-discriminating battle: complete bidirectional coverage produced no still-valid competitive landing and both eligible patches retain equal active defect damage.",
+      };
+    }
     const productionAgents = context.config.agents.filter(
       (agent) =>
         context.config.mode !== "siege" ||
@@ -10168,6 +10301,8 @@ export class RoundEngine {
         ? [left, right].map((agent) => getContestant(context.state, agent))
         : [];
     const shouldCompareQuality =
+      arenaOutcome.kind === "non_discriminating" &&
+      context.state.coverageAssessment?.confidence !== "provisional" &&
       comparableContestants.length === 2 &&
       comparableContestants.every(
         (contestant) =>
@@ -10191,7 +10326,7 @@ export class RoundEngine {
     const qualityStartedAt = this.now();
     if (
       context.config.selectionEnabled &&
-      context.state.schemaVersion < 6 &&
+      context.state.schemaVersion >= 9 &&
       shouldCompareQuality &&
       this.dependencies.qualityVerifier &&
       anonymizationMap
@@ -10227,17 +10362,11 @@ export class RoundEngine {
           anonymizationMap,
         );
         const input = {
-          runSpec: context.runSpec,
+          taskContract: context.runSpec.task,
           finalValidation: Object.fromEntries(
-            context.config.agents.map((agent) => [
-              agent === anonymizationMap.patch_a ? "patch_a" : "patch_b",
-              getContestant(context.state, agent).checks,
-            ]),
-          ),
-          activeDefects: Object.fromEntries(
-            context.config.agents.map((agent) => [
-              agent === anonymizationMap.patch_a ? "patch_a" : "patch_b",
-              getContestant(context.state, agent).healthLedger.activeDefects,
+            (["a", "b"] as const).map((contestantId) => [
+              contestantId === anonymizationMap.patch_a ? "patch_a" : "patch_b",
+              getContestant(context.state, contestantId).checks,
             ]),
           ),
           patches: [
@@ -10257,6 +10386,7 @@ export class RoundEngine {
           transcriptPrefix: context.store.resolve("logs/quality-verifier"),
           timeoutMs: context.config.limits.verifierMs,
           signal: context.controller.signal,
+          observer: context.observer,
         };
         await context.store.writeImmutableJson("quality/input.json", {
           ...input,
@@ -10311,12 +10441,18 @@ export class RoundEngine {
     });
     context.state.patchRecommendation = selectRecommendedPatch({
       contestants: context.state.contestants,
-      ...(context.state.arenaOutcome.championId
-        ? { championId: context.state.arenaOutcome.championId }
+      ...(arenaOutcome.championId
+        ? { championId: arenaOutcome.championId }
         : {}),
       qualityVerdict: verdict,
+      outcomeKind: arenaOutcome.kind,
       ...(anonymizationMap ? { anonymizationMap } : {}),
     });
+    if (
+      arenaOutcome.kind === "non_discriminating" &&
+      context.state.patchRecommendation.reason === "implementation_quality"
+    )
+      arenaOutcome.decisionBasis = "independent_patch_quality";
     context.state.reviewPrompt = buildReviewPrompt(context.state);
     await context.store.writeImmutableJson(
       "review-prompt.json",

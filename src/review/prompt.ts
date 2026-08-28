@@ -12,7 +12,9 @@ export function buildReviewPrompt(state: RunState): ReviewPrompt {
   const recommendation = state.patchRecommendation?.contestantId;
   const champion = state.terminalOutcome
     ? undefined
-    : (state.arenaOutcome?.championId ?? state.ranking?.winner);
+    : state.arenaOutcome
+      ? state.arenaOutcome.championId
+      : state.ranking?.winner;
   const selectableContestants = Object.values(state.contestants).filter(
     (contestant) =>
       Boolean(contestant.finalPatchPath) &&

@@ -138,7 +138,9 @@ export function renderBattleHtml(state: RunState): string {
           ? `${winner} won`
           : outcome.kind === "draw"
             ? "Draw result"
-            : "Battle incomplete";
+            : outcome.kind === "non_discriminating"
+              ? "Non-discriminating battle"
+              : "Battle incomplete";
   const decisionHeading =
     state.coverageAssessment?.confidence === "provisional" &&
     !state.coverageDecision
@@ -147,10 +149,17 @@ export function renderBattleHtml(state: RunState): string {
         ? `Why ${winner} won`
         : outcome.kind === "draw"
           ? "Why the battle ended in a draw"
-          : "Why the battle is incomplete";
+          : outcome.kind === "non_discriminating"
+            ? "Why no arena champion was awarded"
+            : "Why the battle is incomplete";
   const defects = reportDefects(state);
   const unresolved = defects.filter((defect) => defect.active);
-  const repaired = defects.filter((defect) => !defect.active);
+  const competitiveDefects = defects.filter(
+    (defect) => defect.evidenceClass === "competitive",
+  );
+  const sharedDefects = defects.filter(
+    (defect) => defect.evidenceClass === "shared",
+  );
   const checkIds = [
     ...new Set(
       contestants.flatMap((contestant) =>
@@ -171,10 +180,18 @@ export function renderBattleHtml(state: RunState): string {
     ? state.adaptiveDecisions
         .map((decision) => {
           const telemetry = decision.consumption.tokenTelemetry;
-          return `<tr><th>Round ${String(decision.round)}</th><td>${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s</td><td>${String(decision.consumption.providerCalls)}</td><td>${escapeHtml(telemetry.state)}${telemetry.totalTokens === undefined ? "" : ` (${String(telemetry.totalTokens)})`}</td><td>${decision.convergence.passed ? "yes" : "no"}</td><td>${escapeHtml(decision.extensionTriggerDefectIds.join(", ") || "none")}</td><td>${escapeHtml(`${decision.action}: ${decision.reason}`)}</td></tr>`;
+          const signal =
+            decision.version === 2
+              ? `${decision.signal.lowSignal ? "low" : "present"} · ${String(decision.signal.competitiveLandings)} competitive · ${String(decision.signal.sharedDefects)} shared · ${String(decision.signal.explicitEmptyLanes)} empty`
+              : "legacy / unknown";
+          const streak =
+            decision.version === 2
+              ? String(decision.signal.consecutiveLowSignalCount)
+              : "—";
+          return `<tr><th>Round ${String(decision.round)}</th><td>${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s</td><td>${String(decision.consumption.providerCalls)}</td><td>${escapeHtml(telemetry.state)}${telemetry.totalTokens === undefined ? "" : ` (${String(telemetry.totalTokens)})`}</td><td>${decision.convergence.passed ? "yes" : "no"}</td><td>${escapeHtml(signal)}</td><td>${escapeHtml(streak)}</td><td>${escapeHtml(decision.extensionTriggerDefectIds.join(", ") || "none")}</td><td>${escapeHtml(`${decision.action}: ${decision.reason}`)}</td></tr>`;
         })
         .join("")
-    : `<tr><td colspan="7">No adaptive decisions were recorded.</td></tr>`;
+    : `<tr><td colspan="9">No adaptive decisions were recorded.</td></tr>`;
   const contestantCards = contestants
     .map((contestant) => {
       const outcome = state.arenaOutcome?.contestants[contestant.id];
@@ -229,10 +246,10 @@ export function renderBattleHtml(state: RunState): string {
                 : [],
             ),
           ].join(" · ");
-          return `<tr><td>R${String(attack.round)}</td><td>${escapeHtml(attackAuthor(state, attack))}</td><td>${escapeHtml(target)}</td><td>${chip(attack.status.replaceAll("_", " "), statusTone)}</td><td><strong>${escapeHtml(attack.claim)}</strong><span class="subtle">${escapeHtml(attackNarrative(attack))}</span></td><td>${escapeHtml(attack.severity ?? "—")}<span class="subtle">${escapeHtml(attackEffect(attack))}</span></td><td>${evidence}</td></tr>`;
+          return `<tr><td>R${String(attack.round)}</td><td>${escapeHtml(attackAuthor(state, attack))}</td><td>${escapeHtml(target)}</td><td>${chip(attack.status.replaceAll("_", " "), statusTone)}</td><td>${escapeHtml(attack.origin.kind === "house" ? "shared" : "competitive")}</td><td><strong>${escapeHtml(attack.claim)}</strong><span class="subtle">${escapeHtml(attackNarrative(attack))}</span></td><td>${escapeHtml(attack.severity ?? "—")}<span class="subtle">${escapeHtml(attackEffect(attack))}</span></td><td>${evidence}</td></tr>`;
         })
         .join("\n")
-    : `<tr><td colspan="7">No attacks were submitted.</td></tr>`;
+    : `<tr><td colspan="8">No attacks were submitted.</td></tr>`;
   const rounds = reportRounds(state);
   const roundRows = rounds
     .map((round) => {
@@ -362,14 +379,14 @@ export function renderBattleHtml(state: RunState): string {
 </style></head><body><main>
 <header class="masthead"><div><p class="eyebrow">AGENT ARENA · EVIDENCE-LINKED BATTLE DOSSIER</p><h1>${escapeHtml(outcomeHeading)}</h1><p class="summary">${escapeHtml(state.ranking?.reason ?? "This run did not reach a final ranking.")} This dossier separates proven defects, unsuccessful attacks, verified checks, and the recommendation so the score is explainable.</p></div><nav class="artifacts" aria-label="Battle artifacts">${link(state, "Full report", state.artifacts.battle)} · ${link(state, "Raw result", state.artifacts.result)} · ${link(state, "Share image", state.artifacts.battleVisual)}</nav></header>
 <section class="section"><h2>Final decision</h2><div class="contestants">${contestantCards}</div></section>
-<section class="section"><h2>Effort and adaptive coverage</h2><p class="note"><strong>${escapeHtml(state.config.resolvedEffortProfile?.tier ?? state.config.effortMode)}</strong> · ${state.config.fixedRounds ? `${String(state.config.rounds)} exact rounds` : `${String(state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds)} planned, up to ${String(state.config.resolvedEffortProfile?.maxRounds ?? state.config.rounds)}`} · ${escapeHtml(state.adaptiveCompletion?.reason ?? "run in progress or fixed-round completion")}. Skipped briefs: ${escapeHtml(state.adaptiveCompletion?.skippedBriefs.join(", ") || "none")}.</p><p class="note">Configured budget: ${escapeHtml(effortBudget)}.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Boundary</th><th>Wall time</th><th>Calls</th><th>Tokens</th><th>Converged</th><th>Extension triggers</th><th>Exact decision</th></tr></thead><tbody>${adaptiveRows}</tbody></table></div></section>
+<section class="section"><h2>Effort and adaptive coverage</h2><p class="note"><strong>${escapeHtml(state.config.resolvedEffortProfile?.tier ?? state.config.effortMode)}</strong> · ${state.config.fixedRounds ? `${String(state.config.rounds)} exact rounds` : `${String(state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds)} planned, up to ${String(state.config.resolvedEffortProfile?.maxRounds ?? state.config.rounds)}`} · ${escapeHtml(state.adaptiveCompletion?.reason ?? "run in progress or fixed-round completion")}. Skipped briefs: ${escapeHtml(state.adaptiveCompletion?.skippedBriefs.join(", ") || "none")}.</p><p class="note">Configured budget: ${escapeHtml(effortBudget)}.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Boundary</th><th>Wall time</th><th>Calls</th><th>Tokens</th><th>Converged</th><th>Signal</th><th>Low-signal streak</th><th>Extension triggers</th><th>Exact decision</th></tr></thead><tbody>${adaptiveRows}</tbody></table></div></section>
 ${laneCoverage}
 ${terminalNotice}
-<section class="section decision"><div class="callout"><strong>${escapeHtml(decisionHeading)}</strong><p>${escapeHtml(state.ranking?.reason ?? "No final ranking reason was recorded.")}</p><p class="note">The champion is determined by remaining health. Health starts at 100, then subtracts missed-attack recoil and active, un-repaired defect damage. Patch quality only breaks an equal-correctness tie.</p></div><div class="score"><dl><dt>Verified required suites</dt><dd>${requiredPassed ? chip("Both pass", "pass") : chip("Review failures", "fail")}</dd><dt>Proven defects</dt><dd>${String(defects.length)} (${String(unresolved.length)} unresolved, ${String(repaired.length)} repaired)</dd><dt>Deciding factors</dt><dd>${escapeHtml(state.arenaOutcome?.decidingFactors.join(", ") || "ranking")}</dd><dt>Recommended patch</dt><dd>${escapeHtml(recommendation)}</dd></dl></div></section>
+<section class="section decision"><div class="callout"><strong>${escapeHtml(decisionHeading)}</strong><p>${escapeHtml(state.ranking?.reason ?? "No final ranking reason was recorded.")}</p><p class="note">${outcome.kind === "non_discriminating" ? "Raw HP, recoil, shared defects, and patch size remain evidence, but none creates an arena champion. Any recommendation below is an independent identity-blind quality judgment." : "The champion is determined by remaining health. Health starts at 100, then subtracts missed-attack recoil and active, un-repaired defect damage."}</p></div><div class="score"><dl><dt>Verified required suites</dt><dd>${requiredPassed ? chip("Both pass", "pass") : chip("Review failures", "fail")}</dd><dt>Distinct defects</dt><dd>${String(defects.length)} (${String(unresolved.length)} unresolved, ${String(defects.length - unresolved.length)} repaired)</dd><dt>Competitive landings</dt><dd>${String(competitiveDefects.length)}</dd><dt>Shared QA defects</dt><dd>${String(sharedDefects.length)}</dd><dt>Explicit-empty lanes</dt><dd>${String(state.arenaOutcome && "explicitEmptyLaneCount" in state.arenaOutcome ? state.arenaOutcome.explicitEmptyLaneCount : (state.coverageAssessment?.evidenceCounts.explicitEmpty ?? 0))}</dd><dt>Deciding factors</dt><dd>${escapeHtml(state.arenaOutcome?.decidingFactors.join(", ") || "none")}</dd><dt>${outcome.kind === "non_discriminating" ? "Independent recommendation" : "Recommended patch"}</dt><dd>${escapeHtml(recommendation)}</dd></dl></div></section>
 <section class="section"><h2>Verified test coverage</h2><p class="note">These results apply to each named final patch in this run. “Not run” is intentionally not shown as a pass. Open stdout/stderr to inspect the harness evidence.</p><div class="table-wrap" tabindex="0"><table><caption>Recorded checks by contestant and exact command</caption><thead><tr><th>Check / command</th>${contestants.map((contestant) => `<th>${escapeHtml(contestantLabel(state.config.contestants, contestant.id))}</th>`).join("")}</tr></thead><tbody>${coverageRows}</tbody></table></div></section>
 <section class="section"><h2>What happened in each round</h2><div class="table-wrap" tabindex="0"><table><caption>Round outcomes and health after repair</caption><thead><tr><th>Investigation</th><th>Attack outcome</th><th>Health after repair</th><th>Artifacts</th></tr></thead><tbody>${roundRows}</tbody></table></div></section>
 <section class="section" aria-labelledby="phase-heading"><h2 id="phase-heading">Phase replay</h2>${phaseReplay}</section>
-<section class="section"><h2>Attack ledger — bugs found, misses, and repairs</h2><p class="note">Each row reports its recorded evidence basis; partial-judge rulings apply exact 35% damage. Zero landed attacks is not presented as proof of correctness.</p><div class="table-wrap" tabindex="0"><table><caption>All submitted contestant and house attacks</caption><thead><tr><th>Round</th><th>Author</th><th>Target</th><th>Result</th><th>What failed / why</th><th>Severity & score</th><th>Evidence</th></tr></thead><tbody>${attacks}</tbody></table></div></section>
+<section class="section"><h2>Attack ledger — bugs found, misses, and repairs</h2><p class="note">Each row reports its recorded evidence basis; partial-judge rulings apply exact 35% damage. Zero landed attacks is not presented as proof of correctness.</p><div class="table-wrap" tabindex="0"><table><caption>All submitted contestant and house attacks</caption><thead><tr><th>Round</th><th>Author</th><th>Target</th><th>Result</th><th>Evidence class</th><th>What failed / why</th><th>Severity & score</th><th>Evidence</th></tr></thead><tbody>${attacks}</tbody></table></div></section>
 <section class="section"><h2>Failure handling ledger</h2><p class="note">Each distinct stage failure gets at most two attempts. Judge outcomes identify semantic evidence and never masquerade as mechanical execution.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Failure</th><th>Stage</th><th>Attempts</th><th>Disposition</th><th>Judge basis</th><th>Confidence effect</th><th>Score effect</th><th>Diagnostics</th></tr></thead><tbody>${failureRows}</tbody></table></div></section>
 <section class="section"><h2>Submission artifacts</h2><p class="note">Exact provider bytes are retained locally and linked, never embedded. Parsed artifacts contain accepted normalized values and redacted diagnostics.</p><ul>${submissionArtifacts || "<li>No permanent submission artifacts recorded (legacy run).</li>"}</ul></section>
 <section class="section handoff" id="handoff"><div><h3>Already done</h3><p>Required validation was run, ${String(defects.length)} distinct defect(s) were adjudicated, and final patches were frozen for review.</p></div><div><h3>What remains</h3><p>${unresolved.length ? `Review ${String(unresolved.length)} unresolved defect(s) before accepting a patch.` : "Choose and inspect the recommended patch; no unresolved proven defect remains."}</p><p>${link(state, "Open the review handoff", state.artifacts.battle)}</p></div></section>

@@ -82,7 +82,9 @@ export async function compareQualityWithRetry(options: {
             ...diagnosticArtifactRefs,
           ]),
         ],
-        ...(attempt === 2 ? { terminalDisposition: "coverage_lost" } : {}),
+        ...(attempt === 2
+          ? { terminalDisposition: "advisory_unavailable" }
+          : {}),
       });
       await options.persistFailureRecord(record);
       if (attempt === 2) {

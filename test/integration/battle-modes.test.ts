@@ -15,7 +15,7 @@ import type {
   BrowserAdapter,
   BrowserSession,
 } from "../../src/browser/executor.js";
-import { FightConfigSchema, RunStateV8Schema } from "../../src/core/types.js";
+import { FightConfigSchema, RunStateV9Schema } from "../../src/core/types.js";
 import type { ArenaEvent } from "../../src/observability/events.js";
 import { readBaseline } from "../../src/recovery/durable.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
@@ -245,7 +245,7 @@ describe("PR battle modes", () => {
       { durableV5: true },
     );
     const baseline = await readBaseline(store);
-    const baselineState = RunStateV8Schema.parse(
+    const baselineState = RunStateV9Schema.parse(
       structuredClone(baseline.state),
     );
     await Promise.all([
@@ -256,6 +256,7 @@ describe("PR battle modes", () => {
       rm(store.resolve("coverage"), { recursive: true, force: true }),
       rm(store.resolve("finalization.json"), { force: true }),
       rm(store.resolve("review-prompt.json"), { force: true }),
+      rm(store.resolve("result.json"), { force: true }),
     ]);
     await store.initialize();
     await store.writeState(baselineState, []);

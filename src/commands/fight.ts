@@ -29,6 +29,7 @@ import type { ArenaObserver } from "../observability/events.js";
 import { PlainProgressObserver } from "../observability/plain-progress.js";
 import type { WebDashboard } from "../dashboard/web-server.js";
 import type { DesktopDashboardWindow } from "../dashboard/desktop-window.js";
+import { CommandPatchQualityVerifier } from "../quality/verifier.js";
 import {
   collectFightReconnaissance,
   type ReconnaissanceSnapshot,
@@ -192,6 +193,11 @@ function createArena(
     verifier: new CommandAttackVerifier(
       config.judge,
       providerCommand(config.judge, undefined, mcpPolicy),
+    ),
+    qualityVerifier: new CommandPatchQualityVerifier(
+      config.judge,
+      undefined,
+      mcpPolicy,
     ),
     browserAdapters: createBuiltInBrowserAdapters(),
     ...(mcpPolicy ? { mcpPolicy } : {}),

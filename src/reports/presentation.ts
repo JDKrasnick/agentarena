@@ -18,6 +18,7 @@ export interface ReportDefect {
   attacks: Attack[];
   damage: number;
   active: boolean;
+  evidenceClass: "competitive" | "shared";
 }
 
 export interface ReportRound {
@@ -32,6 +33,7 @@ export interface ReportRound {
 export type ReportOutcome =
   | { kind: "winner"; winner: ContestantId }
   | { kind: "draw" }
+  | { kind: "non_discriminating" }
   | { kind: "incomplete" };
 
 function invocationPaths(invocation: AgentInvocation | undefined): string[] {
@@ -84,6 +86,12 @@ export function reportOutcome(state: RunState): ReportOutcome {
   )
     return { kind: "incomplete" };
   if (!state.ranking) return { kind: "incomplete" };
+  if (
+    state.arenaOutcome &&
+    "kind" in state.arenaOutcome &&
+    state.arenaOutcome.kind === "non_discriminating"
+  )
+    return { kind: "non_discriminating" };
   if (state.ranking.draw) return { kind: "draw" };
   return state.ranking.winner
     ? { kind: "winner", winner: state.ranking.winner }
@@ -120,6 +128,8 @@ export function reportDefects(state: RunState): ReportDefect[] {
           (defect) => defect.rootDefectId === id,
         ),
       ),
+      evidenceClass:
+        representative.origin.kind === "house" ? "shared" : "competitive",
     };
   });
 }

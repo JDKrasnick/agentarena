@@ -6,6 +6,7 @@ import {
 import { BrowserValidationResultSchema } from "../contracts/browser.js";
 import {
   AdaptiveRoundDecisionSchema,
+  AdaptiveRoundDecisionReasonSchema,
   EffortModeSchema,
   EffortProfileSchema,
   TaskEffortAssessmentV1Schema,
@@ -389,19 +390,24 @@ export const RunSummaryV9Schema = RunSummaryV5Schema.unwrap()
     adaptiveCompletion: z
       .object({
         kind: z.literal("adaptive_coverage"),
-        reason: AdaptiveRoundDecisionSchema.shape.reason,
+        reason: AdaptiveRoundDecisionReasonSchema,
         skippedBriefs: z.array(z.string()),
       })
       .strict()
       .optional(),
   });
 export type RunSummaryV9 = z.infer<typeof RunSummaryV9Schema>;
+export const RunSummaryV10Schema = RunSummaryV9Schema.omit({
+  schemaVersion: true,
+}).extend({ schemaVersion: z.literal(10) });
+export type RunSummaryV10 = z.infer<typeof RunSummaryV10Schema>;
 export const AnyRunSummarySchema = z.discriminatedUnion("schemaVersion", [
   RunSummaryV5Schema,
   RunSummaryV6Schema,
   RunSummaryV7Schema,
   RunSummaryV8Schema,
   RunSummaryV9Schema,
+  RunSummaryV10Schema,
 ]);
 
 export const CheckpointDescriptorSchema = z

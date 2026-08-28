@@ -73,9 +73,16 @@ export function renderConsoleSummary(
         .map((round) => Number(round.round)),
     ),
   );
-  const champion = state.ranking?.draw
-    ? `Draw: ${state.ranking.reason}`
-    : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Arena champion"}: ${state.coverageDecision?.decision === "inconclusive" && state.ranking?.order[0] ? contestantLabel(state.config.contestants, state.ranking.order[0]) : state.ranking?.winner ? contestantLabel(state.config.contestants, state.ranking.winner) : "none"} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`;
+  const nonDiscriminating = Boolean(
+    state.arenaOutcome &&
+    "kind" in state.arenaOutcome &&
+    state.arenaOutcome.kind === "non_discriminating",
+  );
+  const champion = nonDiscriminating
+    ? `Non-discriminating battle: no arena champion (${String(state.arenaOutcome?.marginHp ?? 0)} HP raw ledger margin)`
+    : state.ranking?.draw
+      ? `Draw: ${state.ranking.reason}`
+      : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Arena champion"}: ${state.coverageDecision?.decision === "inconclusive" && state.ranking?.order[0] ? contestantLabel(state.config.contestants, state.ranking.order[0]) : state.ranking?.winner ? contestantLabel(state.config.contestants, state.ranking.winner) : "none"} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`;
   const recommendation = state.patchRecommendation?.contestantId
     ? contestantLabel(
         state.config.contestants,
@@ -85,7 +92,11 @@ export function renderConsoleSummary(
   const profile = state.config.resolvedEffortProfile;
   const decisionLines = state.adaptiveDecisions.map((decision) => {
     const tokens = decision.consumption.tokenTelemetry;
-    return `Round ${String(decision.round)} decision: ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s · ${String(decision.consumption.providerCalls)} calls · tokens ${tokens.state}${tokens.totalTokens === undefined ? "" : ` (${String(tokens.totalTokens)})`} · ${decision.action} (${decision.reason})`;
+    const signal =
+      "signal" in decision
+        ? ` · signal ${String(decision.signal.competitiveLandings)} competitive/${String(decision.signal.sharedDefects)} shared/${String(decision.signal.explicitEmptyLanes)} empty · low-signal streak ${String(decision.signal.consecutiveLowSignalCount)}`
+        : "";
+    return `Round ${String(decision.round)} decision: ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s · ${String(decision.consumption.providerCalls)} calls · tokens ${tokens.state}${tokens.totalTokens === undefined ? "" : ` (${String(tokens.totalTokens)})`}${signal} · ${decision.action} (${decision.reason})`;
   });
 
   return [
@@ -178,12 +189,14 @@ export function renderConsoleSummary(
     ),
     state.config.mode === "siege"
       ? "Production artifact: defender final patch only"
-      : `Recommended patch: ${recommendation}`,
+      : nonDiscriminating
+        ? `Independent recommendation: ${recommendation}`
+        : `Recommended patch: ${recommendation}`,
     state.config.mode === "siege"
       ? "Patch comparison: disabled for asymmetric siege"
       : `Recommendation reason: ${state.patchRecommendation?.rationale.join(" ") ?? "run incomplete"}`,
     defects.length
-      ? `Decisive defects: ${defects.map((defect) => `${defect.representative.severity ?? "unrated"} ${truncateReportText(defect.representative.claim, 80)} (${defect.active ? "UNRESOLVED" : "REPAIRED"})`).join("; ")}`
+      ? `Evidence: ${String(defects.filter((defect) => defect.evidenceClass === "competitive").length)} competitive landing(s), ${String(defects.filter((defect) => defect.evidenceClass === "shared").length)} shared defect(s). ${defects.map((defect) => `${defect.representative.severity ?? "unrated"} ${truncateReportText(defect.representative.claim, 80)} (${defect.active ? "UNRESOLVED" : "REPAIRED"})`).join("; ")}`
       : "Recorded attacks: no landed defects; this does not establish correctness",
     unresolved.length
       ? style(

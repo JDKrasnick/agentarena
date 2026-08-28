@@ -70,7 +70,7 @@ export function renderBattleVisual(state: RunState): string {
         .slice(0, 3)
         .map(
           (defect, index) =>
-            `<text x="76" y="${520 + index * 42}" class="body"><tspan class="${defect.active ? "fail" : "pass"}">${escapeXml(defect.active ? "UNRESOLVED" : "REPAIRED")}</tspan> · ${escapeXml(defect.representative.severity ?? "unrated")} · ${escapeXml(truncateReportText(defect.representative.claim, 88))}</text>`,
+            `<text x="76" y="${520 + index * 42}" class="body"><tspan class="${defect.active ? "fail" : "pass"}">${escapeXml(defect.active ? "UNRESOLVED" : "REPAIRED")}</tspan> · ${escapeXml(defect.evidenceClass.toUpperCase())} · ${escapeXml(defect.representative.severity ?? "unrated")} · ${escapeXml(truncateReportText(defect.representative.claim, 76))}</text>`,
         )
         .join("\n")
     : `<text x="76" y="520" class="body">No landed defects recorded; this does not establish correctness.</text>`;
@@ -94,7 +94,11 @@ export function renderBattleVisual(state: RunState): string {
         .map((decision, index) => {
           const telemetry = decision.consumption.tokenTelemetry;
           const tokens = `${telemetry.state}${telemetry.totalTokens === undefined ? "" : ` ${String(telemetry.totalTokens)}`}`;
-          return `<text x="76" y="${890 + index * 25}" class="tiny">R${String(decision.round)} · ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s · ${String(decision.consumption.providerCalls)} calls · tokens ${escapeXml(tokens)} · ${escapeXml(decision.action)}: ${escapeXml(decision.reason)}</text>`;
+          const signal =
+            decision.version === 2
+              ? ` · ${String(decision.signal.competitiveLandings)} competitive/${String(decision.signal.sharedDefects)} shared/${String(decision.signal.explicitEmptyLanes)} empty · streak ${String(decision.signal.consecutiveLowSignalCount)}`
+              : "";
+          return `<text x="76" y="${890 + index * 25}" class="tiny">R${String(decision.round)} · ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s · ${String(decision.consumption.providerCalls)} calls · tokens ${escapeXml(tokens)}${escapeXml(signal)} · ${escapeXml(decision.action)}: ${escapeXml(decision.reason)}</text>`;
         })
         .join("\n")
     : `<text x="76" y="890" class="tiny">No adaptive decisions recorded.</text>`;
@@ -113,7 +117,9 @@ export function renderBattleVisual(state: RunState): string {
           ? `${state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Winner"}: ${contestantLabel(state.config.contestants, outcome.winner)}`
           : outcome.kind === "draw"
             ? "Result: DRAW"
-            : "Result: INCOMPLETE";
+            : outcome.kind === "non_discriminating"
+              ? "Non-discriminating battle · No arena champion"
+              : "Result: INCOMPLETE";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1240" height="1040" viewBox="0 0 1240 1040" role="img" aria-label="Agent Arena battle result">
 <style>.title{font:700 28px ui-monospace,Menlo,monospace;fill:#f5f7fa}.label{font:700 18px ui-monospace,Menlo,monospace;fill:#9ac0ff}.hp{font:700 38px ui-monospace,Menlo,monospace;fill:#72df90}.body{font:16px ui-monospace,Menlo,monospace;fill:#d7e0ea}.tiny{font:13px ui-monospace,Menlo,monospace;fill:#d7e0ea}.pass{fill:#72df90}.fail{fill:#ff8b84}.warn{fill:#f5c979}.muted{font:15px ui-monospace,Menlo,monospace;fill:#b4c1cd}</style>

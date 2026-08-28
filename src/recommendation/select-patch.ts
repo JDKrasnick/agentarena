@@ -9,6 +9,7 @@ import {
 export interface RecommendationInput {
   contestants: RunState["contestants"];
   championId?: ContestantId;
+  outcomeKind?: "winner" | "draw" | "non_discriminating";
   qualityVerdict?: PatchQualityVerdict;
   anonymizationMap?: { patch_a: ContestantId; patch_b: ContestantId };
 }
@@ -86,6 +87,20 @@ export function selectRecommendedPatch(
         comparison,
       });
     }
+  }
+  if (input.outcomeKind === "non_discriminating") {
+    return PatchRecommendationSchema.parse({
+      reason: "no_differentiator",
+      qualityVerdict: input.qualityVerdict?.verdict,
+      rationale: [
+        input.qualityVerdict?.verdict === "equivalent"
+          ? "The identity-blind quality comparison found the eligible patches equivalent."
+          : input.qualityVerdict?.verdict === "inconclusive"
+            ? "The identity-blind quality comparison found no reliable differentiator."
+            : "No identity-blind quality recommendation was available.",
+      ],
+      comparison,
+    });
   }
   const smallestPatchSize = Math.min(
     ...correct.map(

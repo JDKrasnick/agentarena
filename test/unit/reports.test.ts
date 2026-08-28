@@ -4,6 +4,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Attack, RunState } from "../../src/core/types.js";
 import { healDefect } from "../../src/core/scoring.js";
+import { deriveArenaOutcome } from "../../src/outcomes/derive-outcome.js";
+import { selectRecommendedPatch } from "../../src/recommendation/select-patch.js";
 import { renderConsoleSummary } from "../../src/reports/console.js";
 import { renderBattleHtml } from "../../src/reports/html.js";
 import { renderBattleReport } from "../../src/reports/markdown.js";
@@ -46,6 +48,71 @@ function attack(state: RunState, overrides: Partial<Attack> = {}): Attack {
 }
 
 describe("battle reports", () => {
+  it("uses consistent non-discriminating language and separates shared evidence in every report", () => {
+    const state = makeRunState();
+    state.coverageAssessment = {
+      version: 3,
+      runId: state.runId,
+      mode: "duel",
+      confidence: "full_confidence",
+      requiredLanes: [],
+      counts: { required: 6, completed: 6, degraded: 0, unresolved: 0 },
+      evidenceCounts: {
+        mechanical: 1,
+        judgeConfirmed: 0,
+        judgePartial: 0,
+        judgeRejected: 0,
+        explicitEmpty: 5,
+      },
+      reasonCodes: [],
+      retryHistory: [],
+      assessmentDigest: "d".repeat(64),
+    };
+    state.attacks = [
+      attack(state, {
+        id: "shared-1",
+        origin: { kind: "house", methodPackId: "neutral-qa" },
+        targets: ["a", "b"],
+        rootDefectId: "shared-defect",
+        damageActive: false,
+      }),
+    ];
+    state.arenaOutcome = deriveArenaOutcome(state);
+    state.ranking = {
+      winner: null,
+      draw: false,
+      order: ["a", "b"],
+      reason: "No competitive differentiator.",
+    };
+    state.patchRecommendation = selectRecommendedPatch({
+      contestants: state.contestants,
+      outcomeKind: "non_discriminating",
+      qualityVerdict: {
+        version: 1,
+        verdict: "patch_b",
+        criteria: [],
+        rationale: ["Patch B is independently preferred."],
+      },
+      anonymizationMap: { patch_a: "a", patch_b: "b" },
+    });
+
+    const consoleReport = renderConsoleSummary(state);
+    const markdown = renderBattleReport(state);
+    const html = renderBattleHtml(state);
+    const visual = renderBattleVisual(state);
+    for (const rendered of [consoleReport, markdown, html, visual]) {
+      expect(rendered).toContain("Non-discriminating");
+    }
+    expect(consoleReport).toContain("no arena champion");
+    expect(markdown).toContain(
+      "0 competitive landing(s) · 1 shared QA defect(s)",
+    );
+    expect(markdown).toContain("Independent patch recommendation");
+    expect(html).toContain("Why no arena champion was awarded");
+    expect(html).toContain("Independent recommendation</dt><dd>Claude");
+    expect(visual).toContain("No arena champion");
+  });
+
   it("renders contestant-scoped validation and handoff sections", () => {
     const state = makeRunState();
     const codex = state.contestants.a;

@@ -101,7 +101,7 @@ export function makeRunState(
   codex.finalPatchPath = `${runDirectory}/patches/a.diff`;
   claude.finalPatchPath = `${runDirectory}/patches/b.diff`;
   const state = RunStateSchema.parse({
-    schemaVersion: 8,
+    schemaVersion: 9,
     runId: "run-12345678",
     harnessVersion: "0.1.0",
     status: "complete",

@@ -74,4 +74,27 @@ describe("legacy run-state migration", () => {
       order: ["a", "b"],
     });
   });
+
+  it("reads legacy v8 outcomes while requiring versioned outcomes for current v9 state", () => {
+    const current = makeRunState();
+    expect(parseRunState(current)).toMatchObject({
+      schemaVersion: 9,
+      arenaOutcome: { version: 2, kind: "winner" },
+    });
+
+    const legacy = structuredClone(current) as Record<string, unknown>;
+    legacy.schemaVersion = 8;
+    const outcome = legacy.arenaOutcome as Record<string, unknown>;
+    delete outcome.version;
+    delete outcome.kind;
+    delete outcome.decisionBasis;
+    delete outcome.competitiveLandingCount;
+    delete outcome.sharedDefectCount;
+    delete outcome.explicitEmptyLaneCount;
+
+    expect(parseRunState(legacy)).toMatchObject({
+      schemaVersion: 8,
+      arenaOutcome: { championId: "a" },
+    });
+  });
 });

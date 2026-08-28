@@ -70,6 +70,7 @@ export interface DashboardAttackActivity {
   target?: string;
   severity?: string;
   damage?: number;
+  evidenceClass?: "competitive" | "shared";
   detail?: string;
 }
 
@@ -113,6 +114,11 @@ export interface DashboardState {
   result?: {
     roundsCompleted?: number;
     championId?: string;
+    outcomeKind?: "winner" | "draw" | "non_discriminating";
+    decisionBasis?: string;
+    competitiveLandingCount?: number;
+    sharedDefectCount?: number;
+    explicitEmptyLaneCount?: number;
     recommendedId?: string;
     recommendationReason?: string;
     coverageConfidence?: string;
@@ -397,6 +403,7 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
         ...(event.attackerId ? { attacker: event.attackerId } : {}),
         ...(event.targetId ? { target: event.targetId } : {}),
         ...(event.claim ? { detail: event.claim } : {}),
+        ...(event.evidenceClass ? { evidenceClass: event.evidenceClass } : {}),
       });
       return;
     case "attack_revised":
@@ -420,6 +427,7 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
         ...(event.targetId ? { target: event.targetId } : {}),
         ...(event.severity ? { severity: event.severity } : {}),
         ...(event.damage === undefined ? {} : { damage: event.damage }),
+        ...(event.evidenceClass ? { evidenceClass: event.evidenceClass } : {}),
       });
       return;
     case "warning":
@@ -464,6 +472,17 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
           ? {}
           : { roundsCompleted: event.roundsCompleted }),
         ...(event.championId ? { championId: event.championId } : {}),
+        ...(event.outcomeKind ? { outcomeKind: event.outcomeKind } : {}),
+        ...(event.decisionBasis ? { decisionBasis: event.decisionBasis } : {}),
+        ...(event.competitiveLandingCount === undefined
+          ? {}
+          : { competitiveLandingCount: event.competitiveLandingCount }),
+        ...(event.sharedDefectCount === undefined
+          ? {}
+          : { sharedDefectCount: event.sharedDefectCount }),
+        ...(event.explicitEmptyLaneCount === undefined
+          ? {}
+          : { explicitEmptyLaneCount: event.explicitEmptyLaneCount }),
         ...(event.recommendedId ? { recommendedId: event.recommendedId } : {}),
         ...(event.recommendationReason
           ? { recommendationReason: event.recommendationReason }

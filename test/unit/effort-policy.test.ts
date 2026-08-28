@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   EFFORT_PROFILES,
   decideAdaptiveRound,
+  nextLowSignalCount,
   resolveEffortProfile,
   scoreEffort,
   TokenTelemetrySchema,
@@ -260,5 +261,84 @@ describe("task-scaled effort policy", () => {
         terminalCondition: true,
       }),
     ).toEqual({ action: "stop", reason: "terminal_condition" });
+  });
+
+  it("pivots after one low-signal round and stops after two consecutive low-signal rounds", () => {
+    expect(
+      decideAdaptiveRound({
+        round: 1,
+        profile: EFFORT_PROFILES.medium,
+        convergencePassed: true,
+        extensionQualified: false,
+        lowSignal: true,
+        consecutiveLowSignalCount: 1,
+      }),
+    ).toEqual({ action: "continue", reason: "planned_rounds_remaining" });
+    expect(
+      decideAdaptiveRound({
+        round: 2,
+        profile: EFFORT_PROFILES.medium,
+        convergencePassed: true,
+        extensionQualified: false,
+        lowSignal: true,
+        consecutiveLowSignalCount: 2,
+      }),
+    ).toEqual({ action: "stop", reason: "repeated_low_signal" });
+  });
+
+  it("does not let the low-signal stop shorten an exact fixed-round battle", () => {
+    expect(
+      decideAdaptiveRound({
+        round: 2,
+        fixedRounds: 3,
+        profile: EFFORT_PROFILES.low,
+        convergencePassed: true,
+        extensionQualified: false,
+        lowSignal: true,
+        consecutiveLowSignalCount: 2,
+      }),
+    ).toEqual({ action: "continue", reason: "fixed_rounds_remaining" });
+  });
+
+  it("reconstructs a persisted low-signal streak and resets it on competitive evidence", () => {
+    const persisted = {
+      version: 2 as const,
+      round: 1 as const,
+      consumption: {
+        wallTimeMs: 1,
+        providerCalls: 1,
+        tokenTelemetry: { state: "unavailable" as const },
+        wallTimePressure: false,
+        invocationPressure: false,
+        tokenPressure: false,
+        overrunMs: 0,
+      },
+      convergence: {
+        intactExecutedLaneCoverage: true,
+        noUnresolvedAdjudication: true,
+        zeroActiveDamage: true,
+        acceptedDefectsHealedWithRegressionPasses: true,
+        noNewCanonicalDefectOrScoreCorrection: true,
+        allLanesExplicitlyEmpty: true,
+        patchesSmallAndStable: true,
+        passed: true,
+      },
+      extensionQualified: false,
+      extensionTriggerDefectIds: [],
+      action: "continue" as const,
+      reason: "planned_rounds_remaining" as const,
+      signal: {
+        competitiveLandings: 0,
+        sharedDefects: 0,
+        explicitEmptyLanes: 2,
+        lowSignal: true,
+        consecutiveLowSignalCount: 1,
+      },
+      skippedBriefs: [],
+      decidedAt: "2026-08-28T00:00:00.000Z",
+    };
+
+    expect(nextLowSignalCount(true, persisted)).toBe(2);
+    expect(nextLowSignalCount(false, persisted)).toBe(0);
   });
 });

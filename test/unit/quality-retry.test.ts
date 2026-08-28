@@ -51,4 +51,35 @@ describe("quality verifier retry", () => {
       ],
     });
   });
+
+  it("records a twice-failed optional comparison as advisory-unavailable rather than lost coverage", async () => {
+    const persisted: FailureRecord[] = [];
+    const compare = vi.fn(() => Promise.reject(new Error("judge unavailable")));
+    const verdict = await compareQualityWithRetry({
+      verifier: { id: "quality-test", compare },
+      input: {
+        promptPath: "/tmp/quality.prompt",
+        transcriptPrefix: "/tmp/quality",
+        worktree: "/tmp/quality-worktree-1",
+      } as unknown as PatchQualityVerifierInput,
+      patchArtifactRefs: ["/tmp/a.diff", "/tmp/b.diff"],
+      transcriptPrefix: (attempt) => `/tmp/quality-${String(attempt)}`,
+      recreateWorktree: () => Promise.resolve("/tmp/quality-worktree-2"),
+      persistFailureRecord: (record) => {
+        persisted.push(structuredClone(record));
+        return Promise.resolve();
+      },
+      now: () => new Date("2026-08-10T00:00:00.000Z"),
+    });
+
+    expect(verdict.verdict).toBe("inconclusive");
+    expect(compare).toHaveBeenCalledTimes(2);
+    expect(persisted.at(-1)).toMatchObject({
+      terminalDisposition: "advisory_unavailable",
+      attempts: [
+        { attempt: 1, status: "failed" },
+        { attempt: 2, status: "failed" },
+      ],
+    });
+  });
 });

@@ -9,9 +9,11 @@ import {
 import type { RunSpec } from "../contracts/round.js";
 import { runProcess } from "../runner/process-runner.js";
 import type { ArenaObserver } from "../observability/events.js";
+import { providerCommand } from "../agents/adapter.js";
+import type { FrozenMcpPolicy } from "../mcp/policy.js";
 
 export interface PatchQualityVerifierInput {
-  runSpec: RunSpec;
+  taskContract: RunSpec["task"];
   patches: readonly [
     {
       label: "patch_a";
@@ -25,7 +27,6 @@ export interface PatchQualityVerifierInput {
     },
   ];
   finalValidation: Record<string, unknown>;
-  activeDefects: Record<string, unknown>;
   promptPath: string;
   worktree: string;
   transcriptPrefix: string;
@@ -39,34 +40,13 @@ export interface PatchQualityVerifier {
   compare(input: PatchQualityVerifierInput): Promise<PatchQualityVerdict>;
 }
 
-function providerCommand(id: AgentId): { executable: string; args: string[] } {
-  switch (id) {
-    case "codex":
-      return {
-        executable: "codex",
-        args: ["exec", "--full-auto", "--skip-git-repo-check", "-"],
-      };
-    case "claude":
-      return {
-        executable: "claude",
-        args: [
-          "--print",
-          "--permission-mode",
-          "bypassPermissions",
-          "--output-format",
-          "text",
-        ],
-      };
-    case "gemini":
-      return { executable: "gemini", args: ["--yolo"] };
-  }
-}
-
 export class CommandPatchQualityVerifier implements PatchQualityVerifier {
   readonly id: string;
+  private readonly command;
 
-  constructor(private readonly provider: AgentId) {
+  constructor(provider: AgentId, model?: string, mcpPolicy?: FrozenMcpPolicy) {
     this.id = `quality-${provider}`;
+    this.command = providerCommand(provider, model, mcpPolicy);
   }
 
   async compare(
@@ -74,7 +54,7 @@ export class CommandPatchQualityVerifier implements PatchQualityVerifier {
   ): Promise<PatchQualityVerdict> {
     const outputPath = path.join(input.worktree, "quality-verdict.json");
     await rm(outputPath, { force: true });
-    const command = providerCommand(this.provider);
+    const command = this.command;
     const prompt = [
       "You are a neutral implementation-quality verifier.",
       "Correctness has already been adjudicated. Compare only the anonymized patches using scope precision, dependency/operational footprint, change surface, structural simplicity, verification/observability, and normalized patch size (last).",
@@ -84,9 +64,8 @@ export class CommandPatchQualityVerifier implements PatchQualityVerifier {
       "",
       JSON.stringify(
         {
-          runSpec: input.runSpec,
+          taskContract: input.taskContract,
           finalValidation: input.finalValidation,
-          activeDefects: input.activeDefects,
           patches: input.patches,
         },
         null,
@@ -103,6 +82,9 @@ export class CommandPatchQualityVerifier implements PatchQualityVerifier {
     });
     const result = await runProcess({
       ...command,
+      ...(command.providerStream
+        ? { providerStream: command.providerStream }
+        : {}),
       input: prompt,
       cwd: input.worktree,
       timeoutMs: input.timeoutMs,

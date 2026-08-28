@@ -11,7 +11,7 @@ Surviving the arena is additional evidence, not a correctness guarantee.
 The primary workflow is a chat or IDE host calling the exported typed
 operations:
 
-1. `reviewRun` presents the arena champion, correctness-first recommendation,
+1. `reviewRun` presents the arena outcome, any independent recommendation,
    evidence, choices, and exact patch digests.
 2. `inspectPatch` reads a summary, diff, checks, or quality evidence.
 3. `recordReviewDecision` accepts or rejects only an authenticated user action
@@ -146,8 +146,8 @@ rounds; `resume` continues from a sealed durable boundary.
 
 The desktop window opens in a spacious, work-area-clamped live layout and keeps
 up to ten recent work summaries visible for each fighter. A terminal result
-automatically contracts the window into a results-first view with the independent
-arena champion and recommended patch, coverage, run integrity, completed rounds,
+automatically contracts the window into a results-first view with the arena
+outcome and any independent recommendation, coverage, run integrity, completed rounds,
 final fighter scores, defects, verified repairs, outcome, and evidence links.
 
 Use the top-bar swatches to switch among **Classic Shell** (the first-run
@@ -181,8 +181,8 @@ current objective; and highlights progress through `scout → mount → verify �
 damage → repair`. Battle-log entries retain the round in which each move occurred.
 
 On completion, the dashboard opens an evidence-backed result area. It
-shows final HP, status, and checks for both fighters; the champion and
-recommended patch when coverage resolves them; verified defects caught before
+shows final HP, status, and checks for both fighters; the champion or explicit
+non-discriminating result and any recommendation when coverage resolves them; verified defects caught before
 ship; health-restoring improvements that survived replay; and the exact review
 command. Choose
 **Finish session** after review to close the window and its loopback-only local
@@ -254,6 +254,16 @@ contestants.
 - Each distinct stage failure receives one targeted retry with validated upstream artifacts reused.
 - After mechanics exhaust that retry, only a schema-valid immutable attack may use the identity-blind judge fallback; judge evidence is labeled separately from mechanical evidence.
 - HP is reconstructed from permanent recoil and distinct active defects, so repeated evidence cannot stack damage and healing never restores recoil.
+- Complete duel or catch-up coverage with two required-valid, equally correct
+  final patches and no effective contestant landing is non-discriminating: raw
+  HP remains visible, but recoil, shared findings, and patch size cannot create
+  a champion.
+- With selection enabled, a fresh identity-blind configured-judge comparison
+  may independently recommend one anonymized patch. Equivalent, inconclusive,
+  disabled, or twice-failed comparison leaves both unrecommended.
+- Adaptive decisions record low-signal evidence. An already-planned next round
+  pivots after the first low-signal boundary; two consecutive low-signal rounds
+  stop adaptive play. Exact fixed rounds still continue with the pivot.
 
 Round 3 executes an approved integration profile symmetrically against both frozen patches. If the profile is absent or denied, the round degrades to local contract, security, and resilience probes without a health event.
 
@@ -262,7 +272,7 @@ Round 3 executes an approved integration profile symmetrically against both froz
 Each run is persisted atomically under `.agent-arena/runs/<run-id>/`:
 
 - `BATTLE.md`, the clickable `BATTLE.html` dossier, deterministic `BATTLE.svg`,
-  and compact schema-v9 `result.json`
+  and compact schema-v10 `result.json`
 - immutable `baseline.json`, sealed round envelopes, runtime drift manifest,
   envelope-head-bound finalization, and checkpoint descriptors
 - ordered append-only `events.ndjson` for live observability and replay
@@ -285,6 +295,11 @@ agent-arena review <run-id>
 agent-arena inspect <run-id> --agent codex --view diff
 agent-arena accept <run-id> --selection recommended --apply
 ```
+
+For a non-discriminating result, `--selection champion` is unavailable. If the
+identity-blind comparison makes no recommendation, inspect both choices and use
+`agent-arena accept <run-id> --agent <contestant>` to record an explicit,
+digest-bound selection before applying it.
 
 Resume only from a sealed boundary. Material runtime drift requires approval
 bound to the displayed report hash:

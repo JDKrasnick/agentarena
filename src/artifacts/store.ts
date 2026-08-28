@@ -17,6 +17,7 @@ import {
   RunStateV5Schema,
   RunStateV7Schema,
   RunStateV8Schema,
+  RunStateV9Schema,
   type RunState,
 } from "../core/types.js";
 import {
@@ -26,12 +27,14 @@ import {
   RunSummaryV7Schema,
   RunSummaryV8Schema,
   RunSummaryV9Schema,
+  RunSummaryV10Schema,
   type AppliedEnvelope,
   type RunSummaryV5,
   type RunSummaryV6,
   type RunSummaryV7,
   type RunSummaryV8,
   type RunSummaryV9,
+  type RunSummaryV10,
 } from "../recovery/contracts.js";
 import { buildRunSummary, reconstructRunState } from "../recovery/durable.js";
 
@@ -206,17 +209,24 @@ export class ArtifactStore {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    if (state.schemaVersion === 7 || state.schemaVersion === 8) {
-      const expectedSummaryVersion = state.schemaVersion === 8 ? 9 : 8;
+    if (
+      state.schemaVersion === 7 ||
+      state.schemaVersion === 8 ||
+      state.schemaVersion === 9
+    ) {
+      const expectedSummaryVersion =
+        state.schemaVersion === 9 ? 10 : state.schemaVersion === 8 ? 9 : 8;
       if (
         existingVersion !== undefined &&
         existingVersion !== expectedSummaryVersion
       )
         throw new Error("Cannot replace an unsupported result schema");
       const validated =
-        state.schemaVersion === 8
-          ? RunStateV8Schema.parse(state)
-          : RunStateV7Schema.parse(state);
+        state.schemaVersion === 9
+          ? RunStateV9Schema.parse(state)
+          : state.schemaVersion === 8
+            ? RunStateV8Schema.parse(state)
+            : RunStateV7Schema.parse(state);
       const current = await this.readSummary();
       const summary = await buildRunSummary({
         store: this,
@@ -277,7 +287,8 @@ export class ArtifactStore {
         version === 6 ||
         version === 7 ||
         version === 8 ||
-        version === 9) &&
+        version === 9 ||
+        version === 10) &&
       Array.isArray((value as { appliedEnvelopes?: unknown }).appliedEnvelopes);
     if (!isDurableSummary) return parseRunState(value);
     return reconstructRunState({
@@ -292,6 +303,7 @@ export class ArtifactStore {
     | RunSummaryV7
     | RunSummaryV8
     | RunSummaryV9
+    | RunSummaryV10
     | undefined
   > {
     try {
@@ -303,7 +315,7 @@ export class ArtifactStore {
         appliedEnvelopes?: unknown;
       };
       if (
-        ![5, 6, 7, 8, 9].includes(candidate.schemaVersion ?? -1) ||
+        ![5, 6, 7, 8, 9, 10].includes(candidate.schemaVersion ?? -1) ||
         !Array.isArray(candidate.appliedEnvelopes)
       )
         return undefined;
@@ -316,7 +328,9 @@ export class ArtifactStore {
             ? RunSummaryV7Schema.parse(value)
             : version === 8
               ? RunSummaryV8Schema.parse(value)
-              : RunSummaryV9Schema.parse(value);
+              : version === 9
+                ? RunSummaryV9Schema.parse(value)
+                : RunSummaryV10Schema.parse(value);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   AdaptiveRoundDecisionSchema,
+  AdaptiveRoundDecisionReasonSchema,
   EffortModeSchema,
   EffortProfileSchema,
   TaskEffortAssessmentV1Schema,
@@ -1200,7 +1201,7 @@ export const ArenaContestantOutcomeSchema = z.object({
   eliminatedByRequiredCheck: z.boolean(),
 });
 
-export const ArenaOutcomeSchema = z.object({
+export const ArenaOutcomeV1Schema = z.object({
   championId: ContestantIdSchema.optional(),
   contestants: z.partialRecord(
     ContestantIdSchema,
@@ -1212,7 +1213,30 @@ export const ArenaOutcomeSchema = z.object({
     z.enum(["unresolved_defects", "recoil", "elimination", "tie_breaker"]),
   ),
 });
-export type ArenaOutcome = z.infer<typeof ArenaOutcomeSchema>;
+export const OutcomeKindSchema = z.enum([
+  "winner",
+  "draw",
+  "non_discriminating",
+]);
+export const OutcomeDecisionBasisSchema = z.enum([
+  "competitive_evidence",
+  "independent_patch_quality",
+  "fallback_tie_break",
+  "no_differentiator",
+]);
+export const ArenaOutcomeV2Schema = ArenaOutcomeV1Schema.extend({
+  version: z.literal(2),
+  kind: OutcomeKindSchema,
+  decisionBasis: OutcomeDecisionBasisSchema,
+  competitiveLandingCount: z.number().int().nonnegative(),
+  sharedDefectCount: z.number().int().nonnegative(),
+  explicitEmptyLaneCount: z.number().int().nonnegative(),
+});
+export const ArenaOutcomeSchema = z.union([
+  ArenaOutcomeV1Schema,
+  ArenaOutcomeV2Schema,
+]);
+export type ArenaOutcome = z.infer<typeof ArenaOutcomeV2Schema>;
 
 export const EvidenceValueSchema = z.object({
   status: z.enum(["known", "unknown"]),
@@ -1282,6 +1306,7 @@ export const PatchRecommendationSchema = z.object({
     "forfeit",
     "draw",
     "inconclusive",
+    "no_differentiator",
   ]),
   qualityVerdict: z
     .enum(["patch_a", "patch_b", "equivalent", "inconclusive"])
@@ -1539,7 +1564,7 @@ const RunStateCoreSchema = z.object({
   adaptiveCompletion: z
     .object({
       kind: z.literal("adaptive_coverage"),
-      reason: AdaptiveRoundDecisionSchema.shape.reason,
+      reason: AdaptiveRoundDecisionReasonSchema,
       skippedBriefs: z.array(z.string()),
     })
     .optional(),
@@ -1694,15 +1719,40 @@ export const RunStateV8Schema = RunStateV8CoreSchema.extend({
   deliveryTarget: DeliveryTargetSchema.optional(),
   pullRequestFixture: PullRequestFixtureSchema.optional(),
 });
-export const RunStateSchema = RunStateV8Schema;
+export const RunStateV9Schema = RunStateV8CoreSchema.extend({
+  schemaVersion: z.literal(9),
+  runSpecHash: z.string().length(64),
+  contestants: z.partialRecord(ContestantIdSchema, ContestantResultSchema),
+  attacks: z.array(AttackSchema),
+  reviewInvocations: z.array(ReviewInvocationRecordSchema).default([]),
+  attackInvocations: z.array(AttackInvocationRecordSchema).default([]),
+  ranking: RankingSchema.optional(),
+  arenaOutcome: ArenaOutcomeV2Schema.optional(),
+  patchQualityFacts: z
+    .partialRecord(ContestantIdSchema, PatchQualityFactsSchema)
+    .default({}),
+  patchQualityVerdict: PatchQualityVerdictSchema.optional(),
+  patchRecommendation: PatchRecommendationSchema.optional(),
+  reviewPrompt: ReviewPromptSchema.optional(),
+  deliveryTarget: DeliveryTargetSchema.optional(),
+  pullRequestFixture: PullRequestFixtureSchema.optional(),
+});
+export const RunStateSchema = RunStateV9Schema;
 export type RunStateV3 = z.infer<typeof RunStateV3Schema>;
 export type RunStateV4 = z.infer<typeof RunStateV4Schema>;
 export type RunStateV5 = z.infer<typeof RunStateV5Schema>;
 export type RunStateV6 = z.infer<typeof RunStateV6Schema>;
 export type RunStateV7 = z.infer<typeof RunStateV7Schema>;
 export type RunStateV8 = z.infer<typeof RunStateV8Schema>;
+export type RunStateV9 = z.infer<typeof RunStateV9Schema>;
 export type RunState =
-  RunStateV3 | RunStateV4 | RunStateV5 | RunStateV6 | RunStateV7 | RunStateV8;
+  | RunStateV3
+  | RunStateV4
+  | RunStateV5
+  | RunStateV6
+  | RunStateV7
+  | RunStateV8
+  | RunStateV9;
 
 // --- Legacy readers: in schema versions 1 and 2 the provider was the
 // contestant identity. They are migrated to contestant slots at load time. ---
@@ -1734,7 +1784,7 @@ const LegacyRankingSchema = z.object({
   reason: z.string(),
 });
 
-const LegacyArenaOutcomeSchema = ArenaOutcomeSchema.omit({
+const LegacyArenaOutcomeSchema = ArenaOutcomeV1Schema.omit({
   championId: true,
   contestants: true,
 }).extend({
@@ -1816,6 +1866,7 @@ export const AnyRunStateSchema = z.discriminatedUnion("schemaVersion", [
   RunStateV6Schema,
   RunStateV7Schema,
   RunStateV8Schema,
+  RunStateV9Schema,
 ]);
 export type AnyRunState = z.infer<typeof AnyRunStateSchema>;
 

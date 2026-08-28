@@ -1,8 +1,15 @@
 import {
-  ArenaOutcomeSchema,
+  ArenaOutcomeV2Schema,
   type ArenaOutcome,
   type RunState,
 } from "../core/types.js";
+import {
+  activeDefectDamage,
+  competitiveLandings,
+  explicitEmptyLaneCount,
+  finalPatchEligible,
+  sharedDefects,
+} from "./evidence.js";
 
 export function classifyMargin(marginHp: number): ArenaOutcome["marginClass"] {
   if (marginHp === 0) return "tied";
@@ -12,7 +19,13 @@ export function classifyMargin(marginHp: number): ArenaOutcome["marginClass"] {
 }
 
 export function deriveArenaOutcome(
-  state: Pick<RunState, "contestants" | "ranking">,
+  state: Pick<RunState, "contestants" | "ranking"> &
+    Partial<
+      Pick<
+        RunState,
+        "config" | "attacks" | "attackInvocations" | "coverageAssessment"
+      >
+    >,
 ): ArenaOutcome {
   const contestants = Object.values(state.contestants);
   const derived = Object.fromEntries(
@@ -91,11 +104,59 @@ export function deriveArenaOutcome(
   if (marginHp === 0 && state.ranking?.winner)
     decidingFactors.add("tie_breaker");
 
-  return ArenaOutcomeSchema.parse({
-    ...(state.ranking?.winner ? { championId: state.ranking.winner } : {}),
+  const evidenceState = {
+    attacks: state.attacks ?? [],
+    attackInvocations: state.attackInvocations ?? [],
+    coverageAssessment: state.coverageAssessment,
+  };
+  const competitiveLandingCount = competitiveLandings(evidenceState).length;
+  const sharedDefectCount = sharedDefects(evidenceState).length;
+  const explicitEmptyLanes = explicitEmptyLaneCount(evidenceState);
+  const equalActiveDamage =
+    activeDefectDamage(state, "a") === activeDefectDamage(state, "b");
+  const completeRequiredCoverage = Boolean(
+    state.coverageAssessment &&
+    state.coverageAssessment.counts.required > 0 &&
+    state.coverageAssessment.counts.unresolved === 0,
+  );
+  const nonDiscriminating = Boolean(
+    state.config &&
+    (state.config.mode === "duel" || state.config.mode === "catch_up") &&
+    completeRequiredCoverage &&
+    finalPatchEligible(state, "a") &&
+    finalPatchEligible(state, "b") &&
+    equalActiveDamage &&
+    competitiveLandingCount === 0,
+  );
+  const kind: ArenaOutcome["kind"] = nonDiscriminating
+    ? "non_discriminating"
+    : state.ranking?.draw || !state.ranking?.winner
+      ? "draw"
+      : "winner";
+  const decisionBasis: ArenaOutcome["decisionBasis"] = nonDiscriminating
+    ? "no_differentiator"
+    : decidingFactors.has("tie_breaker")
+      ? "fallback_tie_break"
+      : competitiveLandingCount > 0 ||
+          decidingFactors.has("unresolved_defects") ||
+          decidingFactors.has("recoil") ||
+          decidingFactors.has("elimination")
+        ? "competitive_evidence"
+        : "no_differentiator";
+
+  return ArenaOutcomeV2Schema.parse({
+    version: 2,
+    kind,
+    decisionBasis,
+    ...(kind === "winner" && state.ranking?.winner
+      ? { championId: state.ranking.winner }
+      : {}),
     contestants: derived,
     marginHp,
     marginClass: classifyMargin(marginHp),
     decidingFactors: [...decidingFactors],
+    competitiveLandingCount,
+    sharedDefectCount,
+    explicitEmptyLaneCount: explicitEmptyLanes,
   });
 }

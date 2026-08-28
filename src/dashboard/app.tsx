@@ -434,6 +434,7 @@ function SuccessScreen({ state }: { state: DashboardState }) {
   const rounds = state.result?.roundsCompleted ?? 0;
   const recommended = state.result?.recommendedId?.toUpperCase();
   const champion = state.result?.championId?.toUpperCase();
+  const nonDiscriminating = state.result?.outcomeKind === "non_discriminating";
   return (
     <Box flexDirection="column">
       <Box
@@ -444,7 +445,9 @@ function SuccessScreen({ state }: { state: DashboardState }) {
       >
         <Text bold color="green">
           {state.status === "complete"
-            ? "★ BATTLE COMPLETE · PATCH HARDENED"
+            ? nonDiscriminating
+              ? "★ NON-DISCRIMINATING BATTLE"
+              : "★ BATTLE COMPLETE · PATCH HARDENED"
             : `BATTLE ${state.status.toUpperCase()}`}
         </Text>
         <Text>
@@ -459,7 +462,11 @@ function SuccessScreen({ state }: { state: DashboardState }) {
           <Text bold color="green">
             Fighter {recommended ?? "—"}
           </Text>
-          {champion ? ` · Arena champion: Fighter ${champion}` : ""}
+          {nonDiscriminating
+            ? " · No arena champion"
+            : champion
+              ? ` · Arena champion: Fighter ${champion}`
+              : ""}
         </Text>
         {state.result?.recommendationReason ? (
           <Text wrap="wrap">

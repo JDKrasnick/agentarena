@@ -131,9 +131,9 @@ function decisiveDefects(state: RunState): string[] {
             ),
           ),
         ].join(" ");
-        return `| ${tableCell(attack.claim)} | ${tableCell(attack.oracle.expectedBehavior)} | ${tableCell(observed)} | ${tableCell(attack.impact)} | ${attack.severity ?? "unrated"} — ${String(defect.damage)} HP | ${defect.active ? "UNRESOLVED" : "REPAIRED"} | ${evidence} |`;
+        return `| ${defect.evidenceClass === "shared" ? "Shared QA" : "Competitive"} | ${tableCell(attack.claim)} | ${tableCell(attack.oracle.expectedBehavior)} | ${tableCell(observed)} | ${tableCell(attack.impact)} | ${attack.severity ?? "unrated"} — ${String(defect.damage)} HP | ${defect.active ? "UNRESOLVED" : "REPAIRED"} | ${evidence} |`;
       })
-    : ["| No landed defect records | — | — | — | — | — | — |"];
+    : ["| — | No landed defect records | — | — | — | — | — | — |"];
 }
 
 function invocationEvidence(
@@ -348,6 +348,17 @@ export function renderBattleReport(state: RunState): string {
   }
   const contestants = reportContestants(state);
   const defects = reportDefects(state);
+  const competitiveDefects = defects.filter(
+    (defect) => defect.evidenceClass === "competitive",
+  );
+  const sharedDefects = defects.filter(
+    (defect) => defect.evidenceClass === "shared",
+  );
+  const nonDiscriminating = Boolean(
+    state.arenaOutcome &&
+    "kind" in state.arenaOutcome &&
+    state.arenaOutcome.kind === "non_discriminating",
+  );
   const lines = [
     "# Agent Arena Battle Report",
     "",
@@ -375,11 +386,11 @@ export function renderBattleReport(state: RunState): string {
       : []),
     ...(state.adaptiveDecisions.length
       ? [
-          "| Round | Wall time | Provider calls | Tokens | Converged | Extension | Decision |",
-          "| ---: | ---: | ---: | --- | --- | --- | --- |",
+          "| Round | Wall time | Provider calls | Tokens | Signal | Low-signal streak | Converged | Extension | Decision |",
+          "| ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- |",
           ...state.adaptiveDecisions.map(
             (decision) =>
-              `| ${String(decision.round)} | ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s | ${String(decision.consumption.providerCalls)} | ${decision.consumption.tokenTelemetry.state}${decision.consumption.tokenTelemetry.totalTokens === undefined ? "" : ` (${String(decision.consumption.tokenTelemetry.totalTokens)})`} | ${decision.convergence.passed ? "yes" : "no"} | ${decision.extensionQualified ? decision.extensionTriggerDefectIds.join(", ") || "yes" : "no"} | ${decision.action}: ${decision.reason} |`,
+              `| ${String(decision.round)} | ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s | ${String(decision.consumption.providerCalls)} | ${decision.consumption.tokenTelemetry.state}${decision.consumption.tokenTelemetry.totalTokens === undefined ? "" : ` (${String(decision.consumption.tokenTelemetry.totalTokens)})`} | ${"signal" in decision ? `${String(decision.signal.competitiveLandings)} competitive / ${String(decision.signal.sharedDefects)} shared / ${String(decision.signal.explicitEmptyLanes)} empty` : "legacy"} | ${"signal" in decision ? String(decision.signal.consecutiveLowSignalCount) : "—"} | ${decision.convergence.passed ? "yes" : "no"} | ${decision.extensionQualified ? decision.extensionTriggerDefectIds.join(", ") || "yes" : "no"} | ${decision.action}: ${decision.reason} |`,
           ),
           "",
         ]
@@ -399,24 +410,30 @@ export function renderBattleReport(state: RunState): string {
     ...pullRequestProvenance(state),
     "## Final result",
     "",
-    state.ranking?.draw
-      ? `Draw: ${state.ranking.reason}`
-      : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Winner"}: **${state.coverageDecision?.decision === "inconclusive" ? (state.ranking?.order[0] ?? "none") : (state.ranking?.winner ?? "none")}** — ${state.ranking?.reason ?? "run incomplete"}`,
+    nonDiscriminating
+      ? `**Non-discriminating battle** — ${state.ranking?.reason ?? "complete bidirectional coverage found no competitive differentiator"}`
+      : state.ranking?.draw
+        ? `Draw: ${state.ranking.reason}`
+        : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Winner"}: **${state.coverageDecision?.decision === "inconclusive" ? (state.ranking?.order[0] ?? "none") : (state.ranking?.winner ?? "none")}** — ${state.ranking?.reason ?? "run incomplete"}`,
     state.coverageDecision?.decision === "inconclusive" ||
     (state.coverageAssessment?.confidence === "provisional" &&
       !state.coverageDecision)
       ? "Arena champion: **not published** (coverage unresolved or finalized inconclusive)"
       : state.arenaOutcome
-        ? `${state.integrity === "assisted" ? "Assisted leader" : "Arena champion"}: **${state.arenaOutcome.championId ?? "draw"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
+        ? nonDiscriminating
+          ? `Arena champion: **none**. Raw health is preserved (${String(state.arenaOutcome.marginHp)} HP margin) without implying leadership.`
+          : `${state.integrity === "assisted" ? "Assisted leader" : "Arena champion"}: **${state.arenaOutcome.championId ?? "draw"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
         : "Arena champion: unavailable",
     state.config.mode === "siege"
       ? "Production artifact: **defender final patch only** (patch comparison disabled)"
-      : `Recommended patch: **${state.patchRecommendation?.contestantId ?? "draw"}** (${state.patchRecommendation?.reason ?? "pending"})`,
+      : `${nonDiscriminating ? "Independent patch recommendation" : "Recommended patch"}: **${state.patchRecommendation?.contestantId ?? "none"}** (${state.patchRecommendation?.reason ?? "pending"})`,
     ...(state.patchRecommendation?.contestantId &&
     state.patchRecommendation.contestantId !== state.arenaOutcome?.championId
       ? [
           "",
-          "> The arena champion and recommended patch differ: arena health remains unchanged; the recommendation is an advisory correctness-first selection.",
+          nonDiscriminating
+            ? "> The arena awarded no champion. This recommendation comes only from the separate identity-blind implementation-quality comparison and does not change the competitive result."
+            : "> The arena champion and recommended patch differ: arena health remains unchanged; the recommendation is an advisory correctness-first selection.",
         ]
       : []),
     "",
@@ -430,7 +447,9 @@ export function renderBattleReport(state: RunState): string {
       return `| ${contestantLabel(state.config.contestants, contestant.id)} | ${finalRequired?.status ?? "not run"} | ${String(contestant.finalHealth)} | ${String(outcome?.grossDamageReceived ?? 0)} | ${String(outcome?.grossHealing ?? 0)} | ${String(outcome?.activeDefectDamage ?? 0)} | ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil)} | ${String(contestant.patchSize)} | ${contestant.status} |`;
     }),
     "",
-    `Deciding factors: ${state.arenaOutcome?.decidingFactors.join(", ") || "none"}`,
+    `Decision basis: ${state.arenaOutcome && "decisionBasis" in state.arenaOutcome ? state.arenaOutcome.decisionBasis : "legacy_unknown"}`,
+    "",
+    `Evidence counts: ${String(competitiveDefects.length)} competitive landing(s) · ${String(sharedDefects.length)} shared QA defect(s) · ${String(state.coverageAssessment?.evidenceCounts.explicitEmpty ?? 0)} explicit-empty lane(s)`,
     "",
     "## Attack-lane coverage",
     "",
@@ -468,14 +487,14 @@ export function renderBattleReport(state: RunState): string {
       : []),
     "## Developer takeaway",
     "",
-    `- **Ledger result:** ${state.ranking?.draw ? "Draw" : `${contestantLabel(state.config.contestants, state.coverageDecision?.decision === "inconclusive" ? (state.ranking?.order[0] ?? "a") : (state.ranking?.winner ?? "a"))} — ${state.ranking?.reason ?? "run incomplete"}`}.`,
+    `- **Arena result:** ${nonDiscriminating ? "Non-discriminating battle; no champion" : state.ranking?.draw ? "Draw" : `${contestantLabel(state.config.contestants, state.coverageDecision?.decision === "inconclusive" ? (state.ranking?.order[0] ?? "a") : (state.ranking?.winner ?? "a"))} — ${state.ranking?.reason ?? "run incomplete"}`}.`,
     `- **Why:** ${contestants
       .map((contestant) => {
         const outcome = state.arenaOutcome?.contestants[contestant.id];
         return `${contestantLabel(state.config.contestants, contestant.id)} ${String(contestant.finalHealth)} HP (recoil ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil)}, active damage ${String(outcome?.activeDefectDamage ?? 0)})`;
       })
       .join("; ")}.`,
-    `- **Bugs found:** ${String(defects.length)} proven; ${String(defects.filter((defect) => !defect.active).length)} repaired; ${String(defects.filter((defect) => defect.active).length)} unresolved.`,
+    `- **Bugs found:** ${String(competitiveDefects.length)} competitive; ${String(sharedDefects.length)} shared QA; ${String(defects.filter((defect) => !defect.active).length)} repaired; ${String(defects.filter((defect) => defect.active).length)} unresolved.`,
     `- **Battle evidence:** ${defects.length ? "Recorded landed attacks and their repair outcomes are listed below." : "No attacks landed in the recorded evidence; no correctness inference is made from that count."}`,
     "",
     "## Verified test coverage — final patches",
@@ -486,10 +505,10 @@ export function renderBattleReport(state: RunState): string {
     "| --- | --- | --- | --- |",
     ...coverageRows(state, contestants),
     "",
-    "## Decisive defects",
+    "## Competitive and shared defect evidence",
     "",
-    "| Defect | Expected / invariant | Observed failure | Why it matters | Severity | State | Evidence |",
-    "| --- | --- | --- | --- | --- | --- |",
+    "| Evidence class | Defect | Expected / invariant | Observed failure | Why it matters | Severity | State | Evidence |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ...decisiveDefects(state),
     "",
     "## Round digest",
