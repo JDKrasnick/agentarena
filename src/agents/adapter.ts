@@ -118,6 +118,23 @@ async function runObservedProcess(
   return result;
 }
 
+function tokenTelemetryFromResult(result: CommandResult): TokenTelemetry {
+  const usage = result.providerDiagnostics?.tokenUsage;
+  const fields = usage
+    ? Object.values(usage).filter((entry) => entry !== undefined)
+    : [];
+  if (!usage || fields.length === 0) return { state: "unavailable" };
+  return {
+    state: fields.length === 4 ? "complete" : "partial",
+    ...usage,
+    totalTokens:
+      (usage.uncachedInputTokens ?? 0) +
+      (usage.cacheReadTokens ?? 0) +
+      (usage.cacheWriteTokens ?? 0) +
+      (usage.outputTokens ?? 0),
+  };
+}
+
 export interface Availability {
   available: boolean;
   version?: string;
@@ -180,6 +197,7 @@ export interface AttackVerdict {
   rationale: string;
   relationship?: "independent" | "affirm" | "overturn" | "unresolved";
   priorAdjudicationId?: string;
+  tokenTelemetry?: TokenTelemetry;
 }
 
 export type AnonymizedAttack = Pick<
@@ -281,6 +299,7 @@ export interface JudgeAttackVerdict {
   rationale: string;
   relationship?: "independent" | "affirm" | "overturn" | "unresolved";
   priorAdjudicationId?: string;
+  tokenTelemetry?: TokenTelemetry;
 }
 
 export interface JudgeRepairInput {
@@ -303,6 +322,7 @@ export interface JudgeRepairVerdict {
   decision: "repaired" | "not_repaired" | "unable";
   rationale: string;
   packetDigest: string;
+  tokenTelemetry?: TokenTelemetry;
 }
 
 export interface HarnessOverlayProposal {
@@ -1041,16 +1061,6 @@ export class CommandAttackVerifier implements AttackVerifier {
       schema,
       await readFile(outputPath, "utf8"),
     );
-    const usage = result.providerDiagnostics?.tokenUsage;
-    const fields = usage
-      ? Object.values(usage).filter((entry) => entry !== undefined)
-      : [];
-    const state =
-      !usage || fields.length === 0
-        ? "unavailable"
-        : fields.length === 4
-          ? "complete"
-          : "partial";
     return {
       dimensions: {
         changeSurface: value.changeSurface,
@@ -1060,19 +1070,7 @@ export class CommandAttackVerifier implements AttackVerifier {
       },
       confidence: value.confidence,
       rationale: value.rationale,
-      tokenTelemetry: {
-        state,
-        ...usage,
-        ...(usage
-          ? {
-              totalTokens:
-                (usage.uncachedInputTokens ?? 0) +
-                (usage.cacheReadTokens ?? 0) +
-                (usage.cacheWriteTokens ?? 0) +
-                (usage.outputTokens ?? 0),
-            }
-          : {}),
-      },
+      tokenTelemetry: tokenTelemetryFromResult(result),
     };
   }
 
@@ -1209,6 +1207,7 @@ export class CommandAttackVerifier implements AttackVerifier {
         ...(verdict.priorAdjudicationId
           ? { priorAdjudicationId: verdict.priorAdjudicationId }
           : {}),
+        tokenTelemetry: tokenTelemetryFromResult(result),
       };
     } catch (error) {
       if (this.isProviderInfrastructureFailure(result)) {
@@ -1363,6 +1362,7 @@ export class CommandAttackVerifier implements AttackVerifier {
         ...(verdict.priorAdjudicationId
           ? { priorAdjudicationId: verdict.priorAdjudicationId }
           : {}),
+        tokenTelemetry: tokenTelemetryFromResult(result),
       };
     } catch (error) {
       if (this.isProviderInfrastructureFailure(result)) {
@@ -1468,7 +1468,11 @@ export class CommandAttackVerifier implements AttackVerifier {
         schema,
         await readFile(outputPath, "utf8"),
       );
-      return { ...verdict, packetDigest: packet.packetDigest };
+      return {
+        ...verdict,
+        packetDigest: packet.packetDigest,
+        tokenTelemetry: tokenTelemetryFromResult(result),
+      };
     } catch (error) {
       if (this.isProviderInfrastructureFailure(result)) {
         this.recordTerminalProviderFailure(

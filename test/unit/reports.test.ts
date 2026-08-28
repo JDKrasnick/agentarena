@@ -110,6 +110,54 @@ describe("battle reports", () => {
     expect(visual).toContain("ROUND DIGEST");
   });
 
+  it("reports configured budgets, consumption, and the exact adaptive decision", () => {
+    const state = makeRunState();
+    state.adaptiveDecisions.push({
+      version: 1,
+      round: 1,
+      consumption: {
+        wallTimeMs: 12_300,
+        providerCalls: 6,
+        tokenTelemetry: {
+          state: "complete",
+          uncachedInputTokens: 100,
+          cacheReadTokens: 200,
+          cacheWriteTokens: 300,
+          outputTokens: 400,
+          totalTokens: 1_000,
+        },
+        wallTimePressure: false,
+        invocationPressure: false,
+        tokenPressure: false,
+        overrunMs: 0,
+      },
+      convergence: {
+        intactExecutedLaneCoverage: true,
+        noUnresolvedAdjudication: true,
+        zeroActiveDamage: true,
+        acceptedDefectsHealedWithRegressionPasses: true,
+        noNewCanonicalDefectOrScoreCorrection: true,
+        allLanesExplicitlyEmpty: true,
+        patchesSmallAndStable: true,
+        passed: true,
+      },
+      extensionQualified: false,
+      extensionTriggerDefectIds: [],
+      action: "stop",
+      reason: "adaptive_convergence",
+      skippedBriefs: ["systematic exploration"],
+      decidedAt: "2026-08-28T00:00:00.000Z",
+    });
+
+    expect(renderConsoleSummary(state)).toContain(
+      "Round 1 decision: 12.3s · 6 calls · tokens complete (1000) · stop (adaptive_convergence)",
+    );
+    expect(renderBattleHtml(state)).toContain("stop: adaptive_convergence");
+    const visual = renderBattleVisual(state);
+    expect(visual).toContain("EFFORT AND DECISION LEDGER");
+    expect(visual).toContain("stop: adaptive_convergence");
+  });
+
   it("renders a clickable HTML dossier with scoring, checks, and attack evidence", () => {
     const html = renderBattleHtml(makeRunState());
 

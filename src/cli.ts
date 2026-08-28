@@ -100,9 +100,9 @@ program
   )
   .option("--rounds <count>", "Exact attack–repair rounds (1–5)")
   .addOption(
-    new Option("--effort <tier>", "Effort assessment or explicit tier")
-      .choices(["auto", "ultra-low", "low", "medium", "high", "ultra-high"])
-      .default("auto"),
+    new Option("--effort <tier>", "Effort assessment or explicit tier").choices(
+      ["auto", "ultra-low", "low", "medium", "high", "ultra-high"],
+    ),
   )
   .option("--test <command>", "Required validation command")
   .option("--spec <path...>", "Local specification path(s)")
@@ -155,7 +155,8 @@ program
         agents?: string;
         models?: string;
         rounds?: string;
-        effort: "auto" | "ultra-low" | "low" | "medium" | "high" | "ultra-high";
+        effort?:
+          "auto" | "ultra-low" | "low" | "medium" | "high" | "ultra-high";
         test?: string;
         spec?: string[];
         issue?: string[];
@@ -193,7 +194,7 @@ program
           configPath: options.config,
           ...(options.agents ? { agents: options.agents } : {}),
           ...(options.models ? { models: options.models } : {}),
-          effort: options.effort,
+          ...(options.effort ? { effort: options.effort } : {}),
           ...(rounds === undefined ? {} : { rounds }),
           ...(options.test ? { testCommand: options.test } : {}),
           ...(options.spec ? { specPaths: options.spec } : {}),

@@ -89,6 +89,19 @@ export function renderBattleVisual(state: RunState): string {
       return `<rect x="${54 + index * 226}" y="690" width="206" height="112" rx="12" fill="#121b26" stroke="#294056"/><text x="${70 + index * 226}" y="730" class="label">${label}</text><text x="${70 + index * 226}" y="766" class="body">${count ? `${String(count)} proven` : "No proven attacks"}</text>`;
     })
     .join("\n");
+  const decisionLines = state.adaptiveDecisions.length
+    ? state.adaptiveDecisions
+        .map((decision, index) => {
+          const telemetry = decision.consumption.tokenTelemetry;
+          const tokens = `${telemetry.state}${telemetry.totalTokens === undefined ? "" : ` ${String(telemetry.totalTokens)}`}`;
+          return `<text x="76" y="${890 + index * 25}" class="tiny">R${String(decision.round)} · ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s · ${String(decision.consumption.providerCalls)} calls · tokens ${escapeXml(tokens)} · ${escapeXml(decision.action)}: ${escapeXml(decision.reason)}</text>`;
+        })
+        .join("\n")
+    : `<text x="76" y="890" class="tiny">No adaptive decisions recorded.</text>`;
+  const profile = state.config.resolvedEffortProfile;
+  const budgetLine = profile
+    ? `${profile.tier} · ${String(profile.plannedRounds)} planned / ${String(profile.maxRounds)} max · ${String(profile.roundEnvelopeMs / 60_000)}m · ${String(profile.maxProviderCallsPerRound)} calls · ${String(profile.maxTokensPerRound)} tokens`
+    : `${state.config.effortMode} · legacy budget unavailable`;
   const outcome = reportOutcome(state);
   const verdict =
     state.coverageDecision?.decision === "inconclusive"
@@ -102,13 +115,14 @@ export function renderBattleVisual(state: RunState): string {
             ? "Result: DRAW"
             : "Result: INCOMPLETE";
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="860" viewBox="0 0 1240 860" role="img" aria-label="Agent Arena battle result">
-<style>.title{font:700 28px ui-monospace,Menlo,monospace;fill:#f5f7fa}.label{font:700 18px ui-monospace,Menlo,monospace;fill:#9ac0ff}.hp{font:700 38px ui-monospace,Menlo,monospace;fill:#72df90}.body{font:16px ui-monospace,Menlo,monospace;fill:#d7e0ea}.pass{fill:#72df90}.fail{fill:#ff8b84}.warn{fill:#f5c979}.muted{font:15px ui-monospace,Menlo,monospace;fill:#b4c1cd}</style>
-<rect width="1240" height="860" fill="#070c12"/><text x="54" y="72" class="title">AGENT ARENA — EVIDENCE-LINKED BATTLE REPLAY</text><text x="54" y="112" class="muted">${escapeXml(verdict)} · ${escapeXml(state.ranking?.reason ?? "run incomplete")}</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="1040" viewBox="0 0 1240 1040" role="img" aria-label="Agent Arena battle result">
+<style>.title{font:700 28px ui-monospace,Menlo,monospace;fill:#f5f7fa}.label{font:700 18px ui-monospace,Menlo,monospace;fill:#9ac0ff}.hp{font:700 38px ui-monospace,Menlo,monospace;fill:#72df90}.body{font:16px ui-monospace,Menlo,monospace;fill:#d7e0ea}.tiny{font:13px ui-monospace,Menlo,monospace;fill:#d7e0ea}.pass{fill:#72df90}.fail{fill:#ff8b84}.warn{fill:#f5c979}.muted{font:15px ui-monospace,Menlo,monospace;fill:#b4c1cd}</style>
+<rect width="1240" height="1040" fill="#070c12"/><text x="54" y="72" class="title">AGENT ARENA — EVIDENCE-LINKED BATTLE REPLAY</text><text x="54" y="112" class="muted">${escapeXml(verdict)} · ${escapeXml(state.ranking?.reason ?? "run incomplete")}</text>
 ${state.coverageAssessment ? `<text x="54" y="138" class="muted">Coverage ${escapeXml(state.coverageAssessment.confidence)} · ${String(state.coverageAssessment.counts.completed)} completed · ${String(state.coverageAssessment.counts.degraded)} degraded · ${String(state.coverageAssessment.counts.unresolved)} unresolved / ${String(state.coverageAssessment.counts.required)}</text>` : ""}
 ${blocks}
 <text x="54" y="410" class="title">DECISIVE DEFECTS</text><rect x="54" y="438" width="1132" height="${defects.length ? 56 + Math.min(defects.length, 3) * 42 : 98}" rx="16" fill="#121b26" stroke="#294056"/>${defectLines}
 <text x="54" y="650" class="title">ROUND DIGEST</text>${rounds}
-<text x="54" y="842" class="muted">Generated from result.json · See BATTLE.md for commands, logs, and all evidence.</text>
+<text x="54" y="835" class="title">EFFORT AND DECISION LEDGER</text><text x="54" y="858" class="muted">${escapeXml(budgetLine)}</text>${decisionLines}
+<text x="54" y="1025" class="muted">Generated from result.json · See BATTLE.md for commands, logs, and all evidence.</text>
 </svg>`;
 }

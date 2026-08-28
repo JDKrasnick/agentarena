@@ -124,6 +124,7 @@ import {
   type EffortProfile,
   type AdaptiveRoundDecision,
   type TaskEffortAssessmentV1,
+  type TokenTelemetry,
 } from "../effort/policy.js";
 import {
   BrowserValidationResultSchema,
@@ -376,6 +377,7 @@ interface RecordedRoundInvocation {
   startedAt: string;
   finishedAt: string;
   artifactPaths: string[];
+  tokenTelemetry?: TokenTelemetry;
 }
 
 type DashboardLink = NonNullable<
@@ -2299,25 +2301,56 @@ export class RoundEngine {
         .map((entry) => entry.invocation),
     );
     const providerCalls = invocations.length + context.roundInvocations.length;
-    const usages = invocations.flatMap((invocation) => {
-      const usage = invocation.command?.providerDiagnostics?.tokenUsage;
-      return usage ? [usage] : [];
-    });
+    const invocationTelemetry: TokenTelemetry[] = invocations.map(
+      (invocation) => {
+        const usage = invocation.command?.providerDiagnostics?.tokenUsage;
+        if (
+          !usage ||
+          Object.values(usage).every((value) => value === undefined)
+        )
+          return unavailableTokenTelemetry();
+        const complete = [
+          usage.uncachedInputTokens,
+          usage.cacheReadTokens,
+          usage.cacheWriteTokens,
+          usage.outputTokens,
+        ].every((value) => value !== undefined);
+        return {
+          state: complete ? "complete" : "partial",
+          ...usage,
+          totalTokens:
+            (usage.uncachedInputTokens ?? 0) +
+            (usage.cacheReadTokens ?? 0) +
+            (usage.cacheWriteTokens ?? 0) +
+            (usage.outputTokens ?? 0),
+        };
+      },
+    );
+    const allTelemetry = [
+      ...invocationTelemetry,
+      ...context.roundInvocations.map(
+        (invocation) =>
+          invocation.tokenTelemetry ?? unavailableTokenTelemetry(),
+      ),
+    ];
+    const availableTelemetry = allTelemetry.filter(
+      (telemetry) => telemetry.state !== "unavailable",
+    );
     const tokenFields = {
-      uncachedInputTokens: usages.reduce(
-        (sum, usage) => sum + (usage.uncachedInputTokens ?? 0),
+      uncachedInputTokens: availableTelemetry.reduce(
+        (sum, telemetry) => sum + (telemetry.uncachedInputTokens ?? 0),
         0,
       ),
-      cacheReadTokens: usages.reduce(
-        (sum, usage) => sum + (usage.cacheReadTokens ?? 0),
+      cacheReadTokens: availableTelemetry.reduce(
+        (sum, telemetry) => sum + (telemetry.cacheReadTokens ?? 0),
         0,
       ),
-      cacheWriteTokens: usages.reduce(
-        (sum, usage) => sum + (usage.cacheWriteTokens ?? 0),
+      cacheWriteTokens: availableTelemetry.reduce(
+        (sum, telemetry) => sum + (telemetry.cacheWriteTokens ?? 0),
         0,
       ),
-      outputTokens: usages.reduce(
-        (sum, usage) => sum + (usage.outputTokens ?? 0),
+      outputTokens: availableTelemetry.reduce(
+        (sum, telemetry) => sum + (telemetry.outputTokens ?? 0),
         0,
       ),
     };
@@ -2327,23 +2360,16 @@ export class RoundEngine {
     );
     const completeTelemetry =
       providerCalls > 0 &&
-      usages.length === providerCalls &&
-      usages.every((usage) =>
-        [
-          usage.uncachedInputTokens,
-          usage.cacheReadTokens,
-          usage.cacheWriteTokens,
-          usage.outputTokens,
-        ].every((value) => value !== undefined),
-      );
+      allTelemetry.length === providerCalls &&
+      allTelemetry.every((telemetry) => telemetry.state === "complete");
     const tokenTelemetry = {
       state:
-        usages.length === 0
+        availableTelemetry.length === 0
           ? ("unavailable" as const)
           : completeTelemetry
             ? ("complete" as const)
             : ("partial" as const),
-      ...(usages.length ? { ...tokenFields, totalTokens } : {}),
+      ...(availableTelemetry.length ? { ...tokenFields, totalTokens } : {}),
     };
     const roundAttacks = context.state.attacks.filter(
       (attack) => attack.round === round,
@@ -5633,6 +5659,9 @@ export class RoundEngine {
             startedAt,
             finishedAt: this.now().toISOString(),
             artifactPaths: [input.promptPath, input.transcriptPrefix],
+            ...(verdict.tokenTelemetry
+              ? { tokenTelemetry: verdict.tokenTelemetry }
+              : {}),
           });
           return verdict;
         } catch (error) {
@@ -5675,6 +5704,9 @@ export class RoundEngine {
                   startedAt,
                   finishedAt: this.now().toISOString(),
                   artifactPaths: [input.promptPath, input.transcriptPrefix],
+                  ...(verdict.tokenTelemetry
+                    ? { tokenTelemetry: verdict.tokenTelemetry }
+                    : {}),
                 });
                 return verdict;
               } catch (error) {
@@ -5719,6 +5751,9 @@ export class RoundEngine {
                   startedAt,
                   finishedAt: this.now().toISOString(),
                   artifactPaths: [input.promptPath, input.transcriptPrefix],
+                  ...(verdict.tokenTelemetry
+                    ? { tokenTelemetry: verdict.tokenTelemetry }
+                    : {}),
                 });
                 return verdict;
               } catch (error) {

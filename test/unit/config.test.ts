@@ -33,7 +33,7 @@ describe("configuration", () => {
     });
   });
 
-  it("rejects fixed rounds with automatic effort", async () => {
+  it("defaults fixed rounds to medium and rejects explicitly automatic effort", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-config-fixed-"));
     await writeFile(
       path.join(root, "agent-arena.yaml"),
@@ -41,6 +41,18 @@ describe("configuration", () => {
     );
     await expect(
       loadFightConfig({ task: "review", repositoryRoot: root }),
+    ).resolves.toMatchObject({
+      effortMode: "medium",
+      fixedRounds: true,
+      rounds: 1,
+      limits: { implementationMs: 900_000, reviewMs: 240_000 },
+    });
+    await expect(
+      loadFightConfig({
+        task: "review",
+        repositoryRoot: root,
+        effort: "auto",
+      }),
     ).rejects.toThrow(/effort auto/);
   });
 

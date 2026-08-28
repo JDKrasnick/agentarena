@@ -267,10 +267,19 @@ export async function loadFightConfig(
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const file = FileConfigSchema.parse(fileValue ?? {});
-  const effort = overrides.effort ?? file.effort;
   const configuredRounds = overrides.rounds ?? file.limits.rounds;
-  if (configuredRounds !== undefined && effort === "auto")
+  const fileDeclaresEffort = Boolean(
+    fileValue &&
+    typeof fileValue === "object" &&
+    Object.hasOwn(fileValue, "effort"),
+  );
+  const explicitlyConfiguredEffort =
+    overrides.effort ?? (fileDeclaresEffort ? file.effort : undefined);
+  if (configuredRounds !== undefined && explicitlyConfiguredEffort === "auto")
     throw new Error("--rounds cannot be combined with --effort auto");
+  const effort =
+    explicitlyConfiguredEffort ??
+    (configuredRounds === undefined ? file.effort : "medium");
   const profile = resolveEffortProfile(effort === "auto" ? "medium" : effort);
   const rawLimits =
     fileValue &&
@@ -432,7 +441,7 @@ export async function loadFightConfig(
       "infrastructure_recovery_round",
     )
       ? [
-          "`limits.infrastructure_recovery_round` is obsolete and ignored; new runs always use exactly three rounds.",
+          "`limits.infrastructure_recovery_round` is obsolete and ignored; new runs use the configured effort policy or fixed round count.",
         ]
       : []),
   ];

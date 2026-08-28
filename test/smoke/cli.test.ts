@@ -55,8 +55,6 @@ describe("built CLI smoke flow", () => {
         "node --test",
         "--agents",
         "codex,claude",
-        "--effort",
-        "medium",
         "--rounds",
         "3",
         "--models",
