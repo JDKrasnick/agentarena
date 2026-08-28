@@ -8,6 +8,7 @@ import type { FailureRecord } from "../../src/contracts/failure.js";
 import { validateHouseAttack } from "../../src/attacks/validate.js";
 import { FightConfigSchema, type Attack } from "../../src/core/types.js";
 import { RunSpecSchema } from "../../src/contracts/round.js";
+import { EFFORT_PROFILES } from "../../src/effort/policy.js";
 import { WorktreeManager } from "../../src/repo/git.js";
 import { createSlugRepository } from "../helpers/repository.js";
 
@@ -165,7 +166,7 @@ describe("target-relative test overlays", () => {
         },
       });
       const runSpec = RunSpecSchema.parse({
-        version: 1,
+        version: 2,
         runId: "run-1",
         task: {
           task: "Normalize slugs",
@@ -193,7 +194,25 @@ describe("target-relative test overlays", () => {
             required: true,
           },
         ],
-        budgets: config.limits,
+        budgets: {
+          ...config.limits,
+          roundEnvelopeMs: EFFORT_PROFILES.medium.roundEnvelopeMs,
+          maxProviderCallsPerRound:
+            EFFORT_PROFILES.medium.maxProviderCallsPerRound,
+          maxTokensPerRound: EFFORT_PROFILES.medium.maxTokensPerRound,
+        },
+        effort: {
+          mode: "medium",
+          fixedRounds: false,
+          profile: EFFORT_PROFILES.medium,
+          phaseOverrides: {
+            implementation: false,
+            review: false,
+            attack: false,
+            judge: false,
+            repair: false,
+          },
+        },
         permissions: {
           mode: "confirm",
           reducedValidationAccepted: false,

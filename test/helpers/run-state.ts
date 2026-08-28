@@ -10,6 +10,7 @@ import { deriveArenaOutcome } from "../../src/outcomes/derive-outcome.js";
 import { collectPatchQualityFacts } from "../../src/quality/collect-facts.js";
 import { selectRecommendedPatch } from "../../src/recommendation/select-patch.js";
 import { buildReviewPrompt } from "../../src/review/prompt.js";
+import { EFFORT_PROFILES } from "../../src/effort/policy.js";
 
 function contestant(
   id: ContestantId,
@@ -100,7 +101,7 @@ export function makeRunState(
   codex.finalPatchPath = `${runDirectory}/patches/a.diff`;
   claude.finalPatchPath = `${runDirectory}/patches/b.diff`;
   const state = RunStateSchema.parse({
-    schemaVersion: 7,
+    schemaVersion: 8,
     runId: "run-12345678",
     harnessVersion: "0.1.0",
     status: "complete",
@@ -115,6 +116,9 @@ export function makeRunState(
       attackVerifier: "codex",
       harnessMaintainer: "codex",
       rounds: 3,
+      effortMode: "medium",
+      fixedRounds: true,
+      resolvedEffortProfile: EFFORT_PROFILES.medium,
       maxAttacksPerRound: 3,
       infrastructureRecoveryRound: true,
       maxHeldOutCasesPerDefect: 2,

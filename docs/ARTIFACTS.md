@@ -4,10 +4,10 @@ Completed runs live under `.agent-arena/runs/<run-id>/`.
 
 ## Immutable battle evidence
 
-- New `result.json` files use compact schema version 8. The immutable
+- New `result.json` files use compact schema version 9. The immutable
   `baseline.json` and digest-chained `rounds/<round>/envelope.json` files are the
-  authoritative history; current round records use contract V4 and the summary records the ordered snapshot, replay, and
-  envelope hashes already applied. Versions 1–7 remain readable without being
+  authoritative history; current round records use contract V5 and the summary records effort assessment, adaptive decisions, and the ordered snapshot, replay, and
+  envelope hashes already applied. Versions 1–8 remain readable without being
   converted to the new authority model. Version 1 and 2 states still migrate
   provider-keyed contestants into stable `a` and `b` slots in memory.
 - `finalization.json` is an immutable, envelope-head-bound projection of final
@@ -38,7 +38,7 @@ Completed runs live under `.agent-arena/runs/<run-id>/`.
 - Existing artifacts default to competitive integrity with no operator
   interventions. `operations/operator-interventions.json` is the versioned
   runtime ledger for queued, applied, and expired one-time steering notes,
-  including the applied stage, round, and prompt hash. Schema-v8 `result.json`
+  including the applied stage, round, and prompt hash. Schema-v9 `result.json`
   projects assisted provenance; the baseline and sealed envelopes remain
   scoring authority.
 - `events.ndjson` is an ordered, append-only version-1 observability stream.

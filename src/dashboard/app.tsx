@@ -146,7 +146,7 @@ function BattleStatus({ state }: { state: DashboardState }) {
     ? state.round === "recovery"
       ? "RECOVERY"
       : state.round
-        ? `ROUND ${String(state.round)}/3`
+        ? `ROUND ${String(state.round)}/${String(state.roundPlan?.maximum ?? 5)}${state.roundPlan ? ` · ${String(state.roundPlan.planned)} planned` : ""}`
         : "ATTACK ROUND"
     : detail.chapter.toUpperCase();
   return (

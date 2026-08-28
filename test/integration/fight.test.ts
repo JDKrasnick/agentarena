@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile, readdir, rm } from "node:fs/promises";
+import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { execa } from "execa";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -8,6 +8,8 @@ import {
   CommandCaseBuilder,
   CommandHouseScout,
   RuleBasedVerifier,
+  type AttackInput,
+  type ImplementInput,
   type ReviewInput,
 } from "../../src/agents/adapter.js";
 import { Arena } from "../../src/core/arena.js";
@@ -55,6 +57,8 @@ function duelConfig(repositoryRoot: string) {
     agents: ["codex", "claude"],
     attackVerifier: "claude",
     harnessMaintainer: "claude",
+    effortMode: "medium",
+    fixedRounds: true,
     rounds: 3,
     maxAttacksPerRound: 3,
     infrastructureRecoveryRound: true,
@@ -118,7 +122,210 @@ class DeterministicTimedReviewAdapter extends CommandAgentAdapter {
   }
 }
 
+class ConvergedEmptyLaneAdapter extends CommandAgentAdapter {
+  override async implement(input: ImplementInput) {
+    const invocation = await super.implement(input);
+    await writeFile(
+      path.join(input.worktree, "src", "slug.mjs"),
+      'export function slug(value) {\n  return value.trim().toLowerCase().replace(/\\s+/g, "-");\n}\n',
+    );
+    return invocation;
+  }
+
+  override async review(input: ReviewInput) {
+    const invocation = await super.review(input);
+    await writeFile(
+      path.join(input.worktree, ".agent-arena-submission.json"),
+      JSON.stringify({ version: 2, findings: [] }),
+    );
+    return invocation;
+  }
+
+  override async attack(input: AttackInput) {
+    const invocation = await super.attack(input);
+    await writeFile(
+      path.join(input.worktree, ".agent-arena-submission.json"),
+      JSON.stringify({ version: 2, sharedSupportPaths: [], attacks: [] }),
+    );
+    return invocation;
+  }
+}
+
+class FreshEvidenceAdapter extends CommandAgentAdapter {
+  override async review(input: ReviewInput) {
+    const invocation = await super.review(input);
+    const findings =
+      input.round === 1
+        ? [
+            {
+              trust: "reviewer_hypothesis",
+              invariant: "Every whitespace run becomes one separator",
+              observations: [
+                {
+                  trust: "reviewer_hypothesis",
+                  statement:
+                    "The target replaces individual spaces instead of whitespace runs.",
+                  provenance: {
+                    kind: "code_inspection",
+                    references: ["src/slug.mjs:1"],
+                  },
+                },
+              ],
+              code_locations: [
+                {
+                  path: "src/slug.mjs",
+                  line_start: 1,
+                  line_end: 3,
+                  symbol: "slug",
+                },
+              ],
+              trigger_sequence: [
+                "Call slug with three consecutive spaces",
+                "Observe multiple separators",
+              ],
+              oracle: {
+                expected_behavior:
+                  "Collapse every run of whitespace to one hyphen",
+                task_source_ids: ["task-user"],
+                task_source_rationale:
+                  "The acceptance criterion states this behavior exactly.",
+              },
+              confidence: 98,
+              required_capability_ids: [],
+              regression_test_plan: {
+                summary: "Add a repeated-whitespace regression.",
+                suggested_paths: ["test/arena-repeated-whitespace.test.mjs"],
+                focused_command:
+                  "node --test test/arena-repeated-whitespace.test.mjs",
+              },
+            },
+          ]
+        : [];
+    await writeFile(
+      path.join(input.worktree, ".agent-arena-submission.json"),
+      JSON.stringify({ version: 2, findings }),
+    );
+    return invocation;
+  }
+
+  override async attack(input: AttackInput) {
+    const invocation = await super.attack(input);
+    if (input.round !== 1) {
+      await writeFile(
+        path.join(input.worktree, ".agent-arena-submission.json"),
+        JSON.stringify({ version: 2, sharedSupportPaths: [], attacks: [] }),
+      );
+      return invocation;
+    }
+    const testPath = "test/arena-repeated-whitespace.test.mjs";
+    await writeFile(
+      path.join(input.worktree, testPath),
+      'import test from "node:test";\nimport assert from "node:assert/strict";\nimport { slug } from "../src/slug.mjs";\ntest("collapses repeated whitespace", () => assert.equal(slug("Alpha   Beta"), "alpha-beta"));\n',
+    );
+    await writeFile(
+      path.join(input.worktree, ".agent-arena-submission.json"),
+      JSON.stringify({
+        version: 2,
+        sharedSupportPaths: [],
+        attacks: [
+          {
+            rank: 1,
+            claim: "Repeated whitespace is not collapsed",
+            impact: "Valid titles produce malformed public slugs",
+            oracle: {
+              expectedBehavior:
+                "Collapse every run of whitespace to one hyphen",
+              rationale:
+                "The acceptance criterion states this behavior exactly.",
+            },
+            proposedSeverity: "high",
+            confidence: 98,
+            focusedCommand:
+              "node --test test/arena-repeated-whitespace.test.mjs",
+            paths: [testPath],
+            requiredCapabilities: [],
+          },
+        ],
+      }),
+    );
+    return invocation;
+  }
+}
+
 describe("fake-adapter fight on a mocked real issue", () => {
+  it("stops a tiny converged fight after one round but continues fresh evidence", async () => {
+    const convergedRoot = await createSlugRepository();
+    const convergedConfig = FightConfigSchema.parse({
+      ...duelConfig(convergedRoot),
+      effortMode: "low",
+      fixedRounds: false,
+      rounds: 1,
+    });
+    const converged = await new Arena({
+      adapters: {
+        codex: new ConvergedEmptyLaneAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new ConvergedEmptyLaneAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+    }).fight(convergedConfig);
+
+    expect(converged.state.adaptiveDecisions).toHaveLength(1);
+    expect(converged.state.adaptiveDecisions[0]).toMatchObject({
+      round: 1,
+      action: "stop",
+      reason: "adaptive_convergence",
+      convergence: { passed: true },
+    });
+    expect(converged.state.adaptiveCompletion).toMatchObject({
+      kind: "adaptive_coverage",
+      reason: "adaptive_convergence",
+    });
+
+    const evidenceRoot = await createSlugRepository();
+    const evidenceConfig = FightConfigSchema.parse({
+      ...duelConfig(evidenceRoot),
+      acceptanceCriteria: [
+        "Collapse every run of whitespace to one hyphen",
+        "Return a lowercase slug",
+      ],
+      effortMode: "low",
+      fixedRounds: false,
+      rounds: 1,
+    });
+    const evidence = await new Arena({
+      adapters: {
+        codex: new FreshEvidenceAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+    }).fight(evidenceConfig);
+
+    expect(evidence.state.adaptiveDecisions.length).toBeGreaterThan(1);
+    expect(evidence.state.adaptiveDecisions[0]).toMatchObject({
+      round: 1,
+      action: "continue",
+      reason: "extension_qualified",
+      extensionQualified: true,
+    });
+    expect(evidence.state.adaptiveDecisions.at(-1)?.action).toBe("stop");
+  }, 60_000);
+
   it("isolates two slots that use the same provider", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = FightConfigSchema.parse({
@@ -129,6 +336,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       agents: ["codex", "codex"],
       attackVerifier: "codex",
       harnessMaintainer: "codex",
+      effortMode: "medium",
+      fixedRounds: true,
       rounds: 3,
       maxAttacksPerRound: 3,
       infrastructureRecoveryRound: true,
@@ -259,6 +468,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       agents: ["codex", "claude"],
       attackVerifier: "claude",
       harnessMaintainer: "claude",
+      effortMode: "medium",
+      fixedRounds: true,
       rounds: 3,
       maxAttacksPerRound: 3,
       infrastructureRecoveryRound: true,
@@ -373,6 +584,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       agents: ["codex", "claude"],
       attackVerifier: "codex",
       harnessMaintainer: "codex",
+      effortMode: "medium",
+      fixedRounds: true,
       rounds: 3,
       maxAttacksPerRound: 3,
       infrastructureRecoveryRound: true,
@@ -479,6 +692,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       agents: ["codex", "claude"],
       attackVerifier: "claude",
       harnessMaintainer: "claude",
+      effortMode: "medium",
+      fixedRounds: true,
       rounds: 3,
       maxAttacksPerRound: 3,
       infrastructureRecoveryRound: true,
@@ -1161,6 +1376,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       agents: ["codex", "claude"],
       attackVerifier: "codex",
       harnessMaintainer: "codex",
+      effortMode: "medium",
+      fixedRounds: true,
       rounds: 3,
       maxAttacksPerRound: 3,
       infrastructureRecoveryRound: true,
@@ -1479,7 +1696,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         "utf8",
       ),
     ) as { schemaVersion: number; stage: string };
-    expect(result).toMatchObject({ schemaVersion: 8, stage: "complete" });
+    expect(result).toMatchObject({ schemaVersion: 9, stage: "complete" });
     const roundDirectory = path.join(
       outcome.state.artifacts.runDirectory!,
       "rounds",
@@ -1574,8 +1791,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       contentHash: string;
       task: { sources: Array<{ kind: string; snapshotPath: string }> };
     };
-    expect(outcome.state.schemaVersion).toBe(7);
-    if (outcome.state.schemaVersion !== 7) throw new Error("expected v7 state");
+    expect(outcome.state.schemaVersion).toBe(8);
+    if (outcome.state.schemaVersion !== 8) throw new Error("expected v8 state");
     expect(outcome.state.runSpecHash).toBe(runSpec.contentHash);
     const issueSnapshot = runSpec.task.sources.find(
       (source) => source.kind === "issue",
@@ -1639,6 +1856,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       agents: ["codex", "claude"],
       attackVerifier: "codex",
       harnessMaintainer: "codex",
+      effortMode: "medium",
+      fixedRounds: true,
       rounds: 3,
       maxAttacksPerRound: 3,
       infrastructureRecoveryRound: true,

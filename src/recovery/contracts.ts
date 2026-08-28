@@ -4,6 +4,12 @@ import {
   RoundResultSchema,
 } from "../contracts/round.js";
 import { BrowserValidationResultSchema } from "../contracts/browser.js";
+import {
+  AdaptiveRoundDecisionSchema,
+  EffortModeSchema,
+  EffortProfileSchema,
+  TaskEffortAssessmentV1Schema,
+} from "../effort/policy.js";
 
 const IdentifierSchema = z.string().trim().min(1);
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -12,6 +18,8 @@ const RoundIdSchema = z.union([
   z.literal(1),
   z.literal(2),
   z.literal(3),
+  z.literal(4),
+  z.literal(5),
   z.literal("recovery"),
   z.literal("reconciliation"),
 ]);
@@ -38,7 +46,7 @@ export type AppliedEnvelope = z.infer<typeof AppliedEnvelopeSchema>;
 
 export const RoundEnvelopeSchema = z
   .object({
-    version: z.literal(4),
+    version: z.literal(5),
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     sealedAt: IsoDateSchema,
@@ -77,7 +85,7 @@ export type RoundEnvelope = z.infer<typeof RoundEnvelopeSchema>;
  */
 const LegacyRoundReplayHeaderSchema = z
   .object({
-    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     snapshotHash: Sha256Schema,
@@ -88,7 +96,7 @@ const LegacyRoundReplayHeaderSchema = z
 
 const LegacyRoundResultHeaderSchema = z
   .object({
-    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
     status: z.enum(["completed", "inconclusive", "cancelled", "failed"]),
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
@@ -99,7 +107,7 @@ const LegacyRoundResultHeaderSchema = z
 
 export const LegacyRoundEnvelopeSchema = z
   .object({
-    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     sealedAt: IsoDateSchema,
@@ -137,7 +145,7 @@ export const StoredRoundEnvelopeSchema = z.union([
 
 export const LegacyRoundSnapshotHeaderSchema = z
   .object({
-    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     snapshotHash: Sha256Schema,
@@ -365,11 +373,35 @@ export const RunSummaryV8Schema = RunSummaryV5Schema.unwrap()
   .omit({ schemaVersion: true })
   .extend({ schemaVersion: z.literal(8) });
 export type RunSummaryV8 = z.infer<typeof RunSummaryV8Schema>;
+export const RunSummaryV9Schema = RunSummaryV5Schema.unwrap()
+  .omit({ schemaVersion: true })
+  .extend({
+    schemaVersion: z.literal(9),
+    effort: z
+      .object({
+        mode: EffortModeSchema,
+        assessment: TaskEffortAssessmentV1Schema.optional(),
+        profile: EffortProfileSchema,
+        fixedRounds: z.boolean(),
+      })
+      .strict(),
+    adaptiveDecisions: z.array(AdaptiveRoundDecisionSchema),
+    adaptiveCompletion: z
+      .object({
+        kind: z.literal("adaptive_coverage"),
+        reason: AdaptiveRoundDecisionSchema.shape.reason,
+        skippedBriefs: z.array(z.string()),
+      })
+      .strict()
+      .optional(),
+  });
+export type RunSummaryV9 = z.infer<typeof RunSummaryV9Schema>;
 export const AnyRunSummarySchema = z.discriminatedUnion("schemaVersion", [
   RunSummaryV5Schema,
   RunSummaryV6Schema,
   RunSummaryV7Schema,
   RunSummaryV8Schema,
+  RunSummaryV9Schema,
 ]);
 
 export const CheckpointDescriptorSchema = z

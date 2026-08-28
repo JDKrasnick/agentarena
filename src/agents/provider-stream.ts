@@ -27,6 +27,12 @@ export interface ProviderStreamDiagnostics {
   lastActivityAt?: string;
   currentOpenTool?: string;
   decodingWarnings: string[];
+  tokenUsage?: {
+    uncachedInputTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    outputTokens?: number;
+  };
 }
 
 const safeToolName = (value: unknown): string | undefined =>
@@ -60,6 +66,7 @@ export class ProviderStreamDecoder {
   private toolStartedCount = 0;
   private toolFinishedCount = 0;
   private lastAssistantText?: string;
+  private tokenUsage?: ProviderStreamDiagnostics["tokenUsage"];
 
   constructor(
     readonly kind: ProviderStreamKind,
@@ -95,6 +102,7 @@ export class ProviderStreamDecoder {
         ? { currentOpenTool: [...this.openTools.values()].at(-1)! }
         : {}),
       decodingWarnings: [...this.warnings],
+      ...(this.tokenUsage ? { tokenUsage: { ...this.tokenUsage } } : {}),
     };
   }
 
@@ -138,6 +146,7 @@ export class ProviderStreamDecoder {
       stringAt(record, "sessionId") ??
       stringAt(record, "thread_id");
     if (!this.sessionId && sessionId) this.sessionId = sessionId;
+    this.captureTokenUsage(record);
 
     if (this.kind === "codex") {
       const itemType = item ? stringAt(item, "type") : undefined;
@@ -222,6 +231,51 @@ export class ProviderStreamDecoder {
     }
     // Providers add record variants frequently. Unknown records are ignored by
     // design so telemetry can never fail an otherwise usable invocation.
+  }
+
+  private captureTokenUsage(record: Record<string, unknown>) {
+    const usage =
+      recordAt(record, "usage") ??
+      recordAt(recordAt(record, "response") ?? {}, "usage") ??
+      recordAt(recordAt(record, "turn") ?? {}, "usage");
+    if (!usage) return;
+    const numberAt = (...keys: string[]): number | undefined => {
+      for (const key of keys) {
+        const value = usage[key];
+        if (typeof value === "number" && Number.isFinite(value) && value >= 0)
+          return Math.round(value);
+      }
+      return undefined;
+    };
+    const input = numberAt("input_tokens", "inputTokens", "prompt_tokens");
+    const cacheRead = numberAt(
+      "cache_read_input_tokens",
+      "cacheReadInputTokens",
+      "cached_input_tokens",
+    );
+    const cacheWrite = numberAt(
+      "cache_creation_input_tokens",
+      "cacheWriteInputTokens",
+    );
+    const output = numberAt(
+      "output_tokens",
+      "outputTokens",
+      "completion_tokens",
+    );
+    if (
+      [input, cacheRead, cacheWrite, output].every(
+        (value) => value === undefined,
+      )
+    )
+      return;
+    this.tokenUsage = {
+      ...(input === undefined
+        ? {}
+        : { uncachedInputTokens: Math.max(0, input - (cacheRead ?? 0)) }),
+      ...(cacheRead === undefined ? {} : { cacheReadTokens: cacheRead }),
+      ...(cacheWrite === undefined ? {} : { cacheWriteTokens: cacheWrite }),
+      ...(output === undefined ? {} : { outputTokens: output }),
+    };
   }
 
   private decodeClaudeContent(value: unknown, update: ProviderStreamUpdate) {

@@ -17,8 +17,8 @@ scouting, case-building, quality comparison, held-out sibling generation, and
 harness maintenance are legacy-only extensions and are not invoked by new runs.
 
 Champion and patch-recommendation language is conditional on coverage. Duel
-and catch-up require both attack directions in each of the three rounds; siege
-requires the attacker-to-defender lane in each round. Optional neutral-house
+and catch-up require both attack directions in every executed round; siege
+requires the attacker-to-defender lane in every executed round. Optional neutral-house
 scouting is outside this calculation. A valid explicit empty attack submission
 completes a lane, while a lane with no usable terminal result leaves only a
 provisional health-ledger leader. The user must bind an `accept-reduced` or
@@ -515,7 +515,22 @@ Patches that fail essential checks may be eliminated immediately or allowed into
 
 Each surviving agent receives anonymized opponent patches and changes roles from solver to attacker.
 
-The MVP runs three review–attack–repair rounds after the initial implementation.
+The MVP scales review–attack–repair work to the task. `effort: auto` is the
+default: after frozen inputs, permission planning, dependency checks, and MCP
+readiness, the identity-blind judge scores change surface, behavioral
+complexity, validation burden, and operational risk from 0–2. Scores 0, 1–2,
+3–4, 5–6, and 7–8 select ultra-low, low, medium, high, and ultra-high. Security,
+authorization, migration, concurrency, irreversible-data, and external-system
+risk impose a high floor; low-confidence assessments are promoted one tier.
+The judge receives one retry, after which the harness records a medium fallback.
+
+Profiles plan 1/1/2/3/3 rounds with per-round envelopes of 15/20/25/45/60
+minutes, provider-call caps of 6/8/10/14/18, and token caps of
+500k/750k/1.5m/4m/7m. They also select phase budgets. Explicit phase settings
+override only their named phase. `--effort` may pin a profile. `--rounds 1..5`
+runs exactly that many rounds with medium phase timings and disables adaptive
+stopping and extension; it is rejected with `--effort auto`.
+
 In each round, the harness first freezes both current implementation patches.
 Each eligible reviewer then gets a dedicated read-only budget, configured by
 `review_minutes` separately from the focused test-generation budget. The budget
@@ -578,6 +593,17 @@ Each round has its own symmetric, versioned prompt and investigation brief:
 | 1 — Contract and local correctness | Acceptance criteria, wrong output, regressions, negative cases, boundaries, and error handling. | Requirement-to-code tracing, examples, table tests, boundary analysis, and focused API assertions. |
 | 2 — Systematic exploration | State transitions, persistence, serialization, ordering, concurrency, cleanup, cancellation, and test-suite blind spots. | Property and state-machine tests, generated inputs, fuzzing, mutation-guided probes, static leads, controlled schedules, and—when relevant—prior-version artifact compatibility or full retry/persistence lifecycle probes. |
 | 3 — Integration, resilience, and security | Real component boundaries, dependency contracts, configuration, authentication and authorization, timeouts, retries, idempotency, partial failure, recovery, and resource behavior. | Approved ephemeral services, protocol checks, fault injection, security checks, deterministic stress, and steady-state invariants. |
+| 4 — Generalization extension | Generalize a newly proven damage-bearing defect or finish the bounded repair allowance for an active accepted defect. | Adjacent inputs, state transitions, equivalent protocols, and invariant variants tied to the triggering defect. |
+| 5 — Durability extension | Test recurrence, recovery, restart, and durability for a newly qualified trigger. | Regression recurrence, persistence/restart checks, recovery invariants, and bounded failure sequences. |
+
+After every sealed round, the harness records convergence and budget pressure.
+It stops when both contestants pass required checks, no active damage remains,
+there is no new damage-bearing defect, and no repair allowance remains. At most
+two additional rounds may extend the profile, never beyond round 5. Every
+extension must qualify independently from a new damage-bearing canonical defect
+(including partial-judge damage) or an active accepted defect with repair
+allowance remaining. Unrelated extension findings remain recorded evidence but
+cannot change damage or recoil.
 
 Required repository integration checks still run at baseline and after every
 repair, and agents may submit integration attacks in any round. Round 3 is the
@@ -792,7 +818,7 @@ Health is calculated from a ledger: `100 - permanent recoil - active distinct de
 
 Attackers may propose a severity, but they do not control damage. A neutral verifier should apply the published rubric to anonymized executable evidence, choose the lowest level fully supported, and provide a saved rationale. Ambiguous High or Critical ratings should be capped at Medium. The harness then calculates health deterministically from landed tests, persisted severity verdicts, recoil, and repair results.
 
-After three attack–repair rounds, the surviving contestant with the most HP wins. Patch simplicity may break an HP tie; otherwise the result is a draw. If only one contestant survives earlier, the fight ends early. Cost and duration are reported but do not change health.
+After the adaptive or fixed round plan completes, the surviving contestant with the most HP wins. Patch simplicity may break an HP tie; otherwise the result is a draw. If only one contestant survives earlier, the fight ends early. Cost and duration are reported but do not change health.
 
 The **arena champion** remains this health-ledger result. After final
 validation, Agent Arena separately derives deterministic patch-quality facts
@@ -1020,9 +1046,9 @@ agents:
   - gemini
 
 judge: codex
+effort: auto
 
 limits:
-  rounds: 3
   attacks_per_round: 3
   timeout_minutes: 20
 
@@ -1103,12 +1129,12 @@ Avoid initially supporting:
 ```bash
 agent-arena fight "fix issue #241" \
   --agents claude,codex \
-  --rounds 3 \
+  --effort auto \
   --budget 5
 ```
 
-The MVP supports two agents, one initial implementation, three attack–repair
-rounds, up to three ranked attacks per agent per round, one targeted retry per
+The MVP supports two agents, one initial implementation, one to five adaptive
+attack–repair rounds, up to three ranked attacks per agent per round, one targeted retry per
 distinct failure, one required validation command, and at most one
 approved ephemeral integration profile.
 

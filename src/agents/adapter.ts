@@ -37,6 +37,7 @@ import type {
   ProviderStage,
   ProviderStageFailure,
 } from "../recovery/provider-policy.js";
+import type { TaskEffortDimensions, TokenTelemetry } from "../effort/policy.js";
 import type { ProviderStreamKind } from "./provider-stream.js";
 
 async function runObservedProcess(
@@ -46,7 +47,7 @@ async function runObservedProcess(
     source: OutputSource;
     stage: string;
     contestantId?: ContestantId;
-    round?: 1 | 2 | 3 | "recovery" | "reconciliation";
+    round?: 1 | 2 | 3 | 4 | 5 | "recovery" | "reconciliation";
   },
 ): Promise<CommandResult> {
   if (!observation?.observer) return runProcess(request);
@@ -117,6 +118,23 @@ async function runObservedProcess(
   return result;
 }
 
+function tokenTelemetryFromResult(result: CommandResult): TokenTelemetry {
+  const usage = result.providerDiagnostics?.tokenUsage;
+  const fields = usage
+    ? Object.values(usage).filter((entry) => entry !== undefined)
+    : [];
+  if (!usage || fields.length === 0) return { state: "unavailable" };
+  return {
+    state: fields.length === 4 ? "complete" : "partial",
+    ...usage,
+    totalTokens:
+      (usage.uncachedInputTokens ?? 0) +
+      (usage.cacheReadTokens ?? 0) +
+      (usage.cacheWriteTokens ?? 0) +
+      (usage.outputTokens ?? 0),
+  };
+}
+
 export interface Availability {
   available: boolean;
   version?: string;
@@ -131,7 +149,7 @@ interface InvocationInput {
   transcriptPrefix: string;
   timeoutMs: number;
   signal: AbortSignal;
-  round?: 1 | 2 | 3 | "recovery" | "reconciliation";
+  round?: 1 | 2 | 3 | 4 | 5 | "recovery" | "reconciliation";
   observer?: ArenaObserver;
   outputSource?: OutputSource;
 }
@@ -179,6 +197,7 @@ export interface AttackVerdict {
   rationale: string;
   relationship?: "independent" | "affirm" | "overturn" | "unresolved";
   priorAdjudicationId?: string;
+  tokenTelemetry?: TokenTelemetry;
 }
 
 export type AnonymizedAttack = Pick<
@@ -222,6 +241,7 @@ export interface AnonymizedAttackInput {
 
 export interface AttackVerifier {
   readonly id: AgentId;
+  assessEffort?(input: EffortAssessmentInput): Promise<EffortAssessmentOutput>;
   assess(input: AnonymizedAttackInput): Promise<AttackVerdict>;
   /** Optional semantic fallback used only after the approved mechanical path fails. */
   adjudicate?(input: JudgeAdjudicationInput): Promise<JudgeAttackVerdict>;
@@ -229,6 +249,26 @@ export interface AttackVerifier {
   assessRepair?(input: JudgeRepairInput): Promise<JudgeRepairVerdict>;
   /** Returns and removes the oldest causally established terminal provider failure. */
   consumeProviderFailure?(): ProviderStageFailure | undefined;
+}
+
+export interface EffortAssessmentInput {
+  task: string;
+  acceptanceCriteria: readonly string[];
+  repositoryEvidence: readonly string[];
+  worktree: string;
+  promptPath: string;
+  transcriptPrefix: string;
+  timeoutMs: number;
+  signal: AbortSignal;
+  retryReason?: string;
+  observer?: ArenaObserver;
+}
+
+export interface EffortAssessmentOutput {
+  dimensions: TaskEffortDimensions;
+  confidence: number;
+  rationale: string;
+  tokenTelemetry: TokenTelemetry;
 }
 
 export interface JudgeAdjudicationInput extends Omit<
@@ -259,6 +299,7 @@ export interface JudgeAttackVerdict {
   rationale: string;
   relationship?: "independent" | "affirm" | "overturn" | "unresolved";
   priorAdjudicationId?: string;
+  tokenTelemetry?: TokenTelemetry;
 }
 
 export interface JudgeRepairInput {
@@ -281,6 +322,7 @@ export interface JudgeRepairVerdict {
   decision: "repaired" | "not_repaired" | "unable";
   rationale: string;
   packetDigest: string;
+  tokenTelemetry?: TokenTelemetry;
 }
 
 export interface HarnessOverlayProposal {
@@ -297,7 +339,7 @@ export interface AnonymizedInfrastructurePacket {
   prompt: string;
   timeoutMs: number;
   transcriptPrefix: string;
-  round: 1 | 2 | 3;
+  round: 1 | 2 | 3 | 4 | 5;
   observer?: ArenaObserver;
 }
 
@@ -315,7 +357,7 @@ export interface StructuredGeneratorInput {
   timeoutMs: number;
   transcriptPrefix: string;
   signal: AbortSignal;
-  round: 1 | 2 | 3;
+  round: 1 | 2 | 3 | 4 | 5;
   observer?: ArenaObserver;
 }
 
@@ -958,6 +1000,80 @@ export class CommandAttackVerifier implements AttackVerifier {
     return this.providerFailures.shift();
   }
 
+  async assessEffort(
+    input: EffortAssessmentInput,
+  ): Promise<EffortAssessmentOutput> {
+    const outputPath = path.join(input.worktree, ".agent-arena-effort.json");
+    const prompt = [
+      "# Agent Arena task-effort assessment",
+      "Classify the task once before implementation. Do not change files or execute project code.",
+      "Score each dimension as 0 (small/routine), 1 (moderate), or 2 (broad/complex/high validation or operational exposure).",
+      "Dimensions: changeSurface, behavioralComplexity, validationBurden, operationalRisk.",
+      "Confidence is a number from 0 through 1. Judge only the task and bounded repository evidence; do not predict contestant skill.",
+      JSON.stringify(
+        {
+          task: input.task,
+          acceptanceCriteria: input.acceptanceCriteria,
+          repositoryEvidence: input.repositoryEvidence,
+        },
+        null,
+        2,
+      ),
+      `Write only valid JSON to ${outputPath} with keys changeSurface, behavioralComplexity, validationBurden, operationalRisk, confidence, and rationale.`,
+      ...(input.retryReason
+        ? [
+            "The first bounded assessment was invalid.",
+            `Retry reason: ${input.retryReason}`,
+            "Return one corrected JSON object using the exact requested keys.",
+          ]
+        : []),
+    ].join("\n\n");
+    await writeFile(input.promptPath, prompt, "utf8");
+    await rm(outputPath, { force: true });
+    const result = await runObservedProcess(
+      {
+        executable: this.command.executable,
+        args: this.command.args,
+        input: prompt,
+        cwd: input.worktree,
+        timeoutMs: input.timeoutMs,
+        logPrefix: input.transcriptPrefix,
+        signal: input.signal,
+        ...(this.command.providerStream
+          ? { providerStream: this.command.providerStream }
+          : {}),
+      },
+      {
+        ...(input.observer ? { observer: input.observer } : {}),
+        source: "verifier",
+        stage: "effort-assessment",
+      },
+    );
+    const schema = z.object({
+      changeSurface: z.number().int().min(0).max(2),
+      behavioralComplexity: z.number().int().min(0).max(2),
+      validationBurden: z.number().int().min(0).max(2),
+      operationalRisk: z.number().int().min(0).max(2),
+      confidence: z.number().min(0).max(1),
+      rationale: z.string().min(1),
+    });
+    const value = parseModelSubmission(
+      schema,
+      await readFile(outputPath, "utf8"),
+    );
+    return {
+      dimensions: {
+        changeSurface: value.changeSurface,
+        behavioralComplexity: value.behavioralComplexity,
+        validationBurden: value.validationBurden,
+        operationalRisk: value.operationalRisk,
+      },
+      confidence: value.confidence,
+      rationale: value.rationale,
+      tokenTelemetry: tokenTelemetryFromResult(result),
+    };
+  }
+
   private recordTerminalProviderFailure(
     stage: Extract<ProviderStage, "judge" | "semantic_adjudication">,
     result: CommandResult,
@@ -1091,6 +1207,7 @@ export class CommandAttackVerifier implements AttackVerifier {
         ...(verdict.priorAdjudicationId
           ? { priorAdjudicationId: verdict.priorAdjudicationId }
           : {}),
+        tokenTelemetry: tokenTelemetryFromResult(result),
       };
     } catch (error) {
       if (this.isProviderInfrastructureFailure(result)) {
@@ -1245,6 +1362,7 @@ export class CommandAttackVerifier implements AttackVerifier {
         ...(verdict.priorAdjudicationId
           ? { priorAdjudicationId: verdict.priorAdjudicationId }
           : {}),
+        tokenTelemetry: tokenTelemetryFromResult(result),
       };
     } catch (error) {
       if (this.isProviderInfrastructureFailure(result)) {
@@ -1350,7 +1468,11 @@ export class CommandAttackVerifier implements AttackVerifier {
         schema,
         await readFile(outputPath, "utf8"),
       );
-      return { ...verdict, packetDigest: packet.packetDigest };
+      return {
+        ...verdict,
+        packetDigest: packet.packetDigest,
+        tokenTelemetry: tokenTelemetryFromResult(result),
+      };
     } catch (error) {
       if (this.isProviderInfrastructureFailure(result)) {
         this.recordTerminalProviderFailure(

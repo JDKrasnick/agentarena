@@ -89,6 +89,7 @@ export interface DashboardState {
   startedAt?: string;
   stage: Stage;
   round?: RoundId;
+  roundPlan?: { planned: number; maximum: number };
   status: string;
   assisted: boolean;
   warnings: string[];
@@ -190,6 +191,42 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
       return;
     case "round_started":
       state.round = event.round;
+      return;
+    case "effort_assessed":
+      state.roundPlan = {
+        planned: event.plannedRounds,
+        maximum: event.maxRounds,
+      };
+      appendBounded(state.systemOutput, {
+        source: "harness",
+        stream: "stdout",
+        text: `Effort ${event.tier}; score ${String(event.score)}/8; ${String(event.plannedRounds)} planned rounds; cap ${String(event.maxRounds)}${event.fallback ? "; fallback" : ""}.`,
+      });
+      return;
+    case "effort_resolved":
+      state.roundPlan = {
+        planned: event.plannedRounds,
+        maximum: event.maxRounds,
+      };
+      appendBounded(state.systemOutput, {
+        source: "harness",
+        stream: "stdout",
+        text: `Effort ${event.tier}; assessment skipped; ${String(event.plannedRounds)} planned rounds; cap ${String(event.maxRounds)}.`,
+      });
+      return;
+    case "budget_pressure":
+    case "convergence_evaluated":
+    case "extension_qualified":
+    case "extension_declined":
+    case "adaptive_stop":
+      appendBounded(state.systemOutput, {
+        source: "harness",
+        stream: "stdout",
+        text:
+          event.type === "adaptive_stop"
+            ? `Adaptive stop after round ${String(event.round)}: ${event.reason}.`
+            : `${event.type.replaceAll("_", " ")} in round ${String(event.round)}.`,
+      });
       return;
     case "invocation_started":
       if (event.contestantId) {

@@ -163,6 +163,18 @@ export function renderBattleHtml(state: RunState): string {
     (contestant) =>
       reportCheckStatus(latestCheck(contestant, "required")) === "PASS",
   );
+  const effortProfile = state.config.resolvedEffortProfile;
+  const effortBudget = effortProfile
+    ? `${String(effortProfile.roundEnvelopeMs / 60_000)} minutes · ${String(effortProfile.maxProviderCallsPerRound)} provider calls · ${String(effortProfile.maxTokensPerRound)} tokens per round; implementation/review/attack/judge/repair ${String(effortProfile.implementationMs / 60_000)}/${String(effortProfile.reviewMs / 60_000)}/${String(effortProfile.attackMs / 60_000)}/${String(effortProfile.judgeMs / 60_000)}/${String(effortProfile.repairMs / 60_000)} minutes`
+    : "Legacy budget unavailable";
+  const adaptiveRows = state.adaptiveDecisions.length
+    ? state.adaptiveDecisions
+        .map((decision) => {
+          const telemetry = decision.consumption.tokenTelemetry;
+          return `<tr><th>Round ${String(decision.round)}</th><td>${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s</td><td>${String(decision.consumption.providerCalls)}</td><td>${escapeHtml(telemetry.state)}${telemetry.totalTokens === undefined ? "" : ` (${String(telemetry.totalTokens)})`}</td><td>${decision.convergence.passed ? "yes" : "no"}</td><td>${escapeHtml(decision.extensionTriggerDefectIds.join(", ") || "none")}</td><td>${escapeHtml(`${decision.action}: ${decision.reason}`)}</td></tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="7">No adaptive decisions were recorded.</td></tr>`;
   const contestantCards = contestants
     .map((contestant) => {
       const outcome = state.arenaOutcome?.contestants[contestant.id];
@@ -249,9 +261,13 @@ export function renderBattleHtml(state: RunState): string {
             ? "State, boundaries & systematic probes"
             : round.id === 3
               ? "Integration, resilience & security"
-              : round.id === "reconciliation"
-                ? "Correction-only reconciliation"
-                : "Infrastructure recovery";
+              : round.id === 4
+                ? "Extension generalization"
+                : round.id === 5
+                  ? "Extension durability & recovery"
+                  : round.id === "reconciliation"
+                    ? "Correction-only reconciliation"
+                    : "Infrastructure recovery";
       const label =
         round.id === "recovery"
           ? "Recovery"
@@ -346,6 +362,7 @@ export function renderBattleHtml(state: RunState): string {
 </style></head><body><main>
 <header class="masthead"><div><p class="eyebrow">AGENT ARENA · EVIDENCE-LINKED BATTLE DOSSIER</p><h1>${escapeHtml(outcomeHeading)}</h1><p class="summary">${escapeHtml(state.ranking?.reason ?? "This run did not reach a final ranking.")} This dossier separates proven defects, unsuccessful attacks, verified checks, and the recommendation so the score is explainable.</p></div><nav class="artifacts" aria-label="Battle artifacts">${link(state, "Full report", state.artifacts.battle)} · ${link(state, "Raw result", state.artifacts.result)} · ${link(state, "Share image", state.artifacts.battleVisual)}</nav></header>
 <section class="section"><h2>Final decision</h2><div class="contestants">${contestantCards}</div></section>
+<section class="section"><h2>Effort and adaptive coverage</h2><p class="note"><strong>${escapeHtml(state.config.resolvedEffortProfile?.tier ?? state.config.effortMode)}</strong> · ${state.config.fixedRounds ? `${String(state.config.rounds)} exact rounds` : `${String(state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds)} planned, up to ${String(state.config.resolvedEffortProfile?.maxRounds ?? state.config.rounds)}`} · ${escapeHtml(state.adaptiveCompletion?.reason ?? "run in progress or fixed-round completion")}. Skipped briefs: ${escapeHtml(state.adaptiveCompletion?.skippedBriefs.join(", ") || "none")}.</p><p class="note">Configured budget: ${escapeHtml(effortBudget)}.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Boundary</th><th>Wall time</th><th>Calls</th><th>Tokens</th><th>Converged</th><th>Extension triggers</th><th>Exact decision</th></tr></thead><tbody>${adaptiveRows}</tbody></table></div></section>
 ${laneCoverage}
 ${terminalNotice}
 <section class="section decision"><div class="callout"><strong>${escapeHtml(decisionHeading)}</strong><p>${escapeHtml(state.ranking?.reason ?? "No final ranking reason was recorded.")}</p><p class="note">The champion is determined by remaining health. Health starts at 100, then subtracts missed-attack recoil and active, un-repaired defect damage. Patch quality only breaks an equal-correctness tie.</p></div><div class="score"><dl><dt>Verified required suites</dt><dd>${requiredPassed ? chip("Both pass", "pass") : chip("Review failures", "fail")}</dd><dt>Proven defects</dt><dd>${String(defects.length)} (${String(unresolved.length)} unresolved, ${String(repaired.length)} repaired)</dd><dt>Deciding factors</dt><dd>${escapeHtml(state.arenaOutcome?.decidingFactors.join(", ") || "ranking")}</dd><dt>Recommended patch</dt><dd>${escapeHtml(recommendation)}</dd></dl></div></section>

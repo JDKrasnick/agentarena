@@ -14,6 +14,7 @@ import {
 import { redact } from "../../src/runner/process-runner.js";
 import { FightConfigSchema } from "../../src/core/types.js";
 import { RunSpecSchema } from "../../src/contracts/round.js";
+import { EFFORT_PROFILES } from "../../src/effort/policy.js";
 
 const config = FightConfigSchema.parse({
   task: "task",
@@ -42,7 +43,7 @@ const config = FightConfigSchema.parse({
 });
 
 const runSpec = RunSpecSchema.parse({
-  version: 1,
+  version: 2,
   runId: "run-1",
   task: {
     task: "task",
@@ -70,7 +71,24 @@ const runSpec = RunSpecSchema.parse({
       required: true,
     },
   ],
-  budgets: config.limits,
+  budgets: {
+    ...config.limits,
+    roundEnvelopeMs: EFFORT_PROFILES.medium.roundEnvelopeMs,
+    maxProviderCallsPerRound: EFFORT_PROFILES.medium.maxProviderCallsPerRound,
+    maxTokensPerRound: EFFORT_PROFILES.medium.maxTokensPerRound,
+  },
+  effort: {
+    mode: "medium",
+    fixedRounds: false,
+    profile: EFFORT_PROFILES.medium,
+    phaseOverrides: {
+      implementation: false,
+      review: false,
+      attack: false,
+      judge: false,
+      repair: false,
+    },
+  },
   permissions: {
     mode: "confirm",
     reducedValidationAccepted: false,

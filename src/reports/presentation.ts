@@ -126,7 +126,7 @@ export function reportDefects(state: RunState): ReportDefect[] {
 
 export function reportRounds(state: RunState): ReportRound[] {
   const contestants = reportContestants(state);
-  const ids: RoundId[] = [1, 2, 3];
+  const ids: RoundId[] = [1, 2, 3, 4, 5];
   if (
     state.attacks.some((attack) => attack.round === "recovery") ||
     contestants.some((contestant) =>

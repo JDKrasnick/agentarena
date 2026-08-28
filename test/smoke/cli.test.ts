@@ -55,6 +55,8 @@ describe("built CLI smoke flow", () => {
         "node --test",
         "--agents",
         "codex,claude",
+        "--rounds",
+        "3",
         "--models",
         "codex-test-model,claude-test-model",
         "--yes",
@@ -100,7 +102,7 @@ describe("built CLI smoke flow", () => {
         assessmentDigest: string;
       };
     };
-    expect(result.schemaVersion).toBe(8);
+    expect(result.schemaVersion).toBe(9);
     expect(result.contestants.map((contestant) => contestant.id)).toEqual([
       "a",
       "b",
@@ -120,7 +122,7 @@ describe("built CLI smoke flow", () => {
       { cwd: repositoryRoot, env },
     );
     expect(JSON.parse(resumed.stdout)).toMatchObject({
-      schemaVersion: 8,
+      schemaVersion: 9,
       status: "complete",
     });
     expect(
@@ -262,6 +264,10 @@ describe("built CLI smoke flow", () => {
         "node --test",
         "--agents",
         "codex,claude",
+        "--effort",
+        "medium",
+        "--rounds",
+        "3",
         "--yes",
         "--no-window",
       ],
@@ -303,6 +309,10 @@ describe("built CLI smoke flow", () => {
         "node --test",
         "--agents",
         "codex,claude",
+        "--effort",
+        "medium",
+        "--rounds",
+        "3",
         "--yes",
         "--review-mcp",
         "--no-window",
@@ -313,7 +323,7 @@ describe("built CLI smoke flow", () => {
     expect(manualReview.stderr).toContain(
       "--review-mcp requires an interactive TTY",
     );
-  });
+  }, 90_000);
 
   it("recovers provider transport with an exact frozen-input replacement", async () => {
     const repositoryRoot = await createSlugRepository();
@@ -352,6 +362,10 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
         "node --test",
         "--agents",
         "codex,claude",
+        "--effort",
+        "medium",
+        "--rounds",
+        "3",
         "--yes",
         "--no-window",
       ],
@@ -497,6 +511,10 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
         "node --test",
         "--agents",
         "codex,claude",
+        "--effort",
+        "medium",
+        "--rounds",
+        "3",
         "--yes",
         "--no-window",
       ],
@@ -566,6 +584,10 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
         "node --test",
         "--agents",
         "codex,claude",
+        "--effort",
+        "medium",
+        "--rounds",
+        "3",
         "--yes",
         "--no-window",
       ],
@@ -676,6 +698,10 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
         "node --test",
         "--agents",
         "codex,claude",
+        "--effort",
+        "medium",
+        "--rounds",
+        "3",
         "--yes",
         "--no-window",
       ],

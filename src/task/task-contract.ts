@@ -14,6 +14,7 @@ import {
   type TaskSource,
   type TaskReference,
 } from "../core/types.js";
+import { resolveEffortProfile } from "../effort/policy.js";
 import { RunSpecSchema, type RunSpec } from "../contracts/round.js";
 import {
   discoverInstructions,
@@ -1060,8 +1061,30 @@ export async function buildRunSpec(
     browserCapability?.status === "approved" && blockedRequiredBrowserOrigin
       ? blockedRequiredBrowserOrigin.status
       : browserCapability?.status;
+  const effortProfile =
+    config.resolvedEffortProfile ??
+    resolveEffortProfile(
+      config.effortMode === "auto" ? "medium" : config.effortMode,
+      {
+        ...(config.phaseOverrides.implementation
+          ? { implementationMs: config.limits.implementationMs }
+          : {}),
+        ...(config.phaseOverrides.review
+          ? { reviewMs: config.limits.reviewMs }
+          : {}),
+        ...(config.phaseOverrides.attack
+          ? { attackMs: config.limits.attackMs }
+          : {}),
+        ...(config.phaseOverrides.judge
+          ? { judgeMs: config.limits.verifierMs }
+          : {}),
+        ...(config.phaseOverrides.repair
+          ? { repairMs: config.limits.repairMs }
+          : {}),
+      },
+    );
   const base = {
-    version: 1 as const,
+    version: 2 as const,
     runId: options.runId,
     task: {
       task: snapshot.task,
@@ -1083,7 +1106,22 @@ export async function buildRunSpec(
       contestants: config.contestants,
     },
     commands,
-    budgets: config.limits,
+    budgets: {
+      ...config.limits,
+      roundEnvelopeMs: effortProfile.roundEnvelopeMs,
+      maxProviderCallsPerRound: effortProfile.maxProviderCallsPerRound,
+      maxTokensPerRound: effortProfile.maxTokensPerRound,
+    },
+    effort: {
+      mode: config.effortMode,
+      fixedRounds: config.fixedRounds,
+      ...(config.fixedRounds ? { exactRounds: config.rounds } : {}),
+      ...(config.effortAssessment
+        ? { assessment: config.effortAssessment }
+        : {}),
+      profile: effortProfile,
+      phaseOverrides: config.phaseOverrides,
+    },
     permissions: {
       mode: options.permissions.defaultMode,
       reducedValidationAccepted: options.permissions.reducedValidationAccepted,

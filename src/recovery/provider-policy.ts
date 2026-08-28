@@ -17,7 +17,15 @@ export const ProviderStageFailureSchema = z
     version: z.literal(1),
     provider: z.enum(["codex", "claude", "gemini"]),
     stage: ProviderStageSchema,
-    round: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+    round: z
+      .union([
+        z.literal(1),
+        z.literal(2),
+        z.literal(3),
+        z.literal(4),
+        z.literal(5),
+      ])
+      .optional(),
     contestantId: z.enum(["a", "b"]).optional(),
     reason: z.string().min(1),
     causalEvidence: z.array(z.string().min(1)).min(1),

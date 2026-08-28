@@ -82,6 +82,11 @@ export function renderConsoleSummary(
         state.patchRecommendation.contestantId,
       )
     : "none";
+  const profile = state.config.resolvedEffortProfile;
+  const decisionLines = state.adaptiveDecisions.map((decision) => {
+    const tokens = decision.consumption.tokenTelemetry;
+    return `Round ${String(decision.round)} decision: ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s · ${String(decision.consumption.providerCalls)} calls · tokens ${tokens.state}${tokens.totalTokens === undefined ? "" : ` (${String(tokens.totalTokens)})`} · ${decision.action} (${decision.reason})`;
+  });
 
   return [
     style("Agent Arena — evidence-backed final result", ANSI.bold, color),
@@ -95,7 +100,24 @@ export function renderConsoleSummary(
           `Incumbent attribution: ${state.pullRequestFixture.attribution.confidence}${state.pullRequestFixture.attribution.provider ? ` (${state.pullRequestFixture.attribution.provider})` : ""}`,
         ]
       : []),
-    `Rounds completed: ${String(completedRounds)}/3`,
+    `Effort: ${state.config.resolvedEffortProfile?.tier ?? state.config.effortMode}${state.config.effortAssessment?.fallback ? " (medium fallback)" : ""} · ${state.config.fixedRounds ? `${String(state.config.rounds)} fixed` : `${String(state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds)} planned`} round(s)`,
+    ...(profile
+      ? [
+          `Round budget: ${(profile.roundEnvelopeMs / 60_000).toFixed(0)}m · ${String(profile.maxProviderCallsPerRound)} calls · ${String(profile.maxTokensPerRound)} tokens; phase limits ${String(profile.implementationMs / 60_000)}m/${String(profile.reviewMs / 60_000)}m/${String(profile.attackMs / 60_000)}m/${String(profile.judgeMs / 60_000)}m/${String(profile.repairMs / 60_000)}m`,
+        ]
+      : []),
+    `Rounds completed: ${String(completedRounds)}/${String(state.config.fixedRounds ? state.config.rounds : (state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds))}${completedRounds > (state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds) ? " (extended)" : ""}`,
+    ...decisionLines,
+    ...(state.adaptiveCompletion
+      ? [
+          `Completion: adaptive coverage (${state.adaptiveCompletion.reason})`,
+          ...(state.adaptiveCompletion.skippedBriefs.length
+            ? [
+                `Skipped briefs: ${state.adaptiveCompletion.skippedBriefs.join(", ")}`,
+              ]
+            : []),
+        ]
+      : []),
     ...(state.coverageAssessment
       ? [
           `Coverage: ${state.coverageAssessment.confidence.replaceAll("_", " ")} — ${String(state.coverageAssessment.counts.completed)} completed, ${String(state.coverageAssessment.counts.degraded)} degraded, ${String(state.coverageAssessment.counts.unresolved)} unresolved / ${String(state.coverageAssessment.counts.required)} required`,

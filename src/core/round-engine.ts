@@ -116,6 +116,17 @@ import {
 } from "../task/task-contract.js";
 import type { RunSpec } from "../contracts/round.js";
 import {
+  resolveEffortProfile,
+  decideAdaptiveRound,
+  scoreEffort,
+  TaskEffortAssessmentV1Schema,
+  unavailableTokenTelemetry,
+  type EffortProfile,
+  type AdaptiveRoundDecision,
+  type TaskEffortAssessmentV1,
+  type TokenTelemetry,
+} from "../effort/policy.js";
+import {
   BrowserValidationResultSchema,
   type BrowserValidationResult,
 } from "../contracts/browser.js";
@@ -318,7 +329,7 @@ export interface ReplacementFightOptions {
   /** State reconstructed only from the parent's sealed envelope ledger. */
   inheritedState?: RunState;
   /** First unsealed round; earlier rounds must never be replayed. */
-  startRound?: 1 | 2 | 3;
+  startRound?: 1 | 2 | 3 | 4 | 5;
   /** Round-one implementation and initial validation were durably retained. */
   resumeAfterInitialization?: boolean;
   /** Last sealed parent boundary that anchors the child's first round. */
@@ -366,6 +377,7 @@ interface RecordedRoundInvocation {
   startedAt: string;
   finishedAt: string;
   artifactPaths: string[];
+  tokenTelemetry?: TokenTelemetry;
 }
 
 type DashboardLink = NonNullable<
@@ -566,6 +578,232 @@ export class RoundEngine {
     this.progress = dependencies.onProgress ?? (() => undefined);
   }
 
+  private deadlineAfter(durationMs: number): string {
+    return new Date(this.now().getTime() + durationMs).toISOString();
+  }
+
+  private extensionScope(
+    context: ArenaContext,
+    round: RoundId,
+  ): string | undefined {
+    if (typeof round !== "number" || round < 4) return undefined;
+    const previous = context.state.adaptiveDecisions.find(
+      (decision) => decision.round === round - 1,
+    );
+    return JSON.stringify(
+      {
+        triggeringDefectIds: previous?.extensionTriggerDefectIds ?? [],
+        scoringBoundary:
+          "Only the triggering defect or an adjacent invariant explicitly linked to its prior adjudication may change score. Other findings are recorded without damage or recoil.",
+      },
+      null,
+      2,
+    );
+  }
+
+  private profileWithOverrides(
+    config: FightConfig,
+    tier: EffortProfile["tier"],
+  ): EffortProfile {
+    return resolveEffortProfile(tier, {
+      ...(config.phaseOverrides.implementation
+        ? { implementationMs: config.limits.implementationMs }
+        : {}),
+      ...(config.phaseOverrides.review
+        ? { reviewMs: config.limits.reviewMs }
+        : {}),
+      ...(config.phaseOverrides.attack
+        ? { attackMs: config.limits.attackMs }
+        : {}),
+      ...(config.phaseOverrides.judge
+        ? { judgeMs: config.limits.verifierMs }
+        : {}),
+      ...(config.phaseOverrides.repair
+        ? { repairMs: config.limits.repairMs }
+        : {}),
+    });
+  }
+
+  private async resolveInitialEffort(options: {
+    config: FightConfig;
+    reconnaissance: ReconnaissanceSnapshot;
+    store: ArtifactStore;
+    worktrees: WorktreeManager;
+    controller: AbortController;
+    observer: ArenaObserver;
+  }): Promise<FightConfig> {
+    const { config } = options;
+    if (config.effortMode !== "auto") {
+      const profile = this.profileWithOverrides(config, config.effortMode);
+      const plannedRounds = config.fixedRounds
+        ? config.rounds
+        : profile.plannedRounds;
+      const maxRounds = config.fixedRounds ? config.rounds : profile.maxRounds;
+      this.progress(
+        `Effort: ${profile.tier} (${String(plannedRounds)} planned round${plannedRounds === 1 ? "" : "s"}, cap ${String(maxRounds)}, assessment skipped)`,
+      );
+      await options.observer.publish({
+        type: "effort_resolved",
+        tier: profile.tier,
+        plannedRounds,
+        maxRounds,
+      });
+      return FightConfigSchema.parse({
+        ...config,
+        resolvedEffortProfile: profile,
+        rounds: plannedRounds,
+        limits: {
+          implementationMs: profile.implementationMs,
+          reviewMs: profile.reviewMs,
+          attackMs: profile.attackMs,
+          verifierMs: profile.judgeMs,
+          repairMs: profile.repairMs,
+        },
+      });
+    }
+
+    const attempts: TaskEffortAssessmentV1["attempts"] = [];
+    let selected:
+      | Awaited<ReturnType<NonNullable<AttackVerifier["assessEffort"]>>>
+      | undefined;
+    let fallbackReason: string | undefined;
+    const assessor = this.dependencies.verifier.assessEffort?.bind(
+      this.dependencies.verifier,
+    );
+    await options.store.writeText("initialization/.keep", "");
+    if (assessor) {
+      let worktree = await options.worktrees.create("effort-assessment");
+      try {
+        for (const attempt of [1, 2] as const) {
+          const started = this.now();
+          const promptPath = options.store.resolve(
+            `initialization/effort-attempt-${String(attempt)}.prompt.md`,
+          );
+          const transcriptPrefix = options.store.resolve(
+            `initialization/effort-attempt-${String(attempt)}`,
+          );
+          try {
+            selected = await assessor({
+              task: config.task,
+              acceptanceCriteria: config.acceptanceCriteria,
+              repositoryEvidence: options.reconnaissance.repositoryEvidence.map(
+                (entry) =>
+                  `${entry.path} (${String(entry.byteLength)} bytes)\n${entry.content.slice(0, 4_000)}`,
+              ),
+              worktree,
+              promptPath,
+              transcriptPrefix,
+              timeoutMs: 2 * 60_000,
+              signal: options.controller.signal,
+              ...(attempt === 2 && fallbackReason
+                ? { retryReason: fallbackReason }
+                : {}),
+              observer: options.observer,
+            });
+            const finished = this.now();
+            attempts.push({
+              attempt,
+              startedAt: started.toISOString(),
+              finishedAt: finished.toISOString(),
+              durationMs: Math.max(0, finished.getTime() - started.getTime()),
+              status: "succeeded",
+              promptPath,
+              transcriptPrefix,
+              dimensions: selected.dimensions,
+              confidence: selected.confidence,
+              rationale: selected.rationale,
+              tokenTelemetry: selected.tokenTelemetry,
+            });
+            break;
+          } catch (error) {
+            const finished = this.now();
+            fallbackReason =
+              error instanceof Error ? error.message : String(error);
+            attempts.push({
+              attempt,
+              startedAt: started.toISOString(),
+              finishedAt: finished.toISOString(),
+              durationMs: Math.max(0, finished.getTime() - started.getTime()),
+              status: "failed",
+              promptPath,
+              transcriptPrefix,
+              error: fallbackReason,
+              tokenTelemetry: unavailableTokenTelemetry(),
+            });
+            await options.store.replaceDerivedJson(
+              "initialization/effort-attempts.json",
+              attempts,
+            );
+            if (attempt === 1) {
+              await options.worktrees.remove(worktree);
+              worktree = await options.worktrees.create(
+                "effort-assessment-retry",
+              );
+            }
+          }
+        }
+      } finally {
+        await options.worktrees.remove(worktree);
+      }
+    } else {
+      fallbackReason = "Configured judge does not implement effort assessment";
+    }
+
+    const dimensions = selected?.dimensions ?? {
+      changeSurface: 1,
+      behavioralComplexity: 1,
+      validationBurden: 1,
+      operationalRisk: 1,
+    };
+    const confidence = selected?.confidence ?? 1;
+    const scored = scoreEffort(dimensions, confidence);
+    const assessment = TaskEffortAssessmentV1Schema.parse({
+      version: 1,
+      mode: "auto",
+      dimensions,
+      rawScore: scored.score,
+      confidence,
+      selectedTier: selected ? scored.tier : "medium",
+      promotedForConfidence: selected ? scored.promotedForConfidence : false,
+      riskFloorApplied: selected ? scored.riskFloorApplied : false,
+      fallback: !selected,
+      ...(!selected
+        ? { fallbackReason: fallbackReason ?? "Assessment attempts exhausted" }
+        : {}),
+      attempts,
+      assessedAt: this.now().toISOString(),
+    });
+    await options.store.writeImmutableJson(
+      "initialization/effort-assessment.json",
+      assessment,
+    );
+    const profile = this.profileWithOverrides(config, assessment.selectedTier);
+    this.progress(
+      `Effort: ${assessment.selectedTier} (score ${String(assessment.rawScore)}/8, ${String(profile.plannedRounds)} planned round${profile.plannedRounds === 1 ? "" : "s"}${assessment.fallback ? ", medium fallback" : ""})`,
+    );
+    await options.observer.publish({
+      type: "effort_assessed",
+      tier: assessment.selectedTier,
+      score: assessment.rawScore,
+      plannedRounds: profile.plannedRounds,
+      maxRounds: profile.maxRounds,
+      fallback: assessment.fallback,
+    });
+    return FightConfigSchema.parse({
+      ...config,
+      effortAssessment: assessment,
+      resolvedEffortProfile: profile,
+      rounds: profile.plannedRounds,
+      limits: {
+        implementationMs: profile.implementationMs,
+        reviewMs: profile.reviewMs,
+        attackMs: profile.attackMs,
+        verifierMs: profile.judgeMs,
+        repairMs: profile.repairMs,
+      },
+    });
+  }
+
   /**
    * Execute and validate exactly one immutable round transaction. Runtime
    * services are constructor-injected and never enter the serialized input.
@@ -735,6 +973,36 @@ export class RoundEngine {
 
     let context: ArenaContext | undefined;
     try {
+      if (replacement) {
+        const profile = replacement.runSpec.effort.profile;
+        config = FightConfigSchema.parse({
+          ...config,
+          effortMode: replacement.runSpec.effort.mode,
+          fixedRounds: replacement.runSpec.effort.fixedRounds,
+          rounds:
+            replacement.runSpec.effort.exactRounds ?? profile.plannedRounds,
+          ...(replacement.runSpec.effort.assessment
+            ? { effortAssessment: replacement.runSpec.effort.assessment }
+            : {}),
+          resolvedEffortProfile: profile,
+          limits: {
+            implementationMs: profile.implementationMs,
+            reviewMs: profile.reviewMs,
+            attackMs: profile.attackMs,
+            verifierMs: profile.judgeMs,
+            repairMs: profile.repairMs,
+          },
+        });
+      } else {
+        config = await this.resolveInitialEffort({
+          config,
+          reconnaissance,
+          store,
+          worktrees,
+          controller,
+          observer,
+        });
+      }
       this.progress("Preflight: snapshotting run specification");
       const contractWarnings: string[] = [];
       const runSpec = replacement
@@ -826,7 +1094,7 @@ export class RoundEngine {
         contractWarnings.push(targetResolution.reason);
       const startedAt = this.now().toISOString();
       let state: RunState = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         runId,
         harnessVersion: "0.1.0",
         status: "running",
@@ -850,6 +1118,7 @@ export class RoundEngine {
         failureRecords: [],
         integrity: "competitive",
         operatorInterventions: [],
+        adaptiveDecisions: [],
         patchQualityFacts: {},
         ...(targetResolution.target
           ? { deliveryTarget: targetResolution.target }
@@ -880,8 +1149,8 @@ export class RoundEngine {
       };
       if (replacement?.inheritedState) {
         const inherited = structuredClone(replacement.inheritedState);
-        if (inherited.schemaVersion !== 7)
-          throw new Error("Provider recovery requires durable V7 parent state");
+        if (inherited.schemaVersion !== 8)
+          throw new Error("Provider recovery requires durable V8 parent state");
         delete inherited.terminalOutcome;
         delete inherited.providerFailure;
         delete inherited.completedAt;
@@ -994,8 +1263,13 @@ export class RoundEngine {
       await this.persist(context);
       let priorReplayHash: string | null =
         replacement?.continuationCheckpoint?.replayHash ?? null;
-      for (const round of [1, 2, 3] as const) {
+      for (const round of [1, 2, 3, 4, 5] as const) {
         if (replacement?.startRound && round < replacement.startRound) continue;
+        if (
+          context.runSpec.effort.fixedRounds &&
+          round > (context.runSpec.effort.exactRounds ?? context.config.rounds)
+        )
+          break;
         if (this.shouldStop(context)) break;
         const beforeRound = structuredClone(context.state);
         const snapshot = await this.createRoundSnapshot(
@@ -1020,6 +1294,16 @@ export class RoundEngine {
         }
         await this.applyRoundTransaction(context, result);
         priorReplayHash = result.replay.replayHash;
+        if (result.replay.adaptiveDecision?.action === "stop") {
+          if (!context.runSpec.effort.fixedRounds) {
+            context.state.adaptiveCompletion = {
+              kind: "adaptive_coverage",
+              reason: result.replay.adaptiveDecision.reason,
+              skippedBriefs: result.replay.adaptiveDecision.skippedBriefs,
+            };
+          }
+          break;
+        }
       }
 
       await this.finalValidation(context);
@@ -1109,17 +1393,19 @@ export class RoundEngine {
     });
     await store.initialize();
     const summary = await store.readSummary();
-    if (!summary || summary.schemaVersion !== 8)
-      throw new Error("Only durable schema v8 runs support resume");
+    if (!summary || summary.schemaVersion !== 9)
+      throw new Error(
+        "Interrupted runs older than adaptive schema v9 cannot resume; restart the fight. Completed legacy artifacts remain readable.",
+      );
     await appendRecoveryEvent({
       store,
       type: "resume_started",
       now: this.now(),
     });
     let state = await store.readState();
-    if (state.schemaVersion !== 7)
+    if (state.schemaVersion !== 8)
       throw new Error(
-        "Interrupted pre-V7 runs are read-only legacy artifacts and cannot continue; restart the fight to create a V7 run",
+        "Interrupted pre-V8 runs are read-only legacy artifacts and cannot continue; restart the fight to create a V8 run",
       );
     const config = FightConfigSchema.parse({
       ...state.config,
@@ -1358,12 +1644,19 @@ export class RoundEngine {
       state = await store.readState();
     }
 
-    const nextRound = ([1, 2, 3] as const).find(
+    const lastAdaptiveDecision = envelopes
+      .filter((envelope) => typeof envelope.roundId === "number")
+      .at(-1)?.result.replay.adaptiveDecision;
+    const roundLimit = runSpec.effort.fixedRounds
+      ? (runSpec.effort.exactRounds ?? config.rounds)
+      : runSpec.effort.profile.maxRounds;
+    const nextRound = ([1, 2, 3, 4, 5] as const).find(
       (roundId) =>
+        roundId <= roundLimit &&
         roundId > continuationRound &&
         !envelopes.some((envelope) => envelope.roundId === roundId),
     );
-    if (nextRound) {
+    if (nextRound && lastAdaptiveDecision?.action !== "stop") {
       try {
         await access(
           store.resolve(`rounds/${String(nextRound)}/snapshot.json`),
@@ -1460,9 +1753,11 @@ export class RoundEngine {
         envelopes.at(-1)?.replayHash ??
         continuationCheckpoint?.replayHash ??
         null;
-      for (const round of [1, 2, 3] as const) {
+      for (const round of [1, 2, 3, 4, 5] as const) {
+        if (round > roundLimit) break;
         if (round <= continuationRound) continue;
         if (envelopes.some((envelope) => envelope.roundId === round)) continue;
+        if (lastAdaptiveDecision?.action === "stop") break;
         if (this.shouldStop(context)) break;
         const beforeRound = structuredClone(context.state);
         const snapshot = await this.createRoundSnapshot(
@@ -1489,6 +1784,17 @@ export class RoundEngine {
         }
         await this.applyRoundTransaction(context, transaction.result);
         priorReplayHash = transaction.result.replay.replayHash;
+        if (transaction.result.replay.adaptiveDecision?.action === "stop") {
+          if (!context.runSpec.effort.fixedRounds) {
+            context.state.adaptiveCompletion = {
+              kind: "adaptive_coverage",
+              reason: transaction.result.replay.adaptiveDecision.reason,
+              skippedBriefs:
+                transaction.result.replay.adaptiveDecision.skippedBriefs,
+            };
+          }
+          break;
+        }
       }
       if (!savedFinalization) {
         await this.finalValidation(context);
@@ -1565,6 +1871,7 @@ export class RoundEngine {
       topology: options.source.topology,
       commands: options.source.commands,
       budgets: options.source.budgets,
+      effort: options.source.effort,
       permissions: options.source.permissions,
       ...(options.source.browserValidation
         ? { browserValidation: options.source.browserValidation }
@@ -1685,7 +1992,21 @@ export class RoundEngine {
           context.state,
         );
       }
+      const roundStartedAt = this.now();
       await this.runRound(context, snapshot.roundId);
+      if (typeof snapshot.roundId === "number") {
+        const decision = await this.makeAdaptiveDecision(
+          context,
+          before,
+          snapshot.roundId,
+          roundStartedAt,
+        );
+        context.state.adaptiveDecisions.push(decision);
+        await context.store.writeImmutableJson(
+          `rounds/${String(snapshot.roundId)}/adaptive-decision.json`,
+          decision,
+        );
+      }
       return this.persistRoundBoundary(context, snapshot, before);
     } catch (error) {
       if (this.isRoundInvariantError(error)) throw error;
@@ -1950,6 +2271,364 @@ export class RoundEngine {
     await this.persist(context);
   }
 
+  private async makeAdaptiveDecision(
+    context: ArenaContext,
+    before: RunState,
+    round: 1 | 2 | 3 | 4 | 5,
+    startedAt: Date,
+  ): Promise<AdaptiveRoundDecision> {
+    const profile = context.runSpec.effort.profile;
+    const finishedAt = this.now();
+    const wallTimeMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());
+    const invocations: AgentInvocation[] = [];
+    for (const contestantId of ["a", "b"] as const) {
+      const previous = before.contestants[contestantId];
+      const current = context.state.contestants[contestantId];
+      if (!current) continue;
+      if (!previous?.implementation && current.implementation)
+        invocations.push(current.implementation);
+      const summary = current.rounds.find((entry) => entry.round === round);
+      if (summary?.repairAttempts?.length)
+        invocations.push(...summary.repairAttempts);
+      else if (summary?.repair) invocations.push(summary.repair);
+    }
+    invocations.push(
+      ...context.state.reviewInvocations
+        .slice(before.reviewInvocations.length)
+        .map((entry) => entry.invocation),
+      ...context.state.attackInvocations
+        .slice(before.attackInvocations.length)
+        .map((entry) => entry.invocation),
+    );
+    const providerCalls = invocations.length + context.roundInvocations.length;
+    const invocationTelemetry: TokenTelemetry[] = invocations.map(
+      (invocation) => {
+        const usage = invocation.command?.providerDiagnostics?.tokenUsage;
+        if (
+          !usage ||
+          Object.values(usage).every((value) => value === undefined)
+        )
+          return unavailableTokenTelemetry();
+        const complete = [
+          usage.uncachedInputTokens,
+          usage.cacheReadTokens,
+          usage.cacheWriteTokens,
+          usage.outputTokens,
+        ].every((value) => value !== undefined);
+        return {
+          state: complete ? "complete" : "partial",
+          ...usage,
+          totalTokens:
+            (usage.uncachedInputTokens ?? 0) +
+            (usage.cacheReadTokens ?? 0) +
+            (usage.cacheWriteTokens ?? 0) +
+            (usage.outputTokens ?? 0),
+        };
+      },
+    );
+    const allTelemetry = [
+      ...invocationTelemetry,
+      ...context.roundInvocations.map(
+        (invocation) =>
+          invocation.tokenTelemetry ?? unavailableTokenTelemetry(),
+      ),
+    ];
+    const availableTelemetry = allTelemetry.filter(
+      (telemetry) => telemetry.state !== "unavailable",
+    );
+    const tokenFields = {
+      uncachedInputTokens: availableTelemetry.reduce(
+        (sum, telemetry) => sum + (telemetry.uncachedInputTokens ?? 0),
+        0,
+      ),
+      cacheReadTokens: availableTelemetry.reduce(
+        (sum, telemetry) => sum + (telemetry.cacheReadTokens ?? 0),
+        0,
+      ),
+      cacheWriteTokens: availableTelemetry.reduce(
+        (sum, telemetry) => sum + (telemetry.cacheWriteTokens ?? 0),
+        0,
+      ),
+      outputTokens: availableTelemetry.reduce(
+        (sum, telemetry) => sum + (telemetry.outputTokens ?? 0),
+        0,
+      ),
+    };
+    const totalTokens = Object.values(tokenFields).reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+    const completeTelemetry =
+      providerCalls > 0 &&
+      allTelemetry.length === providerCalls &&
+      allTelemetry.every((telemetry) => telemetry.state === "complete");
+    const tokenTelemetry = {
+      state:
+        availableTelemetry.length === 0
+          ? ("unavailable" as const)
+          : completeTelemetry
+            ? ("complete" as const)
+            : ("partial" as const),
+      ...(availableTelemetry.length ? { ...tokenFields, totalTokens } : {}),
+    };
+    const roundAttacks = context.state.attacks.filter(
+      (attack) => attack.round === round,
+    );
+    const newHealthEvents = (["a", "b"] as const).flatMap((id) =>
+      (context.state.contestants[id]?.healthEvents ?? []).slice(
+        before.contestants[id]?.healthEvents.length ?? 0,
+      ),
+    );
+    const unresolved = roundAttacks.some((attack) =>
+      [
+        "submitted",
+        "provisional_infrastructure",
+        "execution_inconclusive",
+        "judge_unable",
+      ].includes(attack.status),
+    );
+    const zeroActiveDamage = Object.values(context.state.contestants).every(
+      (contestant) => !contestant?.healthLedger.activeDefects.length,
+    );
+    const requiredLanes =
+      context.config.mode === "siege"
+        ? [["a", "b"] as const]
+        : [["a", "b"] as const, ["b", "a"] as const];
+    const intactExecutedLaneCoverage = requiredLanes.every(
+      ([attacker, target]) => {
+        const review = context.state.reviewInvocations
+          .filter(
+            (entry) =>
+              entry.round === round &&
+              entry.reviewer === attacker &&
+              entry.target === target,
+          )
+          .at(-1);
+        const attackInvocation = context.state.attackInvocations
+          .filter(
+            (entry) =>
+              entry.round === round &&
+              entry.attacker === attacker &&
+              entry.target === target,
+          )
+          .at(-1);
+        return Boolean(
+          review?.submissionStatus === "submitted" &&
+          attackInvocation?.submissionStatus === "submitted" &&
+          ["valid", "valid_empty", "partial"].includes(
+            attackInvocation.parseOutcome ?? "",
+          ),
+        );
+      },
+    );
+    const allLanesExplicitlyEmpty = requiredLanes.every(
+      ([attacker, target]) =>
+        context.state.attackInvocations
+          .filter(
+            (entry) =>
+              entry.round === round &&
+              entry.attacker === attacker &&
+              entry.target === target,
+          )
+          .at(-1)?.parseOutcome === "valid_empty",
+    );
+    const patchStatistics = async (patchPath: string | undefined) => {
+      if (!patchPath) return { lines: 0, files: new Set<string>() };
+      const patch = await readFile(patchPath, "utf8");
+      const files = new Set<string>();
+      let currentProduction = false;
+      let lines = 0;
+      for (const line of patch.split("\n")) {
+        if (line.startsWith("+++ b/")) {
+          const file = line.slice(6);
+          currentProduction =
+            !/(^|\/)(?:test|tests|__tests__|fixtures)(\/|$)|\.(?:test|spec)\.[^.]+$/iu.test(
+              file,
+            );
+          if (currentProduction) files.add(file);
+        } else if (
+          currentProduction &&
+          /^[+-]/u.test(line) &&
+          !/^(?:\+\+\+|---)/u.test(line)
+        )
+          lines += 1;
+      }
+      return { lines, files };
+    };
+    const stableByContestant = await Promise.all(
+      (["a", "b"] as const).map(async (id) => {
+        const current = context.state.contestants[id];
+        const previous = before.contestants[id];
+        if (!current || current.role === "attacker") return true;
+        const [nowStats, priorStats] = await Promise.all([
+          patchStatistics(current.currentPatchPath),
+          patchStatistics(previous?.currentPatchPath),
+        ]);
+        const churn = previous?.currentPatchPath
+          ? Math.abs(nowStats.lines - priorStats.lines)
+          : 0;
+        const addedFiles = [...nowStats.files].filter(
+          (file) => !priorStats.files.has(file),
+        ).length;
+        const currentChecks = current.checks.filter((check) =>
+          ["required", "focused", "browser"].includes(check.kind),
+        );
+        return (
+          nowStats.lines <= 120 &&
+          nowStats.files.size <= 6 &&
+          churn <= 12 &&
+          addedFiles <= 1 &&
+          currentChecks.length > 0 &&
+          currentChecks.every((check) => check.status === "passed")
+        );
+      }),
+    );
+    const knownCheckOutcomes = (["a", "b"] as const).map((id) =>
+      (context.state.contestants[id]?.checks ?? [])
+        .filter((check) =>
+          ["required", "focused", "browser"].includes(check.kind),
+        )
+        .map((check) => `${check.id}:${check.status}`)
+        .sort()
+        .join("\n"),
+    );
+    const patchesSmallAndStable =
+      stableByContestant.every(Boolean) &&
+      knownCheckOutcomes[0] === knownCheckOutcomes[1];
+    const noNewCanonicalDefectOrScoreCorrection =
+      !roundAttacks.some(
+        (attack) => attack.status === "landed" && Boolean(attack.damage),
+      ) &&
+      !newHealthEvents.some((event) =>
+        ["target_damage", "damage_upgrade", "score_correction"].includes(
+          event.type,
+        ),
+      );
+    const acceptedDefectsHealedWithRegressionPasses =
+      zeroActiveDamage &&
+      Object.values(context.state.contestants).every((contestant) =>
+        (contestant?.checks ?? [])
+          .filter((check) => ["required", "focused"].includes(check.kind))
+          .every((check) => check.status === "passed"),
+      );
+    const convergence = {
+      intactExecutedLaneCoverage,
+      noUnresolvedAdjudication: !unresolved,
+      zeroActiveDamage,
+      acceptedDefectsHealedWithRegressionPasses,
+      noNewCanonicalDefectOrScoreCorrection,
+      allLanesExplicitlyEmpty,
+      patchesSmallAndStable,
+      passed:
+        intactExecutedLaneCoverage &&
+        !unresolved &&
+        zeroActiveDamage &&
+        acceptedDefectsHealedWithRegressionPasses &&
+        noNewCanonicalDefectOrScoreCorrection &&
+        (allLanesExplicitlyEmpty || patchesSmallAndStable),
+    };
+    const extensionTriggerDefectIds = [
+      ...new Set([
+        ...roundAttacks.flatMap((attack) =>
+          attack.status === "landed" && attack.damage && attack.rootDefectId
+            ? [attack.rootDefectId]
+            : [],
+        ),
+        ...Object.values(context.state.contestants).flatMap((contestant) =>
+          (contestant?.healthLedger.canonicalDefects ?? []).flatMap((defect) =>
+            defect.status === "active" &&
+            defect.repairAttemptsUsed < (defect.repairAllowance ?? 2)
+              ? [defect.rootDefectId]
+              : [],
+          ),
+        ),
+      ]),
+    ];
+    const extensionQualified = extensionTriggerDefectIds.length > 0;
+    const consumption = {
+      wallTimeMs,
+      providerCalls,
+      tokenTelemetry,
+      wallTimePressure: wallTimeMs >= profile.roundEnvelopeMs,
+      invocationPressure: providerCalls >= profile.maxProviderCallsPerRound,
+      tokenPressure:
+        completeTelemetry && totalTokens >= profile.maxTokensPerRound,
+      overrunMs: Math.max(0, wallTimeMs - profile.roundEnvelopeMs),
+    };
+    const pressureReason = consumption.wallTimePressure
+      ? ("round_time_budget_exhausted" as const)
+      : consumption.invocationPressure
+        ? ("round_invocation_budget_exhausted" as const)
+        : consumption.tokenPressure
+          ? ("round_token_budget_exhausted" as const)
+          : undefined;
+    const { action, reason } = decideAdaptiveRound({
+      round,
+      profile,
+      convergencePassed: convergence.passed,
+      extensionQualified,
+      terminalCondition: this.shouldStop(context),
+      ...(pressureReason ? { pressureReason } : {}),
+      ...(context.runSpec.effort.fixedRounds
+        ? {
+            fixedRounds:
+              context.runSpec.effort.exactRounds ?? context.config.rounds,
+          }
+        : {}),
+    });
+    const briefs = [
+      "contract and local correctness",
+      "systematic exploration",
+      "integration, resilience, and security",
+      "extension generalization",
+      "extension durability",
+    ];
+    const skippedBriefs =
+      action === "stop" ? briefs.slice(round, profile.maxRounds) : [];
+    const decision: AdaptiveRoundDecision = {
+      version: 1,
+      round,
+      consumption,
+      convergence,
+      extensionQualified,
+      extensionTriggerDefectIds,
+      action,
+      reason,
+      skippedBriefs,
+      decidedAt: finishedAt.toISOString(),
+    };
+    if (
+      consumption.wallTimePressure ||
+      consumption.invocationPressure ||
+      consumption.tokenPressure
+    )
+      await context.observer.publish({
+        type: "budget_pressure",
+        round,
+        wallTime: consumption.wallTimePressure,
+        invocations: consumption.invocationPressure,
+        tokens: consumption.tokenPressure,
+      });
+    await context.observer.publish({
+      type: "convergence_evaluated",
+      round,
+      passed: convergence.passed,
+    });
+    await context.observer.publish({
+      type: extensionQualified ? "extension_qualified" : "extension_declined",
+      round,
+      defectIds: extensionTriggerDefectIds,
+    });
+    if (action === "stop")
+      await context.observer.publish({
+        type: "adaptive_stop",
+        round,
+        reason,
+        skippedBriefs,
+      });
+    return decision;
+  }
+
   private async createRoundSnapshot(
     context: ArenaContext,
     roundId: RoundId,
@@ -2048,7 +2727,7 @@ export class RoundEngine {
       });
     });
     const draft = {
-      version: 4 as const,
+      version: 5 as const,
       runId: context.state.runId,
       roundId,
       snapshotHash: "0".repeat(64),
@@ -2634,7 +3313,7 @@ export class RoundEngine {
       };
     });
     const replayDraft = {
-      version: 4 as const,
+      version: 5 as const,
       runId: snapshot.runId,
       roundId,
       snapshotHash: snapshot.snapshotHash,
@@ -2697,6 +3376,15 @@ export class RoundEngine {
       failureRecords: structuredClone(context.state.failureRecords),
       artifacts,
       stateDeltaArtifactId: deltaArtifact.id,
+      ...(context.state.adaptiveDecisions.find(
+        (entry) => entry.round === roundId,
+      )
+        ? {
+            adaptiveDecision: context.state.adaptiveDecisions.find(
+              (entry) => entry.round === roundId,
+            ),
+          }
+        : {}),
       replayHash: "0".repeat(64),
     };
     replayDraft.replayHash = calculateReplayHash(replayDraft);
@@ -2767,7 +3455,7 @@ export class RoundEngine {
       }),
     );
     const baseResult = {
-      version: 4,
+      version: 5,
       runId: snapshot.runId,
       roundId,
       resultingContestants: [
@@ -3199,7 +3887,7 @@ export class RoundEngine {
       contestantId: ContestantId;
       stage: ProviderStage;
       invocation: AgentInvocation;
-      round?: 1 | 2 | 3;
+      round?: 1 | 2 | 3 | 4 | 5;
       reason: string;
     },
   ): boolean {
@@ -3503,6 +4191,9 @@ export class RoundEngine {
               runSpec: context.runSpec,
               config: context.config,
               permissions: context.permissions,
+              deadlineAt: this.deadlineAfter(
+                context.config.limits.implementationMs,
+              ),
             }),
           );
           const promptPath = await context.store.writeText(
@@ -4058,6 +4749,10 @@ export class RoundEngine {
       permissions: context.permissions,
       methodSelection: options.selection,
       contestantFeedback: options.contestantFeedback,
+      ...(this.extensionScope(context, options.round)
+        ? { priorOutcomes: this.extensionScope(context, options.round)! }
+        : {}),
+      deadlineAt: this.deadlineAfter(context.config.limits.reviewMs),
     })}\n\n${options.promptSuffix}\n${JSON.stringify(options.reason)}`;
     const promptPath = await context.store.writeText(
       `prompts/round-${String(options.round)}-review-${options.agent}-${options.promptSuffix.includes("blocker") ? "blocker" : "validation"}-refresh.md`,
@@ -4454,6 +5149,10 @@ export class RoundEngine {
           permissions: context.permissions,
           methodSelection: selection,
           contestantFeedback,
+          ...(this.extensionScope(context, round)
+            ? { priorOutcomes: this.extensionScope(context, round)! }
+            : {}),
+          deadlineAt: this.deadlineAfter(context.config.limits.reviewMs),
         });
         const promptPath = await context.store.writeText(
           `prompts/round-${String(round)}-review-${reviewer}.md`,
@@ -4960,6 +5659,9 @@ export class RoundEngine {
             startedAt,
             finishedAt: this.now().toISOString(),
             artifactPaths: [input.promptPath, input.transcriptPrefix],
+            ...(verdict.tokenTelemetry
+              ? { tokenTelemetry: verdict.tokenTelemetry }
+              : {}),
           });
           return verdict;
         } catch (error) {
@@ -5002,6 +5704,9 @@ export class RoundEngine {
                   startedAt,
                   finishedAt: this.now().toISOString(),
                   artifactPaths: [input.promptPath, input.transcriptPrefix],
+                  ...(verdict.tokenTelemetry
+                    ? { tokenTelemetry: verdict.tokenTelemetry }
+                    : {}),
                 });
                 return verdict;
               } catch (error) {
@@ -5046,6 +5751,9 @@ export class RoundEngine {
                   startedAt,
                   finishedAt: this.now().toISOString(),
                   artifactPaths: [input.promptPath, input.transcriptPrefix],
+                  ...(verdict.tokenTelemetry
+                    ? { tokenTelemetry: verdict.tokenTelemetry }
+                    : {}),
                 });
                 return verdict;
               } catch (error) {
@@ -5727,6 +6435,7 @@ export class RoundEngine {
       permissions: context.permissions,
       methodSelection: selection,
       allowMissingReviewPacket: true,
+      deadlineAt: this.deadlineAfter(context.config.limits.attackMs),
     });
     const sharedPromptPath = await context.store.writeText(
       `prompts/round-${String(round)}-common.md`,
@@ -6112,6 +6821,10 @@ export class RoundEngine {
             reviewPacket: consumablePacket,
             currentHealth: contestant.finalHealth,
             contestantFeedback,
+            ...(this.extensionScope(context, round)
+              ? { priorOutcomes: this.extensionScope(context, round)! }
+              : {}),
+            deadlineAt: this.deadlineAfter(context.config.limits.attackMs),
           }),
           round,
         );
@@ -6258,6 +6971,12 @@ export class RoundEngine {
                   permissions: context.permissions,
                   methodSelection: selection,
                   contestantFeedback,
+                  ...(this.extensionScope(context, round)
+                    ? { priorOutcomes: this.extensionScope(context, round)! }
+                    : {}),
+                  deadlineAt: this.deadlineAfter(
+                    context.config.limits.attackMs,
+                  ),
                 })}\n\n# Targeted blocker refresh\nThe prior handoff was blocked. Re-review the current target and return a fresh v2 review submission. The blocker record is context only; do not copy secrets or provider-identifying content into findings.\n${JSON.stringify(blocker)}`;
                 const refreshPromptPath = await context.store.writeText(
                   `prompts/round-${String(round)}-review-${agent}-blocker-refresh.md`,
@@ -7463,6 +8182,7 @@ export class RoundEngine {
           permissions: context.permissions,
           currentHealth: contestant.finalHealth,
           contestantFeedback,
+          deadlineAt: this.deadlineAfter(context.config.limits.repairMs),
         });
         await context.store.writeText(
           `prompts/round-${String(round)}-repair-${agent}.md`,
@@ -8335,7 +9055,7 @@ export class RoundEngine {
     authorPatch: string,
     targetPatch: string,
     knownRoots: ReadonlySet<string>,
-    round: 1 | 2 | 3,
+    round: 1 | 2 | 3 | 4 | 5,
   ): Promise<Attack> {
     const legacyDependencies = this.dependencies as ArenaDependencies &
       LegacyArenaDependencies;
@@ -8488,7 +9208,7 @@ export class RoundEngine {
   protected async proposeHarnessOverlay(
     context: ArenaContext,
     provisional: Attack,
-    round: 1 | 2 | 3,
+    round: 1 | 2 | 3 | 4 | 5,
   ): Promise<void> {
     const legacyDependencies = this.dependencies as ArenaDependencies &
       LegacyArenaDependencies;
@@ -8789,6 +9509,34 @@ export class RoundEngine {
         }).filter(([, value]) => value !== undefined),
       ),
     );
+    if (typeof round === "number" && round >= 4) {
+      const triggerIds =
+        context.state.adaptiveDecisions.find(
+          (decision) => decision.round === round - 1,
+        )?.extensionTriggerDefectIds ?? [];
+      const referencedDefect = history.find(
+        (attack) =>
+          attack.adjudication?.id === result.challengeAdjudicationId ||
+          attack.adjudication?.id === result.relatedAdjudicationId,
+      )?.rootDefectId;
+      const inScope =
+        Boolean(result.adjudication.canonicalDefectId) &&
+        (triggerIds.includes(result.adjudication.canonicalDefectId!) ||
+          (referencedDefect ? triggerIds.includes(referencedDefect) : false));
+      if (!inScope) {
+        result.status = "unproven";
+        result.damageActive = false;
+        delete result.recoil;
+        result.outcomeReason =
+          "Recorded as an out-of-scope extension finding without score effect";
+        result.adjudication = AdjudicationRecordSchema.parse({
+          ...result.adjudication,
+          scoreEffect: "none",
+          exactAmount: 0,
+          recoilAmount: undefined,
+        });
+      }
+    }
     await context.store.writeImmutableJson(
       `rounds/${String(round)}/adjudications/${result.id}.json`,
       result.adjudication,
@@ -8798,7 +9546,7 @@ export class RoundEngine {
   private async buildCaseBundle(
     context: ArenaContext,
     attack: Attack,
-    round: 1 | 2 | 3,
+    round: 1 | 2 | 3 | 4 | 5,
   ): Promise<void> {
     if (!attack.rootDefectId) return;
     const visibleContent = await readFile(attack.patchPath);

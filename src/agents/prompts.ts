@@ -19,6 +19,8 @@ const OVERLAY_VERSION: Record<RoundId, string> = {
   1: "round-1-contract@1",
   2: "round-2-systematic@2",
   3: "round-3-integration@1",
+  4: "round-4-extension-generalization@1",
+  5: "round-5-extension-durability@1",
   recovery: "recovery@1",
   reconciliation: "reconciliation@1",
 };
@@ -27,6 +29,8 @@ const OVERLAYS: Record<RoundId, string> = {
   1: "Trace each acceptance criterion through observable behavior. Prefer focused examples, boundaries, negative cases, error paths, and regressions.",
   2: "Build a diverse concise hypothesis portfolio across state, lifecycle, data integrity, generated inputs, concurrency, cancellation, and cleanup. When the patch touches versioned contracts or durable artifacts, consider testing a genuine prior-version fixture against the new reader. When it introduces retry, recovery, or persistence policy, consider tracing a real production path through failure, retry, recovery, persistence, and resume rather than testing only its helper. These are advisory options: pursue them only when the changed surfaces make them relevant, and commit only executable evidence.",
   3: "Exercise approved component boundaries, configuration, trust boundaries, dependency faults, retry/idempotency, recovery, and bounded resources. Degrade to local resilience probes when integration is unavailable.",
+  4: "Extension round. Generalize only the immediately preceding qualifying defect across adjacent cases and invariants. Findings outside that scope are report-only and must not be presented as score-changing attacks.",
+  5: "Final extension round. Check recurrence, repair durability, and relevant integration or recovery boundaries only for the immediately preceding qualifying evidence. Findings outside that scope are report-only.",
   recovery:
     "Use replacement credits only for new attacks against the post-round-3 patches. Another infrastructure failure makes the run inconclusive.",
   reconciliation:
@@ -117,6 +121,7 @@ export interface PromptContext {
   priorOutcomes?: string;
   contestantFeedback?: ContestantFeedback;
   allowMissingReviewPacket?: boolean;
+  deadlineAt?: string;
 }
 
 export function agentVisibleRunSpec(
@@ -180,6 +185,8 @@ export function composePrompt(context: PromptContext): string {
     "",
     `Required validation command: ${context.config.testCommand}`,
     `Time limit: ${String(context.config.limits[`${context.stage === "implement" ? "implementation" : context.stage}Ms`])} ms`,
+    `Exact deadline: ${context.deadlineAt ?? "set by the invocation supervisor and recorded in invocation metadata"}`,
+    "Wrap-up cue: when roughly 80% of the limit has elapsed, preserve the latest schema-valid submission and finish the strongest remaining item.",
     "",
     "# Arena and repository execution architecture",
     executionArchitecture(context, context.target),
@@ -196,6 +203,7 @@ export function composePrompt(context: PromptContext): string {
       "",
       "# Submission schema",
       '{"version":1,"explanation":"concise summary"}',
+      "A phase counts only when the requested output is schema-valid; preserve it incrementally before the exact deadline.",
     );
   }
   if (context.round !== undefined) {
@@ -263,6 +271,8 @@ export function composeAttackReviewPrompt(
     "",
     `Required validation command: ${context.config.testCommand}`,
     `Time limit: ${String(context.config.limits.reviewMs)} ms`,
+    `Exact deadline: ${context.deadlineAt ?? "set by the invocation supervisor and recorded in invocation metadata"}`,
+    "Wrap-up cue: at roughly 80% of the limit, write the strongest complete findings accumulated so far. An explicit empty findings array is a valid pass.",
     "",
     "# Arena and repository execution architecture",
     executionArchitecture(
@@ -296,6 +306,11 @@ export function composeAttackReviewPrompt(
           "# Lane-safe committed feedback",
           JSON.stringify(context.contestantFeedback, null, 2),
         ]
+      : []),
+    ...(context.priorOutcomes &&
+    typeof context.round === "number" &&
+    context.round >= 4
+      ? ["", "# Extension scope", context.priorOutcomes]
       : []),
     "",
   ].join("\n")}\n`;

@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  AdaptiveRoundDecisionSchema,
+  EffortModeSchema,
+  EffortProfileSchema,
+  TaskEffortAssessmentV1Schema,
+} from "../effort/policy.js";
 import { BrowserProbeRequestSchema } from "../contracts/browser.js";
 import { FailureRecordSchema } from "../contracts/failure.js";
 import { BrowserValidationResultSchema } from "../contracts/browser.js";
@@ -74,6 +80,8 @@ export const RoundIdSchema = z.union([
   z.literal(1),
   z.literal(2),
   z.literal(3),
+  z.literal(4),
+  z.literal(5),
   z.literal("recovery"),
   z.literal("reconciliation"),
 ]);
@@ -83,6 +91,8 @@ export const RoundProfileSchema = z.enum([
   "contract_local",
   "systematic_exploration",
   "integration_resilience_security",
+  "extension_generalization",
+  "extension_durability",
   "infrastructure_recovery",
   "reconciliation",
 ]);
@@ -213,6 +223,15 @@ export const CommandResultSchema = z.object({
       currentOpenTool: z.string().min(1).optional(),
       decodingWarnings: z.array(z.string()),
       eventLogPath: z.string().min(1),
+      tokenUsage: z
+        .object({
+          uncachedInputTokens: z.number().int().nonnegative().optional(),
+          cacheReadTokens: z.number().int().nonnegative().optional(),
+          cacheWriteTokens: z.number().int().nonnegative().optional(),
+          outputTokens: z.number().int().nonnegative().optional(),
+        })
+        .strict()
+        .optional(),
     })
     .optional(),
 });
@@ -826,7 +845,13 @@ export type HealthLedger = z.infer<typeof HealthLedgerSchema>;
 export const ReplacementCreditSchema = z.object({
   id: z.string(),
   sourceAttackId: z.string(),
-  issuedRound: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  issuedRound: z.union([
+    z.literal(1),
+    z.literal(2),
+    z.literal(3),
+    z.literal(4),
+    z.literal(5),
+  ]),
   reason: z.enum([
     "accepted_infrastructure",
     "final_infrastructure",
@@ -975,7 +1000,11 @@ const FightConfigBaseSchema = z
     configWarnings: z.array(z.string()).default([]),
     /** @deprecated Ignored for v6 new runs. */
     maxHeldOutCasesPerDefect: z.number().int().min(0).max(2).default(0),
-    rounds: z.literal(3),
+    effortMode: EffortModeSchema.default("auto"),
+    fixedRounds: z.boolean().default(false),
+    rounds: z.number().int().min(1).max(5),
+    effortAssessment: TaskEffortAssessmentV1Schema.optional(),
+    resolvedEffortProfile: EffortProfileSchema.optional(),
     maxAttacksPerRound: z.literal(3),
     testCommand: z.string().min(1),
     integrationProfile: IntegrationProfileSchema.optional(),
@@ -1026,6 +1055,21 @@ const FightConfigBaseSchema = z
       verifierMs: z.number().int().positive(),
       repairMs: z.number().int().positive(),
     }),
+    phaseOverrides: z
+      .object({
+        implementation: z.boolean(),
+        review: z.boolean(),
+        attack: z.boolean(),
+        judge: z.boolean(),
+        repair: z.boolean(),
+      })
+      .default({
+        implementation: false,
+        review: false,
+        attack: false,
+        judge: false,
+        repair: false,
+      }),
   })
   .superRefine((value, context) => {
     if (
@@ -1316,7 +1360,13 @@ export const CoverageStageAssessmentSchema = z.object({
 
 export const CoverageLaneAssessmentSchema = z.object({
   id: z.string().min(1),
-  round: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  round: z.union([
+    z.literal(1),
+    z.literal(2),
+    z.literal(3),
+    z.literal(4),
+    z.literal(5),
+  ]),
   attacker: ContestantIdSchema,
   target: ContestantIdSchema,
   required: z.literal(true),
@@ -1485,6 +1535,14 @@ const RunStateCoreSchema = z.object({
   coverageDecision: CoverageDecisionSchema.optional(),
   terminalOutcome: TerminalOutcomeSchema.optional(),
   providerFailure: ProviderStageFailureSchema.optional(),
+  adaptiveDecisions: z.array(AdaptiveRoundDecisionSchema).default([]),
+  adaptiveCompletion: z
+    .object({
+      kind: z.literal("adaptive_coverage"),
+      reason: AdaptiveRoundDecisionSchema.shape.reason,
+      skippedBriefs: z.array(z.string()),
+    })
+    .optional(),
 });
 
 export const RunStateV3Schema = RunStateCoreSchema.extend({
@@ -1582,6 +1640,24 @@ const RunStateV7CoreSchema = RunStateCoreSchema.omit({
   currentRound: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
 });
 
+const RunStateV8CoreSchema = RunStateCoreSchema.omit({
+  harnessOverlays: true,
+  reconciliationQueue: true,
+  stage: true,
+  currentRound: true,
+}).extend({
+  stage: CurrentStageSchema,
+  currentRound: z
+    .union([
+      z.literal(1),
+      z.literal(2),
+      z.literal(3),
+      z.literal(4),
+      z.literal(5),
+    ])
+    .optional(),
+});
+
 export const RunStateV7Schema = RunStateV7CoreSchema.extend({
   schemaVersion: z.literal(7),
   runSpecHash: z.string().length(64),
@@ -1600,14 +1676,33 @@ export const RunStateV7Schema = RunStateV7CoreSchema.extend({
   deliveryTarget: DeliveryTargetSchema.optional(),
   pullRequestFixture: PullRequestFixtureSchema.optional(),
 });
-export const RunStateSchema = RunStateV7Schema;
+export const RunStateV8Schema = RunStateV8CoreSchema.extend({
+  schemaVersion: z.literal(8),
+  runSpecHash: z.string().length(64),
+  contestants: z.partialRecord(ContestantIdSchema, ContestantResultSchema),
+  attacks: z.array(AttackSchema),
+  reviewInvocations: z.array(ReviewInvocationRecordSchema).default([]),
+  attackInvocations: z.array(AttackInvocationRecordSchema).default([]),
+  ranking: RankingSchema.optional(),
+  arenaOutcome: ArenaOutcomeSchema.optional(),
+  patchQualityFacts: z
+    .partialRecord(ContestantIdSchema, PatchQualityFactsSchema)
+    .default({}),
+  patchQualityVerdict: PatchQualityVerdictSchema.optional(),
+  patchRecommendation: PatchRecommendationSchema.optional(),
+  reviewPrompt: ReviewPromptSchema.optional(),
+  deliveryTarget: DeliveryTargetSchema.optional(),
+  pullRequestFixture: PullRequestFixtureSchema.optional(),
+});
+export const RunStateSchema = RunStateV8Schema;
 export type RunStateV3 = z.infer<typeof RunStateV3Schema>;
 export type RunStateV4 = z.infer<typeof RunStateV4Schema>;
 export type RunStateV5 = z.infer<typeof RunStateV5Schema>;
 export type RunStateV6 = z.infer<typeof RunStateV6Schema>;
 export type RunStateV7 = z.infer<typeof RunStateV7Schema>;
+export type RunStateV8 = z.infer<typeof RunStateV8Schema>;
 export type RunState =
-  RunStateV3 | RunStateV4 | RunStateV5 | RunStateV6 | RunStateV7;
+  RunStateV3 | RunStateV4 | RunStateV5 | RunStateV6 | RunStateV7 | RunStateV8;
 
 // --- Legacy readers: in schema versions 1 and 2 the provider was the
 // contestant identity. They are migrated to contestant slots at load time. ---
@@ -1720,6 +1815,7 @@ export const AnyRunStateSchema = z.discriminatedUnion("schemaVersion", [
   RunStateV5Schema,
   RunStateV6Schema,
   RunStateV7Schema,
+  RunStateV8Schema,
 ]);
 export type AnyRunState = z.infer<typeof AnyRunStateSchema>;
 

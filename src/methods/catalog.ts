@@ -19,9 +19,13 @@ export function selectMethods(
         ? "systematic_exploration"
         : round === 3
           ? "integration_resilience_security"
-          : round === "reconciliation"
-            ? "reconciliation"
-            : "infrastructure_recovery";
+          : round === 4
+            ? "extension_generalization"
+            : round === 5
+              ? "extension_durability"
+              : round === "reconciliation"
+                ? "reconciliation"
+                : "infrastructure_recovery";
   const methodPackIds = [`${profile}@1`];
   const probeCardIds = [`boundary-table@1`];
   if (round === 2) {
@@ -40,5 +44,11 @@ export function selectMethods(
     if (approvedCapabilities.length > 0)
       probeCardIds.push("approved-integration@1");
   }
+  if (round === 4) methodPackIds.push("adjacent-invariant-generalization@1");
+  if (round === 5)
+    methodPackIds.push(
+      "repair-durability@1",
+      "integration-recovery-boundary@1",
+    );
   return { profile, methodPackIds, probeCardIds };
 }
