@@ -19,6 +19,7 @@ import {
   RunStateV5Schema,
   RunStateV6Schema,
   RunStateV7Schema,
+  RunStateV8Schema,
   OperatorInterventionSchema,
   type CheckResult,
   type RunState,
@@ -34,6 +35,7 @@ import {
   RunSummaryV6Schema,
   RunSummaryV7Schema,
   RunSummaryV8Schema,
+  RunSummaryV9Schema,
   type RunSummaryV5,
   type AppliedEnvelope,
   type BrowserBaselineRecord,
@@ -44,6 +46,7 @@ import {
   type RunSummaryV6,
   type RunSummaryV7,
   type RunSummaryV8,
+  type RunSummaryV9,
 } from "./contracts.js";
 
 function hashWithout(value: object, field: string): string {
@@ -112,9 +115,10 @@ export async function writeBaseline(options: {
   if (
     options.state.schemaVersion !== 5 &&
     options.state.schemaVersion !== 6 &&
-    options.state.schemaVersion !== 7
+    options.state.schemaVersion !== 7 &&
+    options.state.schemaVersion !== 8
   )
-    throw new Error("Only v5-v7 runtime state can seed a durable baseline");
+    throw new Error("Only v5-v8 runtime state can seed a durable baseline");
   const draft = {
     version: 1 as const,
     runId: options.state.runId,
@@ -311,7 +315,7 @@ export async function sealRoundEnvelope(options: {
   if (sha256(deltaBytes) !== delta.sha256)
     throw new Error("Cannot seal a round with a corrupt state delta");
   const draft = {
-    version: 4 as const,
+    version: 5 as const,
     runId: options.result.runId,
     roundId: options.result.roundId,
     sealedAt: (options.now ?? new Date()).toISOString(),
@@ -334,7 +338,7 @@ export async function sealRoundEnvelope(options: {
 
 async function readEnvelopeAt(
   store: ArtifactStore,
-  roundId: 1 | 2 | 3 | "recovery" | "reconciliation",
+  roundId: 1 | 2 | 3 | 4 | 5 | "recovery" | "reconciliation",
 ): Promise<RoundEnvelope | undefined> {
   try {
     const envelope = StoredRoundEnvelopeSchema.parse(
@@ -359,7 +363,7 @@ async function readEnvelopeAt(
       ),
     ) as unknown;
     const snapshot =
-      (rawSnapshot as { version?: unknown }).version === 4
+      (rawSnapshot as { version?: unknown }).version === 5
         ? RoundSnapshotSchema.parse(rawSnapshot)
         : LegacyRoundSnapshotHeaderSchema.parse(rawSnapshot);
     if (
@@ -391,7 +395,15 @@ export async function readEnvelopeChain(
   const continuationRound =
     typeof continuation?.roundId === "number" ? continuation.roundId : 0;
   let missingEarlier = false;
-  for (const roundId of [1, 2, 3, "recovery", "reconciliation"] as const) {
+  for (const roundId of [
+    1,
+    2,
+    3,
+    4,
+    5,
+    "recovery",
+    "reconciliation",
+  ] as const) {
     const envelope = await readEnvelopeAt(store, roundId);
     if (
       continuation &&
@@ -443,13 +455,18 @@ function normalizeStoredRoundPayload(
   legacyResult?: Record<string, unknown>;
 } {
   const deltaVersion = (rawDelta as { version?: unknown }).version;
-  if (deltaVersion === 4) {
+  if (deltaVersion === 5) {
     return {
       result: RoundResultSchema.parse(envelope.result),
       delta: RoundStateDeltaSchema.parse(rawDelta),
     };
   }
-  if (deltaVersion !== 1 && deltaVersion !== 2 && deltaVersion !== 3)
+  if (
+    deltaVersion !== 1 &&
+    deltaVersion !== 2 &&
+    deltaVersion !== 3 &&
+    deltaVersion !== 4
+  )
     throw new Error("Unsupported round-state delta schema");
   if (!rawDelta || typeof rawDelta !== "object")
     throw new Error("Legacy round-state delta is not an object");
@@ -492,13 +509,13 @@ function normalizeStoredRoundPayload(
     : legacyResult.resultingContestants;
   const normalizedResult = {
     ...resultFields,
-    version: 4,
+    version: 5,
     roundId: normalizedRoundId,
     failureRecords: [],
     resultingContestants,
     replay: {
       ...replayFields,
-      version: 4,
+      version: 5,
       roundId: normalizedRoundId,
       failureRecords: [],
     },
@@ -509,7 +526,7 @@ function normalizeStoredRoundPayload(
   );
   const normalizedDelta = {
     ...deltaFields,
-    version: 4,
+    version: 5,
     roundId: normalizedRoundId,
     failureRecords: [],
     ...(legacyDelta.coordinator && typeof legacyDelta.coordinator === "object"
@@ -637,7 +654,8 @@ export async function applyEnvelopeExactlyOnce(options: {
 
 export async function reconstructRunState(options: {
   store: ArtifactStore;
-  summary: RunSummaryV5 | RunSummaryV6 | RunSummaryV7 | RunSummaryV8;
+  summary:
+    RunSummaryV5 | RunSummaryV6 | RunSummaryV7 | RunSummaryV8 | RunSummaryV9;
 }): Promise<RunState> {
   const baseline = await readBaseline(options.store);
   if (options.summary.baseline) {
@@ -659,7 +677,9 @@ export async function reconstructRunState(options: {
         ? RunStateV5Schema.parse(baselineState)
         : baselineState.schemaVersion === 6
           ? RunStateV6Schema.parse(baselineState)
-          : RunStateV7Schema.parse(baselineState);
+          : baselineState.schemaVersion === 7
+            ? RunStateV7Schema.parse(baselineState)
+            : RunStateV8Schema.parse(baselineState);
   let ledger: AppliedEnvelope[] = [];
   const continuation = await readContinuationCheckpoint(options.store);
   if (
@@ -702,6 +722,15 @@ export async function reconstructRunState(options: {
   if (options.summary.completedAt)
     state.completedAt = options.summary.completedAt;
   state.warnings = [...options.summary.warnings];
+  if (options.summary.schemaVersion === 9) {
+    state.adaptiveDecisions = structuredClone(
+      options.summary.adaptiveDecisions,
+    );
+    if (options.summary.adaptiveCompletion)
+      state.adaptiveCompletion = structuredClone(
+        options.summary.adaptiveCompletion,
+      );
+  }
   state.artifacts = { ...options.summary.artifacts };
   state.integrity = options.summary.provenance.assisted
     ? "assisted"
@@ -834,22 +863,25 @@ export async function reconstructRunState(options: {
       ? RunStateV5Schema.parse(state)
       : state.schemaVersion === 6
         ? RunStateV6Schema.parse(state)
-        : RunStateV7Schema.parse(state);
+        : state.schemaVersion === 7
+          ? RunStateV7Schema.parse(state)
+          : RunStateV8Schema.parse(state);
 }
 
 export async function buildRunSummary(options: {
   store: ArtifactStore;
   state: RunState;
   appliedEnvelopes: readonly AppliedEnvelope[];
-  provenance?: RunSummaryV8["provenance"];
-}): Promise<RunSummaryV6 | RunSummaryV7 | RunSummaryV8> {
+  provenance?: RunSummaryV9["provenance"];
+}): Promise<RunSummaryV6 | RunSummaryV7 | RunSummaryV8 | RunSummaryV9> {
   if (
     options.state.schemaVersion !== 5 &&
     options.state.schemaVersion !== 6 &&
-    options.state.schemaVersion !== 7
+    options.state.schemaVersion !== 7 &&
+    options.state.schemaVersion !== 8
   )
     throw new Error(
-      "Only v5-v7 runtime state may be written as a durable summary",
+      "Only v5-v8 runtime state may be written as a durable summary",
     );
   const baselinePath = options.store.resolve("baseline.json");
   let baseline: { path: string; sha256: string } | undefined;
@@ -893,11 +925,13 @@ export async function buildRunSummary(options: {
     }),
   );
   const schemaVersion =
-    options.state.schemaVersion === 7
-      ? 8
-      : options.state.schemaVersion === 6
-        ? 7
-        : 6;
+    options.state.schemaVersion === 8
+      ? 9
+      : options.state.schemaVersion === 7
+        ? 8
+        : options.state.schemaVersion === 6
+          ? 7
+          : 6;
   const summary = {
     schemaVersion,
     runId: options.state.runId,
@@ -934,6 +968,22 @@ export async function buildRunSummary(options: {
     ...(options.state.coverageDecision
       ? { coverageDecision: options.state.coverageDecision }
       : {}),
+    ...(options.state.schemaVersion === 8
+      ? {
+          effort: {
+            mode: options.state.config.effortMode,
+            ...(options.state.config.effortAssessment
+              ? { assessment: options.state.config.effortAssessment }
+              : {}),
+            profile: options.state.config.resolvedEffortProfile!,
+            fixedRounds: options.state.config.fixedRounds,
+          },
+          adaptiveDecisions: options.state.adaptiveDecisions,
+          ...(options.state.adaptiveCompletion
+            ? { adaptiveCompletion: options.state.adaptiveCompletion }
+            : {}),
+        }
+      : {}),
     warnings: options.state.warnings,
     artifacts: options.state.artifacts,
     appliedEnvelopes: options.appliedEnvelopes,
@@ -947,11 +997,13 @@ export async function buildRunSummary(options: {
         options.state.integrity !== "assisted",
     },
   };
-  return schemaVersion === 8
-    ? RunSummaryV8Schema.parse(summary)
-    : schemaVersion === 7
-      ? RunSummaryV7Schema.parse(summary)
-      : RunSummaryV6Schema.parse(summary);
+  return schemaVersion === 9
+    ? RunSummaryV9Schema.parse(summary)
+    : schemaVersion === 8
+      ? RunSummaryV8Schema.parse(summary)
+      : schemaVersion === 7
+        ? RunSummaryV7Schema.parse(summary)
+        : RunSummaryV6Schema.parse(summary);
 }
 
 export async function writeCheckpoint(options: {

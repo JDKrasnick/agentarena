@@ -15,7 +15,7 @@ import type {
   BrowserAdapter,
   BrowserSession,
 } from "../../src/browser/executor.js";
-import { FightConfigSchema, RunStateV7Schema } from "../../src/core/types.js";
+import { FightConfigSchema, RunStateV8Schema } from "../../src/core/types.js";
 import type { ArenaEvent } from "../../src/observability/events.js";
 import { readBaseline } from "../../src/recovery/durable.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
@@ -177,6 +177,8 @@ function config(repositoryRoot: string, mode: "catch_up" | "siege") {
           ],
     attackVerifier: "codex",
     harnessMaintainer: "codex",
+    effortMode: "medium",
+    fixedRounds: true,
     rounds: 3,
     maxAttacksPerRound: 3,
     infrastructureRecoveryRound: true,
@@ -243,7 +245,7 @@ describe("PR battle modes", () => {
       { durableV5: true },
     );
     const baseline = await readBaseline(store);
-    const baselineState = RunStateV7Schema.parse(
+    const baselineState = RunStateV8Schema.parse(
       structuredClone(baseline.state),
     );
     await Promise.all([

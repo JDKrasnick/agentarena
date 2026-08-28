@@ -9,7 +9,7 @@ import type {
 export interface PriorAdjudicationContext {
   adjudicationId: string;
   attackId: string;
-  round: 1 | 2 | 3;
+  round: 1 | 2 | 3 | 4 | 5;
   target: ContestantId;
   claim: string;
   expectedBehavior: string;
@@ -159,7 +159,7 @@ export function priorAdjudicationContext(
     .map(({ candidate }) => ({
       adjudicationId: candidate.adjudication!.id,
       attackId: candidate.id,
-      round: candidate.round as 1 | 2 | 3,
+      round: candidate.round as 1 | 2 | 3 | 4 | 5,
       target: candidate.targets[0]!,
       claim: candidate.claim,
       expectedBehavior: candidate.oracle.expectedBehavior,

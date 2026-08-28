@@ -12,12 +12,12 @@ const HASH = "a".repeat(64);
 
 function snapshot(): RoundSnapshot {
   const draft = {
-    version: 4 as const,
+    version: 5 as const,
     runId: "run-1",
     roundId: 1 as const,
     snapshotHash: HASH,
     runSpec: {
-      version: 1 as const,
+      version: 2 as const,
       runId: "run-1",
       task: {
         task: "fix it",
@@ -67,6 +67,33 @@ function snapshot(): RoundSnapshot {
         attackMs: 1_000,
         verifierMs: 1_000,
         repairMs: 1_000,
+        roundEnvelopeMs: 1_500_000,
+        maxProviderCallsPerRound: 10,
+        maxTokensPerRound: 1_500_000,
+      },
+      effort: {
+        mode: "medium" as const,
+        fixedRounds: false,
+        profile: {
+          tier: "medium" as const,
+          plannedRounds: 2,
+          maxRounds: 4,
+          roundEnvelopeMs: 1_500_000,
+          maxProviderCallsPerRound: 10,
+          maxTokensPerRound: 1_500_000,
+          implementationMs: 900_000,
+          reviewMs: 240_000,
+          attackMs: 300_000,
+          judgeMs: 120_000,
+          repairMs: 360_000,
+        },
+        phaseOverrides: {
+          implementation: false,
+          review: false,
+          attack: false,
+          judge: false,
+          repair: false,
+        },
       },
       permissions: {
         mode: "deny" as const,
@@ -114,7 +141,7 @@ function result(
     status: "active" as const,
   })) as [(typeof accepted.contestants)[0], (typeof accepted.contestants)[1]];
   const replay = {
-    version: 4 as const,
+    version: 5 as const,
     runId: accepted.runId,
     roundId: accepted.roundId,
     snapshotHash: accepted.snapshotHash,
@@ -139,7 +166,7 @@ function result(
   };
   replay.replayHash = calculateReplayHash(replay);
   const base = {
-    version: 4 as const,
+    version: 5 as const,
     runId: accepted.runId,
     roundId: accepted.roundId,
     resultingContestants: contestants,

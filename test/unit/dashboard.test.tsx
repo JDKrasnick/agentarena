@@ -52,6 +52,12 @@ describe("terminal dashboard", () => {
     );
 
     observer.publish({
+      type: "effort_resolved",
+      tier: "medium",
+      plannedRounds: 3,
+      maxRounds: 3,
+    });
+    observer.publish({
       type: "stage_changed",
       stage: "collect_attacks",
       round: 2,
@@ -93,7 +99,7 @@ describe("terminal dashboard", () => {
       reason: "Retry race landed",
     });
     await update();
-    expect(view.lastFrame()).toContain("ROUND 2/3 │ Mount attacks");
+    expect(view.lastFrame()).toContain("ROUND 2/3 · 3 planned │ Mount attacks");
     expect(view.lastFrame()).toContain(
       "Round flow: scout → [mount] → verify → damage → repair",
     );

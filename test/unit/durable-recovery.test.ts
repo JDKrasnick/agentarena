@@ -27,6 +27,7 @@ import {
   writeFinalizationRecord,
 } from "../../src/recovery/durable.js";
 import { makeRunState } from "../helpers/run-state.js";
+import { EFFORT_PROFILES } from "../../src/effort/policy.js";
 
 function sha256(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -61,12 +62,12 @@ async function fixture() {
   after.warnings.push("sealed warning");
   const delta = projectRoundStateDelta(before, after, 1);
   const snapshotDraft = {
-    version: 4 as const,
+    version: 5 as const,
     runId: before.runId,
     roundId: 1 as const,
     snapshotHash: "0".repeat(64),
     runSpec: {
-      version: 1 as const,
+      version: 2 as const,
       runId: before.runId,
       task: {
         task: "fixture task",
@@ -116,6 +117,22 @@ async function fixture() {
         attackMs: 1000,
         verifierMs: 1000,
         repairMs: 1000,
+        roundEnvelopeMs: EFFORT_PROFILES.medium.roundEnvelopeMs,
+        maxProviderCallsPerRound:
+          EFFORT_PROFILES.medium.maxProviderCallsPerRound,
+        maxTokensPerRound: EFFORT_PROFILES.medium.maxTokensPerRound,
+      },
+      effort: {
+        mode: "medium" as const,
+        fixedRounds: false,
+        profile: EFFORT_PROFILES.medium,
+        phaseOverrides: {
+          implementation: false,
+          review: false,
+          attack: false,
+          judge: false,
+          repair: false,
+        },
       },
       permissions: {
         mode: "confirm" as const,
@@ -154,7 +171,7 @@ async function fixture() {
     sha256: sha256(deltaBytes),
   };
   const replayDraft = {
-    version: 4 as const,
+    version: 5 as const,
     runId: before.runId,
     roundId: 1 as const,
     snapshotHash: snapshot.snapshotHash,
@@ -202,7 +219,7 @@ async function fixture() {
     return RoundResultSchema.parse(
       status === "completed"
         ? {
-            version: 4,
+            version: 5,
             status,
             runId: before.runId,
             roundId: 1,
@@ -211,7 +228,7 @@ async function fixture() {
             replay,
           }
         : {
-            version: 4,
+            version: 5,
             status,
             runId: before.runId,
             roundId: 1,
@@ -410,7 +427,7 @@ describe("durable round recovery", () => {
     },
   );
 
-  it("rebuilds a v8 result from its immutable baseline and applied envelopes", async () => {
+  it("rebuilds a v9 result from its immutable baseline and applied envelopes", async () => {
     const { store, before, resultFor } = await fixture();
     await writeBaseline({
       store,
@@ -477,7 +494,7 @@ describe("durable round recovery", () => {
     const summary = JSON.parse(
       await readFile(store.resolve("result.json"), "utf8"),
     ) as { schemaVersion: number; appliedEnvelopes: unknown[] };
-    expect(summary.schemaVersion).toBe(8);
+    expect(summary.schemaVersion).toBe(9);
     expect(summary.appliedEnvelopes).toHaveLength(1);
     const rebuilt = await store.readState();
     expect(rebuilt.warnings).toEqual(["sealed warning"]);

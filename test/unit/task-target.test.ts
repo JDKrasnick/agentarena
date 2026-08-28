@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { deriveDeliveryTarget } from "../../src/delivery/target.js";
 import { RunSpecSchema } from "../../src/contracts/round.js";
+import { EFFORT_PROFILES } from "../../src/effort/policy.js";
 
 function runSpec(sources: unknown[]) {
   return RunSpecSchema.parse({
-    version: 1,
+    version: 2,
     runId: "run-1",
     task: {
       task: "task",
@@ -35,6 +36,21 @@ function runSpec(sources: unknown[]) {
       attackMs: 1_000,
       verifierMs: 1_000,
       repairMs: 1_000,
+      roundEnvelopeMs: EFFORT_PROFILES.medium.roundEnvelopeMs,
+      maxProviderCallsPerRound: EFFORT_PROFILES.medium.maxProviderCallsPerRound,
+      maxTokensPerRound: EFFORT_PROFILES.medium.maxTokensPerRound,
+    },
+    effort: {
+      mode: "medium",
+      fixedRounds: false,
+      profile: EFFORT_PROFILES.medium,
+      phaseOverrides: {
+        implementation: false,
+        review: false,
+        attack: false,
+        judge: false,
+        repair: false,
+      },
     },
     permissions: {
       mode: "confirm",

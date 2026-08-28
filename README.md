@@ -2,7 +2,7 @@
 
 Make your coding agents fight for the merge.
 
-Agent Arena is a local Node.js library and CLI that gives two coding agents the same immutable run specification, validates both patches, and runs three attack–repair rounds. Attacks are executable test patches, not critiques. The harness reproduces them twice, verifies that their expected behavior is supported by frozen task text, resolves damage and recoil simultaneously, gives both contestants bounded repair opportunities, and exports the evidence and final patches.
+Agent Arena is a local Node.js library and CLI that gives two coding agents the same immutable run specification, validates both patches, and runs one to five task-scaled attack–repair rounds. Attacks are executable test patches, not critiques. The harness reproduces them twice, verifies that their expected behavior is supported by frozen task text, resolves damage and recoil simultaneously, gives both contestants bounded repair opportunities, and exports the evidence and final patches.
 
 Surviving the arena is additional evidence, not a correctness guarantee.
 
@@ -67,6 +67,7 @@ test: npm test
 agents: [codex, claude]
 models: [gpt-5.2-codex, claude-opus-4-6]
 judge: codex
+effort: auto
 sources:
   - github_issue: 241
   # - github_pr: 87
@@ -89,7 +90,6 @@ integration:
     - health endpoint is ready
   fault_controls: [timeout, disconnect, restart]
 limits:
-  rounds: 3
   attacks_per_round: 3
   implementation_minutes: 15
   review_minutes: 10
@@ -108,6 +108,13 @@ delivery:
 `review_minutes` defaults to `10`, accepts positive lower values, and rejects
 values above `10`. Provider progress is decoded into safe activity events and
 diagnostic artifacts; silence never ends a call before its configured deadline.
+
+`effort` defaults to `auto`; the judge selects an ultra-low through ultra-high
+profile from task complexity and risk, and the harness stops on convergence or
+runs at most two independently qualified extensions through round 5. Use
+`--effort low` (or another explicit tier) to pin a profile. `--rounds 1..5`
+instead requests an exact fixed count with medium timings and cannot be combined
+with `--effort auto`.
 
 `models`/`--models` is optional and follows contestant order. If omitted, each
 provider CLI chooses its configured default. This also permits model-vs-model
@@ -255,7 +262,7 @@ Round 3 executes an approved integration profile symmetrically against both froz
 Each run is persisted atomically under `.agent-arena/runs/<run-id>/`:
 
 - `BATTLE.md`, the clickable `BATTLE.html` dossier, deterministic `BATTLE.svg`,
-  and compact schema-v8 `result.json`
+  and compact schema-v9 `result.json`
 - immutable `baseline.json`, sealed round envelopes, runtime drift manifest,
   envelope-head-bound finalization, and checkpoint descriptors
 - ordered append-only `events.ndjson` for live observability and replay

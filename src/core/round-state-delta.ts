@@ -105,7 +105,7 @@ export function projectRoundStateDelta(
   // heal, so the projection carries the authoritative collection.
   const attacks = after.attacks;
   return RoundStateDeltaSchema.parse({
-    version: 4,
+    version: 5,
     runId: after.runId,
     roundId,
     attacks,
@@ -128,6 +128,9 @@ export function projectRoundStateDelta(
     ),
     repairJudgments: structuredClone(
       after.repairJudgments.slice(before.repairJudgments.length),
+    ),
+    adaptiveDecisions: structuredClone(
+      after.adaptiveDecisions.slice(before.adaptiveDecisions.length),
     ),
     coordinator: {
       stage: after.stage,
@@ -217,6 +220,9 @@ export function applyCompletedRound(
     ...structuredClone(
       (delta.repairJudgments ?? []) as RunState["repairJudgments"],
     ),
+  );
+  state.adaptiveDecisions.push(
+    ...structuredClone(delta.adaptiveDecisions ?? []),
   );
   for (const entry of delta.invocations as TaggedValue[]) {
     if (entry.kind === "review")

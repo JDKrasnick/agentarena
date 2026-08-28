@@ -8,6 +8,11 @@ import {
   type FightConfig,
   type TaskReference,
 } from "../core/types.js";
+import {
+  EffortModeSchema,
+  resolveEffortProfile,
+  type EffortMode,
+} from "../effort/policy.js";
 
 const DurationLimitsSchema = z
   .object({
@@ -16,7 +21,7 @@ const DurationLimitsSchema = z
     attack_minutes: z.number().positive().default(8),
     verifier_minutes: z.number().positive().default(2),
     repair_minutes: z.number().positive().default(8),
-    rounds: z.literal(3).default(3),
+    rounds: z.number().int().min(1).max(5).optional(),
     attacks_per_round: z.literal(3).default(3),
     /** @deprecated Accepted and ignored for legacy configuration. */
     infrastructure_recovery_round: z.boolean().optional(),
@@ -30,7 +35,6 @@ const DurationLimitsSchema = z
     attack_minutes: 8,
     verifier_minutes: 2,
     repair_minutes: 8,
-    rounds: 3,
     attacks_per_round: 3,
     held_out_cases_per_defect: 2,
   });
@@ -46,6 +50,7 @@ const PermissionEntrySchema = z
 const FileConfigSchema = z
   .object({
     test: z.string().optional(),
+    effort: EffortModeSchema.default("auto"),
     base_from_pr: z.union([z.string(), z.number()]).optional(),
     mode: z.enum(["duel", "siege", "catch_up"]).optional(),
     incumbent: AgentIdSchema.optional(),
@@ -210,6 +215,8 @@ export interface CliConfigOverrides {
   reviewMcp?: boolean;
   reducedValidationAccepted?: boolean;
   keepWorktrees?: boolean;
+  effort?: EffortMode;
+  rounds?: number;
 }
 
 function minutes(value: number): number {
@@ -260,6 +267,26 @@ export async function loadFightConfig(
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const file = FileConfigSchema.parse(fileValue ?? {});
+  const effort = overrides.effort ?? file.effort;
+  const configuredRounds = overrides.rounds ?? file.limits.rounds;
+  if (configuredRounds !== undefined && effort === "auto")
+    throw new Error("--rounds cannot be combined with --effort auto");
+  const profile = resolveEffortProfile(effort === "auto" ? "medium" : effort);
+  const rawLimits =
+    fileValue &&
+    typeof fileValue === "object" &&
+    "limits" in fileValue &&
+    fileValue.limits &&
+    typeof fileValue.limits === "object"
+      ? (fileValue.limits as Record<string, unknown>)
+      : {};
+  const phaseOverrides = {
+    implementation: Object.hasOwn(rawLimits, "implementation_minutes"),
+    review: Object.hasOwn(rawLimits, "review_minutes"),
+    attack: Object.hasOwn(rawLimits, "attack_minutes"),
+    judge: Object.hasOwn(rawLimits, "verifier_minutes"),
+    repair: Object.hasOwn(rawLimits, "repair_minutes"),
+  };
   const sourceSpecs = file.sources.flatMap((source) =>
     "spec" in source ? [source.spec] : [],
   );
@@ -485,7 +512,9 @@ export async function loadFightConfig(
       agents[0],
     configWarnings: compatibilityWarnings,
     maxHeldOutCasesPerDefect: 0,
-    rounds: 3,
+    effortMode: effort,
+    fixedRounds: configuredRounds !== undefined,
+    rounds: configuredRounds ?? profile.plannedRounds,
     maxAttacksPerRound: 3,
     testCommand: overrides.testCommand ?? file.test,
     ...(file.integration
@@ -538,11 +567,22 @@ export async function loadFightConfig(
     deliveryEnabled: file.delivery.enabled,
     mergeEnabled: file.delivery.merge_enabled,
     limits: {
-      implementationMs: minutes(file.limits.implementation_minutes),
-      reviewMs: minutes(file.limits.review_minutes),
-      attackMs: minutes(file.limits.attack_minutes),
-      verifierMs: minutes(file.limits.verifier_minutes),
-      repairMs: minutes(file.limits.repair_minutes),
+      implementationMs: phaseOverrides.implementation
+        ? minutes(file.limits.implementation_minutes)
+        : profile.implementationMs,
+      reviewMs: phaseOverrides.review
+        ? minutes(file.limits.review_minutes)
+        : profile.reviewMs,
+      attackMs: phaseOverrides.attack
+        ? minutes(file.limits.attack_minutes)
+        : profile.attackMs,
+      verifierMs: phaseOverrides.judge
+        ? minutes(file.limits.verifier_minutes)
+        : profile.judgeMs,
+      repairMs: phaseOverrides.repair
+        ? minutes(file.limits.repair_minutes)
+        : profile.repairMs,
     },
+    phaseOverrides,
   });
 }

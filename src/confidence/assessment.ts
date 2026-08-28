@@ -14,8 +14,13 @@ import {
 
 export function requiredCoverageLanes(
   mode: RunState["config"]["mode"],
-): Array<{ round: 1 | 2 | 3; attacker: ContestantId; target: ContestantId }> {
-  return ([1, 2, 3] as const).flatMap((round) =>
+  rounds: readonly (1 | 2 | 3 | 4 | 5)[] = [1, 2, 3],
+): Array<{
+  round: 1 | 2 | 3 | 4 | 5;
+  attacker: ContestantId;
+  target: ContestantId;
+}> {
+  return rounds.flatMap((round) =>
     mode === "siege"
       ? [{ round, attacker: "a" as const, target: "b" as const }]
       : [
@@ -69,8 +74,23 @@ export function assessBattleCoverage(
   permissionPolicy?: PermissionPolicy,
 ): CoverageAssessment {
   const coverageV2 = state.schemaVersion >= 6;
+  const executedRounds = [1, 2, 3, 4, 5].filter(
+    (round) =>
+      Object.values(state.contestants).some((contestant) =>
+        contestant?.rounds.some((entry) => entry.round === round),
+      ) ||
+      state.reviewInvocations.some((entry) => entry.round === round) ||
+      state.attackInvocations.some((entry) => entry.round === round) ||
+      state.attacks.some((entry) => entry.round === round) ||
+      state.adaptiveDecisions.some((entry) => entry.round === round),
+  ) as Array<1 | 2 | 3 | 4 | 5>;
+  const legacyConfiguredRounds = [1, 2, 3, 4, 5].slice(
+    0,
+    state.config.rounds,
+  ) as Array<1 | 2 | 3 | 4 | 5>;
   const lanes: CoverageLaneAssessment[] = requiredCoverageLanes(
     state.config.mode,
+    executedRounds.length ? executedRounds : legacyConfiguredRounds,
   ).map(({ round, attacker, target }) => {
     const id = `round-${String(round)}:${attacker}->${target}`;
     const reviews = state.reviewInvocations.filter(

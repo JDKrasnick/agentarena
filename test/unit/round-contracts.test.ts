@@ -17,7 +17,7 @@ const OTHER_HASH = "b".repeat(64);
 
 function runSpec() {
   return {
-    version: 1 as const,
+    version: 2 as const,
     runId: "run-1",
     task: {
       task: "fix the defect",
@@ -67,6 +67,33 @@ function runSpec() {
       attackMs: 60_000,
       verifierMs: 60_000,
       repairMs: 60_000,
+      roundEnvelopeMs: 1_500_000,
+      maxProviderCallsPerRound: 10,
+      maxTokensPerRound: 1_500_000,
+    },
+    effort: {
+      mode: "medium" as const,
+      fixedRounds: false,
+      profile: {
+        tier: "medium" as const,
+        plannedRounds: 2,
+        maxRounds: 4,
+        roundEnvelopeMs: 1_500_000,
+        maxProviderCallsPerRound: 10,
+        maxTokensPerRound: 1_500_000,
+        implementationMs: 900_000,
+        reviewMs: 240_000,
+        attackMs: 300_000,
+        judgeMs: 120_000,
+        repairMs: 360_000,
+      },
+      phaseOverrides: {
+        implementation: false,
+        review: false,
+        attack: false,
+        judge: false,
+        repair: false,
+      },
     },
     permissions: {
       mode: "confirm" as const,
@@ -104,7 +131,7 @@ function contestant(contestantId: "a" | "b") {
 
 function snapshot() {
   return {
-    version: 4 as const,
+    version: 5 as const,
     runId: "run-1",
     roundId: 1 as const,
     snapshotHash: HASH,
@@ -118,7 +145,7 @@ function snapshot() {
 
 function replay() {
   return {
-    version: 4 as const,
+    version: 5 as const,
     runId: "run-1",
     roundId: 1 as const,
     snapshotHash: HASH,
@@ -190,12 +217,12 @@ function roundTrip<T>(schema: { parse(value: unknown): T }, value: unknown): T {
 
 describe("round boundary contracts", () => {
   it("round-trips all five versioned contracts", () => {
-    expect(roundTrip(RunSpecSchema, runSpec()).version).toBe(1);
+    expect(roundTrip(RunSpecSchema, runSpec()).version).toBe(2);
     expect(roundTrip(RoundSnapshotSchema, snapshot()).roundId).toBe(1);
     expect(roundTrip(RoundReplaySchema, replay()).replayHash).toBe(OTHER_HASH);
     expect(
       roundTrip(RoundResultSchema, {
-        version: 4,
+        version: 5,
         runId: "run-1",
         roundId: 1,
         status: "completed",
@@ -245,7 +272,7 @@ describe("round boundary contracts", () => {
       priorReplayHash: OTHER_HASH,
     });
     const resultValue = roundTrip(RoundResultSchema, {
-      version: 4,
+      version: 5,
       runId: "run-1",
       roundId: 2,
       status: "completed",
@@ -282,7 +309,7 @@ describe("round boundary contracts", () => {
     expect(
       validateRoundResult(
         {
-          version: 4,
+          version: 5,
           runId: accepted.runId,
           roundId: accepted.roundId,
           status: "completed",
@@ -306,7 +333,7 @@ describe("round boundary contracts", () => {
     expect(() =>
       validateRoundResult(
         {
-          version: 4,
+          version: 5,
           runId: accepted.runId,
           roundId: accepted.roundId,
           status: "completed",
@@ -343,7 +370,7 @@ describe("round boundary contracts", () => {
     ).toThrow(/Only round 1/);
     expect(() =>
       RoundResultSchema.parse({
-        version: 4,
+        version: 5,
         runId: "run-1",
         roundId: 1,
         status: "completed",
@@ -386,7 +413,7 @@ describe("round boundary contracts", () => {
   });
 
   it("rejects unsupported versions, malformed hashes, and runtime values", () => {
-    expect(() => RunSpecSchema.parse({ ...runSpec(), version: 2 })).toThrow();
+    expect(() => RunSpecSchema.parse({ ...runSpec(), version: 3 })).toThrow();
     expect(() =>
       RunSpecSchema.parse({ ...runSpec(), contentHash: "not-a-hash" }),
     ).toThrow();
@@ -407,7 +434,7 @@ describe("round boundary contracts", () => {
     ).toThrow(/runId/);
     expect(() =>
       RoundResultSchema.parse({
-        version: 4,
+        version: 5,
         runId: "run-1",
         roundId: 2,
         status: "completed",
@@ -424,7 +451,7 @@ describe("round boundary contracts", () => {
     ).toThrow(/topology order/);
     expect(() =>
       RoundResultSchema.parse({
-        version: 4,
+        version: 5,
         runId: "run-1",
         roundId: 1,
         status: "completed",
@@ -504,7 +531,13 @@ describe("round boundary contracts", () => {
     ).toThrow(/production-owning contestant/);
   });
 
-  it("restricts current rounds to the three attack-repair rounds", () => {
+  it("restricts current rounds to the five attack-repair rounds", () => {
+    expect(() =>
+      RoundSnapshotSchema.parse({ ...snapshot(), roundId: 5 }),
+    ).not.toThrow();
+    expect(() =>
+      RoundSnapshotSchema.parse({ ...snapshot(), roundId: 6 }),
+    ).toThrow();
     expect(() =>
       RoundSnapshotSchema.parse({ ...snapshot(), roundId: "recovery" }),
     ).toThrow();
@@ -515,7 +548,7 @@ describe("round boundary contracts", () => {
 
   it("requires every outcome to include a replay and failure diagnostics", () => {
     const base = {
-      version: 4,
+      version: 5,
       runId: "run-1",
       roundId: 1,
       resultingContestants: [contestant("a"), contestant("b")],

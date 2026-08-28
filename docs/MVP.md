@@ -3,7 +3,7 @@
 ## What we are building
 
 Agent Arena is a local command-line tool that asks two coding agents to solve the
-same repository task, then runs three rounds in which they attack the opposing
+same repository task, then runs a task-scaled sequence in which they attack the opposing
 solution and repair their own. It recommends the solution with the strongest
 test evidence and the most remaining health.
 
@@ -14,8 +14,8 @@ The MVP exists to prove one idea:
 
 The result is confidence-qualified. New runs use exactly two contestant adapters
 and one fresh, identity-blind judge adapter. Duel and catch-up require both
-directions in all three attack rounds; siege requires attacker-to-defender in
-all three. Every required coverage-v3 lane records `review`,
+directions in every executed attack round; siege requires attacker-to-defender
+in every executed round. Every required coverage-v3 lane records `review`,
 `attack_submission`, `evidence_construction`, `execution`,
 `semantic_adjudication`, and `repair` when applicable. Direct overlay capture
 completes evidence construction without another model call; a schema-valid
@@ -167,7 +167,7 @@ From the root of a clean Git repository, the developer runs:
 agent-arena fight "fix the refresh-token race condition" \
   --agents codex,claude \
   --models gpt-5.2-codex,claude-opus-4-6 \
-  --rounds 3 \
+  --effort auto \
   --permissions confirm \
   --test "npm test"
 ```
@@ -185,12 +185,15 @@ Agent Arena then:
 5. Gives both agents the same RunSpec, repository instructions, limits,
    and test command.
 6. Captures each implementation as a patch and runs the configured test command.
-7. Runs three attack–repair rounds with different investigation briefs:
+7. Runs one to five task-scaled attack–repair rounds with different investigation briefs:
    - Round 1 attacks specification compliance and local correctness.
    - Round 2 attacks boundaries, state, data, concurrency, and hidden test
      weaknesses with systematic probe methods.
    - Round 3 attacks real integrations, configuration, security boundaries,
      partial failure, recovery, and resource behavior.
+   - Round 4 generalizes an independently qualified damage-bearing defect.
+   - Round 5 tests recurrence, durability, and recovery for a newly qualified
+     extension trigger.
    In each round:
    - The harness freezes both current patches.
    - Both agents get an extended read-only review phase and produce structured
@@ -266,7 +269,7 @@ requires an explicit incumbent provider when attribution is unknown.
 
 ## Final round structure and bug coverage
 
-The three rounds are a progressive investigation, not three copies of the same
+The rounds are a progressive investigation, not copies of the same
 prompt. Both agents receive the same versioned common rules and the same
 round-specific prompt. A repository-specific method pack may enable relevant
 tools, but it must be selected before seeing contestant identities and exposed
@@ -278,7 +281,27 @@ symmetrically.
 | Round 1 — contract and local correctness | Trace every acceptance criterion through the changed code. Look for wrong results, missing behavior, regressions, error handling, and input or boundary mistakes. | Examples, table tests, boundary tests, negative cases, and API assertions. |
 | Round 2 — systematic exploration | Look beyond obvious examples: state transitions, ordering, persistence, serialization, mutation survivors, generated inputs, concurrency schedules, cancellation, resource cleanup, and patch interactions. | Property-based tests, fuzz or generated cases, mutation-guided tests, schedule tests, static-analysis findings with executable reproducers, state-machine tests, and relevant prior-version or retry/persistence lifecycle probes. |
 | Round 3 — integration, resilience, and security | Exercise the patch across its real component boundaries with approved test dependencies. Vary configuration and dependency behavior; test authentication and authorization, retries, idempotency, timeouts, partial failure, recovery, and bounded load. | Ephemeral-service integration tests, protocol assertions, fault injection, security checks, recovery invariants, leak checks, and small deterministic stress tests. |
+| Round 4 — generalization extension | Generalize only the newly qualified damage-bearing defect, or complete a remaining repair allowance for an active accepted defect. | Adjacent inputs, equivalent transitions, related protocols, and invariant variants tied to the trigger. |
+| Round 5 — durability extension | Probe recurrence, restart, recovery, and durability for a newly qualified trigger. | Persistence/restart checks, recurrence tests, recovery invariants, and bounded failure sequences. |
 | Final validation | Re-run the required suite and every already accepted arena check. It discovers no score-changing surprise after the last repair opportunity. | A deterministic patch-by-check matrix and health-ledger replay. |
+
+`effort: auto` runs one identity-blind assessment after readiness and before
+implementation. The judge scores change surface, behavioral complexity,
+validation burden, and operational risk from 0–2. Score bands select ultra-low,
+low, medium, high, or ultra-high; security, authorization, migration,
+concurrency, irreversible-data, and external-system risks impose a high floor,
+and confidence below 0.7 promotes one tier. One failed assessment is retried;
+two failures produce a recorded medium fallback.
+
+The five profiles plan 1/1/2/3/3 rounds with 15/20/25/45/60-minute round
+envelopes, 6/8/10/14/18 provider calls per round, and
+500k/750k/1.5m/4m/7m tokens per round. Convergence is evaluated after each
+sealed round. At most two independently qualified extensions may run, never
+past round 5. An extension requires a new damage-bearing canonical defect,
+including partial-judge damage, or an active accepted defect with repair
+allowance remaining. Findings outside that scope are recorded with no scoring
+effect. `--rounds 1..5` is an exact fixed override using medium timings; it
+disables adaptive behavior and cannot be combined with `--effort auto`.
 
 Round 3 is the proactive integration round, but integration is not deferred until
 then. Required repository integration tests run during baseline and after every
@@ -419,7 +442,7 @@ unscored report finding.
   repository and permission plan.
 - Independently replayable target-relative attack overlays.
 - One implementation round.
-- Three attack–repair rounds.
+- One to five task-scaled attack–repair rounds.
 - One targeted retry for each distinct stage or evidence-path failure.
 - Zero to three ordered attacks per agent in each round.
 - Durable two- or three-attempt repair allowances per canonical defect.
@@ -1010,7 +1033,7 @@ A contestant is eliminated if its final patch cannot be applied or fails the
 configured original validation command; required-check elimination sets its
 health to 0 regardless of adversarial damage. A contestant that remains at 0 HP
 after a round's repair is also eliminated. If only one contestant remains, the
-fight ends early. Otherwise, after three normal rounds:
+fight ends early. Otherwise, after the adaptive or fixed plan completes:
 
 1. Highest final HP wins.
 2. Lower final patch size wins only as a tie-breaker.
@@ -1080,8 +1103,8 @@ sources:
   - github_issue: 241
   # - github_pr: 87
   - spec: docs/session-refresh.md
+effort: auto
 limits:
-  rounds: 3
   attacks_per_round: 3
   implementation_minutes: 15
   attack_minutes: 8
@@ -1306,8 +1329,8 @@ The MVP is ready when a new user can:
    MCP policy before any battle agent starts; both decisions show which
    capabilities are agent, harness-only, approved, unavailable, or denied.
 4. Receive two independently generated implementation patches.
-5. Observe three attack–repair rounds unless an early elimination ends the
-   fight, with at most one retry for each distinct failure.
+5. Observe the selected adaptive or fixed attack–repair rounds unless an early
+   elimination ends the fight, with at most one retry for each distinct failure.
 6. See zero to three ranked attacks per agent per round land or miss for a
    stated, reproducible reason.
 7. See severity damage, miss recoil, repairs, heals, and health after every

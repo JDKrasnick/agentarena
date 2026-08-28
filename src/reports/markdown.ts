@@ -185,9 +185,13 @@ function roundReplay(state: RunState): string[] {
           ? "Systematic exploration of state, boundaries, and concurrency"
           : round.id === 3
             ? "Integration, resilience, and security"
-            : round.id === "reconciliation"
-              ? "Correction-only reconciliation"
-              : "Replacement attacks for confirmed infrastructure losses";
+            : round.id === 4
+              ? "Extension generalization across adjacent cases"
+              : round.id === 5
+                ? "Extension recurrence, repair durability, and recovery boundaries"
+                : round.id === "reconciliation"
+                  ? "Correction-only reconciliation"
+                  : "Replacement attacks for confirmed infrastructure losses";
     const invocations = state.attackInvocations.filter(
       (record) => record.round === round.id,
     );
@@ -353,6 +357,33 @@ export function renderBattleReport(state: RunState): string {
     "",
     `Mode: **${state.config.mode}**`,
     "",
+    `Effort: **${state.config.resolvedEffortProfile?.tier ?? state.config.effortMode}** · ${state.config.fixedRounds ? `${String(state.config.rounds)} exact rounds` : `${String(state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds)} planned rounds, up to ${String(state.config.resolvedEffortProfile?.maxRounds ?? state.config.rounds)} total`} · assessment ${state.config.effortAssessment?.fallback ? "medium fallback" : state.config.effortMode === "auto" ? "completed" : "skipped (explicit tier)"}`,
+    "",
+    ...(state.config.effortAssessment
+      ? [
+          `Initialization assessment overhead (outside task budgets): ${String(state.config.effortAssessment.attempts.length)} call(s), ${(state.config.effortAssessment.attempts.reduce((sum, attempt) => sum + attempt.durationMs, 0) / 1000).toFixed(1)}s, telemetry ${state.config.effortAssessment.attempts.map((attempt) => attempt.tokenTelemetry.state).join(", ") || "unavailable"}.`,
+          "",
+        ]
+      : []),
+    ...(state.adaptiveCompletion
+      ? [
+          `Adaptive result: **adaptive coverage** (\`${state.adaptiveCompletion.reason}\`)`,
+          "",
+          `Skipped briefs: ${state.adaptiveCompletion.skippedBriefs.join(", ") || "none"}`,
+          "",
+        ]
+      : []),
+    ...(state.adaptiveDecisions.length
+      ? [
+          "| Round | Wall time | Provider calls | Tokens | Converged | Extension | Decision |",
+          "| ---: | ---: | ---: | --- | --- | --- | --- |",
+          ...state.adaptiveDecisions.map(
+            (decision) =>
+              `| ${String(decision.round)} | ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s | ${String(decision.consumption.providerCalls)} | ${decision.consumption.tokenTelemetry.state}${decision.consumption.tokenTelemetry.totalTokens === undefined ? "" : ` (${String(decision.consumption.tokenTelemetry.totalTokens)})`} | ${decision.convergence.passed ? "yes" : "no"} | ${decision.extensionQualified ? decision.extensionTriggerDefectIds.join(", ") || "yes" : "no"} | ${decision.action}: ${decision.reason} |`,
+          ),
+          "",
+        ]
+      : []),
     ...(state.integrity === "assisted"
       ? [
           "> **Assisted — not competitively comparable.** Operator steering was applied during this run.",

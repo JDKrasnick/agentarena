@@ -5,12 +5,51 @@ import { describe, expect, it } from "vitest";
 import { loadFightConfig } from "../../src/config/load-config.js";
 
 describe("configuration", () => {
-  it("defaults review calls to ten minutes and rejects a higher limit", async () => {
+  it("resolves explicit effort and fixed-round YAML with CLI precedence", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-config-effort-"));
+    await writeFile(
+      path.join(root, "agent-arena.yaml"),
+      "test: 'true'\neffort: low\nlimits:\n  rounds: 5\n",
+    );
+    await expect(
+      loadFightConfig({ task: "review", repositoryRoot: root }),
+    ).resolves.toMatchObject({
+      effortMode: "low",
+      fixedRounds: true,
+      rounds: 5,
+      limits: { implementationMs: 600_000, reviewMs: 180_000 },
+    });
+    await expect(
+      loadFightConfig({
+        task: "review",
+        repositoryRoot: root,
+        effort: "high",
+        rounds: 1,
+      }),
+    ).resolves.toMatchObject({
+      effortMode: "high",
+      fixedRounds: true,
+      rounds: 1,
+    });
+  });
+
+  it("rejects fixed rounds with automatic effort", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-config-fixed-"));
+    await writeFile(
+      path.join(root, "agent-arena.yaml"),
+      "test: 'true'\nlimits:\n  rounds: 1\n",
+    );
+    await expect(
+      loadFightConfig({ task: "review", repositoryRoot: root }),
+    ).rejects.toThrow(/effort auto/);
+  });
+
+  it("defaults auto effort to medium review timing and rejects a higher override", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-config-review-"));
     await writeFile(path.join(root, "agent-arena.yaml"), "test: 'true'\n");
     await expect(
       loadFightConfig({ task: "review", repositoryRoot: root }),
-    ).resolves.toMatchObject({ limits: { reviewMs: 600_000 } });
+    ).resolves.toMatchObject({ limits: { reviewMs: 240_000 } });
 
     await writeFile(
       path.join(root, "agent-arena.yaml"),

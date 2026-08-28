@@ -209,7 +209,7 @@ export function createArenaPresentation(
   selectedRound: RoundSelection,
   connected: boolean,
 ): ArenaPresentation {
-  const found = new Set<NonNullable<DashboardState["round"]>>([1, 2, 3]);
+  const found = new Set<NonNullable<DashboardState["round"]>>([1, 2, 3, 4, 5]);
   if (state.round) found.add(state.round);
   for (const attack of state.attacks) if (attack.round) found.add(attack.round);
   for (const fighter of Object.values(state.contestants)) {

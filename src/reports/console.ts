@@ -95,7 +95,18 @@ export function renderConsoleSummary(
           `Incumbent attribution: ${state.pullRequestFixture.attribution.confidence}${state.pullRequestFixture.attribution.provider ? ` (${state.pullRequestFixture.attribution.provider})` : ""}`,
         ]
       : []),
-    `Rounds completed: ${String(completedRounds)}/3`,
+    `Effort: ${state.config.resolvedEffortProfile?.tier ?? state.config.effortMode}${state.config.effortAssessment?.fallback ? " (medium fallback)" : ""} · ${state.config.fixedRounds ? `${String(state.config.rounds)} fixed` : `${String(state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds)} planned`} round(s)`,
+    `Rounds completed: ${String(completedRounds)}/${String(state.config.fixedRounds ? state.config.rounds : (state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds))}${completedRounds > (state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds) ? " (extended)" : ""}`,
+    ...(state.adaptiveCompletion
+      ? [
+          `Completion: adaptive coverage (${state.adaptiveCompletion.reason})`,
+          ...(state.adaptiveCompletion.skippedBriefs.length
+            ? [
+                `Skipped briefs: ${state.adaptiveCompletion.skippedBriefs.join(", ")}`,
+              ]
+            : []),
+        ]
+      : []),
     ...(state.coverageAssessment
       ? [
           `Coverage: ${state.coverageAssessment.confidence.replaceAll("_", " ")} — ${String(state.coverageAssessment.counts.completed)} completed, ${String(state.coverageAssessment.counts.degraded)} degraded, ${String(state.coverageAssessment.counts.unresolved)} unresolved / ${String(state.coverageAssessment.counts.required)} required`,

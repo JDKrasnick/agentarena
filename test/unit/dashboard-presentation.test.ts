@@ -55,7 +55,7 @@ describe("dashboard presentation model", () => {
     expect(live.attacks).toEqual(replay.attacks);
     expect(live.counts.mounting).toBe(1);
     expect(live.canSteer).toBe(true);
-    expect(replay.rounds).toEqual([1, 2, 3]);
+    expect(replay.rounds).toEqual([1, 2, 3, 4, 5]);
   });
 
   it("never permits steering without a live running connection", () => {

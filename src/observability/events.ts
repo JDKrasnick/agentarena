@@ -56,6 +56,41 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
     round: RoundIdSchema.optional(),
   }),
   event("round_started", { round: RoundIdSchema }),
+  event("effort_assessed", {
+    tier: z.enum(["ultra-low", "low", "medium", "high", "ultra-high"]),
+    score: z.number().int().min(0).max(8),
+    plannedRounds: z.number().int().min(1).max(3),
+    maxRounds: z.number().int().min(1).max(5),
+    fallback: z.boolean(),
+  }),
+  event("effort_resolved", {
+    tier: z.enum(["ultra-low", "low", "medium", "high", "ultra-high"]),
+    plannedRounds: z.number().int().min(1).max(5),
+    maxRounds: z.number().int().min(1).max(5),
+  }),
+  event("budget_pressure", {
+    round: RoundIdSchema,
+    wallTime: z.boolean(),
+    invocations: z.boolean(),
+    tokens: z.boolean(),
+  }),
+  event("convergence_evaluated", {
+    round: RoundIdSchema,
+    passed: z.boolean(),
+  }),
+  event("extension_qualified", {
+    round: RoundIdSchema,
+    defectIds: z.array(z.string()),
+  }),
+  event("extension_declined", {
+    round: RoundIdSchema,
+    defectIds: z.array(z.string()),
+  }),
+  event("adaptive_stop", {
+    round: RoundIdSchema,
+    reason: z.string().min(1),
+    skippedBriefs: z.array(z.string()),
+  }),
   event("invocation_started", {
     invocationId: z.string(),
     source: OutputSourceSchema,
@@ -174,7 +209,7 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
   }),
   event("battle_completed", {
     status: z.enum(["complete", "inconclusive", "failed", "cancelled"]),
-    roundsCompleted: z.number().int().min(0).max(3).optional(),
+    roundsCompleted: z.number().int().min(0).max(5).optional(),
     /** Absent when coverage is unresolved and no champion may be published. */
     championId: ContestantIdSchema.optional(),
     recommendedId: ContestantIdSchema.optional(),

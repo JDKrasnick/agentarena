@@ -75,7 +75,7 @@ export function renderBattleVisual(state: RunState): string {
         .join("\n")
     : `<text x="76" y="520" class="body">No landed defects recorded; this does not establish correctness.</text>`;
   const rounds = reportRounds(state)
-    .slice(0, 3)
+    .slice(0, 5)
     .map((round, index) => {
       const count = round.attacks.filter(
         (attack) => attack.status === "landed",
@@ -86,7 +86,7 @@ export function renderBattleVisual(state: RunState): string {
           : round.id === "reconciliation"
             ? "RECONCILIATION"
             : `ROUND ${String(round.id)}`;
-      return `<rect x="${54 + index * 380}" y="690" width="340" height="112" rx="12" fill="#121b26" stroke="#294056"/><text x="${78 + index * 380}" y="730" class="label">${label}</text><text x="${78 + index * 380}" y="766" class="body">${count ? `${String(count)} proven attack(s)` : "No proven attacks"}</text>`;
+      return `<rect x="${54 + index * 226}" y="690" width="206" height="112" rx="12" fill="#121b26" stroke="#294056"/><text x="${70 + index * 226}" y="730" class="label">${label}</text><text x="${70 + index * 226}" y="766" class="body">${count ? `${String(count)} proven` : "No proven attacks"}</text>`;
     })
     .join("\n");
   const outcome = reportOutcome(state);

@@ -2,10 +2,15 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { BrowserPlanSchema } from "./browser.js";
 import { FailureRecordSchema } from "./failure.js";
+import {
+  AdaptiveRoundDecisionSchema,
+  EffortProfileSchema,
+  TaskEffortAssessmentV1Schema,
+} from "../effort/policy.js";
 
 const PointValueSchema = z.number().min(0).max(100).multipleOf(0.25);
 const DamageValueSchema = z.number().positive().max(50).multipleOf(0.25);
-const ContractVersionSchema = z.literal(4);
+const ContractVersionSchema = z.literal(5);
 const FeedbackVersionSchema = z.union([
   z.literal(1),
   z.literal(2),
@@ -79,7 +84,13 @@ const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
 );
 
 const ContestantIdSchema = z.enum(["a", "b"]);
-const RoundIdSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
+const RoundIdSchema = z.union([
+  z.literal(1),
+  z.literal(2),
+  z.literal(3),
+  z.literal(4),
+  z.literal(5),
+]);
 const SeveritySchema = z.enum(["critical", "high", "medium", "low"]);
 
 const FrozenSourceSchema = z
@@ -201,6 +212,9 @@ const RunBudgetsSchema = z
     verifierMs: z.number().int().positive(),
     repairMs: z.number().int().positive(),
     maxSpendUsd: z.number().finite().nonnegative().optional(),
+    roundEnvelopeMs: z.number().int().positive(),
+    maxProviderCallsPerRound: z.number().int().positive(),
+    maxTokensPerRound: z.number().int().positive(),
   })
   .strict();
 
@@ -243,13 +257,36 @@ const BrowserValidationSchema = BrowserPlanSchema.extend({
 /** Immutable, JSON-safe input shared by all rounds in a battle. */
 export const RunSpecSchema = z
   .object({
-    version: z.literal(1),
+    version: z.literal(2),
     runId: IdentifierSchema,
     task: ImmutableTaskSchema,
     baseCommit: GitCommitSchema,
     topology: BattleTopologySchema,
     commands: z.array(RunCommandSchema).min(1),
     budgets: RunBudgetsSchema,
+    effort: z
+      .object({
+        mode: z.enum([
+          "auto",
+          "ultra-low",
+          "low",
+          "medium",
+          "high",
+          "ultra-high",
+        ]),
+        fixedRounds: z.boolean(),
+        exactRounds: z.number().int().min(1).max(5).optional(),
+        assessment: TaskEffortAssessmentV1Schema.optional(),
+        profile: EffortProfileSchema,
+        phaseOverrides: z.object({
+          implementation: z.boolean(),
+          review: z.boolean(),
+          attack: z.boolean(),
+          judge: z.boolean(),
+          repair: z.boolean(),
+        }),
+      })
+      .strict(),
     permissions: RunPermissionsSchema,
     browserValidation: BrowserValidationSchema.optional(),
     mcpPolicyHash: Sha256Schema.optional(),
@@ -530,6 +567,7 @@ export const RoundReplaySchema = z
     failureRecords: z.array(FailureRecordSchema),
     artifacts: z.array(ArtifactReferenceSchema),
     stateDeltaArtifactId: IdentifierSchema,
+    adaptiveDecision: AdaptiveRoundDecisionSchema.optional(),
     replayHash: Sha256Schema,
   })
   .strict()
@@ -735,6 +773,7 @@ export const RoundStateDeltaSchema = z
     patchMetadata: z.array(JsonValueSchema),
     submissionArtifacts: z.array(JsonValueSchema).optional(),
     repairJudgments: z.array(JsonValueSchema).optional(),
+    adaptiveDecisions: z.array(AdaptiveRoundDecisionSchema).optional(),
     coordinator: z
       .object({
         stage: IdentifierSchema,

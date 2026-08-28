@@ -56,7 +56,7 @@ program
 program
   .command("resume")
   .description(
-    "Validate and continue a durable schema-v8 run from its latest sealed boundary",
+    "Validate and continue a durable adaptive schema-v9 run from its latest sealed boundary",
   )
   .argument("<run-id>", "Run ID under .agent-arena/runs")
   .addOption(
@@ -90,9 +90,7 @@ program
 
 program
   .command("fight")
-  .description(
-    "Run two coding agents through implementation and three attack–repair rounds",
-  )
+  .description("Run two coding agents through an effort-scaled adaptive battle")
   .argument("<task>", "Concrete repository task")
   .option("-c, --config <path>", "YAML configuration path", "agent-arena.yaml")
   .option("--agents <ids>", "Exactly two comma-separated agents")
@@ -100,7 +98,12 @@ program
     "--models <ids>",
     "Optional comma-separated models for contestants A and B",
   )
-  .option("--rounds <count>", "Attack–repair rounds (MVP requires 3)", "3")
+  .option("--rounds <count>", "Exact attack–repair rounds (1–5)")
+  .addOption(
+    new Option("--effort <tier>", "Effort assessment or explicit tier")
+      .choices(["auto", "ultra-low", "low", "medium", "high", "ultra-high"])
+      .default("auto"),
+  )
   .option("--test <command>", "Required validation command")
   .option("--spec <path...>", "Local specification path(s)")
   .option("--issue <reference...>", "Official GitHub issue reference(s)")
@@ -151,7 +154,8 @@ program
         config: string;
         agents?: string;
         models?: string;
-        rounds: string;
+        rounds?: string;
+        effort: "auto" | "ultra-low" | "low" | "medium" | "high" | "ultra-high";
         test?: string;
         spec?: string[];
         issue?: string[];
@@ -174,15 +178,23 @@ program
         window: boolean;
       },
     ) => {
-      if (options.rounds !== "3") {
-        throw new Error("The MVP requires exactly three attack–repair rounds");
-      }
+      const rounds =
+        options.rounds === undefined ? undefined : Number(options.rounds);
+      if (
+        rounds !== undefined &&
+        (!Number.isInteger(rounds) || rounds < 1 || rounds > 5)
+      )
+        throw new Error("--rounds must be an integer from 1 through 5");
+      if (rounds !== undefined && options.effort === "auto")
+        throw new Error("--rounds cannot be combined with --effort auto");
       const result = await runFight(
         {
           task,
           configPath: options.config,
           ...(options.agents ? { agents: options.agents } : {}),
           ...(options.models ? { models: options.models } : {}),
+          effort: options.effort,
+          ...(rounds === undefined ? {} : { rounds }),
           ...(options.test ? { testCommand: options.test } : {}),
           ...(options.spec ? { specPaths: options.spec } : {}),
           ...(options.issue ? { issueReferences: options.issue } : {}),

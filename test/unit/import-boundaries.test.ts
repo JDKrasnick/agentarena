@@ -102,6 +102,7 @@ function boundaryViolations(edges: ImportEdge[]): string[] {
     if (
       sourceDirectory === "contracts" &&
       targetDirectory !== "contracts" &&
+      targetDirectory !== "effort" &&
       edge.target !== "core/types.ts"
     ) {
       violations.push(

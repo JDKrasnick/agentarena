@@ -55,6 +55,8 @@ function duelConfig(repositoryRoot: string) {
     agents: ["codex", "claude"],
     attackVerifier: "claude",
     harnessMaintainer: "claude",
+    effortMode: "medium",
+    fixedRounds: true,
     rounds: 3,
     maxAttacksPerRound: 3,
     infrastructureRecoveryRound: true,
@@ -129,6 +131,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       agents: ["codex", "codex"],
       attackVerifier: "codex",
       harnessMaintainer: "codex",
+      effortMode: "medium",
+      fixedRounds: true,
       rounds: 3,
       maxAttacksPerRound: 3,
       infrastructureRecoveryRound: true,
@@ -259,6 +263,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       agents: ["codex", "claude"],
       attackVerifier: "claude",
       harnessMaintainer: "claude",
+      effortMode: "medium",
+      fixedRounds: true,
       rounds: 3,
       maxAttacksPerRound: 3,
       infrastructureRecoveryRound: true,
@@ -373,6 +379,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       agents: ["codex", "claude"],
       attackVerifier: "codex",
       harnessMaintainer: "codex",
+      effortMode: "medium",
+      fixedRounds: true,
       rounds: 3,
       maxAttacksPerRound: 3,
       infrastructureRecoveryRound: true,
@@ -479,6 +487,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       agents: ["codex", "claude"],
       attackVerifier: "claude",
       harnessMaintainer: "claude",
+      effortMode: "medium",
+      fixedRounds: true,
       rounds: 3,
       maxAttacksPerRound: 3,
       infrastructureRecoveryRound: true,
@@ -1161,6 +1171,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       agents: ["codex", "claude"],
       attackVerifier: "codex",
       harnessMaintainer: "codex",
+      effortMode: "medium",
+      fixedRounds: true,
       rounds: 3,
       maxAttacksPerRound: 3,
       infrastructureRecoveryRound: true,
@@ -1479,7 +1491,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         "utf8",
       ),
     ) as { schemaVersion: number; stage: string };
-    expect(result).toMatchObject({ schemaVersion: 8, stage: "complete" });
+    expect(result).toMatchObject({ schemaVersion: 9, stage: "complete" });
     const roundDirectory = path.join(
       outcome.state.artifacts.runDirectory!,
       "rounds",
@@ -1574,8 +1586,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       contentHash: string;
       task: { sources: Array<{ kind: string; snapshotPath: string }> };
     };
-    expect(outcome.state.schemaVersion).toBe(7);
-    if (outcome.state.schemaVersion !== 7) throw new Error("expected v7 state");
+    expect(outcome.state.schemaVersion).toBe(8);
+    if (outcome.state.schemaVersion !== 8) throw new Error("expected v8 state");
     expect(outcome.state.runSpecHash).toBe(runSpec.contentHash);
     const issueSnapshot = runSpec.task.sources.find(
       (source) => source.kind === "issue",
@@ -1639,6 +1651,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
       agents: ["codex", "claude"],
       attackVerifier: "codex",
       harnessMaintainer: "codex",
+      effortMode: "medium",
+      fixedRounds: true,
       rounds: 3,
       maxAttacksPerRound: 3,
       infrastructureRecoveryRound: true,
