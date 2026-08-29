@@ -998,7 +998,7 @@ export async function buildRunSpec(
     config.resolvedBootstrap ??
     (await resolveBootstrapContract({
       repositoryRoot: config.repositoryRoot,
-      bootstrap: config.bootstrap,
+      bootstrap: config.bootstrap ?? "none",
       timeoutMs: config.limits.attackMs,
     }));
   if (bootstrap.disposition === "command")

@@ -874,14 +874,12 @@ export class RoundEngine {
         })),
       config,
     );
-    if (!replacement) {
+    if (!replacement && !config.resolvedBootstrap) {
       const resolvedBootstrap = await resolveBootstrapContract({
         repositoryRoot: config.repositoryRoot,
-        // Programmatic callers from pre-bootstrap releases omitted this field.
-        // CLI/config-file runs always materialize the documented `auto` default.
-        bootstrap: Object.hasOwn(rawConfig, "bootstrap")
-          ? config.bootstrap
-          : "none",
+        // Direct callers from pre-bootstrap releases omitted this field.
+        // File/CLI configuration resolves its documented default before approval.
+        bootstrap: config.bootstrap ?? "none",
         timeoutMs: config.limits.attackMs,
       });
       config = FightConfigSchema.parse({ ...config, resolvedBootstrap });
@@ -2954,6 +2952,7 @@ export class RoundEngine {
       attackId?: string;
       laneId?: string;
       runLevel?: boolean;
+      provision?: boolean;
     },
   ): Promise<string> {
     const worktree = await prepareWorktreeWithRetry({
@@ -2971,7 +2970,8 @@ export class RoundEngine {
       ...(options.attackId ? { attackId: options.attackId } : {}),
       ...(options.laneId ? { laneId: options.laneId } : {}),
     });
-    await this.provisionWorktree(context, worktree, options.subject);
+    if (options.provision !== false)
+      await this.provisionWorktree(context, worktree, options.subject);
     return worktree;
   }
 
@@ -4505,6 +4505,7 @@ export class RoundEngine {
         subject: `initial-validation-worktree:${agent}`,
         contestantId: agent,
         runLevel: true,
+        provision: false,
       });
       try {
         try {
@@ -4522,6 +4523,11 @@ export class RoundEngine {
           contestant.status = "failed";
           continue;
         }
+        await this.provisionWorktree(
+          context,
+          worktree,
+          `initial-validation-worktree:${agent}`,
+        );
         let command!: Awaited<ReturnType<typeof runShellCommand>>;
         let validationFailure: FailureRecord | undefined;
         for (const attempt of [1, 2] as const) {

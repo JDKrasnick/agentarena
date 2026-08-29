@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { execa } from "execa";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -260,7 +260,90 @@ class FreshEvidenceAdapter extends CommandAgentAdapter {
   }
 }
 
+class DependencyAddingAdapter extends CommandAgentAdapter {
+  override async implement(input: ImplementInput) {
+    const invocation = await super.implement(input);
+    const packagePath = path.join(input.worktree, "package.json");
+    const packageJson = JSON.parse(await readFile(packagePath, "utf8")) as {
+      dependencies?: Record<string, string>;
+    };
+    packageJson.dependencies = {
+      ...packageJson.dependencies,
+      "arena-fixture-dependency": "file:vendor/fixture-dependency",
+    };
+    await writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+    const dependencyRoot = path.join(
+      input.worktree,
+      "vendor",
+      "fixture-dependency",
+    );
+    await mkdir(dependencyRoot, { recursive: true });
+    await writeFile(
+      path.join(dependencyRoot, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "arena-fixture-dependency",
+          version: "1.0.0",
+          type: "module",
+          exports: "./index.js",
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    await writeFile(
+      path.join(dependencyRoot, "index.js"),
+      'export const fixtureDependency = "installed";\n',
+    );
+    await writeFile(
+      path.join(input.worktree, "test", "dependency.test.mjs"),
+      'import test from "node:test";\nimport assert from "node:assert/strict";\nimport { fixtureDependency } from "arena-fixture-dependency";\ntest("installs dependencies introduced by a contestant patch", () => assert.equal(fixtureDependency, "installed"));\n',
+    );
+    await execa("npm", ["install", "--package-lock-only", "--ignore-scripts"], {
+      cwd: input.worktree,
+    });
+    return invocation;
+  }
+}
+
 describe("fake-adapter fight on a mocked real issue", () => {
+  it("provisions dependencies after applying each contestant patch", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      bootstrap: "auto",
+      effortMode: "ultra-low",
+      fixedRounds: false,
+      rounds: 1,
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new DependencyAddingAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new DependencyAddingAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+    }).fight(config);
+
+    for (const contestant of Object.values(outcome.state.contestants)) {
+      expect(contestant.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "initial-required",
+            status: "passed",
+          }),
+        ]),
+      );
+    }
+  }, 60_000);
+
   it("stops a tiny converged fight after one round but continues fresh evidence", async () => {
     const convergedRoot = await createSlugRepository();
     const convergedConfig = FightConfigSchema.parse({

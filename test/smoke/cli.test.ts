@@ -69,6 +69,15 @@ describe("built CLI smoke flow", () => {
       "native_subprocess_execution: required, high risk, both, advisory",
     );
     expect(fight.stdout).toContain(
+      "repository_bootstrap: required, high risk, harness_only, advisory",
+    );
+    expect(fight.stdout).toContain(
+      "Harness-owned dependency bootstrap: npm ci",
+    );
+    expect(fight.stdout).toContain(
+      "Package installation can access package registries and execute package lifecycle scripts.",
+    );
+    expect(fight.stdout).toContain(
       "configured provider integrations, including MCP",
     );
     expect(fight.stdout).toContain(
@@ -112,10 +121,14 @@ describe("built CLI smoke flow", () => {
     );
     const runSpec = JSON.parse(
       await readFile(path.join(runsRoot, runId!, "run-spec.json"), "utf8"),
-    ) as { topology: { contestants: Array<{ model?: string }> } };
+    ) as {
+      topology: { contestants: Array<{ model?: string }> };
+      bootstrap: { command?: string };
+    };
     expect(
       runSpec.topology.contestants.map((contestant) => contestant.model),
     ).toEqual(["codex-test-model", "claude-test-model"]);
+    expect(runSpec.bootstrap.command).toBe("npm ci");
     const resumed = await execa(
       process.execPath,
       [cli, "resume", runId!, "--display", "json"],

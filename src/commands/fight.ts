@@ -35,6 +35,7 @@ import {
   type ReconnaissanceSnapshot,
   validateReconnaissance,
 } from "../task/task-contract.js";
+import { resolveBootstrapContract } from "../task/bootstrap.js";
 import {
   probeProviderConnectivity,
   TransportRecoverySchema,
@@ -348,11 +349,19 @@ export async function runFight(
 ): Promise<RunCommandResult> {
   const loadedConfig = await loadFightConfig(overrides);
   const reconnaissance = await collectFightReconnaissance(loadedConfig);
-  const mcpPreflight = await prepareMcpPolicy(loadedConfig);
+  const plannedConfig = FightConfigSchema.parse({
+    ...loadedConfig,
+    resolvedBootstrap: await resolveBootstrapContract({
+      repositoryRoot: loadedConfig.repositoryRoot,
+      bootstrap: loadedConfig.bootstrap ?? "none",
+      timeoutMs: loadedConfig.limits.attackMs,
+    }),
+  });
+  const mcpPreflight = await prepareMcpPolicy(plannedConfig);
   let config: Awaited<ReturnType<typeof loadFightConfig>>;
   let mcpPolicy: FrozenMcpPolicy;
   try {
-    config = await approvePermissionPlan(loadedConfig, mcpPreflight.policy);
+    config = await approvePermissionPlan(plannedConfig, mcpPreflight.policy);
     mcpPolicy = await checkSelectedMcpReadiness({
       config,
       policy: mcpPreflight.policy,

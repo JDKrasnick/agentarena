@@ -1014,7 +1014,9 @@ const FightConfigBaseSchema = z
     resolvedEffortProfile: EffortProfileSchema.optional(),
     maxAttacksPerRound: z.literal(3),
     testCommand: z.string().min(1),
-    bootstrap: BootstrapConfigSchema.default("auto"),
+    // File/CLI configuration materializes its documented `auto` default.
+    // Direct callers that omit bootstrap retain the legacy no-install contract.
+    bootstrap: BootstrapConfigSchema.optional(),
     resolvedBootstrap: z
       .object({
         source: z.enum(["auto", "explicit", "none"]),
