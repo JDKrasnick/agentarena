@@ -64,6 +64,9 @@ An optional `agent-arena.yaml` stores repeatable settings:
 
 ```yaml
 test: npm test
+# `auto` selects a locked install (npm ci, frozen pnpm/Yarn/Bun).
+# Use `none` only when this repository deliberately needs no setup.
+bootstrap: auto
 agents: [codex, claude]
 models: [gpt-5.2-codex, claude-opus-4-6]
 judge: codex

@@ -65,6 +65,9 @@ function duelConfig(repositoryRoot: string) {
     infrastructureRecoveryRound: true,
     maxHeldOutCasesPerDefect: 0,
     testCommand: "node --test",
+    // This fixture has no external dependencies; make that intentional under
+    // the frozen bootstrap contract rather than relying on discovery.
+    bootstrap: "none",
     repositoryRoot,
     artifactRoot: path.join(repositoryRoot, ".agent-arena", "runs"),
     permissionMode: "confirm",

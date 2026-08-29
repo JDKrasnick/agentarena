@@ -108,6 +108,7 @@ import {
   persistHandoffValidationOutcome,
 } from "../review/evidence-handoff-store.js";
 import { runShellCommand } from "../runner/process-runner.js";
+import { resolveBootstrapContract } from "../task/bootstrap.js";
 import { provisionIntegrationProfile } from "../runner/integration.js";
 import {
   buildRunSpec,
@@ -873,6 +874,18 @@ export class RoundEngine {
         })),
       config,
     );
+    if (!replacement) {
+      const resolvedBootstrap = await resolveBootstrapContract({
+        repositoryRoot: config.repositoryRoot,
+        // Programmatic callers from pre-bootstrap releases omitted this field.
+        // CLI/config-file runs always materialize the documented `auto` default.
+        bootstrap: Object.hasOwn(rawConfig, "bootstrap")
+          ? config.bootstrap
+          : "none",
+        timeoutMs: config.limits.attackMs,
+      });
+      config = FightConfigSchema.parse({ ...config, resolvedBootstrap });
+    }
     let permissions = replacement
       ? PermissionPolicySchema.parse(replacement.permissions)
       : resolvePermissionPolicy(
@@ -1897,6 +1910,9 @@ export class RoundEngine {
       budgets: options.source.budgets,
       effort: options.source.effort,
       permissions: options.source.permissions,
+      ...("bootstrap" in options.source
+        ? { bootstrap: options.source.bootstrap }
+        : {}),
       ...(options.source.browserValidation
         ? { browserValidation: options.source.browserValidation }
         : {}),
@@ -2928,7 +2944,7 @@ export class RoundEngine {
     await this.persist(context);
   }
 
-  private prepareWorktree(
+  private async prepareWorktree(
     context: ArenaContext,
     options: {
       name: string;
@@ -2940,7 +2956,7 @@ export class RoundEngine {
       runLevel?: boolean;
     },
   ): Promise<string> {
-    return prepareWorktreeWithRetry({
+    const worktree = await prepareWorktreeWithRetry({
       worktrees: context.worktrees,
       name: options.name,
       subject: options.subject,
@@ -2955,6 +2971,57 @@ export class RoundEngine {
       ...(options.attackId ? { attackId: options.attackId } : {}),
       ...(options.laneId ? { laneId: options.laneId } : {}),
     });
+    await this.provisionWorktree(context, worktree, options.subject);
+    return worktree;
+  }
+
+  /** Every repository command receives the same frozen setup before it runs. */
+  private async provisionWorktree(
+    context: ArenaContext,
+    worktree: string,
+    subject: string,
+  ): Promise<void> {
+    const bootstrap =
+      "bootstrap" in context.runSpec ? context.runSpec.bootstrap : undefined;
+    // V2 artifacts deliberately gain no new install authority.
+    if (!bootstrap || bootstrap.disposition === "none") return;
+    const capability = context.permissions.capabilities.find(
+      (entry) => entry.id === "repository_bootstrap",
+    );
+    if (capability?.status !== "approved")
+      throw new Error(
+        `Bootstrap infrastructure unavailable for ${subject}: setup permission was not approved`,
+      );
+    const logPrefix = context.store.resolve(
+      `logs/bootstrap-${sha256(`${subject}\0${worktree}`).slice(0, 16)}`,
+    );
+    const result = await runShellCommand(bootstrap.command!, {
+      cwd: worktree,
+      timeoutMs: bootstrap.timeoutMs,
+      logPrefix,
+      signal: context.controller.signal,
+    });
+    const record = {
+      bootstrapDigest: bootstrap.digest,
+      subject,
+      worktree,
+      command: bootstrap.command,
+      dependencyInputs: bootstrap.dependencyInputs,
+      status:
+        result.exitCode === 0 && !result.timedOut
+          ? "ready"
+          : "infrastructure_error",
+      commandResult: result,
+      recordedAt: this.now().toISOString(),
+    };
+    await context.store.writeJson(
+      `provisioning/${sha256(`${subject}\0${worktree}`).slice(0, 24)}.json`,
+      record,
+    );
+    if (record.status !== "ready")
+      throw new Error(
+        `Bootstrap infrastructure failed for ${subject}; repository commands were not run`,
+      );
   }
 
   private async recordFailureAttempt(

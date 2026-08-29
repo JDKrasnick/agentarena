@@ -21,6 +21,7 @@ import {
   INSTRUCTION_PATHS,
 } from "../repo/instructions.js";
 import { planBrowserValidation } from "../browser/planner.js";
+import { resolveBootstrapContract } from "./bootstrap.js";
 
 export interface ResolvedIssue {
   origin: string;
@@ -993,6 +994,21 @@ export async function buildRunSpec(
       required: true,
     },
   ];
+  const bootstrap =
+    config.resolvedBootstrap ??
+    (await resolveBootstrapContract({
+      repositoryRoot: config.repositoryRoot,
+      bootstrap: config.bootstrap,
+      timeoutMs: config.limits.attackMs,
+    }));
+  if (bootstrap.disposition === "command")
+    commands.unshift({
+      id: "bootstrap",
+      kind: "install",
+      command: bootstrap.command!,
+      timeoutMs: bootstrap.timeoutMs,
+      required: true,
+    });
   if (config.integrationProfile) {
     commands.push(
       {
@@ -1084,7 +1100,7 @@ export async function buildRunSpec(
       },
     );
   const base = {
-    version: 2 as const,
+    version: 3 as const,
     runId: options.runId,
     task: {
       task: snapshot.task,
@@ -1106,6 +1122,7 @@ export async function buildRunSpec(
       contestants: config.contestants,
     },
     commands,
+    bootstrap,
     budgets: {
       ...config.limits,
       roundEnvelopeMs: effortProfile.roundEnvelopeMs,
@@ -1158,7 +1175,7 @@ export async function buildRunSpec(
           },
         }
       : {}),
-  } satisfies Omit<RunSpec, "contentHash">;
+  };
   return RunSpecSchema.parse({
     ...base,
     contentHash: calculateRunSpecHash(base),

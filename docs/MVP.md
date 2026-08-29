@@ -1101,6 +1101,8 @@ Command-line flags are sufficient for the first run. An optional
 
 ```yaml
 test: npm test
+# Auto-detects only locked installs; use `{ command: "…" }` for other ecosystems.
+bootstrap: auto
 integration:
   setup: docker compose up -d postgres
   check: npm run test:integration
