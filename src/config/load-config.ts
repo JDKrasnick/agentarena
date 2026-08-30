@@ -50,6 +50,13 @@ const PermissionEntrySchema = z
 const FileConfigSchema = z
   .object({
     test: z.string().optional(),
+    bootstrap: z
+      .union([
+        z.literal("auto"),
+        z.literal("none"),
+        z.object({ command: z.string().trim().min(1) }).strict(),
+      ])
+      .default("auto"),
     effort: EffortModeSchema.default("auto"),
     base_from_pr: z.union([z.string(), z.number()]).optional(),
     mode: z.enum(["duel", "siege", "catch_up"]).optional(),
@@ -526,6 +533,7 @@ export async function loadFightConfig(
     rounds: configuredRounds ?? profile.plannedRounds,
     maxAttacksPerRound: 3,
     testCommand: overrides.testCommand ?? file.test,
+    bootstrap: file.bootstrap,
     ...(file.integration
       ? {
           integrationProfile: {

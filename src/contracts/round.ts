@@ -254,8 +254,35 @@ const BrowserValidationSchema = BrowserPlanSchema.extend({
   approvedScopes: z.array(z.string()),
 }).strict();
 
-/** Immutable, JSON-safe input shared by all rounds in a battle. */
-export const RunSpecSchema = z
+const BootstrapContractSchema = z
+  .object({
+    source: z.enum(["auto", "explicit", "none"]),
+    disposition: z.enum(["command", "none"]),
+    command: z.string().min(1).optional(),
+    dependencyInputs: z.array(
+      z.object({ path: z.string().min(1), sha256: Sha256Schema }).strict(),
+    ),
+    timeoutMs: z.number().int().positive(),
+    digest: Sha256Schema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.disposition === "command" && !value.command)
+      context.addIssue({
+        code: "custom",
+        path: ["command"],
+        message: "Bootstrap commands require a command",
+      });
+    if (value.disposition === "none" && value.command)
+      context.addIssue({
+        code: "custom",
+        path: ["command"],
+        message: "Explicit-none bootstrap has no command",
+      });
+  });
+
+/** Immutable, JSON-safe input shared by all rounds in a battle. V2 remains readable. */
+const RunSpecV2Schema = z
   .object({
     version: z.literal(2),
     runId: IdentifierSchema,
@@ -292,7 +319,13 @@ export const RunSpecSchema = z
     mcpPolicyHash: Sha256Schema.optional(),
     contentHash: Sha256Schema,
   })
-  .strict()
+  .strict();
+const RunSpecV3Schema = RunSpecV2Schema.extend({
+  version: z.literal(3),
+  bootstrap: BootstrapContractSchema,
+}).strict();
+export const RunSpecSchema = z
+  .union([RunSpecV2Schema, RunSpecV3Schema])
   .readonly();
 export type RunSpec = z.infer<typeof RunSpecSchema>;
 

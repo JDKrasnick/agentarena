@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { execa } from "execa";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -10,6 +10,7 @@ import {
   RuleBasedVerifier,
   type AttackInput,
   type ImplementInput,
+  type RepairInput,
   type ReviewInput,
 } from "../../src/agents/adapter.js";
 import { Arena } from "../../src/core/arena.js";
@@ -65,6 +66,9 @@ function duelConfig(repositoryRoot: string) {
     infrastructureRecoveryRound: true,
     maxHeldOutCasesPerDefect: 0,
     testCommand: "node --test",
+    // This fixture has no external dependencies; make that intentional under
+    // the frozen bootstrap contract rather than relying on discovery.
+    bootstrap: "none",
     repositoryRoot,
     artifactRoot: path.join(repositoryRoot, ".agent-arena", "runs"),
     permissionMode: "confirm",
@@ -151,6 +155,26 @@ class ConvergedEmptyLaneAdapter extends CommandAgentAdapter {
     await writeFile(
       path.join(input.worktree, ".agent-arena-submission.json"),
       JSON.stringify({ version: 2, sharedSupportPaths: [], attacks: [] }),
+    );
+    return invocation;
+  }
+}
+
+class FlawedEmptyLaneAdapter extends ConvergedEmptyLaneAdapter {
+  override async implement(input: ImplementInput) {
+    const invocation = await super.implement(input);
+    await writeFile(
+      path.join(input.worktree, "src", "slug.mjs"),
+      'import { normalizeInput } from "arena-runtime-helper";\nexport function slug(value) {\n  return normalizeInput(value).trim().toLowerCase().replaceAll(" ", "-");\n}\n',
+    );
+    return invocation;
+  }
+
+  override async repair(input: RepairInput) {
+    const invocation = await super.repair(input);
+    await writeFile(
+      path.join(input.worktree, "src", "slug.mjs"),
+      'import { normalizeInput } from "arena-runtime-helper";\nexport function slug(value) {\n  return normalizeInput(value).trim().toLowerCase().replace(/\\s+/g, "-");\n}\n',
     );
     return invocation;
   }
@@ -257,7 +281,298 @@ class FreshEvidenceAdapter extends CommandAgentAdapter {
   }
 }
 
+class DependencyAddingAdapter extends CommandAgentAdapter {
+  override async implement(input: ImplementInput) {
+    const invocation = await super.implement(input);
+    const packagePath = path.join(input.worktree, "package.json");
+    const packageJson = JSON.parse(await readFile(packagePath, "utf8")) as {
+      dependencies?: Record<string, string>;
+    };
+    packageJson.dependencies = {
+      ...packageJson.dependencies,
+      "arena-fixture-dependency": "file:vendor/fixture-dependency",
+    };
+    await writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+    const dependencyRoot = path.join(
+      input.worktree,
+      "vendor",
+      "fixture-dependency",
+    );
+    await mkdir(dependencyRoot, { recursive: true });
+    await writeFile(
+      path.join(dependencyRoot, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "arena-fixture-dependency",
+          version: "1.0.0",
+          type: "module",
+          exports: "./index.js",
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    await writeFile(
+      path.join(dependencyRoot, "index.js"),
+      'export const fixtureDependency = "installed";\n',
+    );
+    await writeFile(
+      path.join(input.worktree, "test", "dependency.test.mjs"),
+      'import test from "node:test";\nimport assert from "node:assert/strict";\nimport { fixtureDependency } from "arena-fixture-dependency";\ntest("installs dependencies introduced by a contestant patch", () => assert.equal(fixtureDependency, "installed"));\n',
+    );
+    await execa("npm", ["install", "--package-lock-only", "--ignore-scripts"], {
+      cwd: input.worktree,
+    });
+    return invocation;
+  }
+}
+
+async function createDependencySlugRepository(): Promise<string> {
+  const repositoryRoot = await createSlugRepository();
+  const runtimeRoot = path.join(repositoryRoot, "vendor", "runtime-helper");
+  const testRoot = path.join(repositoryRoot, "vendor", "test-helper");
+  await mkdir(runtimeRoot, { recursive: true });
+  await mkdir(testRoot, { recursive: true });
+  await writeFile(
+    path.join(runtimeRoot, "package.json"),
+    JSON.stringify({
+      name: "arena-runtime-helper",
+      version: "1.0.0",
+      type: "module",
+      exports: "./index.js",
+    }),
+  );
+  await writeFile(
+    path.join(runtimeRoot, "index.js"),
+    "export const normalizeInput = (value) => value;\n",
+  );
+  await writeFile(
+    path.join(testRoot, "package.json"),
+    JSON.stringify({
+      name: "arena-test-helper",
+      version: "1.0.0",
+      type: "module",
+      exports: "./index.js",
+    }),
+  );
+  await writeFile(
+    path.join(testRoot, "index.js"),
+    'import assert from "node:assert/strict";\nexport const assertSlug = (actual, expected) => assert.equal(actual, expected);\n',
+  );
+  const packagePath = path.join(repositoryRoot, "package.json");
+  const packageJson = JSON.parse(await readFile(packagePath, "utf8")) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  packageJson.dependencies = {
+    "arena-runtime-helper": "file:vendor/runtime-helper",
+  };
+  packageJson.devDependencies = {
+    "arena-test-helper": "file:vendor/test-helper",
+  };
+  await writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+  await writeFile(
+    path.join(repositoryRoot, "src", "slug.mjs"),
+    'import { normalizeInput } from "arena-runtime-helper";\nexport function slug(value) {\n  return normalizeInput(value).trim().toLowerCase().replace(" ", "-");\n}\n',
+  );
+  await writeFile(
+    path.join(repositoryRoot, "test", "slug.test.mjs"),
+    'import test from "node:test";\nimport { assertSlug } from "arena-test-helper";\nimport { slug } from "../src/slug.mjs";\ntest("creates a basic slug", () => assertSlug(slug("Hello World"), "hello-world"));\n',
+  );
+  await execa("npm", ["install", "--package-lock-only", "--ignore-scripts"], {
+    cwd: repositoryRoot,
+  });
+  await execa("git", ["add", "."], { cwd: repositoryRoot });
+  await execa("git", ["commit", "-qm", "add dependency fixtures"], {
+    cwd: repositoryRoot,
+  });
+  return repositoryRoot;
+}
+
 describe("fake-adapter fight on a mocked real issue", () => {
+  it("provisions dependencies after applying each contestant patch", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      bootstrap: "auto",
+      effortMode: "ultra-low",
+      fixedRounds: false,
+      rounds: 1,
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new DependencyAddingAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new DependencyAddingAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+    }).fight(config);
+
+    for (const contestant of Object.values(outcome.state.contestants)) {
+      expect(contestant.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "initial-required",
+            status: "passed",
+          }),
+        ]),
+      );
+    }
+    const provisioningRoot = path.join(
+      repositoryRoot,
+      ".agent-arena",
+      "runs",
+      outcome.state.runId,
+      "provisioning",
+    );
+    const provisioning = await Promise.all(
+      (await readdir(provisioningRoot)).map(
+        async (name) =>
+          JSON.parse(
+            await readFile(path.join(provisioningRoot, name), "utf8"),
+          ) as {
+            cache?: { disposition?: string };
+            commandResult?: unknown;
+          },
+      ),
+    );
+    expect(
+      provisioning.some((record) => record.cache?.disposition === "reused"),
+    ).toBe(true);
+    expect(
+      provisioning.filter((record) => record.commandResult).length,
+    ).toBeLessThan(provisioning.length);
+  }, 60_000);
+
+  it("provisions runtime and test dependencies for final focused checks", async () => {
+    const repositoryRoot = await createDependencySlugRepository();
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      acceptanceCriteria: ["Collapse every run of whitespace to one hyphen"],
+      bootstrap: "auto",
+      testCommand: "npm test",
+      effortMode: "ultra-low",
+      fixedRounds: true,
+      rounds: 1,
+      selectionEnabled: false,
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new FreshEvidenceAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new FlawedEmptyLaneAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+    }).fight(config);
+
+    expect(outcome.state.status).toBe("complete");
+    expect(
+      outcome.state.coverageAssessment?.confidence,
+      JSON.stringify({
+        coverage: outcome.state.coverageAssessment,
+        checks: outcome.state.contestants.b!.checks,
+      }),
+    ).toBe("full_confidence");
+    expect(
+      outcome.state.contestants.b!.checks.some(
+        (check) =>
+          check.id.startsWith("final-") &&
+          check.kind === "focused" &&
+          check.status === "passed",
+      ),
+      JSON.stringify({
+        checks: outcome.state.contestants.b!.checks,
+        attacks: outcome.state.attacks,
+        warnings: outcome.state.warnings,
+      }),
+    ).toBe(true);
+  }, 60_000);
+
+  it("keeps coverage provisional when final focused setup fails", async () => {
+    const repositoryRoot = await createDependencySlugRepository();
+    await writeFile(
+      path.join(repositoryRoot, "bootstrap.mjs"),
+      'import { execFileSync } from "node:child_process";\nimport path from "node:path";\nconst name = path.basename(process.cwd());\nif (/^final-[ab]-(?!attempt-)/u.test(name)) process.exit(127);\nexecFileSync("npm", ["ci", "--ignore-scripts"], { stdio: "inherit" });\n',
+    );
+    await execa("git", ["add", "bootstrap.mjs"], { cwd: repositoryRoot });
+    await execa("git", ["commit", "-qm", "add controlled bootstrap"], {
+      cwd: repositoryRoot,
+    });
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      acceptanceCriteria: ["Collapse every run of whitespace to one hyphen"],
+      bootstrap: { command: "node bootstrap.mjs" },
+      testCommand: "npm test",
+      effortMode: "ultra-low",
+      fixedRounds: true,
+      rounds: 1,
+      selectionEnabled: false,
+    });
+    const arena = new Arena({
+      adapters: {
+        codex: new FreshEvidenceAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new FlawedEmptyLaneAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+    });
+    await expect(arena.fight(config)).rejects.toThrow(
+      "Bootstrap infrastructure failed for final-case-worktree",
+    );
+    const [runId] = await readdir(
+      path.join(repositoryRoot, ".agent-arena", "runs"),
+    );
+    const state = JSON.parse(
+      await readFile(
+        path.join(
+          repositoryRoot,
+          ".agent-arena",
+          "runs",
+          runId!,
+          "result.json",
+        ),
+        "utf8",
+      ),
+    ) as {
+      status: string;
+      coverageAssessment?: {
+        confidence: string;
+        counts: { unresolved: number };
+        reasonCodes: string[];
+      };
+    };
+
+    expect(state.status).toBe("inconclusive");
+    expect(state.coverageAssessment).toMatchObject({
+      confidence: "provisional",
+      counts: { unresolved: 1 },
+    });
+    expect(state.coverageAssessment?.reasonCodes).toContain(
+      "final_reproducer_infrastructure",
+    );
+  }, 60_000);
+
   it("stops a tiny converged fight after one round but continues fresh evidence", async () => {
     const convergedRoot = await createSlugRepository();
     const convergedConfig = FightConfigSchema.parse({

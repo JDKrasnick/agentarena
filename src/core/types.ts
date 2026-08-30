@@ -958,6 +958,12 @@ export const BrowserProfileSchema = z
   .strict();
 export type BrowserProfile = z.infer<typeof BrowserProfileSchema>;
 
+export const BootstrapConfigSchema = z.union([
+  z.literal("auto"),
+  z.literal("none"),
+  z.object({ command: z.string().trim().min(1) }).strict(),
+]);
+
 function normalizeBattleConfigInput(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   const input = { ...(value as Record<string, unknown>) };
@@ -1008,6 +1014,24 @@ const FightConfigBaseSchema = z
     resolvedEffortProfile: EffortProfileSchema.optional(),
     maxAttacksPerRound: z.literal(3),
     testCommand: z.string().min(1),
+    // File/CLI configuration materializes its documented `auto` default.
+    // Direct callers that omit bootstrap retain the legacy no-install contract.
+    bootstrap: BootstrapConfigSchema.optional(),
+    resolvedBootstrap: z
+      .object({
+        source: z.enum(["auto", "explicit", "none"]),
+        disposition: z.enum(["command", "none"]),
+        command: z.string().min(1).optional(),
+        dependencyInputs: z.array(
+          z
+            .object({ path: z.string().min(1), sha256: z.string().length(64) })
+            .strict(),
+        ),
+        timeoutMs: z.number().int().positive(),
+        digest: z.string().length(64),
+      })
+      .strict()
+      .optional(),
     integrationProfile: IntegrationProfileSchema.optional(),
     browserProfile: BrowserProfileSchema.optional(),
     repositoryRoot: z.string(),
