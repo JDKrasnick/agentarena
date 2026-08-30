@@ -25,6 +25,28 @@ function remainsValidLanding(attacks: readonly Attack[], attack: Attack) {
   );
 }
 
+export function sharedDefectIsActive(
+  attack: Attack,
+  contestantId?: ContestantId,
+): boolean {
+  if (attack.status !== "shared_defect") return false;
+  const targets = contestantId ? [contestantId] : attack.targets;
+  return targets.some(
+    (target) =>
+      attack.targets.includes(target) &&
+      attack.sharedRepairStatus?.[target] !== "repaired",
+  );
+}
+
+export function unresolvedSharedDefects(
+  state: Pick<RunState, "attacks">,
+  contestantId?: ContestantId,
+): Attack[] {
+  return sharedDefects(state).filter((attack) =>
+    sharedDefectIsActive(attack, contestantId),
+  );
+}
+
 /** Contestant-authored differential evidence that still stands at finalization. */
 export function competitiveLandings(
   state: Pick<RunState, "attacks">,
@@ -38,7 +60,7 @@ export function competitiveLandings(
   );
 }
 
-/** Neutral findings are counted once by their original canonical identity. */
+/** Shared findings are counted once by their original canonical identity. */
 export function sharedDefects(
   state: Pick<RunState, "attacks">,
   round?: number,
@@ -46,9 +68,13 @@ export function sharedDefects(
   const byCanonicalIdentity = new Map<string, Attack>();
   for (const attack of state.attacks) {
     if (
-      attack.origin.kind !== "house" ||
+      !(
+        attack.status === "shared_defect" ||
+        (attack.origin.kind === "house" &&
+          remainsValidLanding(state.attacks, attack))
+      ) ||
       (round !== undefined && attack.round !== round) ||
-      !remainsValidLanding(state.attacks, attack)
+      decisionWasOverturned(state.attacks, attack)
     )
       continue;
     byCanonicalIdentity.set(attack.rootDefectId ?? attack.id, attack);
@@ -104,7 +130,7 @@ export function finalRequiredPassed(
 }
 
 export function finalPatchEligible(
-  state: Pick<RunState, "contestants">,
+  state: Pick<RunState, "attacks" | "contestants">,
   contestantId: ContestantId,
 ): boolean {
   const contestant = state.contestants[contestantId];
@@ -113,6 +139,7 @@ export function finalPatchEligible(
     contestant.status !== "eliminated" &&
     contestant.status !== "failed" &&
     contestant.finalPatchPath &&
-    finalRequiredPassed(state, contestantId),
+    finalRequiredPassed(state, contestantId) &&
+    unresolvedSharedDefects(state, contestantId).length === 0,
   );
 }

@@ -88,6 +88,7 @@ import { deriveArenaOutcome } from "../outcomes/derive-outcome.js";
 import {
   competitiveLandings,
   explicitEmptyLaneCount,
+  finalPatchEligible,
   sharedDefects,
 } from "../outcomes/evidence.js";
 import { collectPatchQualityFacts } from "../quality/collect-facts.js";
@@ -3470,6 +3471,10 @@ export class RoundEngine {
                     attack.status === "execution_inconclusive"
                   ? attack.status
                   : ("missed" as const),
+        ...(attack.status === "shared_defect" &&
+        attack.sharedRepairStatus?.[target]
+          ? { repairStatus: attack.sharedRepairStatus[target] }
+          : {}),
         ...(attack.rootDefectId ? { defectId: attack.rootDefectId } : {}),
         ...(attack.adjudication ? { adjudication: attack.adjudication } : {}),
         artifactIds: [
@@ -3942,9 +3947,9 @@ export class RoundEngine {
           : {}),
         ...(attack.targets[0] ? { targetId: attack.targets[0] } : {}),
         evidenceClass:
-          attack.origin.kind === "contestant"
-            ? ("competitive" as const)
-            : ("shared" as const),
+          attack.status === "shared_defect" || attack.origin.kind === "house"
+            ? ("shared" as const)
+            : ("competitive" as const),
       };
       const key = `attack:${attack.id}:${attack.status}`;
       if (!emitted.has(key)) {
@@ -8889,7 +8894,16 @@ export class RoundEngine {
             break;
           }
           mechanicalFallback = undefined;
-          if (mechanicsPassed) break;
+          if (mechanicsPassed) {
+            for (const attack of remainingAttacks) {
+              if (attack.status !== "shared_defect") continue;
+              attack.sharedRepairStatus = {
+                ...attack.sharedRepairStatus,
+                [agent]: "repaired",
+              };
+            }
+            break;
+          }
         }
         if (mechanicalFallback) {
           const patchBytes = await readFile(mechanicalFallback.candidatePath);
@@ -9026,6 +9040,12 @@ export class RoundEngine {
               const repaired = judgeRepairedDefects.get(agent) ?? new Set();
               repaired.add(attack.rootDefectId);
               judgeRepairedDefects.set(agent, repaired);
+              if (attack.status === "shared_defect") {
+                attack.sharedRepairStatus = {
+                  ...attack.sharedRepairStatus,
+                  [agent]: "repaired",
+                };
+              }
             }
           }
         }
@@ -10395,6 +10415,13 @@ export class RoundEngine {
                 if (caseTree) await context.worktrees.remove(caseTree);
               }
             }
+            if (attack.status === "shared_defect") {
+              attack.sharedRepairStatus = {
+                ...attack.sharedRepairStatus,
+                [agent]: defectPasses ? "repaired" : "active",
+              };
+              continue;
+            }
             if (
               !defectPasses &&
               attack.rootDefectId &&
@@ -10560,11 +10587,8 @@ export class RoundEngine {
       arenaOutcome.kind === "non_discriminating" &&
       context.state.coverageAssessment?.confidence !== "provisional" &&
       comparableContestants.length === 2 &&
-      comparableContestants.every(
-        (contestant) =>
-          contestant.status !== "eliminated" &&
-          latestRequiredPass(contestant) &&
-          Boolean(contestant.finalPatchPath),
+      context.config.agents.every((agent) =>
+        finalPatchEligible(context.state, agent),
       ) &&
       new Set(
         comparableContestants.map((contestant) =>
@@ -10697,6 +10721,7 @@ export class RoundEngine {
     });
     context.state.patchRecommendation = selectRecommendedPatch({
       contestants: context.state.contestants,
+      attacks: context.state.attacks,
       ...(arenaOutcome.championId
         ? { championId: arenaOutcome.championId }
         : {}),

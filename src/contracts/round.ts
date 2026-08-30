@@ -534,6 +534,7 @@ const ReplayAttackSchema = z
       "infrastructure_error",
       "execution_inconclusive",
     ]),
+    repairStatus: z.enum(["active", "repaired"]).optional(),
     defectId: IdentifierSchema.optional(),
     adjudication: JsonValueSchema.optional(),
     artifactIds: z.array(IdentifierSchema),

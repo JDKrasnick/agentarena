@@ -436,7 +436,11 @@ After the neutral judge confirms the oracle and relevance, Arena records a
 `shared_defect`, expands its targets to both contestants, and gives both the
 same repair opportunity. Shared defects apply neither damage nor recoil and do
 not break ties; their reproducers run in both repair paths and remain visible in
-the report.
+the report. Each target carries durable `active` or `repaired` state, updated by
+repair validation and finalized by the last reproducer run. An unresolved
+shared target remains visibly unresolved and makes that patch ineligible for a
+champion, quality comparison, or recommendation. When shared evidence is the
+only defect evidence and either target remains active, the result is a draw.
 
 Neutral house probes remain readable legacy artifacts. New MVP runs do not
 invoke them.
@@ -940,7 +944,9 @@ auditable variance: NFC/LF/outer whitespace, published enum case, known
 snake/camel aliases, set ordering and duplicates, omitted untrusted review
 labels, `execution` as an alias for tool-summary provenance, and deterministic
 UTF-8-safe truncation of oversized descriptive review fields. The persisted
-value always uses the canonical schema and records the normalization. Review
+value always uses the canonical schema and records the normalization. Exact
+small enum aliases retain their original value; truncation records store only a
+bounded preview, the original UTF-8 byte count, and a SHA-256 digest. Review
 observation provenance additionally canonicalizes only `TEST_RUN`, `test-run`,
 and `test run` spelling, case, and outer-whitespace variants to `test_run`;
 exact `test_run` is unchanged, and values such as `test_execution` remain

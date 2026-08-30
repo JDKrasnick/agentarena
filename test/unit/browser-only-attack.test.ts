@@ -330,6 +330,7 @@ describe("browser-only attacks", () => {
       targets: ["a", "b"],
       rootDefectId: "settings-dialog",
       damageActive: false,
+      sharedRepairStatus: { a: "active", b: "active" },
     });
     expect(assess).toHaveBeenCalledWith(
       expect.objectContaining({ authorPassed: false, targetFailed: true }),

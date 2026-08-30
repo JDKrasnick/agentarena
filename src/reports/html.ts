@@ -5,6 +5,7 @@ import type {
   RunState,
 } from "../core/types.js";
 import { contestantLabel } from "../core/labels.js";
+import { sharedDefectIsActive } from "../outcomes/evidence.js";
 import {
   latestCheck,
   reportCheckStatus,
@@ -77,7 +78,9 @@ function attackEffect(attack: Attack): string {
       ? `${String(amount)} HP remains active`
       : `${String(amount)} HP repaired`;
   if (attack.status === "shared_defect")
-    return "Shared repair target · no HP change";
+    return sharedDefectIsActive(attack)
+      ? "Shared repair target remains active · no HP change"
+      : "Shared repair verified · no HP change";
   if (attack.recoil) return `${String(attack.recoil)} HP recoil`;
   return "No health change";
 }
@@ -225,7 +228,9 @@ export function renderBattleHtml(state: RunState): string {
                 ? "fail"
                 : "pass"
               : attack.status === "shared_defect"
-                ? "pass"
+                ? sharedDefectIsActive(attack)
+                  ? "fail"
+                  : "pass"
                 : attack.recoil
                   ? "warn"
                   : "muted";

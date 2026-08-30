@@ -78,6 +78,58 @@ describe("recommended patch selection", () => {
     });
   });
 
+  it("excludes only contestants with unresolved shared repair targets", () => {
+    const state = makeRunState();
+    state.attacks = [
+      {
+        id: "shared-1",
+        round: 1,
+        origin: { kind: "contestant", contestant: "a", provider: "codex" },
+        rank: 1,
+        targets: ["a", "b"],
+        claim: "A common-mode regression",
+        impact: "Both patches violate the contract",
+        oracle: {
+          expectedBehavior: "The shared case passes",
+          rationale: "The task requires this behavior",
+        },
+        assertionFingerprint: "shared-regression",
+        requiredCapabilities: [],
+        patchPath: "/tmp/shared.diff",
+        focusedCommand: "npm test -- shared",
+        status: "shared_defect",
+        rootDefectId: "shared-regression",
+        sharedRepairStatus: { a: "repaired", b: "active" },
+        checks: [],
+      },
+    ];
+
+    const recommendation = selectRecommendedPatch({
+      contestants: state.contestants,
+      attacks: state.attacks,
+      championId: "b",
+    });
+
+    expect(recommendation).toMatchObject({
+      contestantId: "a",
+      reason: "correctness",
+    });
+    expect(recommendation.comparison).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ contestantId: "a", eligible: true }),
+        expect.objectContaining({ contestantId: "b", eligible: false }),
+      ]),
+    );
+
+    state.attacks[0]!.sharedRepairStatus = { a: "active", b: "active" };
+    expect(
+      selectRecommendedPatch({
+        contestants: state.contestants,
+        attacks: state.attacks,
+      }),
+    ).toMatchObject({ reason: "inconclusive" });
+  });
+
   it("can independently recommend the better implementation after a non-discriminating battle", () => {
     const state = makeRunState();
     expect(

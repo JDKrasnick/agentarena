@@ -405,6 +405,24 @@ describe("battle reports", () => {
     expect(renderBattleHtml(state)).toContain(
       "Competitive landings</dt><dd>1</dd><dt>Shared defects</dt><dd>1</dd><dt>Schema-rejected findings</dt><dd>2</dd>",
     );
+    expect(reportDefects(state)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          evidenceClass: "shared",
+          active: true,
+        }),
+      ]),
+    );
+
+    shared.sharedRepairStatus = { a: "repaired", b: "repaired" };
+    expect(reportDefects(state)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          evidenceClass: "shared",
+          active: false,
+        }),
+      ]),
+    );
   });
 
   it("renders an incomplete outcome without inventing a draw or winner", () => {

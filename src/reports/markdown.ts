@@ -5,6 +5,7 @@ import type {
   RunState,
 } from "../core/types.js";
 import { contestantLabel } from "../core/labels.js";
+import { sharedDefectIsActive } from "../outcomes/evidence.js";
 import {
   reportCheckStatus,
   reportContestants,
@@ -22,7 +23,9 @@ function attackEffect(attack: Attack): string {
   if (attack.status === "landed")
     return `${String(attack.adjudication?.exactAmount ?? attack.damage ?? 0)} damage (${(attack.adjudication?.evidenceBasis ?? attack.evidenceProvenance ?? "legacy_unknown").replaceAll("_", " ")})`;
   if (attack.status === "shared_defect")
-    return "shared defect; repair both patches with no health effect";
+    return sharedDefectIsActive(attack)
+      ? "shared defect unresolved; repair affected patches with no health effect"
+      : "shared defect repaired and verified; no health effect";
   if (attack.recoil !== undefined) return `${String(attack.recoil)} recoil`;
   return "no health effect";
 }

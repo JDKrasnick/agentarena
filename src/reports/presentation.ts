@@ -8,6 +8,7 @@ import type {
   RoundId,
   RunState,
 } from "../core/types.js";
+import { sharedDefectIsActive } from "../outcomes/evidence.js";
 
 export type ReportCheckStatus =
   "PASS" | "FAIL" | "INFRA" | "SKIPPED" | "NOT RUN";
@@ -158,13 +159,18 @@ export function reportDefects(state: RunState): ReportDefect[] {
             (attack) => attack.adjudication?.exactAmount ?? attack.damage ?? 0,
           ),
         ),
-      active: reportContestants(state).some((contestant) =>
-        contestant.healthLedger.activeDefects.some(
-          (defect) => defect.rootDefectId === id,
+      active:
+        attacks.some((attack) => sharedDefectIsActive(attack)) ||
+        reportContestants(state).some((contestant) =>
+          contestant.healthLedger.activeDefects.some(
+            (defect) => defect.rootDefectId === id,
+          ),
         ),
-      ),
       evidenceClass:
-        representative.origin.kind === "house" ? "shared" : "competitive",
+        attacks.some((attack) => attack.status === "shared_defect") ||
+        representative.origin.kind === "house"
+          ? "shared"
+          : "competitive",
     };
   });
 }

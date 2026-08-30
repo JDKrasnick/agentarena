@@ -428,7 +428,8 @@ describe("fault-isolated provider submissions", () => {
 
   it("safely truncates oversized descriptive review text by UTF-8 bytes", () => {
     const finding = reviewFinding();
-    finding.observations[0]!.statement = `Evidence ${"🧪".repeat(400)}`;
+    const original = `Evidence ${"🧪".repeat(250_000)}`;
+    finding.observations[0]!.statement = original;
 
     const parsed = parseFaultIsolatedSubmission(
       "review",
@@ -442,12 +443,21 @@ describe("fault-isolated provider submissions", () => {
       1_000,
     );
     expect(statement).toMatch(/…$/u);
-    expect(parsed.normalizations).toContainEqual(
-      expect.objectContaining({
-        path: "$.findings[0].observations[0].statement",
-        rule: "v1.review.text.truncate_utf8_1000",
-      }),
+    const normalization = parsed.normalizations.find(
+      (entry) =>
+        entry.path === "$.findings[0].observations[0].statement" &&
+        entry.rule === "v1.review.text.truncate_utf8_1000",
     );
+    const auditOriginal = normalization?.original;
+    if (!auditOriginal || typeof auditOriginal !== "object")
+      throw new Error("Expected a bounded normalization audit object");
+    const fields = auditOriginal as Record<string, unknown>;
+    expect(fields.utf8Bytes).toBe(Buffer.byteLength(original, "utf8"));
+    expect(fields.preview).toBeTypeOf("string");
+    expect(fields.preview).toMatch(/\.\.\.$/u);
+    expect(fields.sha256).toBeTypeOf("string");
+    expect(fields.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(JSON.stringify(parsed).length).toBeLessThan(10_000);
   });
 
   it("keeps command fields strict instead of truncating executable semantics", () => {

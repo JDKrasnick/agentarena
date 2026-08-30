@@ -773,6 +773,12 @@ export const AttackSchema = z.object({
   severity: SeveritySchema.optional(),
   damage: DamageSchema.optional(),
   damageActive: z.boolean().optional(),
+  sharedRepairStatus: z
+    .object({
+      a: z.enum(["active", "repaired"]).optional(),
+      b: z.enum(["active", "repaired"]).optional(),
+    })
+    .optional(),
   evidenceProvenance: z
     .enum(["mechanical", "judge_confirmed", "judge_partial"])
     .optional(),

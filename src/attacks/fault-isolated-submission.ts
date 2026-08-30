@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   AttackSubmissionEntrySchema,
@@ -35,6 +36,12 @@ export interface SubmissionNormalization {
   original: unknown;
   normalized: unknown;
   rule: string;
+}
+
+interface BoundedNormalizationOriginal {
+  preview: string;
+  utf8Bytes: number;
+  sha256: string;
 }
 
 export interface SubmissionRejection {
@@ -291,9 +298,18 @@ function normalizeEntry(
     normalized: unknown,
     rule: string,
   ): void => {
+    const persistedOriginal: unknown =
+      typeof original === "string" &&
+      rule.startsWith("v1.review.text.truncate_utf8_")
+        ? ({
+            preview: safelyRenderReceived(jsonPath(path), original),
+            utf8Bytes: Buffer.byteLength(original, "utf8"),
+            sha256: createHash("sha256").update(original).digest("hex"),
+          } satisfies BoundedNormalizationOriginal)
+        : original;
     normalizations.push({
       path: jsonPath(path),
-      original,
+      original: persistedOriginal,
       normalized,
       rule,
     });

@@ -722,7 +722,11 @@ safe `TEST_RUN`, `test-run`, and `test run` spellings canonicalize to
 `test_run`; exact `test_run` records no normalization. Values such as
 `test_execution` remain ambiguous and are rejected. Safe normalization keeps
 the finding and creates its handoff without another provider call. A partially
-valid review immediately keeps its accepted findings; genuinely rejected
+valid enum alias retains its exact original value in that audit record;
+oversized descriptive text instead records a bounded preview, original UTF-8
+byte count, and SHA-256 digest so audit metadata cannot duplicate unbounded
+provider content. A partially valid review immediately keeps its accepted
+findings; genuinely rejected
 siblings remain the only entries counted as schema-rejected. When no finding
 survives, the single review retry receives only the invalid JSON paths,
 received values, and allowed provenance vocabulary. Unknown or contradictory
@@ -781,7 +785,12 @@ the judge confirms its oracle and relevance, Arena records a `shared_defect`.
 It expands the repair target to both patches, applies no damage or recoil, and
 reruns the reproducer during both repair paths. This turns useful common-mode
 evidence into a neutral quality improvement without pretending it distinguishes
-the contestants.
+the contestants. Arena persists an active or repaired result for each target;
+final validation is authoritative. An unresolved target remains visibly active
+and makes that patch ineligible for a champion, quality comparison, or patch
+recommendation. If shared evidence is the only defect evidence and any target
+remains unresolved, the arena result is a draw rather than a ledger-derived
+winner.
 
 A submitted attack that does not land causes recoil damage to its author. Rank 1 costs 5 HP on a miss, rank 2 costs 10 HP, and rank 3 costs 15 HP. Invalid, flaky, unrelated, duplicate, one-sided self-defeating, and blocked attacks all miss. A verified shared defect and harness infrastructure failures cause no recoil.
 

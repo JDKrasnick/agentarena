@@ -1065,6 +1065,9 @@ export async function validateAttack(
           rootDefectId: verdict.rootDefectId,
           severity: verdict.severity,
           damageActive: false,
+          sharedRepairStatus: Object.fromEntries(
+            sharedTargets.map((target) => [target, "active"]),
+          ),
           evidenceProvenance: "mechanical",
           severityRationale: verdict.rationale,
           outcomeReason: `Stable failure on both patches; ${verdict.rationale}`,
@@ -1107,6 +1110,9 @@ export async function validateAttack(
         rootDefectId: verdict.rootDefectId,
         severity: verdict.severity,
         damageActive: false,
+        sharedRepairStatus: Object.fromEntries(
+          sharedTargets.map((target) => [target, "active"]),
+        ),
         evidenceProvenance: "mechanical",
         severityRationale: verdict.rationale,
         outcomeReason: `Stable failure on both patches; ${verdict.rationale}`,

@@ -313,6 +313,9 @@ uncertain values such as `test_execution` remain rejected. Safe normalization
 does not trigger a provider retry and only genuinely rejected findings enter
 schema-rejection totals; if no finding survives, the single targeted retry
 receives the invalid paths, received values, and this complete vocabulary.
+Exact bounded alias values remain available in the normalization audit. For
+UTF-8 truncation, `parsed.json` stores a bounded preview, the original byte
+count, and a SHA-256 digest instead of duplicating the unbounded original text.
 
 ## 6. Duplicate rejection and size compaction
 

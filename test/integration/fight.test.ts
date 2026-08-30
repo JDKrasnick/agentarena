@@ -180,6 +180,26 @@ class FlawedEmptyLaneAdapter extends ConvergedEmptyLaneAdapter {
   }
 }
 
+class SharedTargetAdapter extends ConvergedEmptyLaneAdapter {
+  override async implement(input: ImplementInput) {
+    const invocation = await super.implement(input);
+    await writeFile(
+      path.join(input.worktree, "src", "slug.mjs"),
+      'export function slug(value) {\n  return value.trim().toLowerCase().replaceAll(" ", "-");\n}\n',
+    );
+    return invocation;
+  }
+
+  override async repair(input: RepairInput) {
+    const invocation = await super.repair(input);
+    await writeFile(
+      path.join(input.worktree, "src", "slug.mjs"),
+      'export function slug(value) {\n  return value.trim().toLowerCase().replace(/\\s+/g, "-");\n}\n',
+    );
+    return invocation;
+  }
+}
+
 class FreshEvidenceAdapter extends CommandAgentAdapter {
   override async review(input: ReviewInput) {
     const invocation = await super.review(input);
@@ -276,6 +296,26 @@ class FreshEvidenceAdapter extends CommandAgentAdapter {
           },
         ],
       }),
+    );
+    return invocation;
+  }
+}
+
+class SharedDefectAdapter extends FreshEvidenceAdapter {
+  override async implement(input: ImplementInput) {
+    const invocation = await super.implement(input);
+    await writeFile(
+      path.join(input.worktree, "src", "slug.mjs"),
+      'export function slug(value) {\n  return value.trim().toLowerCase().replaceAll(" ", "-");\n}\n',
+    );
+    return invocation;
+  }
+
+  override async repair(input: RepairInput) {
+    const invocation = await super.repair(input);
+    await writeFile(
+      path.join(input.worktree, "src", "slug.mjs"),
+      'export function slug(value) {\n  return value.trim().toLowerCase().replace(/\\s+/g, "-");\n}\n',
     );
     return invocation;
   }
@@ -803,6 +843,64 @@ describe("fake-adapter fight on a mocked real issue", () => {
         idempotencyKey: "non-discriminating-champion-unavailable",
       }),
     ).rejects.toThrow("missing or ineligible");
+  }, 60_000);
+
+  it("persists independently verified repair state for a contestant-authored shared defect", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      acceptanceCriteria: ["Collapse every run of whitespace to one hyphen"],
+      effortMode: "ultra-low",
+      fixedRounds: true,
+      rounds: 1,
+      selectionEnabled: false,
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new SharedDefectAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new SharedTargetAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+    }).fight(config);
+
+    const shared = outcome.state.attacks.find(
+      (entry) => entry.status === "shared_defect",
+    );
+    expect(shared).toMatchObject({
+      origin: { kind: "contestant", contestant: "a" },
+      targets: ["a", "b"],
+      sharedRepairStatus: { a: "repaired", b: "repaired" },
+    });
+    expect(outcome.state.arenaOutcome).toMatchObject({
+      kind: "non_discriminating",
+      sharedDefectCount: 1,
+    });
+    expect(outcome.state.patchRecommendation).toMatchObject({
+      reason: "no_differentiator",
+    });
+    const sharedEvent = (
+      await readFile(outcome.state.artifacts.events!, "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => ArenaEventSchema.parse(JSON.parse(line)))
+      .find(
+        (event) =>
+          event.type === "attack_resolved" && event.attackId === shared?.id,
+      );
+    expect(sharedEvent).toMatchObject({
+      type: "attack_resolved",
+      status: "shared_defect",
+      evidenceClass: "shared",
+    });
   }, 60_000);
 
   it("pivots a planned second round and stops after two consecutive low-signal rounds", async () => {
