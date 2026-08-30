@@ -1,6 +1,7 @@
 import {
   PatchRecommendationSchema,
   type ContestantId,
+  type ContestantResult,
   type PatchQualityVerdict,
   type PatchRecommendation,
   type RunState,
@@ -12,6 +13,26 @@ export interface RecommendationInput {
   outcomeKind?: "winner" | "draw" | "non_discriminating";
   qualityVerdict?: PatchQualityVerdict;
   anonymizationMap?: { patch_a: ContestantId; patch_b: ContestantId };
+}
+
+export function isCompetitiveQualityTie(
+  contestants: readonly ContestantResult[],
+  outcomeKind: RecommendationInput["outcomeKind"],
+): boolean {
+  return (
+    outcomeKind === "draw" &&
+    contestants.length === 2 &&
+    new Set(contestants.map((contestant) => contestant.finalHealth)).size ===
+      1 &&
+    new Set(
+      contestants.map((contestant) =>
+        contestant.healthLedger.activeDefects.reduce(
+          (total, defect) => total + defect.damage,
+          0,
+        ),
+      ),
+    ).size === 1
+  );
 }
 
 function finalRequiredPassed(
@@ -51,6 +72,26 @@ export function selectRecommendedPatch(
       rationale: [
         "No final patch passed applicability and required validation.",
       ],
+      comparison,
+    });
+  }
+  const decisiveQualityVerdict = input.qualityVerdict?.verdict;
+  if (
+    input.outcomeKind === "winner" &&
+    input.championId &&
+    input.anonymizationMap &&
+    (decisiveQualityVerdict === "patch_a" ||
+      decisiveQualityVerdict === "patch_b") &&
+    input.anonymizationMap[decisiveQualityVerdict] === input.championId &&
+    eligible.some((candidate) => candidate.contestantId === input.championId)
+  ) {
+    return PatchRecommendationSchema.parse({
+      contestantId: input.championId,
+      reason: "implementation_quality",
+      qualityVerdict: decisiveQualityVerdict,
+      rationale: input.qualityVerdict?.rationale.length
+        ? input.qualityVerdict.rationale
+        : ["A decisive identity-blind quality verdict resolved the HP tie."],
       comparison,
     });
   }
@@ -102,32 +143,10 @@ export function selectRecommendedPatch(
       comparison,
     });
   }
-  const smallestPatchSize = Math.min(
-    ...correct.map(
-      (candidate) =>
-        contestants.find((entry) => entry.id === candidate.contestantId)!
-          .patchSize,
-    ),
-  );
-  const smallest = correct.filter(
-    (candidate) =>
-      contestants.find((entry) => entry.id === candidate.contestantId)!
-        .patchSize === smallestPatchSize,
-  );
-  if (smallest.length === 1) {
-    return PatchRecommendationSchema.parse({
-      contestantId: smallest[0]!.contestantId,
-      reason: "patch_size",
-      rationale: [
-        `Equal-correctness patches were tied on active defect damage; selected the smaller ${String(smallestPatchSize)}-byte patch.`,
-      ],
-      comparison,
-    });
-  }
   return PatchRecommendationSchema.parse({
     reason: "draw",
     rationale: [
-      "Required-check eligibility, active defect damage, and patch size are tied.",
+      "Required-check eligibility and active defect damage are tied, and no decisive identity-blind quality verdict is available.",
     ],
     comparison,
   });

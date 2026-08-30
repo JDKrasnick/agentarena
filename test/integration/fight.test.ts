@@ -26,6 +26,7 @@ import { resolveCoverage } from "../../src/commands/resolve-coverage.js";
 import {
   AgentInvocationSchema,
   FightConfigSchema,
+  type PatchQualityFacts,
 } from "../../src/core/types.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
 import {
@@ -155,6 +156,56 @@ class ConvergedEmptyLaneAdapter extends CommandAgentAdapter {
     await writeFile(
       path.join(input.worktree, ".agent-arena-submission.json"),
       JSON.stringify({ version: 2, sharedSupportPaths: [], attacks: [] }),
+    );
+    return invocation;
+  }
+}
+
+class QualityFactsFixtureAdapter extends ConvergedEmptyLaneAdapter {
+  constructor(
+    id: "codex" | "claude",
+    private readonly variant: "more-production" | "more-tests",
+  ) {
+    super({ id, executable: process.execPath, args: [fixtureAgent] });
+  }
+
+  override async implement(input: ImplementInput) {
+    const invocation = await super.implement(input);
+    const moreProduction = this.variant === "more-production";
+    await writeFile(
+      path.join(input.worktree, "src", "slug.mjs"),
+      moreProduction
+        ? 'function collapseWhitespace(value) {\n  return value.replace(/\\s+/g, "-");\n}\n\nexport function slug(value) {\n  const normalized = value.trim().toLowerCase();\n  return collapseWhitespace(normalized);\n}\n'
+        : 'export function slug(value) {\n  return value.trim().toLowerCase().replace(/\\s+/g, "-");\n}\n',
+    );
+    const assertions = moreProduction
+      ? ['assert.equal(slug("Alpha   Beta"), "alpha-beta");']
+      : [
+          'assert.equal(slug("Alpha   Beta"), "alpha-beta");',
+          'assert.equal(slug(" Alpha Beta "), "alpha-beta");',
+          'assert.equal(slug("Alpha\\tBeta"), "alpha-beta");',
+          'assert.equal(slug("ALPHA BETA"), "alpha-beta");',
+          'assert.equal(slug("Alpha    Beta"), "alpha-beta");',
+          'assert.equal(slug("Alpha\\nBeta"), "alpha-beta");',
+          'assert.equal(slug("Alpha \\t Beta"), "alpha-beta");',
+          'assert.equal(slug("alpha beta gamma"), "alpha-beta-gamma");',
+          'assert.equal(slug("  alpha  beta  "), "alpha-beta");',
+          'assert.equal(slug("SINGLE"), "single");',
+          'assert.equal(slug("already-slugged"), "already-slugged");',
+          'assert.equal(slug(""), "");',
+        ];
+    await writeFile(
+      path.join(input.worktree, "test.mjs"),
+      [
+        'import assert from "node:assert/strict";',
+        'import test from "node:test";',
+        'import { slug } from "./src/slug.mjs";',
+        "",
+        'test("root-level regression coverage", () => {',
+        ...assertions.map((assertion) => `  ${assertion}`),
+        "});",
+        "",
+      ].join("\n"),
     );
     return invocation;
   }
@@ -728,7 +779,31 @@ describe("fake-adapter fight on a mocked real issue", () => {
       rounds: 1,
     });
     const compare = vi.fn((input: PatchQualityVerifierInput) => {
-      void input;
+      const facts = input.patches.map((patch) => patch.facts);
+      expect(facts.every((entry) => entry.version === 2)).toBe(true);
+      const current = facts.map((entry) => {
+        if (entry.version !== 2) throw new Error("Expected v2 quality facts");
+        return entry as Omit<
+          Extract<PatchQualityFacts, { version: 2 }>,
+          "contestantId"
+        >;
+      });
+      const smallerTotal = [...current].sort(
+        (left, right) =>
+          left.totals.normalizedLines - right.totals.normalizedLines,
+      )[0]!;
+      const strongerTests = current.find((entry) => entry !== smallerTotal)!;
+      expect(
+        smallerTotal.categories.production.normalizedLines,
+      ).toBeGreaterThan(strongerTests.categories.production.normalizedLines);
+      expect(smallerTotal.categories.test.normalizedLines).toBeLessThan(
+        strongerTests.categories.test.normalizedLines,
+      );
+      expect(
+        current.every((entry) =>
+          entry.categories.test.paths.includes("test.mjs"),
+        ),
+      ).toBe(true);
       return Promise.resolve({
         version: 1 as const,
         verdict: "patch_b" as const,
@@ -738,16 +813,8 @@ describe("fake-adapter fight on a mocked real issue", () => {
     });
     const outcome = await new Arena({
       adapters: {
-        codex: new ConvergedEmptyLaneAdapter({
-          id: "codex",
-          executable: process.execPath,
-          args: [fixtureAgent],
-        }),
-        claude: new ConvergedEmptyLaneAdapter({
-          id: "claude",
-          executable: process.execPath,
-          args: [fixtureAgent],
-        }),
+        codex: new QualityFactsFixtureAdapter("codex", "more-production"),
+        claude: new QualityFactsFixtureAdapter("claude", "more-tests"),
       },
       verifier: new RuleBasedVerifier("codex"),
       qualityVerifier: { id: "fixture-quality", compare },

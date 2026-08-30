@@ -1,8 +1,17 @@
 export type PathKind =
-  "production" | "test" | "generated" | "vendor" | "lockfile" | "documentation";
+  | "production"
+  | "test"
+  | "fixture"
+  | "manifest"
+  | "documentation"
+  | "generated"
+  | "vendor"
+  | "lockfile";
 
 export interface PathClassificationOverrides {
   test?: RegExp[];
+  fixture?: RegExp[];
+  manifest?: RegExp[];
   generated?: RegExp[];
   vendor?: RegExp[];
   lockfile?: RegExp[];
@@ -11,8 +20,15 @@ export interface PathClassificationOverrides {
 
 const DEFAULTS: Record<Exclude<PathKind, "production">, RegExp[]> = {
   test: [
-    /(^|\/)(__tests__|test|tests|spec|specs|fixtures)(\/|$)/i,
+    /(^|\/)(__tests__|test|tests|spec|specs)(\/|$)/i,
     /\.(?:test|spec)\.[^.]+$/i,
+    /(^|\/)(?:test|spec)\.[^./]+$/i,
+    /(^|\/)(?:test_[^/]+|[^/]+_(?:test|spec))(?:\.[^/]+)?$/i,
+    /(^|\/)[^/]+Tests?\.(?:java|cs|fs|vb)$/i,
+  ],
+  fixture: [/(^|\/)(?:fixtures?|testdata|snapshots?|__snapshots__)(\/|$)/i],
+  manifest: [
+    /(^|\/)(?:package\.json|Cargo\.toml|pyproject\.toml|requirements(?:-[^/]+)?\.txt|Pipfile|Gemfile|composer\.json|go\.mod|pom\.xml|build\.gradle(?:\.kts)?|[^/]+\.(?:csproj|fsproj|vbproj))$/i,
   ],
   generated: [/(^|\/)(dist|build|coverage|generated)(\/|$)/i, /\.generated\./i],
   vendor: [/(^|\/)(vendor|third_party|node_modules)(\/|$)/i],
@@ -27,11 +43,13 @@ export function classifyPath(
   overrides: PathClassificationOverrides = {},
 ): PathKind {
   for (const kind of [
-    "test",
-    "generated",
     "vendor",
     "lockfile",
+    "generated",
+    "manifest",
     "documentation",
+    "fixture",
+    "test",
   ] as const) {
     if (
       [...DEFAULTS[kind], ...(overrides[kind] ?? [])].some((rule) =>

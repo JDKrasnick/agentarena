@@ -4,7 +4,6 @@ import path from "node:path";
 import { ArtifactStore } from "../artifacts/store.js";
 import { stableId } from "../core/ids.js";
 import type { ContestantId, ReviewPrompt, RunState } from "../core/types.js";
-import { collectPatchQualityFacts } from "../quality/collect-facts.js";
 import {
   ApprovalContextSchema,
   DirectApprovalVerifier,
@@ -49,8 +48,9 @@ export async function openRun(
 async function ensureReviewFacts(
   store: ArtifactStore,
   state: RunState,
-): Promise<void> {
+): Promise<ReviewPrompt> {
   let changed = false;
+  const patchDigests: Partial<Record<ContestantId, string>> = {};
   for (const contestant of Object.values(state.contestants)) {
     if (!contestant.finalPatchPath) continue;
     const patchPath = await trustedPatchPath(
@@ -60,20 +60,26 @@ async function ensureReviewFacts(
     );
     const patchBytes = await readFile(patchPath);
     const digest = createHash("sha256").update(patchBytes).digest("hex");
-    if (state.patchQualityFacts[contestant.id]?.patchSha256 === digest)
-      continue;
-    state.patchQualityFacts[contestant.id] = collectPatchQualityFacts({
-      contestantId: contestant.id,
-      patch: patchBytes.toString("utf8"),
-      patchBytes,
-    });
+    patchDigests[contestant.id] = digest;
+    const facts = state.patchQualityFacts[contestant.id];
+    if (facts && facts.patchSha256 !== digest)
+      throw new Error(
+        `Stored quality facts do not match the final patch for ${contestant.id}`,
+      );
+  }
+  if (!state.reviewPrompt) {
+    state.reviewPrompt = buildReviewPrompt(state, patchDigests);
     changed = true;
   }
-  if (!state.reviewPrompt || changed) {
-    state.reviewPrompt = buildReviewPrompt(state);
-    changed = true;
+  for (const choice of state.reviewPrompt.choices) {
+    const digest = patchDigests[choice.contestantId];
+    if (digest && choice.patchSha256 !== digest)
+      throw new Error(
+        `Stored review prompt does not match the final patch for ${choice.contestantId}`,
+      );
   }
   if (changed && (await store.readSummary())) await store.writeState(state);
+  return state.reviewPrompt;
 }
 
 export async function reviewRun(options: RunLocation): Promise<ReviewPrompt> {
@@ -84,8 +90,7 @@ export async function reviewRun(options: RunLocation): Promise<ReviewPrompt> {
     );
   if (state.status !== "complete")
     throw new Error("Only a completed run can be reviewed");
-  await ensureReviewFacts(store, state);
-  return state.reviewPrompt ?? buildReviewPrompt(state);
+  return ensureReviewFacts(store, state);
 }
 
 export async function inspectPatch(
@@ -95,7 +100,7 @@ export async function inspectPatch(
   },
 ): Promise<unknown> {
   const { store, state } = await openRun(options);
-  await ensureReviewFacts(store, state);
+  const prompt = await ensureReviewFacts(store, state);
   const contestant = state.contestants[options.contestantId];
   if (!contestant?.finalPatchPath)
     throw new Error(`Run has no final patch for ${options.contestantId}`);
@@ -110,7 +115,7 @@ export async function inspectPatch(
     case "tests":
       return contestant.checks;
     case "summary":
-      return state.reviewPrompt?.choices.find(
+      return prompt.choices.find(
         (choice) => choice.contestantId === options.contestantId,
       );
   }
@@ -136,8 +141,7 @@ export async function recordReviewDecision(
     );
   if (state.status !== "complete")
     throw new Error("Review decisions require a completed, trusted run");
-  await ensureReviewFacts(store, state);
-  const prompt = state.reviewPrompt ?? buildReviewPrompt(state);
+  const prompt = await ensureReviewFacts(store, state);
   if (
     options.promptId !== prompt.promptId ||
     options.approval.promptId !== prompt.promptId

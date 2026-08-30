@@ -6,7 +6,10 @@ import {
   type RunState,
 } from "../core/types.js";
 
-export function buildReviewPrompt(state: RunState): ReviewPrompt {
+export function buildReviewPrompt(
+  state: RunState,
+  patchDigests: Partial<Record<"a" | "b", string>> = {},
+): ReviewPrompt {
   if (!state.config.baseCommit)
     throw new Error("Run has no frozen base commit");
   const recommendation = state.patchRecommendation?.contestantId;
@@ -22,7 +25,8 @@ export function buildReviewPrompt(state: RunState): ReviewPrompt {
   );
   const choices = selectableContestants.map((contestant) => {
     const facts = state.patchQualityFacts[contestant.id];
-    if (!facts)
+    const patchSha256 = facts?.patchSha256 ?? patchDigests[contestant.id];
+    if (!patchSha256)
       throw new Error(
         `Run has no saved patch digest for ${contestant.id}; hydrate the legacy run before review`,
       );
@@ -49,7 +53,7 @@ export function buildReviewPrompt(state: RunState): ReviewPrompt {
           0,
         ),
       )} unresolved damage; ${String(contestant.healthLedger.permanentRecoil)} recoil`,
-      patchSha256: facts.patchSha256,
+      patchSha256,
       ...(!eligible
         ? {
             disabledReason:

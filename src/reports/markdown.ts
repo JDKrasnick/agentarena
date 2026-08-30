@@ -12,6 +12,7 @@ import {
   reportRounds,
   resolveArtifactHref,
 } from "./presentation.js";
+import { qualityCategoryRows } from "../quality/presentation.js";
 
 function attackOwner(attack: Attack): string {
   return attack.origin.kind === "house" ? "House" : attack.origin.contestant;
@@ -557,11 +558,31 @@ export function renderBattleReport(state: RunState): string {
         : "- Recommendation not available.",
     ]),
     "",
-    "| Contestant | Production files | Normalized production lines | Tests | Manifests | Observability |",
-    "| --- | ---: | ---: | ---: | ---: | ---: |",
+    "| Contestant | Primary category | Files | Added | Deleted | Normalized | Paths |",
+    "| --- | --- | ---: | ---: | ---: | ---: | --- |",
+    ...contestants.flatMap((contestant) => {
+      const facts = state.patchQualityFacts[contestant.id];
+      const label = contestantLabel(state.config.contestants, contestant.id);
+      const rows = qualityCategoryRows(facts);
+      if (!rows.length)
+        return [
+          `| ${label} | legacy v1 facts | — | — | — | — | ${facts?.evidence.join(", ") || "none"} |`,
+        ];
+      return rows.map(
+        (row) =>
+          `| ${label} | ${row.category} | ${String(row.filesChanged)} | +${String(row.addedLines)} | -${String(row.deletedLines)} | ${String(row.normalizedLines)} | ${row.paths.join(", ") || "—"} |`,
+      );
+    }),
+    "",
+    "Observability is an overlapping heuristic; zero matches do not prove absence.",
+    "",
     ...contestants.map((contestant) => {
       const facts = state.patchQualityFacts[contestant.id];
-      return `| ${contestantLabel(state.config.contestants, contestant.id)} | ${String(facts?.productionFilesChanged ?? 0)} | ${String(facts?.normalizedProductionLines ?? 0)} | ${String(facts?.testFilesChanged ?? 0)} | ${String(facts?.manifestDeltas.length ?? 0)} | ${String(facts?.observabilityChanges.length ?? 0)} |`;
+      const label = contestantLabel(state.config.contestants, contestant.id);
+      if (!facts || facts.version !== 2)
+        return `- ${label}: legacy v1 observability facts.`;
+      const facet = facts.facets.observability;
+      return `- ${label}: heuristic matches in ${String(facet.filesChanged)} file(s), +${String(facet.matchedAddedLines)} / -${String(facet.matchedDeletedLines)} lines; paths: ${facet.paths.join(", ") || "none"}${facet.risks.length ? `; risks: ${facet.risks.join("; ")}` : ""}.`;
     }),
     "",
     "Human review: pending",
