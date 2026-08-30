@@ -308,10 +308,13 @@ concurrency, irreversible-data, and external-system risks impose a high floor,
 and confidence below 0.7 promotes one tier. One failed assessment is retried;
 two failures produce a recorded medium fallback.
 
-The five profiles plan 1/1/2/3/3 rounds with 15/20/25/45/60-minute round
-envelopes, 6/8/10/14/18 provider calls per round, and
-500k/750k/1.5m/4m/7m tokens per round. Convergence is evaluated after each
-sealed round. At most two independently qualified extensions may run, never
+The five profiles plan 1/1/2/3/3 rounds with sealed-round pressure thresholds
+of 15/20/25/45/60 minutes, 6/8/10/14/18 provider calls, and
+500k/750k/1.5m/4m/7m tokens. They are not hard preemptive caps: mandatory
+verifier and repair work completes transactionally before the harness records
+pressure at the adaptive boundary. Pressure can stop unqualified continuation;
+strong accepted evidence can still qualify a bounded next round. Convergence is
+evaluated after each sealed round. At most two independently qualified extensions may run, never
 past round 5. An extension requires a new damage-bearing canonical defect,
 including partial-judge damage, or an active accepted defect with repair
 allowance remaining. Findings outside that scope are recorded with no scoring

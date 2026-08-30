@@ -116,7 +116,7 @@ export function renderConsoleSummary(
     `Effort: ${state.config.resolvedEffortProfile?.tier ?? state.config.effortMode}${state.config.effortAssessment?.fallback ? " (medium fallback)" : ""} · ${state.config.fixedRounds ? `${String(state.config.rounds)} fixed` : `${String(state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds)} planned`} round(s)`,
     ...(profile
       ? [
-          `Round budget: ${(profile.roundEnvelopeMs / 60_000).toFixed(0)}m · ${String(profile.maxProviderCallsPerRound)} calls · ${String(profile.maxTokensPerRound)} tokens; phase limits ${String(profile.implementationMs / 60_000)}m/${String(profile.reviewMs / 60_000)}m/${String(profile.attackMs / 60_000)}m/${String(profile.judgeMs / 60_000)}m/${String(profile.repairMs / 60_000)}m`,
+          `Sealed-round pressure thresholds: ${(profile.roundEnvelopeMs / 60_000).toFixed(0)}m · ${String(profile.maxProviderCallsPerRound)} provider calls · ${String(profile.maxTokensPerRound)} tokens; phase limits ${String(profile.implementationMs / 60_000)}m/${String(profile.reviewMs / 60_000)}m/${String(profile.attackMs / 60_000)}m/${String(profile.judgeMs / 60_000)}m/${String(profile.repairMs / 60_000)}m`,
         ]
       : []),
     `Rounds completed: ${String(completedRounds)}/${String(state.config.fixedRounds ? state.config.rounds : (state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds))}${completedRounds > (state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds) ? " (extended)" : ""}`,

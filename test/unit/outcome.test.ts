@@ -167,6 +167,32 @@ describe("arena outcome", () => {
     });
   });
 
+  it("keeps a canonical shared defect unresolved while any sibling reproducer remains active", () => {
+    const state = makeRunState();
+    completeCoverage(state, 4);
+    const activeSibling = landing(state, {
+      id: "shared-active",
+      status: "shared_defect",
+      targets: ["a", "b"],
+      rootDefectId: "shared-regression",
+      sharedRepairStatus: { a: "active", b: "active" },
+    });
+    const repairedSibling = landing(state, {
+      id: "shared-repaired",
+      status: "shared_defect",
+      targets: ["a", "b"],
+      rootDefectId: "shared-regression",
+      sharedRepairStatus: { a: "repaired", b: "repaired" },
+    });
+    state.attacks = [activeSibling, repairedSibling];
+
+    expect(deriveArenaOutcome(state)).toMatchObject({
+      kind: "draw",
+      competitiveLandingCount: 0,
+      sharedDefectCount: 1,
+    });
+  });
+
   it("preserves an ordinary competitive result when a contestant landing remains valid even after repair", () => {
     const state = makeRunState();
     completeCoverage(state, 5);

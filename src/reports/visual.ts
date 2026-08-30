@@ -106,7 +106,7 @@ export function renderBattleVisual(state: RunState): string {
     : `<text x="76" y="890" class="tiny">No adaptive decisions recorded.</text>`;
   const profile = state.config.resolvedEffortProfile;
   const budgetLine = profile
-    ? `${profile.tier} · ${String(profile.plannedRounds)} planned / ${String(profile.maxRounds)} max · ${String(profile.roundEnvelopeMs / 60_000)}m · ${String(profile.maxProviderCallsPerRound)} calls · ${String(profile.maxTokensPerRound)} tokens`
+    ? `${profile.tier} · ${String(profile.plannedRounds)} planned / ${String(profile.maxRounds)} max · sealed-round pressure at ${String(profile.roundEnvelopeMs / 60_000)}m / ${String(profile.maxProviderCallsPerRound)} calls / ${String(profile.maxTokensPerRound)} tokens`
     : `${state.config.effortMode} · legacy budget unavailable`;
   const outcome = reportOutcome(state);
   const verdict =

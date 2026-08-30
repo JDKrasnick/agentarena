@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Attack } from "../../src/core/types.js";
 import { selectRecommendedPatch } from "../../src/recommendation/select-patch.js";
 import { makeRunState } from "../helpers/run-state.js";
 
@@ -122,6 +123,46 @@ describe("recommended patch selection", () => {
     );
 
     state.attacks[0]!.sharedRepairStatus = { a: "active", b: "active" };
+    expect(
+      selectRecommendedPatch({
+        contestants: state.contestants,
+        attacks: state.attacks,
+      }),
+    ).toMatchObject({ reason: "inconclusive" });
+  });
+
+  it("does not let a repaired sibling hide an active canonical shared reproducer", () => {
+    const state = makeRunState();
+    const shared: Attack = {
+      id: "shared-active",
+      round: 1,
+      origin: { kind: "contestant", contestant: "a", provider: "codex" },
+      rank: 1,
+      targets: ["a", "b"],
+      claim: "A common-mode regression",
+      impact: "Both patches violate the contract",
+      oracle: {
+        expectedBehavior: "The shared case passes",
+        rationale: "The task requires this behavior",
+      },
+      assertionFingerprint: "shared-regression",
+      requiredCapabilities: [],
+      patchPath: "/tmp/shared.diff",
+      focusedCommand: "npm test -- shared",
+      status: "shared_defect",
+      rootDefectId: "shared-regression",
+      sharedRepairStatus: { a: "active", b: "active" },
+      checks: [],
+    };
+    state.attacks = [
+      shared,
+      {
+        ...shared,
+        id: "shared-repaired",
+        sharedRepairStatus: { a: "repaired", b: "repaired" },
+      },
+    ];
+
     expect(
       selectRecommendedPatch({
         contestants: state.contestants,

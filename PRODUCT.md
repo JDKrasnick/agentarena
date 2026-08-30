@@ -533,9 +533,12 @@ authorization, migration, concurrency, irreversible-data, and external-system
 risk impose a high floor; low-confidence assessments are promoted one tier.
 The judge receives one retry, after which the harness records a medium fallback.
 
-Profiles plan 1/1/2/3/3 rounds with per-round envelopes of 15/20/25/45/60
-minutes, provider-call caps of 6/8/10/14/18, and token caps of
-500k/750k/1.5m/4m/7m. They also select phase budgets. Explicit phase settings
+Profiles plan 1/1/2/3/3 rounds with sealed-round pressure thresholds of
+15/20/25/45/60 minutes, 6/8/10/14/18 provider calls, and
+500k/750k/1.5m/4m/7m tokens. These are post-round pressure signals, not
+preemptive caps: the harness completes mandatory verifier and repair work in
+the transactional round already in flight, then records any threshold crossing
+at the adaptive boundary. They also select phase budgets. Explicit phase settings
 override only their named phase. `--effort` may pin a profile. `--rounds 1..5`
 runs exactly that many rounds with medium phase timings and disables adaptive
 stopping and extension; it is rejected with `--effort auto`.
@@ -619,6 +622,9 @@ Each round has its own symmetric, versioned prompt and investigation brief:
 | 5 — Durability extension | Test recurrence, recovery, restart, and durability for a newly qualified trigger. | Regression recurrence, persistence/restart checks, recovery invariants, and bounded failure sequences. |
 
 After every sealed round, the harness records convergence and budget pressure.
+Crossing a pressure threshold can stop unqualified continuation but does not
+interrupt the completed round; strong accepted evidence may still qualify the
+next bounded round.
 It stops when both contestants pass required checks, no active damage remains,
 there is no new damage-bearing defect, and no repair allowance remains. At most
 two additional rounds may extend the profile, never beyond round 5. Every

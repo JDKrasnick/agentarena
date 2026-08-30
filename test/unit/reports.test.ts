@@ -49,6 +49,18 @@ function attack(state: RunState, overrides: Partial<Attack> = {}): Attack {
 }
 
 describe("battle reports", () => {
+  it("labels provider-call limits as sealed-round pressure thresholds", () => {
+    const state = makeRunState();
+
+    expect(renderConsoleSummary(state)).toContain(
+      "Sealed-round pressure thresholds:",
+    );
+    expect(renderBattleHtml(state)).toContain(
+      "Sealed-round pressure thresholds:",
+    );
+    expect(renderBattleVisual(state)).toContain("sealed-round pressure at");
+  });
+
   it("uses consistent non-discriminating language and separates shared evidence in every report", () => {
     const state = makeRunState();
     state.coverageAssessment = {

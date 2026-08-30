@@ -135,6 +135,7 @@ import type { RunSpec } from "../contracts/round.js";
 import {
   resolveEffortProfile,
   decideAdaptiveRound,
+  hasProviderCallPressure,
   nextLowSignalCount,
   scoreEffort,
   TaskEffortAssessmentV1Schema,
@@ -2623,7 +2624,7 @@ export class RoundEngine {
       providerCalls,
       tokenTelemetry,
       wallTimePressure: wallTimeMs >= profile.roundEnvelopeMs,
-      invocationPressure: providerCalls >= profile.maxProviderCallsPerRound,
+      invocationPressure: hasProviderCallPressure(profile, providerCalls),
       tokenPressure:
         completeTelemetry && totalTokens >= profile.maxTokensPerRound,
       overrunMs: Math.max(0, wallTimeMs - profile.roundEnvelopeMs),

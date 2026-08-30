@@ -175,7 +175,7 @@ export function renderBattleHtml(state: RunState): string {
   );
   const effortProfile = state.config.resolvedEffortProfile;
   const effortBudget = effortProfile
-    ? `${String(effortProfile.roundEnvelopeMs / 60_000)} minutes · ${String(effortProfile.maxProviderCallsPerRound)} provider calls · ${String(effortProfile.maxTokensPerRound)} tokens per round; implementation/review/attack/judge/repair ${String(effortProfile.implementationMs / 60_000)}/${String(effortProfile.reviewMs / 60_000)}/${String(effortProfile.attackMs / 60_000)}/${String(effortProfile.judgeMs / 60_000)}/${String(effortProfile.repairMs / 60_000)} minutes`
+    ? `Sealed-round pressure thresholds: ${String(effortProfile.roundEnvelopeMs / 60_000)} minutes · ${String(effortProfile.maxProviderCallsPerRound)} provider calls · ${String(effortProfile.maxTokensPerRound)} tokens; implementation/review/attack/judge/repair ${String(effortProfile.implementationMs / 60_000)}/${String(effortProfile.reviewMs / 60_000)}/${String(effortProfile.attackMs / 60_000)}/${String(effortProfile.judgeMs / 60_000)}/${String(effortProfile.repairMs / 60_000)} minutes`
     : "Legacy budget unavailable";
   const adaptiveRows = state.adaptiveDecisions.length
     ? state.adaptiveDecisions

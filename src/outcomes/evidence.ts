@@ -42,9 +42,14 @@ export function unresolvedSharedDefects(
   state: Pick<RunState, "attacks">,
   contestantId?: ContestantId,
 ): Attack[] {
-  return sharedDefects(state).filter((attack) =>
-    sharedDefectIsActive(attack, contestantId),
-  );
+  const unresolved: Attack[] = [];
+  for (const attacks of sharedEvidenceByCanonicalIdentity(state).values()) {
+    const activeReproducer = attacks.find((attack) =>
+      sharedDefectIsActive(attack, contestantId),
+    );
+    if (activeReproducer) unresolved.push(activeReproducer);
+  }
+  return unresolved;
 }
 
 /** Contestant-authored differential evidence that still stands at finalization. */
@@ -65,7 +70,16 @@ export function sharedDefects(
   state: Pick<RunState, "attacks">,
   round?: number,
 ): Attack[] {
-  const byCanonicalIdentity = new Map<string, Attack>();
+  return [...sharedEvidenceByCanonicalIdentity(state, round).values()].map(
+    (attacks) => attacks.at(-1)!,
+  );
+}
+
+function sharedEvidenceByCanonicalIdentity(
+  state: Pick<RunState, "attacks">,
+  round?: number,
+): Map<string, Attack[]> {
+  const byCanonicalIdentity = new Map<string, Attack[]>();
   for (const attack of state.attacks) {
     if (
       !(
@@ -77,9 +91,12 @@ export function sharedDefects(
       decisionWasOverturned(state.attacks, attack)
     )
       continue;
-    byCanonicalIdentity.set(attack.rootDefectId ?? attack.id, attack);
+    const canonicalIdentity = attack.rootDefectId ?? attack.id;
+    const siblings = byCanonicalIdentity.get(canonicalIdentity) ?? [];
+    siblings.push(attack);
+    byCanonicalIdentity.set(canonicalIdentity, siblings);
   }
-  return [...byCanonicalIdentity.values()];
+  return byCanonicalIdentity;
 }
 
 export function explicitEmptyLaneCount(

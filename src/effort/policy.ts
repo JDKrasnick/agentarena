@@ -121,6 +121,8 @@ export const EffortProfileSchema = z
     plannedRounds: z.number().int().min(1).max(3),
     maxRounds: z.number().int().min(1).max(5),
     roundEnvelopeMs: z.number().int().positive(),
+    // Compatibility name: this is evaluated at the sealed-round boundary as
+    // pressure telemetry; it does not preempt a transactional round in flight.
     maxProviderCallsPerRound: z.number().int().positive(),
     maxTokensPerRound: z.number().int().positive(),
     implementationMs: z.number().int().positive(),
@@ -255,6 +257,13 @@ export function resolveEffortProfile(
   > = {},
 ): EffortProfile {
   return EffortProfileSchema.parse({ ...EFFORT_PROFILES[tier], ...overrides });
+}
+
+export function hasProviderCallPressure(
+  profile: Pick<EffortProfile, "maxProviderCallsPerRound">,
+  providerCalls: number,
+): boolean {
+  return providerCalls >= profile.maxProviderCallsPerRound;
 }
 
 export const ConvergenceSignalsSchema = z

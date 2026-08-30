@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   EFFORT_PROFILES,
+  hasProviderCallPressure,
   decideAdaptiveRound,
   nextLowSignalCount,
   resolveEffortProfile,
@@ -126,6 +127,22 @@ describe("task-scaled effort policy", () => {
       42_000,
     );
   });
+
+  it.each(["ultra-low", "low"] as const)(
+    "treats the %s provider-call value as a sealed-round pressure threshold",
+    (tier) => {
+      const profile = EFFORT_PROFILES[tier];
+      expect(
+        hasProviderCallPressure(profile, profile.maxProviderCallsPerRound - 1),
+      ).toBe(false);
+      expect(
+        hasProviderCallPressure(profile, profile.maxProviderCallsPerRound),
+      ).toBe(true);
+      expect(
+        hasProviderCallPressure(profile, profile.maxProviderCallsPerRound + 3),
+      ).toBe(true);
+    },
+  );
 
   it("distinguishes complete, partial, and unavailable token telemetry", () => {
     expect(TokenTelemetrySchema.parse({ state: "unavailable" }).state).toBe(
