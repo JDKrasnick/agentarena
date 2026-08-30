@@ -61,6 +61,8 @@ function publicReason(
       return "duplicate_root_defect";
     case "self_defeating":
       return "author_patch_failed";
+    case "shared_defect":
+      return "shared_defect";
     case "capability_denied":
       return "capability_denied";
     case "infrastructure_error":
@@ -304,26 +306,32 @@ export function projectContestantFeedback(options: {
           }) || left.id.localeCompare(right.id),
     )
     .flatMap((attack) =>
-      attack.targets.map((target) => ({
-        attackId: attack.id,
-        target,
-        status:
-          attack.status === "landed"
-            ? ("landed" as const)
-            : attack.status === "duplicate"
-              ? ("duplicate" as const)
-              : attack.status === "capability_denied" ||
-                  attack.status === "infrastructure_error" ||
-                  attack.status === "execution_inconclusive"
-                ? attack.status
-                : ("missed" as const),
-        reason: publicReason(attack),
-        recoil: attack.recoil ?? 0,
-        ...(attack.rootDefectId &&
-        (attack.status === "landed" || attack.status === "duplicate")
-          ? { defectId: attack.rootDefectId }
-          : {}),
-      })),
+      attack.targets
+        .filter((target) => target !== options.contestantId)
+        .map((target) => ({
+          attackId: attack.id,
+          target,
+          status:
+            attack.status === "landed"
+              ? ("landed" as const)
+              : attack.status === "shared_defect"
+                ? ("shared_defect" as const)
+                : attack.status === "duplicate"
+                  ? ("duplicate" as const)
+                  : attack.status === "capability_denied" ||
+                      attack.status === "infrastructure_error" ||
+                      attack.status === "execution_inconclusive"
+                    ? attack.status
+                    : ("missed" as const),
+          reason: publicReason(attack),
+          recoil: attack.recoil ?? 0,
+          ...(attack.rootDefectId &&
+          (attack.status === "landed" ||
+            attack.status === "shared_defect" ||
+            attack.status === "duplicate")
+            ? { defectId: attack.rootDefectId }
+            : {}),
+        })),
     );
   const unresolved = contestant.healthLedger.activeDefects.map(
     (entry) => entry.rootDefectId,

@@ -56,6 +56,7 @@ import {
   declaredAttackPaths,
   isCorrectionEligible,
   mergeCorrectionFields,
+  reviewRetryFeedback,
   type ParsedSubmission,
   type SubmissionKind,
 } from "../attacks/fault-isolated-submission.js";
@@ -88,6 +89,7 @@ import { deriveArenaOutcome } from "../outcomes/derive-outcome.js";
 import {
   competitiveLandings,
   explicitEmptyLaneCount,
+  finalPatchEligible,
   sharedDefects,
 } from "../outcomes/evidence.js";
 import { collectPatchQualityFacts } from "../quality/collect-facts.js";
@@ -136,6 +138,7 @@ import type { RunSpec } from "../contracts/round.js";
 import {
   resolveEffortProfile,
   decideAdaptiveRound,
+  hasProviderCallPressure,
   nextLowSignalCount,
   scoreEffort,
   TaskEffortAssessmentV1Schema,
@@ -173,6 +176,8 @@ import {
   DAMAGE_BY_SEVERITY,
   healDefect,
   normalizeAttackAdjudication,
+  defectEvidenceAttacks,
+  repairEvidenceAttacks,
   PARTIAL_DAMAGE_BY_SEVERITY,
   rankContestants,
   resolveRound,
@@ -2692,7 +2697,7 @@ export class RoundEngine {
       providerCalls,
       tokenTelemetry,
       wallTimePressure: wallTimeMs >= profile.roundEnvelopeMs,
-      invocationPressure: providerCalls >= profile.maxProviderCallsPerRound,
+      invocationPressure: hasProviderCallPressure(profile, providerCalls),
       tokenPressure:
         completeTelemetry && budgetTokens >= profile.maxTokensPerRound,
       overrunMs: Math.max(0, wallTimeMs - profile.roundEnvelopeMs),
@@ -2995,6 +3000,14 @@ export class RoundEngine {
       rawSha256: sha256(raw),
       rawArtifactPath: rawPath,
       parsedArtifactPath: parsedPath,
+      ...(options.kind === "review"
+        ? {
+            schemaRejectedFindingCount:
+              parsed.sections.findings?.entries.filter(
+                (entry) => entry.outcome === "rejected",
+              ).length ?? 0,
+          }
+        : {}),
     });
     return { parsed, rawPath, parsedPath };
   }
@@ -3554,13 +3567,19 @@ export class RoundEngine {
         status:
           attack.status === "landed"
             ? ("landed" as const)
-            : attack.status === "judge_unable"
-              ? ("execution_inconclusive" as const)
-              : attack.status === "capability_denied" ||
-                  attack.status === "infrastructure_error" ||
-                  attack.status === "execution_inconclusive"
-                ? attack.status
-                : ("missed" as const),
+            : attack.status === "shared_defect"
+              ? ("shared_defect" as const)
+              : attack.status === "judge_unable"
+                ? ("execution_inconclusive" as const)
+                : attack.status === "capability_denied" ||
+                    attack.status === "infrastructure_error" ||
+                    attack.status === "execution_inconclusive"
+                  ? attack.status
+                  : ("missed" as const),
+        ...(attack.status === "shared_defect" &&
+        attack.sharedRepairStatus?.[target]
+          ? { repairStatus: attack.sharedRepairStatus[target] }
+          : {}),
         ...(attack.rootDefectId ? { defectId: attack.rootDefectId } : {}),
         ...(attack.adjudication ? { adjudication: attack.adjudication } : {}),
         artifactIds: [
@@ -4034,9 +4053,9 @@ export class RoundEngine {
           : {}),
         ...(attack.targets[0] ? { targetId: attack.targets[0] } : {}),
         evidenceClass:
-          attack.origin.kind === "contestant"
-            ? ("competitive" as const)
-            : ("shared" as const),
+          attack.status === "shared_defect" || attack.origin.kind === "house"
+            ? ("shared" as const)
+            : ("competitive" as const),
       };
       const key = `attack:${attack.id}:${attack.status}`;
       if (!emitted.has(key)) {
@@ -5523,13 +5542,15 @@ export class RoundEngine {
         let salvagedAtDeadline = false;
         let finalAttemptStartedAt = this.now().toISOString();
         let finalAttemptFinishedAt = finalAttemptStartedAt;
+        let attemptPrompt = prompt;
+        let attemptPromptPath = promptPath;
         for (const attemptNumber of [1, 2] as const) {
           const attemptStartedAt = this.now().toISOString();
           const candidate = await this.adapterFor(context, reviewer).review({
             worktree,
             contestantId: reviewer,
-            prompt,
-            promptPath,
+            prompt: attemptPrompt,
+            promptPath: attemptPromptPath,
             transcriptPrefix: context.store.resolve(
               `logs/round-${String(round)}-review-${reviewer}-attempt-${String(attemptNumber)}`,
             ),
@@ -5553,12 +5574,12 @@ export class RoundEngine {
                 path.join(worktree, ".agent-arena-submission.json"),
                 "utf8",
               );
-              const outcome = parseFaultIsolatedSubmission(
-                "review",
-                raw,
-              ).outcome;
+              const outcome = parseFaultIsolatedSubmission("review", raw);
               usableSubmission =
-                outcome === "valid" || outcome === "valid_empty";
+                outcome.outcome === "valid" ||
+                outcome.outcome === "valid_empty" ||
+                (outcome.outcome === "partial" &&
+                  (outcome.sections.findings?.accepted.length ?? 0) > 0);
               salvagedAtDeadline =
                 candidate.status === "timed_out" && usableSubmission;
             } catch {
@@ -5630,6 +5651,16 @@ export class RoundEngine {
               ? JSON.stringify(failedCapture.parsed.rejections)
               : candidate.status,
           });
+          if (failedCapture) {
+            const feedback = reviewRetryFeedback(failedCapture.parsed);
+            if (feedback) {
+              attemptPrompt = `${prompt}\n# Targeted review schema retry\n${feedback}\n`;
+              attemptPromptPath = await context.store.writeText(
+                `prompts/round-${String(round)}-review-${reviewer}-attempt-2.md`,
+                attemptPrompt,
+              );
+            }
+          }
           await removeSubmission(worktree);
           assertTargetedRetryAllowed(attemptNumber);
         }
@@ -5710,7 +5741,9 @@ export class RoundEngine {
           if (submissionFailure) {
             const recovered =
               captured.parsed.outcome === "valid" ||
-              captured.parsed.outcome === "valid_empty";
+              captured.parsed.outcome === "valid_empty" ||
+              (captured.parsed.outcome === "partial" &&
+                (captured.parsed.sections.findings?.accepted.length ?? 0) > 0);
             submissionFailure = await this.recordSubmissionAttempt(context, {
               round,
               actor: reviewer,
@@ -5740,7 +5773,11 @@ export class RoundEngine {
           }
           if (
             captured.parsed.outcome !== "valid" &&
-            captured.parsed.outcome !== "valid_empty"
+            captured.parsed.outcome !== "valid_empty" &&
+            !(
+              captured.parsed.outcome === "partial" &&
+              (captured.parsed.sections.findings?.accepted.length ?? 0) > 0
+            )
           ) {
             await removeSubmission(worktree);
             context.state.reviewInvocations.push({
@@ -7235,6 +7272,7 @@ export class RoundEngine {
             signal: context.controller.signal,
             round,
             opponent: target,
+            observer: context.observer,
           });
           const attemptFinishedAt = this.now().toISOString();
           finalAttemptStartedAt = attemptStartedAt;
@@ -8316,7 +8354,10 @@ export class RoundEngine {
         });
         if (this.recordVerifierProviderFailure(context, round))
           throw new Error(context.state.providerFailure?.reason);
-        if (result.status === "landed" && result.rootDefectId)
+        if (
+          (result.status === "landed" || result.status === "shared_defect") &&
+          result.rootDefectId
+        )
           knownRoots.add(result.rootDefectId);
         if (
           result.status === "landed" &&
@@ -8401,7 +8442,10 @@ export class RoundEngine {
       if (!result) continue;
       if (this.recordVerifierProviderFailure(context, round))
         throw new Error(context.state.providerFailure?.reason);
-      if (result.status === "landed" && result.rootDefectId)
+      if (
+        (result.status === "landed" || result.status === "shared_defect") &&
+        result.rootDefectId
+      )
         knownRoots.add(result.rootDefectId);
       if (
         result.status === "landed" &&
@@ -8526,22 +8570,25 @@ export class RoundEngine {
       const currentPatch = contestant.currentPatchPath;
       const activeAttackCandidates = context.state.attacks.filter(
         (attack) =>
-          attack.status === "landed" &&
           attack.targets.includes(agent) &&
           attack.rootDefectId !== undefined &&
-          contestant.healthLedger.activeDefects.some((defect) => {
-            if (defect.rootDefectId !== attack.rootDefectId) return false;
-            const canonical = contestant.healthLedger.canonicalDefects?.find(
-              (entry) => entry.rootDefectId === defect.rootDefectId,
-            );
-            return (
-              (canonical?.repairAttemptsUsed ?? 0) <
-              (canonical?.repairAllowance ??
-                (defect.severity === "critical" || defect.severity === "high"
-                  ? 3
-                  : 2))
-            );
-          }),
+          ((attack.status === "shared_defect" && attack.round === round) ||
+            (attack.status === "landed" &&
+              contestant.healthLedger.activeDefects.some((defect) => {
+                if (defect.rootDefectId !== attack.rootDefectId) return false;
+                const canonical =
+                  contestant.healthLedger.canonicalDefects?.find(
+                    (entry) => entry.rootDefectId === defect.rootDefectId,
+                  );
+                return (
+                  (canonical?.repairAttemptsUsed ?? 0) <
+                  (canonical?.repairAllowance ??
+                    (defect.severity === "critical" ||
+                    defect.severity === "high"
+                      ? 3
+                      : 2))
+                );
+              }))),
       );
       const activeAttacks = [
         ...new Map(
@@ -8606,6 +8653,7 @@ export class RoundEngine {
           | undefined;
         for (const attemptNumber of [1, 2, 3] as const) {
           const remainingAttacks = activeAttacks.filter((attack) => {
+            if (attack.status === "shared_defect") return true;
             const canonical = contestant.healthLedger.canonicalDefects?.find(
               (entry) => entry.rootDefectId === attack.rootDefectId,
             );
@@ -8617,6 +8665,11 @@ export class RoundEngine {
                   : 2))
             );
           });
+          const remainingEvidenceAttacks = repairEvidenceAttacks(
+            context.state.attacks,
+            agent,
+            remainingAttacks,
+          );
           if (remainingAttacks.length === 0 && latestRequiredPass(contestant))
             break;
           let attemptPrompt = [
@@ -8624,7 +8677,7 @@ export class RoundEngine {
             "",
             "# Remaining failures for this attempt",
             JSON.stringify(
-              remainingAttacks.map((attack) => ({
+              remainingEvidenceAttacks.map((attack) => ({
                 canonicalDefectId: attack.rootDefectId,
                 claim: attack.claim,
                 focusedCommand: attack.focusedCommand,
@@ -8673,7 +8726,7 @@ export class RoundEngine {
               timeoutMs: context.config.limits.repairMs,
               signal: context.controller.signal,
               round,
-              activeAttacks: remainingAttacks,
+              activeAttacks: remainingEvidenceAttacks,
               observer: context.observer,
             });
             attempts.push(invocation);
@@ -8767,10 +8820,9 @@ export class RoundEngine {
           });
           const checksToRun = [
             ...new Map(
-              [...remainingAttacks, ...regressionAttacks].map((attack) => [
-                attack.id,
-                attack,
-              ]),
+              [...remainingEvidenceAttacks, ...regressionAttacks].map(
+                (attack) => [attack.id, attack],
+              ),
             ).values(),
           ];
           let mechanicsPassed = true;
@@ -8945,14 +8997,23 @@ export class RoundEngine {
             mechanicalFallback = {
               attemptId,
               candidatePath,
-              attacks: remainingAttacks,
+              attacks: remainingEvidenceAttacks,
               reason:
                 "Mechanical repair validation remained unavailable after the targeted retry",
             };
             break;
           }
           mechanicalFallback = undefined;
-          if (mechanicsPassed) break;
+          if (mechanicsPassed) {
+            for (const attack of remainingEvidenceAttacks) {
+              if (attack.status !== "shared_defect") continue;
+              attack.sharedRepairStatus = {
+                ...attack.sharedRepairStatus,
+                [agent]: "repaired",
+              };
+            }
+            break;
+          }
         }
         if (mechanicalFallback) {
           const patchBytes = await readFile(mechanicalFallback.candidatePath);
@@ -9089,6 +9150,12 @@ export class RoundEngine {
               const repaired = judgeRepairedDefects.get(agent) ?? new Set();
               repaired.add(attack.rootDefectId);
               judgeRepairedDefects.set(agent, repaired);
+              if (attack.status === "shared_defect") {
+                attack.sharedRepairStatus = {
+                  ...attack.sharedRepairStatus,
+                  [agent]: "repaired",
+                };
+              }
             }
           }
         }
@@ -9235,165 +9302,167 @@ export class RoundEngine {
             context.state.contestants[agent] = contestant;
             continue;
           }
-          const attack = context.state.attacks.find(
-            (candidate) =>
-              candidate.rootDefectId === defect.rootDefectId &&
-              candidate.targets.includes(agent) &&
-              candidate.status === "landed",
+          const defectAttacks = defectEvidenceAttacks(
+            context.state.attacks,
+            agent,
+            defect.rootDefectId,
           );
-          if (!attack) continue;
-          const acceptedCases = attack.caseBundle?.cases.filter(
-            (caseEntry) => caseEntry.status !== "rejected",
-          ) ?? [
-            {
-              id: `${attack.id}-visible`,
-              visibility: "visible" as const,
-              category: "visible_reproducer",
-              patchPath: attack.patchPath,
-              focusedCommand: attack.focusedCommand,
-              contentHash: "",
-              status: "accepted" as const,
-            },
-          ];
+          if (defectAttacks.length === 0) continue;
           let allCasesPass = true;
-          for (const caseEntry of acceptedCases) {
-            const caseTree = await this.prepareWorktree(context, {
-              name: `round-${String(round)}-heal-${agent}-${caseEntry.id}`,
-              subject: `heal-case-worktree:${String(round)}:${agent}:${caseEntry.id}`,
-              patches: [currentPatch, caseEntry.patchPath],
-              contestantId: agent,
-              attackId: attack.id,
-              runLevel: true,
-            });
-            try {
-              const isVisibleBrowserReproducer =
-                Boolean(attack.browserProbe) &&
-                caseEntry.visibility === "visible";
-              if (isVisibleBrowserReproducer && attack.browserProbe) {
-                const validateBrowser = this.browserProbeValidator(
-                  context,
-                  attack.id,
-                  { target: agent },
-                );
-                if (!validateBrowser)
-                  throw new Error(
-                    `Browser repair evidence is unavailable for ${agent} on ${caseEntry.id}`,
+          for (const attack of defectAttacks) {
+            const acceptedCases = attack.caseBundle?.cases.filter(
+              (caseEntry) => caseEntry.status !== "rejected",
+            ) ?? [
+              {
+                id: `${attack.id}-visible`,
+                visibility: "visible" as const,
+                category: "visible_reproducer",
+                patchPath: attack.patchPath,
+                focusedCommand: attack.focusedCommand,
+                contentHash: "",
+                status: "accepted" as const,
+              },
+            ];
+            for (const caseEntry of acceptedCases) {
+              const caseTree = await this.prepareWorktree(context, {
+                name: `round-${String(round)}-heal-${agent}-${caseEntry.id}`,
+                subject: `heal-case-worktree:${String(round)}:${agent}:${caseEntry.id}`,
+                patches: [currentPatch, caseEntry.patchPath],
+                contestantId: agent,
+                attackId: attack.id,
+                runLevel: true,
+              });
+              try {
+                const isVisibleBrowserReproducer =
+                  Boolean(attack.browserProbe) &&
+                  caseEntry.visibility === "visible";
+                if (isVisibleBrowserReproducer && attack.browserProbe) {
+                  const validateBrowser = this.browserProbeValidator(
+                    context,
+                    attack.id,
+                    { target: agent },
                   );
-                const browserResult = await validateBrowser(
-                  caseTree,
-                  attack.browserProbe,
-                  "target",
-                  [
-                    currentPatch,
-                    ...(attack.evidenceKind === "browser_probe"
-                      ? []
-                      : [caseEntry.patchPath]),
-                  ],
-                );
-                const browserEvidencePasses = browserRepairEvidencePasses(
-                  browserResult,
-                  attack.browserProbe.id,
-                );
-                if (browserEvidencePasses === undefined)
-                  throw new BrowserInfrastructureError(
-                    `Browser repair evidence was unverified for ${agent} on ${caseEntry.id}`,
-                    browserResult.reason ?? "launch_failure",
-                    browserResult.failureAttribution === "harness_configuration"
-                      ? "harness_configuration"
-                      : "harness_transport",
+                  if (!validateBrowser)
+                    throw new Error(
+                      `Browser repair evidence is unavailable for ${agent} on ${caseEntry.id}`,
+                    );
+                  const browserResult = await validateBrowser(
+                    caseTree,
+                    attack.browserProbe,
+                    "target",
+                    [
+                      currentPatch,
+                      ...(attack.evidenceKind === "browser_probe"
+                        ? []
+                        : [caseEntry.patchPath]),
+                    ],
                   );
-                if (!browserEvidencePasses) allCasesPass = false;
-                if (attack.evidenceKind === "browser_probe") continue;
-              }
-              const checks = [];
-              for (const sample of [1, 2] as const) {
-                let infrastructureFailure: FailureRecord | undefined;
-                for (const attempt of [1, 2] as const) {
-                  const startedAt = this.now().toISOString();
-                  const command = await runShellCommand(
-                    caseEntry.focusedCommand,
-                    {
-                      cwd: caseTree,
-                      timeoutMs: context.config.limits.attackMs,
-                      logPrefix: context.store.resolve(
-                        `logs/round-${String(round)}-heal-${agent}-${caseEntry.id}-sample-${String(sample)}-attempt-${String(attempt)}`,
-                      ),
-                      signal: context.controller.signal,
-                    },
+                  const browserEvidencePasses = browserRepairEvidencePasses(
+                    browserResult,
+                    attack.browserProbe.id,
                   );
-                  const finishedAt = this.now().toISOString();
-                  const diagnosticArtifactRefs = [
-                    command.stdoutPath,
-                    command.stderrPath,
-                  ];
-                  if (command.failureClass !== "arena_infrastructure") {
-                    if (infrastructureFailure) {
-                      infrastructureFailure = await this.recordFailureAttempt(
-                        context,
-                        {
-                          stage: "repair_validation",
-                          subject: `heal-case:${agent}:${caseEntry.id}:sample-${String(sample)}`,
-                          category: infrastructureFailure.category,
-                          attempt: 2,
-                          startedAt,
-                          finishedAt,
-                          status: "succeeded",
-                          diagnosticArtifactRefs,
-                          contestantId: agent,
-                          attackId: attack.id,
-                          existing: infrastructureFailure,
-                          reusedArtifactRefs: [
-                            currentPatch,
-                            caseEntry.patchPath,
-                          ],
-                          terminalDisposition: "recovered",
-                        },
+                  if (browserEvidencePasses === undefined)
+                    throw new BrowserInfrastructureError(
+                      `Browser repair evidence was unverified for ${agent} on ${caseEntry.id}`,
+                      browserResult.reason ?? "launch_failure",
+                      browserResult.failureAttribution ===
+                        "harness_configuration"
+                        ? "harness_configuration"
+                        : "harness_transport",
+                    );
+                  if (!browserEvidencePasses) allCasesPass = false;
+                  if (attack.evidenceKind === "browser_probe") continue;
+                }
+                const checks = [];
+                for (const sample of [1, 2] as const) {
+                  let infrastructureFailure: FailureRecord | undefined;
+                  for (const attempt of [1, 2] as const) {
+                    const startedAt = this.now().toISOString();
+                    const command = await runShellCommand(
+                      caseEntry.focusedCommand,
+                      {
+                        cwd: caseTree,
+                        timeoutMs: context.config.limits.attackMs,
+                        logPrefix: context.store.resolve(
+                          `logs/round-${String(round)}-heal-${agent}-${caseEntry.id}-sample-${String(sample)}-attempt-${String(attempt)}`,
+                        ),
+                        signal: context.controller.signal,
+                      },
+                    );
+                    const finishedAt = this.now().toISOString();
+                    const diagnosticArtifactRefs = [
+                      command.stdoutPath,
+                      command.stderrPath,
+                    ];
+                    if (command.failureClass !== "arena_infrastructure") {
+                      if (infrastructureFailure) {
+                        infrastructureFailure = await this.recordFailureAttempt(
+                          context,
+                          {
+                            stage: "repair_validation",
+                            subject: `heal-case:${agent}:${caseEntry.id}:sample-${String(sample)}`,
+                            category: infrastructureFailure.category,
+                            attempt: 2,
+                            startedAt,
+                            finishedAt,
+                            status: "succeeded",
+                            diagnosticArtifactRefs,
+                            contestantId: agent,
+                            attackId: attack.id,
+                            existing: infrastructureFailure,
+                            reusedArtifactRefs: [
+                              currentPatch,
+                              caseEntry.patchPath,
+                            ],
+                            terminalDisposition: "recovered",
+                          },
+                        );
+                      }
+                      checks.push(command);
+                      break;
+                    }
+                    infrastructureFailure = await this.recordFailureAttempt(
+                      context,
+                      {
+                        stage: "repair_validation",
+                        subject: `heal-case:${agent}:${caseEntry.id}:sample-${String(sample)}`,
+                        category:
+                          infrastructureFailure?.category ??
+                          (command.timedOut ? "timeout" : "command_execution"),
+                        attempt,
+                        startedAt,
+                        finishedAt,
+                        status: "failed",
+                        diagnosticArtifactRefs,
+                        contestantId: agent,
+                        attackId: attack.id,
+                        ...(infrastructureFailure
+                          ? { existing: infrastructureFailure }
+                          : {}),
+                        reusedArtifactRefs: [currentPatch, caseEntry.patchPath],
+                        ...(attempt === 2
+                          ? {
+                              terminalDisposition:
+                                "run_level_coverage_lost" as const,
+                            }
+                          : {}),
+                      },
+                    );
+                    if (attempt === 2) {
+                      throw new Error(
+                        `Repair evidence infrastructure failed for ${agent} on ${caseEntry.id}`,
                       );
                     }
-                    checks.push(command);
-                    break;
-                  }
-                  infrastructureFailure = await this.recordFailureAttempt(
-                    context,
-                    {
-                      stage: "repair_validation",
-                      subject: `heal-case:${agent}:${caseEntry.id}:sample-${String(sample)}`,
-                      category:
-                        infrastructureFailure?.category ??
-                        (command.timedOut ? "timeout" : "command_execution"),
-                      attempt,
-                      startedAt,
-                      finishedAt,
-                      status: "failed",
-                      diagnosticArtifactRefs,
-                      contestantId: agent,
-                      attackId: attack.id,
-                      ...(infrastructureFailure
-                        ? { existing: infrastructureFailure }
-                        : {}),
-                      reusedArtifactRefs: [currentPatch, caseEntry.patchPath],
-                      ...(attempt === 2
-                        ? {
-                            terminalDisposition:
-                              "run_level_coverage_lost" as const,
-                          }
-                        : {}),
-                    },
-                  );
-                  if (attempt === 2) {
-                    throw new Error(
-                      `Repair evidence infrastructure failed for ${agent} on ${caseEntry.id}`,
-                    );
                   }
                 }
+                if (!checks.every((check) => check.exitCode === 0)) {
+                  allCasesPass = false;
+                  if (caseEntry.visibility === "held_out")
+                    caseEntry.status = "revealed";
+                }
+              } finally {
+                await context.worktrees.remove(caseTree);
               }
-              if (!checks.every((check) => check.exitCode === 0)) {
-                allCasesPass = false;
-                if (caseEntry.visibility === "held_out")
-                  caseEntry.status = "revealed";
-              }
-            } finally {
-              await context.worktrees.remove(caseTree);
             }
           }
           if (allCasesPass) {
@@ -10284,10 +10353,10 @@ export class RoundEngine {
         if (contestant.status !== "eliminated") {
           for (const attack of context.state.attacks.filter(
             (candidate) =>
-              candidate.status === "landed" &&
+              (candidate.status === "landed" ||
+                candidate.status === "shared_defect") &&
               candidate.targets.includes(agent) &&
-              candidate.rootDefectId &&
-              candidate.damage,
+              candidate.rootDefectId,
           )) {
             const finalCases =
               attack.caseBundle?.cases.filter(
@@ -10455,6 +10524,13 @@ export class RoundEngine {
               } finally {
                 if (caseTree) await context.worktrees.remove(caseTree);
               }
+            }
+            if (attack.status === "shared_defect") {
+              attack.sharedRepairStatus = {
+                ...attack.sharedRepairStatus,
+                [agent]: defectPasses ? "repaired" : "active",
+              };
+              continue;
             }
             if (
               !defectPasses &&
@@ -10626,6 +10702,9 @@ export class RoundEngine {
       (arenaOutcome.kind === "non_discriminating" || competitiveHpTie) &&
       context.state.coverageAssessment?.confidence !== "provisional" &&
       comparableContestants.length === 2 &&
+      context.config.agents.every((agent) =>
+        finalPatchEligible(context.state, agent),
+      ) &&
       comparableContestants.every(
         (contestant) =>
           contestant.status !== "eliminated" &&
@@ -10777,6 +10856,7 @@ export class RoundEngine {
     }
     context.state.patchRecommendation = selectRecommendedPatch({
       contestants: context.state.contestants,
+      attacks: context.state.attacks,
       ...(arenaOutcome.championId
         ? { championId: arenaOutcome.championId }
         : {}),

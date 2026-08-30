@@ -9,6 +9,7 @@ import {
   explicitEmptyLaneCount,
   finalPatchEligible,
   sharedDefects,
+  unresolvedSharedDefects,
 } from "./evidence.js";
 
 export function classifyMargin(marginHp: number): ArenaOutcome["marginClass"] {
@@ -111,6 +112,8 @@ export function deriveArenaOutcome(
   };
   const competitiveLandingCount = competitiveLandings(evidenceState).length;
   const sharedDefectCount = sharedDefects(evidenceState).length;
+  const unresolvedSharedDefectCount =
+    unresolvedSharedDefects(evidenceState).length;
   const explicitEmptyLanes = explicitEmptyLaneCount(evidenceState);
   const equalActiveDamage =
     activeDefectDamage(state, "a") === activeDefectDamage(state, "b");
@@ -123,16 +126,24 @@ export function deriveArenaOutcome(
     state.config &&
     (state.config.mode === "duel" || state.config.mode === "catch_up") &&
     completeRequiredCoverage &&
-    finalPatchEligible(state, "a") &&
-    finalPatchEligible(state, "b") &&
+    finalPatchEligible(
+      { contestants: state.contestants, attacks: evidenceState.attacks },
+      "a",
+    ) &&
+    finalPatchEligible(
+      { contestants: state.contestants, attacks: evidenceState.attacks },
+      "b",
+    ) &&
     equalActiveDamage &&
     competitiveLandingCount === 0,
   );
   const kind: ArenaOutcome["kind"] = nonDiscriminating
     ? "non_discriminating"
-    : state.ranking?.draw || !state.ranking?.winner
+    : unresolvedSharedDefectCount > 0 && competitiveLandingCount === 0
       ? "draw"
-      : "winner";
+      : state.ranking?.draw || !state.ranking?.winner
+        ? "draw"
+        : "winner";
   const decisionBasis: ArenaOutcome["decisionBasis"] = nonDiscriminating
     ? "no_differentiator"
     : decidingFactors.has("tie_breaker")

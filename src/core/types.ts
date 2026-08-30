@@ -559,6 +559,7 @@ export const SubmissionArtifactRecordSchema = z.object({
   rawSha256: z.string().length(64),
   rawArtifactPath: z.string().min(1),
   parsedArtifactPath: z.string().min(1),
+  schemaRejectedFindingCount: z.number().int().nonnegative().optional(),
 });
 export type SubmissionArtifactRecord = z.infer<
   typeof SubmissionArtifactRecordSchema
@@ -668,6 +669,7 @@ export const AttackStatusSchema = z.enum([
   "invalid",
   "duplicate",
   "self_defeating",
+  "shared_defect",
   "unproven",
   "capability_denied",
   "blocked",
@@ -779,6 +781,12 @@ export const AttackSchema = z.object({
   severity: SeveritySchema.optional(),
   damage: DamageSchema.optional(),
   damageActive: z.boolean().optional(),
+  sharedRepairStatus: z
+    .object({
+      a: z.enum(["active", "repaired"]).optional(),
+      b: z.enum(["active", "repaired"]).optional(),
+    })
+    .optional(),
   evidenceProvenance: z
     .enum(["mechanical", "judge_confirmed", "judge_partial"])
     .optional(),
@@ -1082,8 +1090,8 @@ const FightConfigBaseSchema = z
         .number()
         .int()
         .positive()
-        .max(10 * 60 * 1000)
-        .default(10 * 60 * 1000),
+        .max(30 * 60 * 1000)
+        .default(30 * 60 * 1000),
       attackMs: z.number().int().positive(),
       verifierMs: z.number().int().positive(),
       repairMs: z.number().int().positive(),

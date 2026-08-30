@@ -4,6 +4,7 @@ import {
   declaredAttackPaths,
   isCorrectionEligible,
   mergeCorrectionFields,
+  reviewRetryFeedback,
   safelyRenderReceived,
 } from "../../src/attacks/fault-isolated-submission.js";
 
@@ -248,6 +249,248 @@ describe("fault-isolated provider submissions", () => {
         received: '["provider_identity"]',
       }),
     ]);
+  });
+
+  it("canonicalizes harmless review schema variance with an audit trail", () => {
+    const finding = reviewFinding();
+    delete (finding as { trust?: string }).trust;
+    delete (finding.observations[0] as { trust?: string }).trust;
+    finding.observations[0]!.provenance.kind = "execution";
+    finding.oracle.task_source_ids = ["task-z", "task-user", "task-user"];
+    const varied = {
+      ...finding,
+      codeLocations: finding.code_locations.map((location) => ({
+        path: location.path,
+        lineStart: location.line_start,
+        lineEnd: location.line_end,
+        symbol: location.symbol,
+      })),
+      code_locations: undefined,
+      requiredCapabilityIds: ["shell", "filesystem", "shell"],
+      required_capability_ids: undefined,
+    };
+    delete (varied as { code_locations?: unknown }).code_locations;
+    delete (varied as { required_capability_ids?: unknown })
+      .required_capability_ids;
+
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({ version: 2, findings: [varied] }),
+    );
+
+    expect(parsed.outcome).toBe("valid");
+    expect(parsed.value.findings[0]).toMatchObject({
+      trust: "reviewer_hypothesis",
+      observations: [
+        {
+          trust: "reviewer_hypothesis",
+          provenance: { kind: "tool_summary" },
+        },
+      ],
+      oracle: { task_source_ids: ["task-user", "task-z"] },
+      required_capability_ids: ["filesystem", "shell"],
+    });
+    expect(parsed.normalizations.map((entry) => entry.rule)).toEqual(
+      expect.arrayContaining([
+        "v1.review.trust.default_untrusted",
+        "v1.review.provenance.execution_alias",
+        "v1.array.task_source_ids.sort_dedupe",
+        "v1.field_alias.codeLocations_to_code_locations",
+      ]),
+    );
+  });
+
+  it("accepts canonical test_run provenance without recording a normalization", () => {
+    const finding = reviewFinding();
+    finding.observations[0]!.provenance.kind = "test_run";
+
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({ version: 2, findings: [finding] }),
+    );
+
+    expect(parsed.outcome).toBe("valid");
+    expect(parsed.value.findings[0]?.observations[0]?.provenance.kind).toBe(
+      "test_run",
+    );
+    expect(parsed.normalizations).toEqual([]);
+  });
+
+  it.each(["TEST_RUN", "Test-Run", "test run", " test_run ", "  TeSt-RuN  "])(
+    "normalizes the safe %s test-run provenance alias with an audit record",
+    (alias) => {
+      const finding = reviewFinding();
+      finding.observations[0]!.provenance.kind = alias;
+
+      const parsed = parseFaultIsolatedSubmission(
+        "review",
+        JSON.stringify({ version: 2, findings: [finding] }),
+      );
+
+      expect(parsed.outcome).toBe("valid");
+      expect(parsed.value.findings[0]?.observations[0]?.provenance.kind).toBe(
+        "test_run",
+      );
+      expect(parsed.normalizations).toContainEqual({
+        path: "$.findings[0].observations[0].provenance.kind",
+        original: alias,
+        normalized: "test_run",
+        rule: "v1.review.provenance.test_run_alias",
+      });
+    },
+  );
+
+  it("rejects ambiguous review provenance and returns focused retry feedback", () => {
+    const finding = reviewFinding();
+    finding.observations[0]!.provenance.kind = "test_execution";
+
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({ version: 2, findings: [finding] }),
+    );
+
+    expect(parsed.outcome).toBe("invalid");
+    expect(parsed.sections.findings?.entries).toHaveLength(1);
+    expect(parsed.sections.findings?.entries[0]?.outcome).toBe("rejected");
+    expect(parsed.rejections).toEqual([
+      expect.objectContaining({
+        path: "$.findings[0].observations[0].provenance.kind",
+        received: '"test_execution"',
+        allowedValues: [
+          "code_inspection",
+          "task_source",
+          "test_inspection",
+          "test_run",
+          "tool_summary",
+          "other",
+        ],
+      }),
+    ]);
+    expect(JSON.parse(reviewRetryFeedback(parsed) ?? "null")).toEqual({
+      invalid_fields: [
+        {
+          path: "$.findings[0].observations[0].provenance.kind",
+          received: '"test_execution"',
+        },
+      ],
+      allowed_provenance_kinds: [
+        "code_inspection",
+        "task_source",
+        "test_inspection",
+        "test_run",
+        "tool_summary",
+        "other",
+      ],
+    });
+  });
+
+  it("preserves a safely normalized sibling and rejects one ambiguous finding", () => {
+    const normalized = reviewFinding();
+    normalized.observations[0]!.provenance.kind = "test-run";
+    const ambiguous = reviewFinding();
+    ambiguous.invariant = "ambiguous provenance";
+    ambiguous.observations[0]!.provenance.kind = "test_execution";
+
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({ version: 2, findings: [normalized, ambiguous] }),
+    );
+
+    expect(parsed.outcome).toBe("partial");
+    expect(parsed.value.findings).toHaveLength(1);
+    expect(parsed.value.findings[0]?.observations[0]?.provenance.kind).toBe(
+      "test_run",
+    );
+    expect(
+      parsed.sections.findings?.entries.filter(
+        (entry) => entry.outcome === "rejected",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("rejects a whole finding once when only one observation is ambiguous", () => {
+    const finding = reviewFinding();
+    finding.observations.push({
+      trust: "reviewer_hypothesis",
+      statement: "ambiguous execution evidence",
+      provenance: { kind: "test_execution", references: ["npm test"] },
+    });
+
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({ version: 2, findings: [finding] }),
+    );
+
+    expect(parsed.outcome).toBe("invalid");
+    expect(parsed.sections.findings?.entries).toHaveLength(1);
+    expect(parsed.sections.findings?.entries[0]?.outcome).toBe("rejected");
+  });
+
+  it("safely truncates oversized descriptive review text by UTF-8 bytes", () => {
+    const finding = reviewFinding();
+    const original = `Evidence ${"🧪".repeat(250_000)}`;
+    finding.observations[0]!.statement = original;
+
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({ version: 2, findings: [finding] }),
+    );
+
+    expect(parsed.outcome).toBe("valid");
+    const statement = parsed.value.findings[0]?.observations[0]?.statement;
+    expect(statement).toBeDefined();
+    expect(Buffer.byteLength(statement ?? "", "utf8")).toBeLessThanOrEqual(
+      1_000,
+    );
+    expect(statement).toMatch(/…$/u);
+    const normalization = parsed.normalizations.find(
+      (entry) =>
+        entry.path === "$.findings[0].observations[0].statement" &&
+        entry.rule === "v1.review.text.truncate_utf8_1000",
+    );
+    const auditOriginal = normalization?.original;
+    if (!auditOriginal || typeof auditOriginal !== "object")
+      throw new Error("Expected a bounded normalization audit object");
+    const fields = auditOriginal as Record<string, unknown>;
+    expect(fields.utf8Bytes).toBe(Buffer.byteLength(original, "utf8"));
+    expect(fields.preview).toBeTypeOf("string");
+    expect(fields.preview).toMatch(/\.\.\.$/u);
+    expect(fields.sha256).toBeTypeOf("string");
+    expect(fields.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(JSON.stringify(parsed).length).toBeLessThan(10_000);
+  });
+
+  it("keeps command fields strict instead of truncating executable semantics", () => {
+    const finding = reviewFinding();
+    finding.regression_test_plan.focused_command = "x".repeat(1_001);
+
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({ version: 2, findings: [finding] }),
+    );
+
+    expect(parsed.outcome).toBe("invalid");
+    expect(parsed.rejections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "$.findings[0].regression_test_plan.focused_command",
+        }),
+      ]),
+    );
+  });
+
+  it("preserves valid review siblings when another finding is malformed", () => {
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({
+        version: 2,
+        findings: [reviewFinding(), { invariant: "missing evidence" }],
+      }),
+    );
+
+    expect(parsed.outcome).toBe("partial");
+    expect(parsed.value.findings).toHaveLength(1);
+    expect(parsed.sections.findings?.accepted).toHaveLength(1);
   });
 
   it("reports exact paths and allowed enums while safely rendering values", () => {

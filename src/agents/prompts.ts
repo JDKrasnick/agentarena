@@ -11,6 +11,7 @@ import type { ContestantFeedback, RunSpec } from "../contracts/round.js";
 import type { MethodSelection } from "../methods/catalog.js";
 import {
   canonicalHandoffJson,
+  HANDOFF_OBSERVATION_PROVENANCE_KINDS,
   type EvidenceHandoffPacket,
 } from "../review/evidence-handoff.js";
 
@@ -300,6 +301,8 @@ export function composeAttackReviewPrompt(
     "",
     "# Submission schema",
     '{"version":2,"findings":[{"trust":"reviewer_hypothesis","invariant":"...","observations":[{"trust":"reviewer_hypothesis","statement":"...","provenance":{"kind":"code_inspection","references":["src/file.ts:42"]}}],"code_locations":[{"path":"src/file.ts","line_start":42,"line_end":42,"symbol":"functionName"}],"trigger_sequence":["first event","second event"],"oracle":{"expected_behavior":"...","task_source_ids":["task-user"],"task_source_rationale":"Explain how the frozen source supports the expectation"},"confidence":85,"required_capability_ids":[],"regression_test_plan":{"summary":"...","suggested_paths":["test/arena-example.test.ts"],"focused_command":"npm test -- test/arena-example.test.ts"}}]}',
+    `Canonical observation provenance kinds: ${HANDOFF_OBSERVATION_PROVENANCE_KINDS.join(", ")}.`,
+    "Use test_run only for observations derived from executing a test. Use test_inspection for evidence obtained by reading test code, and tool_summary for a general summary of tool output.",
     "Zero findings is valid. Rank at most 24 findings by priority. Exact duplicates and the final 12/16 KiB limits are enforced by the harness.",
     "",
     `# Round ${String(context.round)} review brief`,

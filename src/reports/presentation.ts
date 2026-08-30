@@ -8,6 +8,7 @@ import type {
   RoundId,
   RunState,
 } from "../core/types.js";
+import { sharedDefectIsActive } from "../outcomes/evidence.js";
 
 export type ReportCheckStatus =
   "PASS" | "FAIL" | "INFRA" | "SKIPPED" | "NOT RUN";
@@ -35,6 +36,12 @@ export type ReportOutcome =
   | { kind: "draw" }
   | { kind: "non_discriminating" }
   | { kind: "incomplete" };
+
+export interface ReportOutcomeTotals {
+  competitiveLandings: number;
+  sharedDefects: number;
+  schemaRejectedFindings: number;
+}
 
 function invocationPaths(invocation: AgentInvocation | undefined): string[] {
   if (!invocation) return [];
@@ -85,23 +92,54 @@ export function reportOutcome(state: RunState): ReportOutcome {
       state.coverageDecision?.decision !== "accept-reduced")
   )
     return { kind: "incomplete" };
+  if (state.arenaOutcome && "kind" in state.arenaOutcome) {
+    if (state.arenaOutcome.kind === "draw") return { kind: "draw" };
+    if (state.arenaOutcome.kind === "non_discriminating")
+      return { kind: "non_discriminating" };
+    return state.arenaOutcome.championId
+      ? { kind: "winner", winner: state.arenaOutcome.championId }
+      : { kind: "incomplete" };
+  }
   if (!state.ranking) return { kind: "incomplete" };
-  if (
-    state.arenaOutcome &&
-    "kind" in state.arenaOutcome &&
-    state.arenaOutcome.kind === "non_discriminating"
-  )
-    return { kind: "non_discriminating" };
   if (state.ranking.draw) return { kind: "draw" };
   return state.ranking.winner
     ? { kind: "winner", winner: state.ranking.winner }
     : { kind: "incomplete" };
 }
 
+export function reportOutcomeTotals(state: RunState): ReportOutcomeTotals {
+  return {
+    competitiveLandings: state.attacks.filter(
+      (attack) =>
+        attack.status === "landed" &&
+        attack.adjudication?.relationship !== "affirm" &&
+        (attack.adjudication?.scoreEffect === undefined ||
+          attack.adjudication.scoreEffect === "damage" ||
+          attack.adjudication.scoreEffect === "damage_upgrade"),
+    ).length,
+    sharedDefects: state.attacks.filter(
+      (attack) => attack.status === "shared_defect",
+    ).length,
+    schemaRejectedFindings: state.submissionArtifacts.reduce(
+      (sum, artifact) =>
+        sum +
+        (artifact.kind === "review"
+          ? (artifact.schemaRejectedFindingCount ?? 0)
+          : 0),
+      0,
+    ),
+  };
+}
+
 export function reportDefects(state: RunState): ReportDefect[] {
   const grouped = new Map<string, Attack[]>();
   for (const attack of state.attacks) {
-    if (attack.status !== "landed" && attack.status !== "duplicate") continue;
+    if (
+      attack.status !== "landed" &&
+      attack.status !== "shared_defect" &&
+      attack.status !== "duplicate"
+    )
+      continue;
     const id = attack.rootDefectId ?? attack.id;
     grouped.set(id, [...(grouped.get(id) ?? []), attack]);
   }
@@ -123,20 +161,45 @@ export function reportDefects(state: RunState): ReportDefect[] {
             (attack) => attack.adjudication?.exactAmount ?? attack.damage ?? 0,
           ),
         ),
-      active: reportContestants(state).some((contestant) =>
-        contestant.healthLedger.activeDefects.some(
-          (defect) => defect.rootDefectId === id,
+      active:
+        attacks.some((attack) => sharedDefectIsActive(attack)) ||
+        reportContestants(state).some((contestant) =>
+          contestant.healthLedger.activeDefects.some(
+            (defect) => defect.rootDefectId === id,
+          ),
         ),
-      ),
       evidenceClass:
-        representative.origin.kind === "house" ? "shared" : "competitive",
+        attacks.some((attack) => attack.status === "shared_defect") ||
+        representative.origin.kind === "house"
+          ? "shared"
+          : "competitive",
     };
   });
 }
 
 export function reportRounds(state: RunState): ReportRound[] {
   const contestants = reportContestants(state);
-  const ids: RoundId[] = [1, 2, 3, 4, 5];
+  const recordedNumericRounds = [
+    ...state.attacks.map((attack) => attack.round),
+    ...contestants.flatMap((contestant) =>
+      contestant.rounds.map((round) => round.round),
+    ),
+    ...state.reviewInvocations.map((invocation) => invocation.round),
+    ...state.attackInvocations.map((invocation) => invocation.round),
+    ...state.adaptiveDecisions.map((decision) => decision.round),
+  ].filter((round): round is 1 | 2 | 3 | 4 | 5 => typeof round === "number");
+  const configuredRounds = state.config.fixedRounds
+    ? state.config.rounds
+    : (state.config.resolvedEffortProfile?.plannedRounds ??
+      state.config.rounds);
+  const numericRoundCount = Math.min(
+    5,
+    Math.max(configuredRounds, ...recordedNumericRounds),
+  );
+  const ids: RoundId[] = Array.from(
+    { length: numericRoundCount },
+    (_, index) => (index + 1) as 1 | 2 | 3 | 4 | 5,
+  );
   if (
     state.attacks.some((attack) => attack.round === "recovery") ||
     contestants.some((contestant) =>

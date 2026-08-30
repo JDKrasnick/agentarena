@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   AttackSubmissionEntrySchema,
@@ -10,6 +11,7 @@ import {
   type HouseSubmission,
 } from "../core/types.js";
 import {
+  HANDOFF_OBSERVATION_PROVENANCE_KINDS,
   HandoffFindingPayloadSchema,
   TrustedReviewSubmissionSchema,
   type TrustedReviewSubmission,
@@ -34,6 +36,12 @@ export interface SubmissionNormalization {
   original: unknown;
   normalized: unknown;
   rule: string;
+}
+
+interface BoundedNormalizationOriginal {
+  preview: string;
+  utf8Bytes: number;
+  sha256: string;
 }
 
 export interface SubmissionRejection {
@@ -247,17 +255,148 @@ function extractJson(source: string): unknown {
   }
 }
 
+function truncateUtf8WithEllipsis(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
+  const ellipsis = "…";
+  const contentBudget = maxBytes - Buffer.byteLength(ellipsis, "utf8");
+  let bytes = 0;
+  let prefix = "";
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (bytes + characterBytes > contentBudget) break;
+    prefix += character;
+    bytes += characterBytes;
+  }
+  return `${prefix.trimEnd()}${ellipsis}`;
+}
+
+function reviewDescriptiveTextLimit(
+  prefix: readonly PropertyKey[],
+  path: readonly PropertyKey[],
+): number | undefined {
+  if (prefix[0] !== "findings") return undefined;
+  const key = String(path.at(-1) ?? "");
+  const parent = String(path.at(-2) ?? "");
+  if (key === "statement" || key === "invariant") return 1_000;
+  if (key === "expected_behavior" || key === "task_source_rationale")
+    return 1_500;
+  if (key === "symbol") return 300;
+  if (key === "summary" && parent === "regression_test_plan") return 1_500;
+  if (/^\d+$/u.test(key) && parent === "trigger_sequence") return 500;
+  if (/^\d+$/u.test(key) && parent === "references") return 300;
+  return undefined;
+}
+
 function normalizeEntry(
   value: unknown,
   prefix: PropertyKey[],
 ): { value: unknown; normalizations: SubmissionNormalization[] } {
   const normalizations: SubmissionNormalization[] = [];
+  const record = (
+    path: PropertyKey[],
+    original: unknown,
+    normalized: unknown,
+    rule: string,
+  ): void => {
+    const persistedOriginal: unknown =
+      typeof original === "string" &&
+      rule.startsWith("v1.review.text.truncate_utf8_")
+        ? ({
+            preview: safelyRenderReceived(jsonPath(path), original),
+            utf8Bytes: Buffer.byteLength(original, "utf8"),
+            sha256: createHash("sha256").update(original).digest("hex"),
+          } satisfies BoundedNormalizationOriginal)
+        : original;
+    normalizations.push({
+      path: jsonPath(path),
+      original: persistedOriginal,
+      normalized,
+      rule,
+    });
+  };
+  const aliasObjectKeys = (
+    current: Record<string, unknown>,
+    path: PropertyKey[],
+  ): Record<string, unknown> => {
+    const aliases =
+      prefix[0] === "findings"
+        ? {
+            codeLocations: "code_locations",
+            triggerSequence: "trigger_sequence",
+            requiredCapabilityIds: "required_capability_ids",
+            regressionTestPlan: "regression_test_plan",
+            expectedBehavior: "expected_behavior",
+            taskSourceIds: "task_source_ids",
+            taskSourceRationale: "task_source_rationale",
+            lineStart: "line_start",
+            lineEnd: "line_end",
+            suggestedPaths: "suggested_paths",
+            focusedCommand: "focused_command",
+          }
+        : {
+            proposed_severity: "proposedSeverity",
+            focused_command: "focusedCommand",
+            required_capabilities: "requiredCapabilities",
+            browser_probe: "browserProbe",
+            challenge_adjudication_id: "challengeAdjudicationId",
+          };
+    const result = { ...current };
+    for (const [alias, canonical] of Object.entries(aliases)) {
+      if (!(alias in result) || canonical in result) continue;
+      result[canonical] = result[alias];
+      delete result[alias];
+      record(
+        [...path, alias],
+        alias,
+        canonical,
+        `v1.field_alias.${alias}_to_${canonical}`,
+      );
+    }
+    const isReviewFinding =
+      prefix[0] === "findings" &&
+      (path.length === 2 ||
+        (path.length >= 4 && path.at(-2) === "observations"));
+    if (isReviewFinding && result.trust === undefined) {
+      result.trust = "reviewer_hypothesis";
+      record(
+        [...path, "trust"],
+        undefined,
+        "reviewer_hypothesis",
+        "v1.review.trust.default_untrusted",
+      );
+    }
+    return result;
+  };
   const visit = (current: unknown, path: PropertyKey[]): unknown => {
-    if (Array.isArray(current))
-      return current.map((entry, index) => visit(entry, [...path, index]));
+    if (Array.isArray(current)) {
+      const visited = current.map((entry, index) =>
+        visit(entry, [...path, index]),
+      );
+      const key = String(path.at(-1) ?? "");
+      if (
+        [
+          "task_source_ids",
+          "required_capability_ids",
+          "suggested_paths",
+          "requiredCapabilities",
+          "paths",
+        ].includes(key) &&
+        visited.every((entry): entry is string => typeof entry === "string")
+      ) {
+        const normalized = [...new Set(visited)].sort((left, right) =>
+          left < right ? -1 : left > right ? 1 : 0,
+        );
+        if (JSON.stringify(normalized) !== JSON.stringify(visited)) {
+          record(path, visited, normalized, `v1.array.${key}.sort_dedupe`);
+          return normalized;
+        }
+      }
+      return visited;
+    }
     if (current && typeof current === "object") {
+      const aliased = aliasObjectKeys(current as Record<string, unknown>, path);
       return Object.fromEntries(
-        Object.entries(current).map(([key, entry]) => [
+        Object.entries(aliased).map(([key, entry]) => [
           key,
           visit(entry, [...path, key]),
         ]),
@@ -265,43 +404,120 @@ function normalizeEntry(
     }
     if (typeof current !== "string") return current;
     const key = String(path.at(-1) ?? "");
+    const isReviewProvenanceKind =
+      prefix[0] === "findings" &&
+      path.length === 6 &&
+      path.at(-4) === "observations" &&
+      path.at(-2) === "provenance" &&
+      key === "kind";
+    if (isReviewProvenanceKind) {
+      const candidate = current
+        .replaceAll("\r\n", "\n")
+        .replaceAll("\r", "\n")
+        .normalize("NFC")
+        .trim();
+      if (current !== "test_run" && /^test(?:_|-|\s+)run$/iu.test(candidate)) {
+        record(
+          path,
+          current,
+          "test_run",
+          "v1.review.provenance.test_run_alias",
+        );
+        return "test_run";
+      }
+    }
+    let text = current;
+    const normalizedText = text
+      .replaceAll("\r\n", "\n")
+      .replaceAll("\r", "\n")
+      .normalize("NFC")
+      .trim();
+    if (normalizedText !== text) {
+      record(path, text, normalizedText, "v1.text.nfc_lf_trim");
+      text = normalizedText;
+    }
+    const descriptiveLimit = reviewDescriptiveTextLimit(prefix, path);
+    if (
+      descriptiveLimit !== undefined &&
+      Buffer.byteLength(text, "utf8") > descriptiveLimit
+    ) {
+      const truncated = truncateUtf8WithEllipsis(text, descriptiveLimit);
+      record(
+        path,
+        text,
+        truncated,
+        `v1.review.text.truncate_utf8_${String(descriptiveLimit)}`,
+      );
+      text = truncated;
+    }
+    if (isReviewProvenanceKind && text.toLowerCase() === "execution") {
+      record(
+        path,
+        text,
+        "tool_summary",
+        "v1.review.provenance.execution_alias",
+      );
+      return "tool_summary";
+    }
     if (key === "proposedSeverity") {
-      const normalized = current.trim().toLowerCase();
+      const normalized = text.toLowerCase();
       if (
         ["critical", "high", "medium", "low"].includes(normalized) &&
-        normalized !== current
+        normalized !== text
       ) {
-        normalizations.push({
-          path: jsonPath(path),
-          original: current,
+        record(
+          path,
+          text,
           normalized,
-          rule: "v1.enum.proposedSeverity.casefold_trim",
-        });
+          "v1.enum.proposedSeverity.casefold_trim",
+        );
         return normalized;
       }
     }
     if (key === "category") {
-      const normalized = current.trim().toLowerCase();
+      const normalized = text.toLowerCase();
       const alias =
         normalized === "state" || normalized === "lifecycle"
           ? "state_lifecycle"
           : normalized;
-      if (BugCategorySchema.safeParse(alias).success && alias !== current) {
-        normalizations.push({
-          path: jsonPath(path),
-          original: current,
-          normalized: alias,
-          rule:
-            normalized === alias
-              ? "v1.enum.category.casefold_trim"
-              : "v1.enum.category.state_lifecycle_alias",
-        });
+      if (BugCategorySchema.safeParse(alias).success && alias !== text) {
+        record(
+          path,
+          text,
+          alias,
+          normalized === alias
+            ? "v1.enum.category.casefold_trim"
+            : "v1.enum.category.state_lifecycle_alias",
+        );
         return alias;
       }
     }
-    return current;
+    return text;
   };
   return { value: visit(value, prefix), normalizations };
+}
+
+export function reviewRetryFeedback(
+  parsed: ParsedSubmission<unknown>,
+): string | undefined {
+  if (parsed.kind !== "review" || parsed.rejections.length === 0)
+    return undefined;
+  const invalidFields = [
+    ...new Map(
+      parsed.rejections.map((rejection) => [
+        `${rejection.path}\0${rejection.received}`,
+        { path: rejection.path, received: rejection.received },
+      ]),
+    ).values(),
+  ];
+  return JSON.stringify(
+    {
+      invalid_fields: invalidFields,
+      allowed_provenance_kinds: HANDOFF_OBSERVATION_PROVENANCE_KINDS,
+    },
+    null,
+    2,
+  );
 }
 
 function collectValidatedFields(

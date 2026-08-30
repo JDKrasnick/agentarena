@@ -283,7 +283,7 @@ hypothesis label when projected independently.
 | `observations`                         | Reviewer, hypotheses                         | Preserve order                                         | 1–8 entries                                                                                                    | Attacker and local artifacts      |
 | `observations[].trust`                 | Harness normalization                        | Literal string                                         | Exactly `reviewer_hypothesis`                                                                                  | Always disclosed with observation |
 | `observations[].statement`             | Reviewer, hypothesis                         | NFC and outer trim                                     | 1–1,000 UTF-8 bytes                                                                                            | Attacker and local artifacts      |
-| `observations[].provenance.kind`       | Reviewer, hypothesis metadata                | Literal enum                                           | `code_inspection`, `task_source`, `test_inspection`, `tool_summary`, or `other`                                | Attacker and local artifacts      |
+| `observations[].provenance.kind`       | Reviewer, hypothesis metadata                | Literal enum; audited safe aliases for `test_run` only | `code_inspection`, `task_source`, `test_inspection`, `test_run`, `tool_summary`, or `other`                    | Attacker and local artifacts      |
 | `observations[].provenance.references` | Reviewer, unverified references              | NFC, outer trim, preserve order                        | 1–8 unique strings, each 1–300 UTF-8 bytes; no transcript or secret references                                 | Attacker and local artifacts      |
 | `code_locations`                       | Reviewer, hypotheses                         | Normalize paths to target-relative `/`; preserve order | 1–8 unique locations; no absolute path or `..`; positive lines and `line_end >= line_start`; nullable symbol   | Attacker and local artifacts      |
 | `trigger_sequence`                     | Reviewer, hypothesis                         | NFC and outer trim; preserve order                     | 1–12 nonempty steps, each at most 500 UTF-8 bytes                                                              | Attacker and local artifacts      |
@@ -302,6 +302,20 @@ silently redact it because redaction would change the hypothesis. In
 particular, provenance may summarize tool output but MUST NOT embed raw command
 logs, transcripts, model deliberation, credentials, environment values, or
 provider identity.
+
+`test_run` means the observation derives from executing a test;
+`test_inspection` means it derives from reading test code. At this field only,
+the parser canonicalizes `TEST_RUN`, `test-run`, and `test run`, including
+mixed case and outer whitespace, to `test_run` and records the exact path,
+original value, canonical value, and versioned rule in `parsed.json`. Exact
+`test_run` emits no normalization record. Other punctuation and semantically
+uncertain values such as `test_execution` remain rejected. Safe normalization
+does not trigger a provider retry and only genuinely rejected findings enter
+schema-rejection totals; if no finding survives, the single targeted retry
+receives the invalid paths, received values, and this complete vocabulary.
+Exact bounded alias values remain available in the normalization audit. For
+UTF-8 truncation, `parsed.json` stores a bounded preview, the original byte
+count, and a SHA-256 digest instead of duplicating the unbounded original text.
 
 ## 6. Duplicate rejection and size compaction
 

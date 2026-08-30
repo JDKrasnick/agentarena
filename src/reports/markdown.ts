@@ -6,10 +6,13 @@ import type {
 } from "../core/types.js";
 import { conciseUsage, readRunUsageSummarySync } from "../telemetry/usage.js";
 import { contestantLabel } from "../core/labels.js";
+import { sharedDefectIsActive } from "../outcomes/evidence.js";
 import {
   reportCheckStatus,
   reportContestants,
   reportDefects,
+  reportOutcome,
+  reportOutcomeTotals,
   reportRounds,
   resolveArtifactHref,
 } from "./presentation.js";
@@ -22,6 +25,10 @@ function attackOwner(attack: Attack): string {
 function attackEffect(attack: Attack): string {
   if (attack.status === "landed")
     return `${String(attack.adjudication?.exactAmount ?? attack.damage ?? 0)} damage (${(attack.adjudication?.evidenceBasis ?? attack.evidenceProvenance ?? "legacy_unknown").replaceAll("_", " ")})`;
+  if (attack.status === "shared_defect")
+    return sharedDefectIsActive(attack)
+      ? "shared defect unresolved; repair affected patches with no health effect"
+      : "shared defect repaired and verified; no health effect";
   if (attack.recoil !== undefined) return `${String(attack.recoil)} recoil`;
   return "no health effect";
 }
@@ -90,13 +97,16 @@ function roundDigest(
 ): string[] {
   return reportRounds(state).map((round) => {
     const attacks = round.attacks;
-    const landed = attacks.filter((attack) => attack.status === "landed");
-    const summary = landed.length
-      ? landed
+    const proven = attacks.filter(
+      (attack) =>
+        attack.status === "landed" || attack.status === "shared_defect",
+    );
+    const summary = proven.length
+      ? proven
           .map((attack) => `${attack.severity ?? "unrated"} ${attack.claim}`)
           .join("; ")
       : attacks.length
-        ? `${String(attacks.length)} attack(s), none landed`
+        ? `${String(attacks.length)} attack(s), none proven`
         : "No submitted attacks";
     const health = contestants
       .map((contestant) => {
@@ -164,12 +174,35 @@ function implementationReplay(
     "| --- | --- | --- | --- |",
     ...contestants.map((contestant) => {
       const checks = contestant.checks.filter(
-        (check) => check.kind === "baseline",
+        (check) => check.kind === "baseline" || check.id === "initial-required",
       );
       return `| ${contestantLabel(state.config.contestants, contestant.id)} | ${invocationEvidence(state, contestant.implementation)} | ${artifactLink(state, "initial patch", contestant.initialPatchPath)} | ${checks.length ? checks.map((check) => checkCell(state, check)).join("<br>") : "NOT RUN"} |`;
     }),
     "",
   ];
+}
+
+function roundValidationRows(
+  state: RunState,
+  round: ReturnType<typeof reportRounds>[number],
+): string[] {
+  const attackChecks = round.attacks.flatMap((attack) =>
+    attack.checks.map((check) => `- ${check.id}: ${checkCell(state, check)}.`),
+  );
+  const contestantChecks =
+    typeof round.id === "number"
+      ? round.contestants.flatMap(({ contestant }) =>
+          contestant.checks
+            .filter((check) =>
+              check.id.startsWith(`round-${String(round.id)}-`),
+            )
+            .map(
+              (check) =>
+                `- ${contestantLabel(state.config.contestants, contestant.id)} — ${check.id}: ${checkCell(state, check)}.`,
+            ),
+        )
+      : [];
+  return [...contestantChecks, ...attackChecks];
 }
 
 function roundReplay(state: RunState): string[] {
@@ -197,6 +230,7 @@ function roundReplay(state: RunState): string[] {
     const invocations = state.attackInvocations.filter(
       (record) => record.round === round.id,
     );
+    const validationRows = roundValidationRows(state, round);
     return [
       `## ${title}`,
       "",
@@ -235,10 +269,8 @@ function roundReplay(state: RunState): string[] {
       "",
       "### Validation",
       "",
-      ...(round.attacks.flatMap((attack) => attack.checks).length
-        ? round.attacks
-            .flatMap((attack) => attack.checks)
-            .map((check) => `- ${check.id}: ${checkCell(state, check)}.`)
+      ...(validationRows.length
+        ? validationRows
         : ["- No round-scoped check result was recorded."]),
       "",
       "### Health ledger",
@@ -391,11 +423,9 @@ export function renderBattleReport(state: RunState): string {
   const sharedDefects = defects.filter(
     (defect) => defect.evidenceClass === "shared",
   );
-  const nonDiscriminating = Boolean(
-    state.arenaOutcome &&
-    "kind" in state.arenaOutcome &&
-    state.arenaOutcome.kind === "non_discriminating",
-  );
+  const outcome = reportOutcome(state);
+  const nonDiscriminating = outcome.kind === "non_discriminating";
+  const outcomeTotals = reportOutcomeTotals(state);
   const lines = [
     "# Agent Arena Battle Report",
     "",
@@ -448,11 +478,18 @@ export function renderBattleReport(state: RunState): string {
     ...pullRequestProvenance(state),
     "## Final result",
     "",
-    nonDiscriminating
-      ? `**Non-discriminating battle** — ${state.ranking?.reason ?? "complete bidirectional coverage found no competitive differentiator"}`
-      : state.ranking?.draw
-        ? `Draw: ${state.ranking.reason}`
-        : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Winner"}: **${state.coverageDecision?.decision === "inconclusive" ? (state.ranking?.order[0] ?? "none") : (state.ranking?.winner ?? "none")}** — ${state.ranking?.reason ?? "run incomplete"}`,
+    state.coverageDecision?.decision === "inconclusive"
+      ? `Inconclusive; ledger leader: **${state.ranking?.order[0] ?? "none"}** — ${state.ranking?.reason ?? "run incomplete"}`
+      : state.coverageAssessment?.confidence === "provisional" &&
+          !state.coverageDecision
+        ? `Provisional leader: **${state.ranking?.winner ?? "none"}** — ${state.ranking?.reason ?? "run incomplete"}`
+        : nonDiscriminating
+          ? `**Non-discriminating battle** — ${state.ranking?.reason ?? "complete bidirectional coverage found no competitive differentiator"}`
+          : outcome.kind === "draw"
+            ? `Draw: ${state.ranking?.reason ?? "equal evidence"}`
+            : outcome.kind === "winner"
+              ? `${state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Winner"}: **${outcome.winner}** — ${state.ranking?.reason ?? "arena outcome"}`
+              : `Battle incomplete: **${state.ranking?.order[0] ?? "none"}** — ${state.ranking?.reason ?? "run incomplete"}`,
     state.coverageDecision?.decision === "inconclusive" ||
     (state.coverageAssessment?.confidence === "provisional" &&
       !state.coverageDecision)
@@ -460,7 +497,9 @@ export function renderBattleReport(state: RunState): string {
       : state.arenaOutcome
         ? nonDiscriminating
           ? `Arena champion: **none**. Raw health is preserved (${String(state.arenaOutcome.marginHp)} HP margin) without implying leadership.`
-          : `${state.integrity === "assisted" ? "Assisted leader" : "Arena champion"}: **${state.arenaOutcome.championId ?? "draw"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
+          : outcome.kind === "draw"
+            ? `Arena champion: **draw** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
+            : `${state.integrity === "assisted" ? "Assisted leader" : "Arena champion"}: **${outcome.kind === "winner" ? outcome.winner : "unavailable"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
         : "Arena champion: unavailable",
     state.config.mode === "siege"
       ? "Production artifact: **defender final patch only** (patch comparison disabled)"
@@ -488,6 +527,8 @@ export function renderBattleReport(state: RunState): string {
     `Decision basis: ${state.arenaOutcome && "decisionBasis" in state.arenaOutcome ? state.arenaOutcome.decisionBasis : "legacy_unknown"}`,
     "",
     `Evidence counts: ${String(competitiveDefects.length)} competitive landing(s) · ${String(sharedDefects.length)} shared QA defect(s) · ${String(state.coverageAssessment?.evidenceCounts.explicitEmpty ?? 0)} explicit-empty lane(s)`,
+    "",
+    `Competitive landings: **${String(outcomeTotals.competitiveLandings)}** · Shared defects: **${String(outcomeTotals.sharedDefects)}** · Schema-rejected findings: **${String(outcomeTotals.schemaRejectedFindings)}**`,
     "",
     "## Attack-lane coverage",
     "",

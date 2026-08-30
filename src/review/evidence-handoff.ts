@@ -8,6 +8,14 @@ export const EVIDENCE_HANDOFF_MAX_FINDINGS = 12;
 export const EVIDENCE_HANDOFF_MAX_BOUNDARY_FINDINGS = 24;
 export const EVIDENCE_HANDOFF_MAX_BYTES = 16 * 1024;
 export const EVIDENCE_HANDOFF_DIAGNOSTIC_MAX_BYTES = 8 * 1024;
+export const HANDOFF_OBSERVATION_PROVENANCE_KINDS = [
+  "code_inspection",
+  "task_source",
+  "test_inspection",
+  "test_run",
+  "tool_summary",
+  "other",
+] as const;
 
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const FindingIdSchema = z.string().regex(/^finding_[a-f0-9]{64}$/);
@@ -227,13 +235,7 @@ export const HandoffObservationSchema = z
     statement: normalizedTextSchema(1, 1_000),
     provenance: z
       .object({
-        kind: z.enum([
-          "code_inspection",
-          "task_source",
-          "test_inspection",
-          "tool_summary",
-          "other",
-        ]),
+        kind: z.enum(HANDOFF_OBSERVATION_PROVENANCE_KINDS),
         references: UniquePreservedTextArray(
           normalizedTextSchema(1, 300),
           1,

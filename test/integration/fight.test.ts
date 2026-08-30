@@ -231,6 +231,26 @@ class FlawedEmptyLaneAdapter extends ConvergedEmptyLaneAdapter {
   }
 }
 
+class SharedTargetAdapter extends ConvergedEmptyLaneAdapter {
+  override async implement(input: ImplementInput) {
+    const invocation = await super.implement(input);
+    await writeFile(
+      path.join(input.worktree, "src", "slug.mjs"),
+      'export function slug(value) {\n  return value.trim().toLowerCase().replaceAll(" ", "-");\n}\n',
+    );
+    return invocation;
+  }
+
+  override async repair(input: RepairInput) {
+    const invocation = await super.repair(input);
+    await writeFile(
+      path.join(input.worktree, "src", "slug.mjs"),
+      'export function slug(value) {\n  return value.trim().toLowerCase().replace(/\\s+/g, "-");\n}\n',
+    );
+    return invocation;
+  }
+}
+
 class FreshEvidenceAdapter extends CommandAgentAdapter {
   override async review(input: ReviewInput) {
     const invocation = await super.review(input);
@@ -327,6 +347,26 @@ class FreshEvidenceAdapter extends CommandAgentAdapter {
           },
         ],
       }),
+    );
+    return invocation;
+  }
+}
+
+class SharedDefectAdapter extends FreshEvidenceAdapter {
+  override async implement(input: ImplementInput) {
+    const invocation = await super.implement(input);
+    await writeFile(
+      path.join(input.worktree, "src", "slug.mjs"),
+      'export function slug(value) {\n  return value.trim().toLowerCase().replaceAll(" ", "-");\n}\n',
+    );
+    return invocation;
+  }
+
+  override async repair(input: RepairInput) {
+    const invocation = await super.repair(input);
+    await writeFile(
+      path.join(input.worktree, "src", "slug.mjs"),
+      'export function slug(value) {\n  return value.trim().toLowerCase().replace(/\\s+/g, "-");\n}\n',
     );
     return invocation;
   }
@@ -872,6 +912,64 @@ describe("fake-adapter fight on a mocked real issue", () => {
     ).rejects.toThrow("missing or ineligible");
   }, 60_000);
 
+  it("persists independently verified repair state for a contestant-authored shared defect", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      acceptanceCriteria: ["Collapse every run of whitespace to one hyphen"],
+      effortMode: "ultra-low",
+      fixedRounds: true,
+      rounds: 1,
+      selectionEnabled: false,
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new SharedDefectAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new SharedTargetAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+    }).fight(config);
+
+    const shared = outcome.state.attacks.find(
+      (entry) => entry.status === "shared_defect",
+    );
+    expect(shared).toMatchObject({
+      origin: { kind: "contestant", contestant: "a" },
+      targets: ["a", "b"],
+      sharedRepairStatus: { a: "repaired", b: "repaired" },
+    });
+    expect(outcome.state.arenaOutcome).toMatchObject({
+      kind: "non_discriminating",
+      sharedDefectCount: 1,
+    });
+    expect(outcome.state.patchRecommendation).toMatchObject({
+      reason: "no_differentiator",
+    });
+    const sharedEvent = (
+      await readFile(outcome.state.artifacts.events!, "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => ArenaEventSchema.parse(JSON.parse(line)))
+      .find(
+        (event) =>
+          event.type === "attack_resolved" && event.attackId === shared?.id,
+      );
+    expect(sharedEvent).toMatchObject({
+      type: "attack_resolved",
+      status: "shared_defect",
+      evidenceClass: "shared",
+    });
+  }, 60_000);
+
   it("pivots a planned second round and stops after two consecutive low-signal rounds", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = FightConfigSchema.parse({
@@ -1232,6 +1330,13 @@ describe("fake-adapter fight on a mocked real issue", () => {
         }),
       ]),
     );
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "invocation_started" &&
+          event.stage === "collect_attacks",
+      ),
+    ).toHaveLength(6);
     const durableSummary = JSON.parse(
       await readFile(outcome.state.artifacts.result!, "utf8"),
     ) as {
@@ -1774,6 +1879,191 @@ describe("fake-adapter fight on a mocked real issue", () => {
           record.terminalDisposition === "recovered",
       ),
     ).toHaveLength(3);
+  }, 30_000);
+
+  it("keeps accepted review findings without retrying malformed siblings", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = duelConfig(repositoryRoot);
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_PARTIAL_REVIEW: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+
+    const reviews = outcome.state.reviewInvocations.filter(
+      (entry) => entry.round === 1 && entry.reviewer === "a",
+    );
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toMatchObject({
+      submissionStatus: "submitted",
+      findingCount: 1,
+      parseOutcome: "partial",
+    });
+    expect(reviews[0]?.artifactPath).toBeTruthy();
+    expect(
+      outcome.state.attackInvocations.some(
+        (entry) => entry.round === 1 && entry.attacker === "a",
+      ),
+    ).toBe(true);
+  }, 30_000);
+
+  it("canonicalizes test-run review provenance without another provider invocation", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      rounds: 1,
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_TEST_RUN_ALIAS: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+
+    const reviews = outcome.state.reviewInvocations.filter(
+      (entry) => entry.round === 1 && entry.reviewer === "a",
+    );
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toMatchObject({
+      submissionStatus: "submitted",
+      findingCount: 1,
+      parseOutcome: "valid",
+    });
+    const parsed = JSON.parse(
+      await readFile(reviews[0]!.parsedArtifactPath!, "utf8"),
+    ) as {
+      normalizations: Array<{
+        path: string;
+        original: string;
+        normalized: string;
+        rule: string;
+      }>;
+    };
+    expect(parsed.normalizations).toContainEqual({
+      path: "$.findings[0].observations[0].provenance.kind",
+      original: "test-run",
+      normalized: "test_run",
+      rule: "v1.review.provenance.test_run_alias",
+    });
+    expect(await readFile(reviews[0]!.rawArtifactPath!, "utf8")).toContain(
+      '"kind":"test-run"',
+    );
+    const packet = EvidenceHandoffPacketSchema.parse(
+      JSON.parse(await readFile(reviews[0]!.artifactPath!, "utf8")),
+    );
+    expect(packet.findings[0]?.observations[0]?.provenance.kind).toBe(
+      "test_run",
+    );
+    expect(
+      outcome.state.submissionArtifacts
+        .filter((artifact) => artifact.kind === "review")
+        .reduce(
+          (total, artifact) =>
+            total + (artifact.schemaRejectedFindingCount ?? 0),
+          0,
+        ),
+    ).toBe(0);
+    expect(
+      outcome.state.attackInvocations.some(
+        (entry) =>
+          entry.round === 1 && entry.attacker === "a" && entry.target === "b",
+      ),
+    ).toBe(true);
+  }, 30_000);
+
+  it("retries wholly ambiguous review provenance with focused schema feedback", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      rounds: 1,
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_AMBIGUOUS_REVIEW_ONCE: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+
+    const reviews = outcome.state.reviewInvocations.filter(
+      (entry) => entry.round === 1 && entry.reviewer === "a",
+    );
+    expect(reviews).toHaveLength(2);
+    expect(reviews[0]).toMatchObject({
+      submissionStatus: "invalid_submission",
+      parseOutcome: "invalid",
+      findingCount: 0,
+    });
+    expect(reviews[1]).toMatchObject({
+      submissionStatus: "submitted",
+      parseOutcome: "valid",
+      findingCount: 1,
+    });
+    const retryPrompt = await readFile(
+      path.join(
+        outcome.state.artifacts.runDirectory!,
+        "prompts",
+        "round-1-review-a-attempt-2.md",
+      ),
+      "utf8",
+    );
+    expect(
+      JSON.parse(retryPrompt.split("# Targeted review schema retry\n")[1]!),
+    ).toEqual({
+      invalid_fields: [
+        {
+          path: "$.findings[0].observations[0].provenance.kind",
+          received: '"test_execution"',
+        },
+      ],
+      allowed_provenance_kinds: [
+        "code_inspection",
+        "task_source",
+        "test_inspection",
+        "test_run",
+        "tool_summary",
+        "other",
+      ],
+    });
+    expect(
+      outcome.state.submissionArtifacts
+        .filter((artifact) => artifact.kind === "review")
+        .reduce(
+          (total, artifact) =>
+            total + (artifact.schemaRejectedFindingCount ?? 0),
+          0,
+        ),
+    ).toBe(1);
   }, 30_000);
 
   it("refreshes a blocker from a clean frozen target worktree", async () => {

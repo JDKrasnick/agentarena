@@ -1,4 +1,5 @@
 import {
+  type Attack,
   PatchRecommendationSchema,
   type ContestantId,
   type ContestantResult,
@@ -6,9 +7,11 @@ import {
   type PatchRecommendation,
   type RunState,
 } from "../core/types.js";
+import { unresolvedSharedDefects } from "../outcomes/evidence.js";
 
 export interface RecommendationInput {
   contestants: RunState["contestants"];
+  attacks?: Attack[];
   championId?: ContestantId;
   outcomeKind?: "winner" | "draw" | "non_discriminating";
   qualityVerdict?: PatchQualityVerdict;
@@ -56,7 +59,10 @@ export function selectRecommendedPatch(
       eligible:
         contestant.status !== "eliminated" &&
         requiredValidationPassed &&
-        finalApplicabilityPassed,
+        finalApplicabilityPassed &&
+        (!input.attacks ||
+          unresolvedSharedDefects({ attacks: input.attacks }, contestant.id)
+            .length === 0),
       activeDefectDamage: contestant.healthLedger.activeDefects.reduce(
         (total, defect) => total + defect.damage,
         0,
@@ -70,7 +76,7 @@ export function selectRecommendedPatch(
     return PatchRecommendationSchema.parse({
       reason: "inconclusive",
       rationale: [
-        "No final patch passed applicability and required validation.",
+        "No final patch passed applicability, required validation, and shared-defect repair validation.",
       ],
       comparison,
     });

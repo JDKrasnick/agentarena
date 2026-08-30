@@ -172,8 +172,11 @@ Arena -> RoundEngine -> mechanisms
   validation, repair, and scoring. They do not depend upward on `RoundEngine` or
   `Arena`.
 
-Only versioned, strict, serializable data crosses the Arena–RoundEngine
-boundary. Runtime services, callbacks, worktree objects, abort controllers, and
+Only versioned, canonical, serializable data crosses the Arena–RoundEngine
+boundary. LLM-facing parsers accept and record unambiguous presentation-level
+variance—such as whitespace, enum case, known field aliases, and set ordering—
+before validating the canonical contract. They never invent missing semantic
+facts. Runtime services, callbacks, worktree objects, abort controllers, and
 mutable `RunState` stay outside it. `ContestantFeedback` is a deliberately
 limited projection: a lane sees its health, accepted attacks and visible
 reproducers, its own attack outcomes, and healed or unresolved defect IDs, but
@@ -217,7 +220,10 @@ Later attacks may explicitly challenge a prior adjudication or match one by
 assertion identity and normalized browser actions. The existing neutral judge
 receives up to six same-target decisions and classifies the new evidence as
 independent, affirming, overturning, or unresolved. Affirmations do not repeat
-damage or recoil; overturns preserve both immutable decisions and append score
+damage or recoil, but each affirmed reproducer joins the canonical defect's
+repair and final-verification set. If an affirmed variant still fails after the
+defect was healed, Arena reactivates the existing canonical damage without
+adding new damage. Overturns preserve both immutable decisions and append score
 corrections; unresolved conflicts remain score-neutral and make coverage
 provisional. A browser pass against a changed target patch is repair evidence,
 not proof that the earlier observation was wrong.
@@ -539,9 +545,12 @@ authorization, migration, concurrency, irreversible-data, and external-system
 risk impose a high floor; low-confidence assessments are promoted one tier.
 The judge receives one retry, after which the harness records a medium fallback.
 
-Profiles plan 1/1/2/3/3 rounds with per-round envelopes of 15/20/25/45/60
-minutes, provider-call caps of 6/8/10/14/18, and token caps of
-500k/750k/1.5m/4m/7m. They also select phase budgets. Explicit phase settings
+Profiles plan 1/1/2/3/3 rounds with sealed-round pressure thresholds of
+15/20/25/45/60 minutes, 6/8/10/14/18 provider calls, and
+500k/750k/1.5m/4m/7m tokens. These are post-round pressure signals, not
+preemptive caps: the harness completes mandatory verifier and repair work in
+the transactional round already in flight, then records any threshold crossing
+at the adaptive boundary. They also select phase budgets. Explicit phase settings
 override only their named phase. `--effort` may pin a profile. `--rounds 1..5`
 runs exactly that many rounds with medium phase timings and disables adaptive
 stopping and extension; it is rejected with `--effort auto`.
@@ -560,9 +569,10 @@ Each eligible reviewer then gets a dedicated read-only budget, configured by
 defaults to 10 minutes, accepts smaller positive values, and cannot
 exceed 10 minutes. At the deadline the harness terminates the owned process
 tree, then accepts an already-written review only when fault-isolated parsing
-classifies the complete file as `valid` or `valid_empty`. The review record is
-marked salvaged while its invocation remains `timed_out`; partial, invalid, and
-missing files receive the ordinary targeted retry and may lose coverage.
+classifies the complete file as `valid`, `valid_empty`, or a `partial` with at
+least one accepted finding. The review record is marked salvaged while its
+invocation remains `timed_out`; invalid, empty partial, and missing files
+receive the ordinary targeted retry and may lose coverage.
 
 Provider calls emit structured operational activity independently of visible
 stdout: assistant messages, tool starts and finishes, progress, and completion.
@@ -587,7 +597,11 @@ worktree state, the declared integration topology, and previously adjudicated
 root defects. It includes the complete approved/denied capability policy with
 scope, execution role, and `enforced`, `brokered`, or `advisory` semantics.
 Agents may use only approved `agent` or `both` capabilities directly;
-`harness_only` checks remain mediated by the harness.
+`harness_only` checks remain mediated by the harness. The prompt enumerates
+`code_inspection`, `task_source`, `test_inspection`, `test_run`,
+`tool_summary`, and `other` as the complete provenance vocabulary:
+`test_run` records evidence derived from executing a test, while
+`test_inspection` records evidence derived from reading test code.
 
 Immediately before attack invocation, the harness recomputes both fingerprints.
 A stale or malformed packet skips invocation and receives one targeted review
@@ -620,6 +634,9 @@ Each round has its own symmetric, versioned prompt and investigation brief:
 | 5 — Durability extension | Test recurrence, recovery, restart, and durability for a newly qualified trigger. | Regression recurrence, persistence/restart checks, recovery invariants, and bounded failure sequences. |
 
 After every sealed round, the harness records convergence and budget pressure.
+Crossing a pressure threshold can stop unqualified continuation but does not
+interrupt the completed round; strong accepted evidence may still qualify the
+next bounded round.
 It stops when both contestants pass required checks, no active damage remains,
 there is no new damage-bearing defect, and no repair allowance remains. At most
 two additional rounds may extend the profile, never beyond round 5. Every
@@ -714,6 +731,26 @@ valid siblings continue normally. A missing, timed-out, tampered, or malformed
 second attempt is permanently recorded as lost coverage. No correction work is
 carried into another round.
 
+LLM-facing normalization is deliberately softer than persisted contracts.
+Known snake/camel field aliases, normalized text, case-insensitive published
+enums, sorted unique set fields, omitted untrusted review labels, and the
+`execution` provenance alias are canonicalized with an audit record. At the
+review-observation provenance path only, case and outer whitespace plus the
+safe `TEST_RUN`, `test-run`, and `test run` spellings canonicalize to
+`test_run`; exact `test_run` records no normalization. Values such as
+`test_execution` remain ambiguous and are rejected. Safe normalization keeps
+the finding and creates its handoff without another provider call. A partially
+valid enum alias retains its exact original value in that audit record;
+oversized descriptive text instead records a bounded preview, original UTF-8
+byte count, and SHA-256 digest so audit metadata cannot duplicate unbounded
+provider content. A partially valid review immediately keeps its accepted
+findings; genuinely rejected
+siblings remain the only entries counted as schema-rejected. When no finding
+survives, the single review retry receives only the invalid JSON paths,
+received values, and allowed provenance vocabulary. Unknown or contradictory
+fields, missing evidence, invalid numbers, and unsupported semantic values
+remain rejected.
+
 Case-judge worktrees start from the frozen base implementation. The case judge
 receives an anonymized failure description and immutable RunSpec, snapshots
 that tree before generation, captures its test-only overlay, and replays it in
@@ -761,16 +798,30 @@ reads that text and decides whether it clearly supports the claim; the presence
 of a source ID is never sufficient by itself. Unsupported or ambiguous
 expectations are `unproven`, deal no target damage, and count as a miss.
 
-A submitted attack that does not land causes recoil damage to its author. Rank 1 costs 5 HP on a miss, rank 2 costs 10 HP, and rank 3 costs 15 HP. Invalid, flaky, unrelated, duplicate, self-defeating, and blocked attacks all miss. Harness infrastructure failures cause no recoil.
+When the same stable focused reproducer fails on both contestant patches and
+the judge confirms its oracle and relevance, Arena records a `shared_defect`.
+It expands the repair target to both patches, applies no damage or recoil, and
+reruns the reproducer during both repair paths. This turns useful common-mode
+evidence into a neutral quality improvement without pretending it distinguishes
+the contestants. Arena persists an active or repaired result for each target;
+final validation is authoritative. An unresolved target remains visibly active
+and makes that patch ineligible for a champion, quality comparison, or patch
+recommendation. If shared evidence is the only defect evidence and any target
+remains unresolved, the arena result is a draw rather than a ledger-derived
+winner.
+
+A submitted attack that does not land causes recoil damage to its author. Rank 1 costs 5 HP on a miss, rank 2 costs 10 HP, and rank 3 costs 15 HP. Invalid, flaky, unrelated, duplicate, one-sided self-defeating, and blocked attacks all miss. A verified shared defect and harness infrastructure failures cause no recoil.
 
 A lightweight verifier agent may help evaluate disputed attacks, but deterministic execution should remain the primary source of truth.
 
 The term **harness** should refer to deterministic orchestration and execution: worktrees, patches, processes, retries, and recorded pass/fail results. The **attack verifier** performs the narrow semantic judgment about oracle support, relevance, root-defect identity, and severity. Together they form the arena adjudication pipeline.
 
 Each mechanically landed defect retains its executable reproducer. Repair
-validation reruns every active reproducer and each healed-defect regression
-check after every attempt. Judge-based defects use immutable digest-bound repair
-judgments only when mechanical confirmation remains unavailable.
+validation reruns every accepted reproducer for the canonical defect, including
+score-neutral affirming variants, and each healed-defect regression check after
+every attempt. The defect heals only when the complete set passes. Judge-based
+defects use immutable digest-bound repair judgments only when mechanical
+confirmation remains unavailable.
 
 Harness-owned failures must never change health, but a true target defect must not be dismissed merely because it looks infrastructural. Git, filesystem, process-launch, environment, service, or provider failures are first retried in a clean worktree with author, target, base, and service-health controls.
 
@@ -1208,8 +1259,8 @@ Game mechanics should map directly to real engineering events:
 
 * **Damage:** A verified failing test, weighted by defect severity.
 * **Critical hit:** A catastrophic defect dealing 50 HP.
-* **Shared hit:** A neutral house attack proves the same defect against both
-  patches and damages both without recoil.
+* **Shared defect:** A verified contestant reproducer fails on both patches and
+  triggers repair for both without damage or recoil.
 * **Block:** An attack successfully disproved; its author takes rank-based recoil.
 * **Recoil:** A missed rank 1, 2, or 3 attack costs its author 5, 10, or 15 HP.
 * **Holdout:** A repair passes the visible reproducer but remains damaged because
@@ -1255,6 +1306,8 @@ Duration: 11m 14s
 Each run should generate:
 
 * `BATTLE.md`
+* Separate competitive-landing, shared-defect, and schema-rejected-finding
+  totals in the console and battle reports.
 * An immutable `run-spec.json` with frozen source snapshots and reproducibility metadata.
 * A redacted permission manifest with approvals, denials, leases, and omitted checks.
 * A credential-free frozen MCP inventory, readiness result, exact allowlist,

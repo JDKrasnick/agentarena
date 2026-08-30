@@ -52,6 +52,7 @@ export async function resolveCoverage(options: {
     state.arenaOutcome = deriveArenaOutcome(state);
     state.patchRecommendation = selectRecommendedPatch({
       contestants: state.contestants,
+      attacks: state.attacks,
       ...(state.ranking?.winner ? { championId: state.ranking.winner } : {}),
       ...(state.patchQualityVerdict
         ? { qualityVerdict: state.patchQualityVerdict }

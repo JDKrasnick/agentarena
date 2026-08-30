@@ -13,6 +13,7 @@ import { renderBattleVisual } from "../../src/reports/visual.js";
 import {
   reportCheckStatus,
   reportDefects,
+  reportOutcomeTotals,
   resolveArtifactHref,
 } from "../../src/reports/presentation.js";
 import { makeRunState } from "../helpers/run-state.js";
@@ -48,6 +49,18 @@ function attack(state: RunState, overrides: Partial<Attack> = {}): Attack {
 }
 
 describe("battle reports", () => {
+  it("labels provider-call limits as sealed-round pressure thresholds", () => {
+    const state = makeRunState();
+
+    expect(renderConsoleSummary(state)).toContain(
+      "Sealed-round pressure thresholds:",
+    );
+    expect(renderBattleHtml(state)).toContain(
+      "Sealed-round pressure thresholds:",
+    );
+    expect(renderBattleVisual(state)).toContain("sealed-round pressure at");
+  });
+
   it("uses consistent non-discriminating language and separates shared evidence in every report", () => {
     const state = makeRunState();
     state.coverageAssessment = {
@@ -157,6 +170,31 @@ describe("battle reports", () => {
     expect(report).toContain("## Handoff");
     expect(report).toContain("### Already done");
     expect(report).toContain("### Still needed");
+  });
+
+  it("projects initial and round required checks into their causal sections", () => {
+    const state = makeRunState();
+    for (const contestant of Object.values(state.contestants)) {
+      contestant.initialPatchPath = `${state.artifacts.runDirectory}/patches/${contestant.id}-initial.diff`;
+      contestant.checks = [
+        { id: "initial-required", kind: "required", status: "passed" },
+        ...([1, 2, 3] as const).map((round) => ({
+          id: `round-${String(round)}-required`,
+          kind: "required" as const,
+          status: "passed" as const,
+        })),
+        { id: "final-required", kind: "required", status: "passed" },
+      ];
+    }
+
+    const report = renderBattleReport(state);
+
+    expect(report).toContain(
+      "| Codex | not run | [initial patch](./patches/a-initial.diff) | PASS |",
+    );
+    expect(report).toContain("- Codex — round-1-required: PASS.");
+    expect(report).toContain("- Claude — round-3-required: PASS.");
+    expect(report).not.toContain("No round-scoped check result was recorded.");
   });
 
   it("keeps the terminal verdict tied to validation and unresolved defects", () => {
@@ -310,6 +348,93 @@ describe("battle reports", () => {
     expect(renderBattleVisual(state)).not.toContain("<script>alert");
   });
 
+  it("separates competitive, shared, and schema-rejected outcome totals", () => {
+    const state = makeRunState();
+    const competitive = attack(state);
+    competitive.adjudication = {
+      version: 1,
+      id: "adjudication:competitive",
+      verdict: "valid",
+      canonicalDefectId: "logout-defect",
+      severity: "high",
+      rationale: "verified",
+      evidenceBasis: "mechanical",
+      duplicateState: "unique",
+      relationship: "independent",
+      retryArtifactRefs: [],
+      diagnosticArtifactRefs: [],
+      multiplier: 1,
+      scoreEffect: "damage",
+      exactAmount: 30,
+    };
+    const competitiveAdjudication = competitive.adjudication;
+    if (!competitiveAdjudication)
+      throw new Error("Fixture adjudication is missing");
+    const affirm = attack(state, { id: "affirm", round: 2 });
+    affirm.adjudication = {
+      ...competitiveAdjudication,
+      id: "adjudication:affirm",
+      relationship: "affirm",
+      priorAdjudicationId: competitiveAdjudication.id,
+      scoreEffect: "none",
+      exactAmount: 0,
+    };
+    const shared = attack(state, {
+      id: "shared",
+      status: "shared_defect",
+      targets: ["a", "b"],
+      damage: undefined,
+      damageActive: false,
+    });
+    state.attacks = [competitive, affirm, shared];
+    state.submissionArtifacts = [
+      {
+        round: 1,
+        phase: "review",
+        actor: "a",
+        kind: "review",
+        outcome: "partial",
+        rawSha256: "a".repeat(64),
+        rawArtifactPath: `${state.artifacts.runDirectory}/submissions/raw.txt`,
+        parsedArtifactPath: `${state.artifacts.runDirectory}/submissions/parsed.json`,
+        schemaRejectedFindingCount: 2,
+      },
+    ];
+
+    expect(reportOutcomeTotals(state)).toEqual({
+      competitiveLandings: 1,
+      sharedDefects: 1,
+      schemaRejectedFindings: 2,
+    });
+    expect(renderConsoleSummary(state)).toContain(
+      "Attack outcomes: 1 competitive landing · 1 shared defect · 2 schema-rejected findings",
+    );
+    expect(renderBattleReport(state)).toContain(
+      "Competitive landings: **1** · Shared defects: **1** · Schema-rejected findings: **2**",
+    );
+    expect(renderBattleHtml(state)).toContain(
+      "Competitive landings</dt><dd>1</dd><dt>Shared defects</dt><dd>1</dd><dt>Schema-rejected findings</dt><dd>2</dd>",
+    );
+    expect(reportDefects(state)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          evidenceClass: "shared",
+          active: true,
+        }),
+      ]),
+    );
+
+    shared.sharedRepairStatus = { a: "repaired", b: "repaired" };
+    expect(reportDefects(state)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          evidenceClass: "shared",
+          active: false,
+        }),
+      ]),
+    );
+  });
+
   it("renders an incomplete outcome without inventing a draw or winner", () => {
     const state = makeRunState();
     state.status = "inconclusive";
@@ -325,6 +450,42 @@ describe("battle reports", () => {
     expect(html).not.toContain("Draw result");
     expect(visual).toContain("Result: INCOMPLETE · run incomplete");
     expect(visual).not.toContain("Winner:");
+  });
+
+  it("renders the authoritative draw when legacy ranking still names a winner", () => {
+    const state = makeRunState();
+    state.arenaOutcome = {
+      version: 2,
+      kind: "draw",
+      contestants: {},
+      marginHp: 0,
+      marginClass: "tied",
+      decidingFactors: [],
+      decisionBasis: "no_differentiator",
+      competitiveLandingCount: 0,
+      sharedDefectCount: 1,
+      explicitEmptyLaneCount: 0,
+    };
+    state.ranking = {
+      winner: "a",
+      draw: false,
+      order: ["a", "b"],
+      reason: "Stale pre-outcome ranking",
+    };
+
+    const consoleReport = renderConsoleSummary(state);
+    const markdown = renderBattleReport(state);
+    const html = renderBattleHtml(state);
+    const visual = renderBattleVisual(state);
+
+    expect(consoleReport).toContain("Draw: Stale pre-outcome ranking");
+    expect(markdown).toContain("Draw: Stale pre-outcome ranking");
+    expect(html).toContain("Draw result");
+    expect(visual).toContain("Result: DRAW");
+    expect(consoleReport).not.toContain("Arena champion: Codex");
+    expect(markdown).not.toContain("Winner: **a**");
+    expect(html).not.toContain("Codex won");
+    expect(visual).not.toContain("Winner: Codex");
   });
 
   it("renders implementation, round phases, failures, and review in causal order", () => {
@@ -358,6 +519,18 @@ describe("battle reports", () => {
       draw: true,
       order: ["a", "b"],
       reason: "equal evidence",
+    };
+    draw.arenaOutcome = {
+      version: 2,
+      kind: "draw",
+      contestants: {},
+      marginHp: 0,
+      marginClass: "tied",
+      decidingFactors: [],
+      decisionBasis: "no_differentiator",
+      competitiveLandingCount: 0,
+      sharedDefectCount: 0,
+      explicitEmptyLaneCount: 0,
     };
     expect(renderConsoleSummary(draw)).toContain("Draw: equal evidence");
     expect(renderBattleHtml(draw)).toContain("Draw result");

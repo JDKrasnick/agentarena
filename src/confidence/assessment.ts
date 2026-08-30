@@ -242,13 +242,18 @@ export function assessBattleCoverage(
           : [],
       ),
     );
-    const hasLanded = usable.some((entry) => entry.status === "landed");
+    const hasRepairableDefect = usable.some(
+      (entry) => entry.status === "landed" || entry.status === "shared_defect",
+    );
     const finalValidationAttempted =
       state.contestants[target]?.checks.some(
         (check) => check.id === "final-required",
       ) ?? false;
     const expectedFinalCheckIds = attacks
-      .filter((entry) => entry.status === "landed")
+      .filter(
+        (entry) =>
+          entry.status === "landed" || entry.status === "shared_defect",
+      )
       .flatMap((entry) => [
         ...(entry.browserProbe ? [`final-browser-${entry.id}`] : []),
         ...(entry.caseBundle?.cases
@@ -265,7 +270,7 @@ export function assessBattleCoverage(
       return check ? [check] : [];
     });
     const finalEvidenceRequired =
-      hasLanded &&
+      hasRepairableDefect &&
       (finalValidationAttempted || state.status === "inconclusive");
     const finalEvidenceMissing =
       finalEvidenceRequired &&
@@ -289,7 +294,7 @@ export function assessBattleCoverage(
       (entry) => entry.round === round,
     );
     const repairRequired =
-      hasLanded && targetRound?.postAttackStatus !== "downed";
+      hasRepairableDefect && targetRound?.postAttackStatus !== "downed";
     const repairAttempts =
       targetRound?.repairAttempts ??
       (targetRound?.repair ? [targetRound.repair] : []);

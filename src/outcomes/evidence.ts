@@ -25,6 +25,33 @@ function remainsValidLanding(attacks: readonly Attack[], attack: Attack) {
   );
 }
 
+export function sharedDefectIsActive(
+  attack: Attack,
+  contestantId?: ContestantId,
+): boolean {
+  if (attack.status !== "shared_defect") return false;
+  const targets = contestantId ? [contestantId] : attack.targets;
+  return targets.some(
+    (target) =>
+      attack.targets.includes(target) &&
+      attack.sharedRepairStatus?.[target] !== "repaired",
+  );
+}
+
+export function unresolvedSharedDefects(
+  state: Pick<RunState, "attacks">,
+  contestantId?: ContestantId,
+): Attack[] {
+  const unresolved: Attack[] = [];
+  for (const attacks of sharedEvidenceByCanonicalIdentity(state).values()) {
+    const activeReproducer = attacks.find((attack) =>
+      sharedDefectIsActive(attack, contestantId),
+    );
+    if (activeReproducer) unresolved.push(activeReproducer);
+  }
+  return unresolved;
+}
+
 /** Contestant-authored differential evidence that still stands at finalization. */
 export function competitiveLandings(
   state: Pick<RunState, "attacks">,
@@ -38,22 +65,38 @@ export function competitiveLandings(
   );
 }
 
-/** Neutral findings are counted once by their original canonical identity. */
+/** Shared findings are counted once by their original canonical identity. */
 export function sharedDefects(
   state: Pick<RunState, "attacks">,
   round?: number,
 ): Attack[] {
-  const byCanonicalIdentity = new Map<string, Attack>();
+  return [...sharedEvidenceByCanonicalIdentity(state, round).values()].map(
+    (attacks) => attacks.at(-1)!,
+  );
+}
+
+function sharedEvidenceByCanonicalIdentity(
+  state: Pick<RunState, "attacks">,
+  round?: number,
+): Map<string, Attack[]> {
+  const byCanonicalIdentity = new Map<string, Attack[]>();
   for (const attack of state.attacks) {
     if (
-      attack.origin.kind !== "house" ||
+      !(
+        attack.status === "shared_defect" ||
+        (attack.origin.kind === "house" &&
+          remainsValidLanding(state.attacks, attack))
+      ) ||
       (round !== undefined && attack.round !== round) ||
-      !remainsValidLanding(state.attacks, attack)
+      decisionWasOverturned(state.attacks, attack)
     )
       continue;
-    byCanonicalIdentity.set(attack.rootDefectId ?? attack.id, attack);
+    const canonicalIdentity = attack.rootDefectId ?? attack.id;
+    const siblings = byCanonicalIdentity.get(canonicalIdentity) ?? [];
+    siblings.push(attack);
+    byCanonicalIdentity.set(canonicalIdentity, siblings);
   }
-  return [...byCanonicalIdentity.values()];
+  return byCanonicalIdentity;
 }
 
 export function explicitEmptyLaneCount(
@@ -104,7 +147,7 @@ export function finalRequiredPassed(
 }
 
 export function finalPatchEligible(
-  state: Pick<RunState, "contestants">,
+  state: Pick<RunState, "attacks" | "contestants">,
   contestantId: ContestantId,
 ): boolean {
   const contestant = state.contestants[contestantId];
@@ -113,6 +156,7 @@ export function finalPatchEligible(
     contestant.status !== "eliminated" &&
     contestant.status !== "failed" &&
     contestant.finalPatchPath &&
-    finalRequiredPassed(state, contestantId),
+    finalRequiredPassed(state, contestantId) &&
+    unresolvedSharedDefects(state, contestantId).length === 0,
   );
 }

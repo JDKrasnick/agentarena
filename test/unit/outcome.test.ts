@@ -140,6 +140,59 @@ describe("arena outcome", () => {
     expect(outcome).not.toHaveProperty("championId");
   });
 
+  it("withholds a champion while either shared repair target remains unresolved", () => {
+    const state = makeRunState();
+    completeCoverage(state, 5);
+    const shared = landing(state, {
+      id: "shared-1",
+      status: "shared_defect",
+      targets: ["a", "b"],
+      rootDefectId: "shared-regression",
+      sharedRepairStatus: { a: "repaired", b: "active" },
+    });
+    state.attacks = [shared];
+
+    expect(deriveArenaOutcome(state)).toMatchObject({
+      kind: "draw",
+      competitiveLandingCount: 0,
+      sharedDefectCount: 1,
+    });
+    expect(deriveArenaOutcome(state)).not.toHaveProperty("championId");
+
+    shared.sharedRepairStatus = { a: "repaired", b: "repaired" };
+    expect(deriveArenaOutcome(state)).toMatchObject({
+      kind: "non_discriminating",
+      competitiveLandingCount: 0,
+      sharedDefectCount: 1,
+    });
+  });
+
+  it("keeps a canonical shared defect unresolved while any sibling reproducer remains active", () => {
+    const state = makeRunState();
+    completeCoverage(state, 4);
+    const activeSibling = landing(state, {
+      id: "shared-active",
+      status: "shared_defect",
+      targets: ["a", "b"],
+      rootDefectId: "shared-regression",
+      sharedRepairStatus: { a: "active", b: "active" },
+    });
+    const repairedSibling = landing(state, {
+      id: "shared-repaired",
+      status: "shared_defect",
+      targets: ["a", "b"],
+      rootDefectId: "shared-regression",
+      sharedRepairStatus: { a: "repaired", b: "repaired" },
+    });
+    state.attacks = [activeSibling, repairedSibling];
+
+    expect(deriveArenaOutcome(state)).toMatchObject({
+      kind: "draw",
+      competitiveLandingCount: 0,
+      sharedDefectCount: 1,
+    });
+  });
+
   it("preserves an ordinary competitive result when a contestant landing remains valid even after repair", () => {
     const state = makeRunState();
     completeCoverage(state, 5);

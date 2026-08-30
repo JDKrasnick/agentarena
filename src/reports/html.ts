@@ -5,6 +5,7 @@ import type {
   RunState,
 } from "../core/types.js";
 import { contestantLabel } from "../core/labels.js";
+import { sharedDefectIsActive } from "../outcomes/evidence.js";
 import { conciseUsage, readRunUsageSummarySync } from "../telemetry/usage.js";
 import {
   latestCheck,
@@ -12,6 +13,7 @@ import {
   reportContestants,
   reportDefects,
   reportOutcome,
+  reportOutcomeTotals,
   reportRounds,
   resolveArtifactHref,
 } from "./presentation.js";
@@ -77,6 +79,10 @@ function attackEffect(attack: Attack): string {
     return attack.damageActive
       ? `${String(amount)} HP remains active`
       : `${String(amount)} HP repaired`;
+  if (attack.status === "shared_defect")
+    return sharedDefectIsActive(attack)
+      ? "Shared repair target remains active · no HP change"
+      : "Shared repair verified · no HP change";
   if (attack.recoil) return `${String(attack.recoil)} HP recoil`;
   return "No health change";
 }
@@ -174,13 +180,8 @@ export function renderBattleHtml(state: RunState): string {
             ? "Why no arena champion was awarded"
             : "Why the battle is incomplete";
   const defects = reportDefects(state);
+  const outcomeTotals = reportOutcomeTotals(state);
   const unresolved = defects.filter((defect) => defect.active);
-  const competitiveDefects = defects.filter(
-    (defect) => defect.evidenceClass === "competitive",
-  );
-  const sharedDefects = defects.filter(
-    (defect) => defect.evidenceClass === "shared",
-  );
   const checkIds = [
     ...new Set(
       contestants.flatMap((contestant) =>
@@ -195,7 +196,7 @@ export function renderBattleHtml(state: RunState): string {
   );
   const effortProfile = state.config.resolvedEffortProfile;
   const effortBudget = effortProfile
-    ? `${String(effortProfile.roundEnvelopeMs / 60_000)} minutes · ${String(effortProfile.maxProviderCallsPerRound)} provider calls · ${String(effortProfile.maxTokensPerRound)} tokens per round; implementation/review/attack/judge/repair ${String(effortProfile.implementationMs / 60_000)}/${String(effortProfile.reviewMs / 60_000)}/${String(effortProfile.attackMs / 60_000)}/${String(effortProfile.judgeMs / 60_000)}/${String(effortProfile.repairMs / 60_000)} minutes`
+    ? `Sealed-round pressure thresholds: ${String(effortProfile.roundEnvelopeMs / 60_000)} minutes · ${String(effortProfile.maxProviderCallsPerRound)} provider calls · ${String(effortProfile.maxTokensPerRound)} tokens; implementation/review/attack/judge/repair ${String(effortProfile.implementationMs / 60_000)}/${String(effortProfile.reviewMs / 60_000)}/${String(effortProfile.attackMs / 60_000)}/${String(effortProfile.judgeMs / 60_000)}/${String(effortProfile.repairMs / 60_000)} minutes`
     : "Legacy budget unavailable";
   const adaptiveRows = state.adaptiveDecisions.length
     ? state.adaptiveDecisions
@@ -272,9 +273,13 @@ export function renderBattleHtml(state: RunState): string {
               ? attack.damageActive
                 ? "fail"
                 : "pass"
-              : attack.recoil
-                ? "warn"
-                : "muted";
+              : attack.status === "shared_defect"
+                ? sharedDefectIsActive(attack)
+                  ? "fail"
+                  : "pass"
+                : attack.recoil
+                  ? "warn"
+                  : "muted";
           const target = attack.targets
             .map((id) => contestantLabel(state.config.contestants, id))
             .join(", ");
@@ -300,8 +305,9 @@ export function renderBattleHtml(state: RunState): string {
   const roundRows = rounds
     .map((round) => {
       const attacksForRound = round.attacks;
-      const landedForRound = attacksForRound.filter(
-        (attack) => attack.status === "landed",
+      const provenForRound = attacksForRound.filter(
+        (attack) =>
+          attack.status === "landed" || attack.status === "shared_defect",
       );
       const recoil = attacksForRound.reduce(
         (sum, attack) => sum + (attack.recoil ?? 0),
@@ -337,7 +343,7 @@ export function renderBattleHtml(state: RunState): string {
           : round.id === "reconciliation"
             ? "Reconciliation"
             : `Round ${String(round.id)}`;
-      return `<tr><th>${label}<span class="subtle">${focus}</span></th><td>${String(attacksForRound.length)} submitted · ${String(landedForRound.length)} proven · ${String(recoil)} HP recoil</td><td>${escapeHtml(health)} HP</td><td>${link(state, "Open report", state.artifacts.battle)}</td></tr>`;
+      return `<tr><th>${label}<span class="subtle">${focus}</span></th><td>${String(attacksForRound.length)} submitted · ${String(provenForRound.length)} proven · ${String(recoil)} HP recoil</td><td>${escapeHtml(health)} HP</td><td>${link(state, "Open report", state.artifacts.battle)}</td></tr>`;
     })
     .join("\n");
   const phaseReplay = rounds
@@ -429,7 +435,7 @@ export function renderBattleHtml(state: RunState): string {
 <section class="section"><h2>Effort and adaptive coverage</h2><p class="note"><strong>${escapeHtml(state.config.resolvedEffortProfile?.tier ?? state.config.effortMode)}</strong> · ${state.config.fixedRounds ? `${String(state.config.rounds)} exact rounds` : `${String(state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds)} planned, up to ${String(state.config.resolvedEffortProfile?.maxRounds ?? state.config.rounds)}`} · ${escapeHtml(state.adaptiveCompletion?.reason ?? "run in progress or fixed-round completion")}. Skipped briefs: ${escapeHtml(state.adaptiveCompletion?.skippedBriefs.join(", ") || "none")}.</p><p class="note">Configured budget: ${escapeHtml(effortBudget)}.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Boundary</th><th>Wall time</th><th>Calls</th><th>Tokens</th><th>Converged</th><th>Signal</th><th>Low-signal streak</th><th>Extension triggers</th><th>Exact decision</th></tr></thead><tbody>${adaptiveRows}</tbody></table></div></section>
 ${laneCoverage}
 ${terminalNotice}
-<section class="section decision"><div class="callout"><strong>${escapeHtml(decisionHeading)}</strong><p>${escapeHtml(state.ranking?.reason ?? "No final ranking reason was recorded.")}</p><p class="note">${outcome.kind === "non_discriminating" ? "Raw HP, recoil, shared defects, and patch size remain evidence, but none creates an arena champion. Any recommendation below is an independent identity-blind quality judgment." : "The champion is determined by remaining health. Health starts at 100, then subtracts missed-attack recoil and active, un-repaired defect damage."}</p></div><div class="score"><dl><dt>Verified required suites</dt><dd>${requiredPassed ? chip("Both pass", "pass") : chip("Review failures", "fail")}</dd><dt>Distinct defects</dt><dd>${String(defects.length)} (${String(unresolved.length)} unresolved, ${String(defects.length - unresolved.length)} repaired)</dd><dt>Competitive landings</dt><dd>${String(competitiveDefects.length)}</dd><dt>Shared QA defects</dt><dd>${String(sharedDefects.length)}</dd><dt>Explicit-empty lanes</dt><dd>${String(state.arenaOutcome && "explicitEmptyLaneCount" in state.arenaOutcome ? state.arenaOutcome.explicitEmptyLaneCount : (state.coverageAssessment?.evidenceCounts.explicitEmpty ?? 0))}</dd><dt>Deciding factors</dt><dd>${escapeHtml(state.arenaOutcome?.decidingFactors.join(", ") || "none")}</dd><dt>${outcome.kind === "non_discriminating" ? "Independent recommendation" : "Recommended patch"}</dt><dd>${escapeHtml(recommendation)}</dd></dl></div></section>
+<section class="section decision"><div class="callout"><strong>${escapeHtml(decisionHeading)}</strong><p>${escapeHtml(state.ranking?.reason ?? "No final ranking reason was recorded.")}</p><p class="note">${outcome.kind === "non_discriminating" ? "Raw HP, recoil, shared defects, and patch size remain evidence, but none creates an arena champion. Any recommendation below is an independent identity-blind quality judgment." : "The champion is determined by remaining health. Health starts at 100, then subtracts missed-attack recoil and active, un-repaired defect damage."}</p></div><div class="score"><dl><dt>Verified required suites</dt><dd>${requiredPassed ? chip("Both pass", "pass") : chip("Review failures", "fail")}</dd><dt>Distinct defects</dt><dd>${String(defects.length)} (${String(unresolved.length)} unresolved, ${String(defects.length - unresolved.length)} repaired)</dd><dt>Competitive landings</dt><dd>${String(outcomeTotals.competitiveLandings)}</dd><dt>Shared defects</dt><dd>${String(outcomeTotals.sharedDefects)}</dd><dt>Schema-rejected findings</dt><dd>${String(outcomeTotals.schemaRejectedFindings)}</dd><dt>Explicit-empty lanes</dt><dd>${String(state.arenaOutcome && "explicitEmptyLaneCount" in state.arenaOutcome ? state.arenaOutcome.explicitEmptyLaneCount : (state.coverageAssessment?.evidenceCounts.explicitEmpty ?? 0))}</dd><dt>Deciding factors</dt><dd>${escapeHtml(state.arenaOutcome?.decidingFactors.join(", ") || "none")}</dd><dt>${outcome.kind === "non_discriminating" ? "Independent recommendation" : "Recommended patch"}</dt><dd>${escapeHtml(recommendation)}</dd></dl></div></section>
 <section class="section"><h2>Patch quality facts</h2><p class="note">Primary categories are mutually exclusive. Production minimality excludes every other category; raw test volume is not a quality advantage.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Contestant</th><th>Primary category</th><th>Files</th><th>Added</th><th>Deleted</th><th>Normalized</th><th>Paths</th></tr></thead><tbody>${qualityRows}</tbody></table></div><p class="note">Observability is an overlapping heuristic; zero matches do not prove absence.</p><ul>${observabilityRows}</ul></section>
 <section class="section"><h2>Verified test coverage</h2><p class="note">These results apply to each named final patch in this run. “Not run” is intentionally not shown as a pass. Open stdout/stderr to inspect the harness evidence.</p><div class="table-wrap" tabindex="0"><table><caption>Recorded checks by contestant and exact command</caption><thead><tr><th>Check / command</th>${contestants.map((contestant) => `<th>${escapeHtml(contestantLabel(state.config.contestants, contestant.id))}</th>`).join("")}</tr></thead><tbody>${coverageRows}</tbody></table></div></section>
 <section class="section"><h2>What happened in each round</h2><div class="table-wrap" tabindex="0"><table><caption>Round outcomes and health after repair</caption><thead><tr><th>Investigation</th><th>Attack outcome</th><th>Health after repair</th><th>Artifacts</th></tr></thead><tbody>${roundRows}</tbody></table></div></section>

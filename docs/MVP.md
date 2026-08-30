@@ -37,9 +37,12 @@ assertion fingerprints and normalized browser family, profile, target, and
 non-assert action sequences also supply likely prior decisions to the same
 judge call, bounded to six same-target records. The judge returns an
 independent, affirm, overturn, or unresolved relationship with its rationale.
-Affirmations never score twice; overturns append recoil refunds or defect-damage
-corrections and mark withdrawn defects superseded; unresolved challenges keep
-the prior score temporarily but prevent full-confidence completion.
+Affirmations never score twice, but their reproducers join the canonical
+defect's repair and final-verification set. A failing affirm after healing
+reactivates the existing canonical damage without adding damage. Overturns
+append recoil refunds or defect-damage corrections and mark withdrawn defects
+superseded; unresolved challenges keep the prior score temporarily but prevent
+full-confidence completion.
 
 Unresolved required coverage preserves the health-ledger leader as provisional
 but publishes no champion or recommended patch. `agent-arena
@@ -78,7 +81,10 @@ and runs initial validation; only successful initialization continues into the
 ordinary attack–repair phases. Lower-level mechanisms perform narrow operations
 and cannot import either orchestration layer.
 
-The boundary carries only strict, versioned, JSON-safe contracts:
+The boundary carries only canonical, versioned, JSON-safe contracts. Provider
+submissions first pass through a narrow audited normalizer for unambiguous
+presentation variance; missing or contradictory semantic evidence still fails
+closed:
 
 - `RunSpec` freezes the task and sources, base commit, battle topology,
   commands, budgets, permissions, and content hash.
@@ -302,10 +308,13 @@ concurrency, irreversible-data, and external-system risks impose a high floor,
 and confidence below 0.7 promotes one tier. One failed assessment is retried;
 two failures produce a recorded medium fallback.
 
-The five profiles plan 1/1/2/3/3 rounds with 15/20/25/45/60-minute round
-envelopes, 6/8/10/14/18 provider calls per round, and
-500k/750k/1.5m/4m/7m tokens per round. Convergence is evaluated after each
-sealed round. At most two independently qualified extensions may run, never
+The five profiles plan 1/1/2/3/3 rounds with sealed-round pressure thresholds
+of 15/20/25/45/60 minutes, 6/8/10/14/18 provider calls, and
+500k/750k/1.5m/4m/7m tokens. They are not hard preemptive caps: mandatory
+verifier and repair work completes transactionally before the harness records
+pressure at the adaptive boundary. Pressure can stop unqualified continuation;
+strong accepted evidence can still qualify a bounded next round. Convergence is
+evaluated after each sealed round. At most two independently qualified extensions may run, never
 past round 5. An extension requires a new damage-bearing canonical defect,
 including partial-judge damage, or an active accepted defect with repair
 allowance remaining. Findings outside that scope are recorded with no scoring
@@ -332,10 +341,10 @@ The budget defaults to 10 minutes and has a 10-minute ceiling. Every provider
 and judge invocation records normalized message, tool lifecycle, progress, and
 result activity without tool arguments or private reasoning. A review deadline
 still terminates and cleans up the owned process tree. Only a complete
-schema-valid `valid` or `valid_empty` file already present after cleanup is
-salvaged into the normal handoff path; the underlying invocation stays
-`timed_out`. Partial, invalid, and missing output follow the existing one-retry
-path.
+schema-valid `valid`, `valid_empty`, or `partial` file with at least one
+accepted finding already present after cleanup is salvaged into the normal
+handoff path; the underlying invocation stays `timed_out`. Invalid, empty
+partial, and missing output follow the existing one-retry path.
 
 The resulting v2 packet records harness-attested target and complete resolved
 permission fingerprints plus at most 12 ordered reviewer hypotheses. Each
@@ -345,6 +354,11 @@ behavior, confidence, required capabilities, and focused regression plan. Stable
 finding IDs reject exact duplicates while preserving the first priority; they
 never identify canonical defects. Deterministic tail compaction records omitted
 IDs and enforces a 16 KiB canonical UTF-8 ceiling.
+
+The review prompt lists the complete observation provenance vocabulary:
+`code_inspection`, `task_source`, `test_inspection`, `test_run`,
+`tool_summary`, and `other`. `test_run` means the reviewer executed a test;
+`test_inspection` means the reviewer read test code without claiming execution.
 
 Immediately before attack invocation, the harness recomputes both fingerprints.
 A stale or malformed packet skips invocation and receives one targeted review
@@ -417,25 +431,22 @@ authoritative oracle. House-generated probes must be surfaced during a normal
 round so the target receives a repair opportunity; a novel final-validation
 finding is reported but cannot change the winner.
 
-### Deferred shared-defect extension
+### Shared-defect repair
 
-Differential contestant attacks cannot expose a defect shared by both patches.
-Neutral house probes remain a readable legacy artifact and a possible future
-extension; new MVP runs do not invoke or score them.
+A contestant reproducer that stably fails on both frozen patches is not useful
+differential scoring evidence, but it can still improve both implementations.
+After the neutral judge confirms the oracle and relevance, Arena records a
+`shared_defect`, expands its targets to both contestants, and gives both the
+same repair opportunity. Shared defects apply neither damage nor recoil and do
+not break ties; their reproducers run in both repair paths and remain visible in
+the report. Each target carries durable `active` or `repaired` state, updated by
+repair validation and finalized by the last reproducer run. An unresolved
+shared target remains visibly unresolved and makes that patch ineligible for a
+champion, quality comparison, or recommendation. When shared evidence is the
+only defect evidence and either target remains active, the result is a draw.
 
-Historically, a house attack came from the same versioned method packs and official task
-contract, but has no contestant author. It must pass the ordinary determinism,
-relevance, oracle, root-defect, and severity checks. It is evaluated
-independently against both frozen patches and may land on either or both. Each
-affected contestant takes the same severity damage for the shared root defect
-and receives the same evidence and repair opportunity. House attacks have no
-rank and cannot cause recoil. They are resolved in the same simultaneous event
-batch as contestant attacks and cannot duplicate or stack existing defect
-damage.
-
-The cap keeps the neutral lane from overtaking the core agent-versus-agent
-experiment. A house lead that is not promoted during rounds 2 or 3 is an
-unscored report finding.
+Neutral house probes remain readable legacy artifacts. New MVP runs do not
+invoke them.
 
 ## MVP boundaries
 
@@ -931,15 +942,36 @@ still-malformed second attempt is discarded permanently and recorded as lost
 coverage. No correction queue or later reconciliation round exists for new
 runs.
 
+Before fault isolation, the provider boundary normalizes only harmless,
+auditable variance: NFC/LF/outer whitespace, published enum case, known
+snake/camel aliases, set ordering and duplicates, omitted untrusted review
+labels, `execution` as an alias for tool-summary provenance, and deterministic
+UTF-8-safe truncation of oversized descriptive review fields. The persisted
+value always uses the canonical schema and records the normalization. Exact
+small enum aliases retain their original value; truncation records store only a
+bounded preview, the original UTF-8 byte count, and a SHA-256 digest. Review
+observation provenance additionally canonicalizes only `TEST_RUN`, `test-run`,
+and `test run` spelling, case, and outer-whitespace variants to `test_run`;
+exact `test_run` is unchanged, and values such as `test_execution` remain
+ambiguous errors. Safe normalization preserves the finding and creates the
+handoff without another provider invocation. A partially valid review retains
+accepted findings immediately and counts only genuinely rejected sibling
+findings in the schema-rejected total. When none survive, the single targeted
+review retry receives only invalid JSON paths, received values, and the allowed
+provenance vocabulary. Commands, paths, identifiers, unknown or conflicting
+fields, absent semantic evidence, and ambiguous numeric or enum values remain
+strict.
+
 ### Conservative attack acceptance
 
-An attack lands only when:
+A submitted reproducer becomes scored or repairable only when:
 
 - The test overlay was captured relative to a frozen target-patched Git tree and
   applies cleanly after the same target patch in the verifier worktree.
 - The attack runs consistently twice.
 - It passes against the attacker's current implementation and fails against the
-  targeted opponent's current implementation.
+  targeted opponent's current implementation, or it fails on both and is
+  classified as a health-neutral shared defect after semantic adjudication.
 - It does not modify production code.
 - It proves a new root defect that has not already dealt damage.
 - Its expected output or invariant is clearly supported by the frozen task or source text.
@@ -957,11 +989,12 @@ additional evidence, not ground truth.
 
 Every mechanically landed defect keeps its executable reproducer. After each
 repair attempt the harness runs the required check, every active reproducer,
-and every previously healed defect's regression check. A repair heals only the
-exact active damage whose evidence now passes. For judge-based defects whose
-mechanics remain unavailable, an immutable digest-bound repair judgment records
-`repaired`, `not_repaired`, or `unable`; `unable` leaves damage active and
-degrades coverage.
+every score-neutral affirming variant for the same canonical defect, and every
+previously healed defect's regression check. A repair heals only when all
+accepted reproducers for that canonical defect pass. For judge-based defects
+whose mechanics remain unavailable, an immutable digest-bound repair judgment
+records `repaired`, `not_repaired`, or `unable`; `unable` leaves damage active
+and degrades coverage.
 
 ### Bounded failure handling and judge fallback
 
@@ -1224,7 +1257,8 @@ Every fight creates a self-contained directory under `.agent-arena/runs/<run-id>
 containing:
 
 - `BATTLE.md`: complete evidence-linked narrative, phase replay, decisions, and
-  final test matrix.
+  final test matrix, with separate competitive-landing, shared-defect, and
+  schema-rejected-finding totals.
 - `BATTLE.html`: responsive, clickable dossier generated from the same run data.
 - `BATTLE.svg`: deterministic share image with the result and round digest.
 - `run-spec.json`: exact task text, explicit acceptance criteria, frozen sources,
@@ -1305,8 +1339,9 @@ Failures should be useful and recoverable:
   independently.
 - If both implementations still fail required validation after round 1's repair,
   there is no winner.
-- If an attack is invalid, flaky, blocked, or self-defeating, it misses, the
-  report explains why, and its author takes rank-based recoil.
+- If an attack is invalid, flaky, blocked, or only self-defeating, it misses,
+  the report explains why, and its author takes rank-based recoil. A verified
+  defect shared by both patches instead triggers neutral repair with no recoil.
 - Harness-owned failures are retried in a clean worktree and never cause damage,
   recoil, healing failure, or elimination.
 - Provider recovery applies after the targeted retry to implementation, review,

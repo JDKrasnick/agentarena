@@ -6,6 +6,8 @@ import {
   reportCheckStatus,
   reportContestants,
   reportDefects,
+  reportOutcome,
+  reportOutcomeTotals,
   truncateReportText,
 } from "./presentation.js";
 import { conciseUsage, readRunUsageSummarySync } from "../telemetry/usage.js";
@@ -68,6 +70,7 @@ export function renderConsoleSummary(
   }
   const contestants = reportContestants(state);
   const defects = reportDefects(state);
+  const outcomeTotals = reportOutcomeTotals(state);
   const unresolved = defects.filter((defect) => defect.active);
   const browserAttackArtifacts = [
     ...new Set(
@@ -82,16 +85,16 @@ export function renderConsoleSummary(
         .map((round) => Number(round.round)),
     ),
   );
-  const nonDiscriminating = Boolean(
-    state.arenaOutcome &&
-    "kind" in state.arenaOutcome &&
-    state.arenaOutcome.kind === "non_discriminating",
-  );
-  const champion = nonDiscriminating
-    ? `Non-discriminating battle: no arena champion (${String(state.arenaOutcome?.marginHp ?? 0)} HP raw ledger margin)`
-    : state.ranking?.draw
-      ? `Draw: ${state.ranking.reason}`
-      : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Arena champion"}: ${state.coverageDecision?.decision === "inconclusive" && state.ranking?.order[0] ? contestantLabel(state.config.contestants, state.ranking.order[0]) : state.ranking?.winner ? contestantLabel(state.config.contestants, state.ranking.winner) : "none"} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`;
+  const outcome = reportOutcome(state);
+  const nonDiscriminating = outcome.kind === "non_discriminating";
+  const champion =
+    outcome.kind === "non_discriminating"
+      ? `Non-discriminating battle: no arena champion (${String(state.arenaOutcome?.marginHp ?? 0)} HP raw ledger margin)`
+      : outcome.kind === "draw"
+        ? `Draw: ${state.ranking?.reason ?? "equal evidence"}`
+        : outcome.kind === "winner"
+          ? `${state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Arena champion"}: ${contestantLabel(state.config.contestants, outcome.winner)} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`
+          : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : "Arena champion"}: ${state.ranking?.order[0] ? contestantLabel(state.config.contestants, state.ranking.order[0]) : "none"} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`;
   const recommendation = state.patchRecommendation?.contestantId
     ? contestantLabel(
         state.config.contestants,
@@ -123,7 +126,7 @@ export function renderConsoleSummary(
     `Effort: ${state.config.resolvedEffortProfile?.tier ?? state.config.effortMode}${state.config.effortAssessment?.fallback ? " (medium fallback)" : ""} · ${state.config.fixedRounds ? `${String(state.config.rounds)} fixed` : `${String(state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds)} planned`} round(s)`,
     ...(profile
       ? [
-          `Round budget: ${(profile.roundEnvelopeMs / 60_000).toFixed(0)}m · ${String(profile.maxProviderCallsPerRound)} calls · ${String(profile.maxTokensPerRound)} tokens; phase limits ${String(profile.implementationMs / 60_000)}m/${String(profile.reviewMs / 60_000)}m/${String(profile.attackMs / 60_000)}m/${String(profile.judgeMs / 60_000)}m/${String(profile.repairMs / 60_000)}m`,
+          `Sealed-round pressure thresholds: ${(profile.roundEnvelopeMs / 60_000).toFixed(0)}m · ${String(profile.maxProviderCallsPerRound)} provider calls · ${String(profile.maxTokensPerRound)} tokens; phase limits ${String(profile.implementationMs / 60_000)}m/${String(profile.reviewMs / 60_000)}m/${String(profile.attackMs / 60_000)}m/${String(profile.judgeMs / 60_000)}m/${String(profile.repairMs / 60_000)}m`,
         ]
       : []),
     `Rounds completed: ${String(completedRounds)}/${String(state.config.fixedRounds ? state.config.rounds : (state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds))}${completedRounds > (state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds) ? " (extended)" : ""}`,
@@ -171,6 +174,7 @@ export function renderConsoleSummary(
           ),
         ]
       : []),
+    `Attack outcomes: ${String(outcomeTotals.competitiveLandings)} competitive landing · ${String(outcomeTotals.sharedDefects)} shared defect · ${String(outcomeTotals.schemaRejectedFindings)} schema-rejected findings`,
     "",
     "Contestant   Required suite  Final HP  Unresolved  Recoil",
     ...contestants.map((contestant) => {
