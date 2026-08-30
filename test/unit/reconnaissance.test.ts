@@ -40,6 +40,11 @@ function config(root: string, overrides: Record<string, unknown> = {}) {
 }
 
 describe("bounded pre-permission reconnaissance", () => {
+  it("preserves legacy no-install behavior when a programmatic caller omits bootstrap", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-legacy-"));
+    expect(config(root)).not.toHaveProperty("bootstrap");
+  });
+
   it("keeps exact task sources and repository evidence in memory", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-recon-"));
     await writeFile(

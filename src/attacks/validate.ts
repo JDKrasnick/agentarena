@@ -45,6 +45,7 @@ interface ValidateAttackOptions {
   priorCanonicalDefects?: JudgeAdjudicationInput["priorCanonicalDefects"];
   priorAdjudications?: readonly PriorAdjudicationContext[];
   persistFailureRecord?: (record: FailureRecord) => Promise<void>;
+  provisionWorktree?: (worktree: string, subject: string) => Promise<void>;
   validateBrowser?: (
     worktree: string,
     probe: NonNullable<Attack["browserProbe"]>,
@@ -265,6 +266,7 @@ async function prepare(
     "attack" | "persistFailureRecord"
   >,
   expectedAttackPatchFailure = false,
+  provisionWorktree?: ValidateAttackOptions["provisionWorktree"],
 ): Promise<string> {
   const causalDigest = createHash("sha256")
     .update(JSON.stringify({ attackId: failureOptions.attack.id, name }))
@@ -275,7 +277,8 @@ async function prepare(
   for (const attempt of [1, 2] as const) {
     const startedAt = new Date().toISOString();
     let worktree: string | undefined;
-    let operation: "create" | "implementation_patch" | "attack_patch" =
+    let operation:
+      "create" | "implementation_patch" | "attack_patch" | "provision" =
       "create";
     try {
       worktree = await worktrees.create(
@@ -287,6 +290,8 @@ async function prepare(
       }
       operation = "attack_patch";
       await worktrees.applyPatch(worktree, attackPatch);
+      operation = "provision";
+      await provisionWorktree?.(worktree, `attack-evidence-worktree:${name}`);
       if (record) {
         record = FailureRecordSchema.parse({
           ...record,
@@ -400,6 +405,7 @@ async function judgeFallback(
         fallbackWorktree = await options.worktrees.create(
           `${String(attack.round)}-${attack.id}-judge-fallback-attempt-${String(attempt)}`,
         );
+        await options.provisionWorktree?.(fallbackWorktree, subject);
         if (preparationRecord) {
           preparationRecord = FailureRecordSchema.parse({
             ...preparationRecord,
@@ -420,6 +426,12 @@ async function judgeFallback(
         break;
       } catch (error) {
         lastError = error;
+        if (fallbackWorktree) {
+          await options.worktrees
+            .remove(fallbackWorktree)
+            .catch(() => undefined);
+          fallbackWorktree = undefined;
+        }
         preparationRecord = FailureRecordSchema.parse({
           version: 1,
           failureId: `failure-judge-worktree-${causalDigest.slice(0, 24)}`,
@@ -742,6 +754,7 @@ export async function validateAttack(
         attack.patchPath,
         options,
         true,
+        options.provisionWorktree,
       );
       created.push(baseline);
     } catch {
@@ -789,6 +802,8 @@ export async function validateAttack(
         options.authorPatch,
         attack.patchPath,
         options,
+        false,
+        options.provisionWorktree,
       );
       created.push(author);
       target = await prepare(
@@ -797,6 +812,8 @@ export async function validateAttack(
         options.targetPatch,
         attack.patchPath,
         options,
+        false,
+        options.provisionWorktree,
       );
       created.push(target);
     } catch (error) {
@@ -1146,6 +1163,7 @@ export async function validateSiegeAttack(
         attack.patchPath,
         options,
         true,
+        options.provisionWorktree,
       );
       created.push(baseline);
     } catch {
@@ -1161,6 +1179,8 @@ export async function validateSiegeAttack(
         options.targetPatch,
         attack.patchPath,
         options,
+        false,
+        options.provisionWorktree,
       );
       created.push(targetTree);
     } catch (error) {
@@ -1365,6 +1385,7 @@ export async function validateHouseAttack(
         attack.patchPath,
         options,
         true,
+        options.provisionWorktree,
       );
       created.push(baseline);
     } catch {
@@ -1409,6 +1430,8 @@ export async function validateHouseAttack(
           implementationPatch,
           attack.patchPath,
           options,
+          false,
+          options.provisionWorktree,
         );
       } catch (error) {
         if (error instanceof AttackPatchApplicationError) {

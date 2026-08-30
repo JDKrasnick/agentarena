@@ -69,6 +69,20 @@ export function discoverCapabilities(
       scopes: [config.repositoryRoot],
     },
   ];
+  if (config.resolvedBootstrap?.disposition === "command") {
+    requests.push({
+      id: "repository_bootstrap",
+      reason: `Harness-owned dependency bootstrap: ${config.resolvedBootstrap.command}. Package installation can access package registries and execute package lifecycle scripts.`,
+      risk: "high",
+      requirement: "required",
+      role: "harness_only",
+      enforcement: "advisory",
+      scopes: [
+        config.repositoryRoot,
+        ...config.resolvedBootstrap.dependencyInputs.map((entry) => entry.path),
+      ],
+    });
+  }
   if (
     config.issueReferences.length > 0 ||
     config.pullRequestReferences.length > 0

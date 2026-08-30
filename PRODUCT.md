@@ -1072,6 +1072,9 @@ Real integration testing requires explicit configuration. An optional `agent-are
 
 ```yaml
 test: pnpm test
+# Frozen, harness-owned dependency setup. `auto` requires a recognized lockfile.
+# Equivalent post-patch trees reuse a run-local content-addressed setup cache.
+bootstrap: auto
 integration:
   setup: docker compose up -d postgres
   check: pnpm test:integration
