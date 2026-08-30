@@ -8,6 +8,7 @@ import {
   reportDefects,
   truncateReportText,
 } from "./presentation.js";
+import { conciseUsage, readRunUsageSummarySync } from "../telemetry/usage.js";
 
 export interface ConsoleRenderOptions {
   color?: boolean;
@@ -42,6 +43,13 @@ export function renderConsoleSummary(
 ): string {
   const color = options.color ?? false;
   const hyperlinks = options.hyperlinks ?? false;
+  const usageSummary = readRunUsageSummarySync(
+    `${state.config.artifactRoot}/${state.runId}`,
+  );
+  const runWallTimeMs =
+    new Date(state.completedAt ?? state.updatedAt).getTime() -
+    new Date(state.startedAt).getTime();
+  const usageLine = `Fight usage: ${(Math.max(0, runWallTimeMs) / 1000).toFixed(1)}s wall · ${conciseUsage(usageSummary)}`;
   if (state.terminalOutcome) {
     const terminal = state.terminalOutcome;
     const winner = terminal.eligibleContestantIds[0];
@@ -53,6 +61,7 @@ export function renderConsoleSummary(
       terminal.kind === "forfeit"
         ? `Recommended patch: ${winner ? contestantLabel(state.config.contestants, winner) : "none"} (forfeit; no attack, repair, quality, or coverage work ran)`
         : "Recommended patch: none",
+      usageLine,
       terminalLink("Open HTML dossier", state.artifacts.battleHtml, hyperlinks),
       terminalLink("Open Markdown report", state.artifacts.battle, hyperlinks),
     ].join("\n");
@@ -118,6 +127,7 @@ export function renderConsoleSummary(
         ]
       : []),
     `Rounds completed: ${String(completedRounds)}/${String(state.config.fixedRounds ? state.config.rounds : (state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds))}${completedRounds > (state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds) ? " (extended)" : ""}`,
+    usageLine,
     ...decisionLines,
     ...(state.adaptiveCompletion
       ? [

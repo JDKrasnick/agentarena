@@ -5,6 +5,7 @@ import type {
   RunState,
 } from "../core/types.js";
 import { contestantLabel } from "../core/labels.js";
+import { conciseUsage, readRunUsageSummarySync } from "../telemetry/usage.js";
 import {
   latestCheck,
   reportCheckStatus,
@@ -98,6 +99,25 @@ function attackNarrative(attack: Attack): string {
 
 /** A deterministic, self-contained, clickable battle dossier for local review. */
 export function renderBattleHtml(state: RunState): string {
+  const usageSummary = readRunUsageSummarySync(
+    `${state.config.artifactRoot}/${state.runId}`,
+  );
+  const usageRows = usageSummary
+    ? [
+        ...usageSummary.byProvider.map(
+          (entry) =>
+            `<tr><td>Provider</td><td>${escapeHtml(entry.key)}</td><td>${String(entry.invocationCount)}</td><td>${(entry.providerDurationMs / 1000).toFixed(1)}s</td><td>${entry.usage.processedTokens === null ? "unavailable" : entry.usage.processedTokens.toLocaleString("en-US")}</td><td>${entry.cost.usd === null ? escapeHtml(`unavailable (${entry.cost.unavailableReason ?? "unknown"})`) : `$${entry.cost.usd.toFixed(4)}`}</td></tr>`,
+        ),
+        ...usageSummary.byResolvedModel.map(
+          (entry) =>
+            `<tr><td>Resolved model</td><td>${escapeHtml(entry.key)}</td><td>${String(entry.invocationCount)}</td><td>${(entry.providerDurationMs / 1000).toFixed(1)}s</td><td>${entry.usage.processedTokens === null ? "unavailable" : entry.usage.processedTokens.toLocaleString("en-US")}</td><td>${entry.cost.usd === null ? "unavailable" : `$${entry.cost.usd.toFixed(4)}`}</td></tr>`,
+        ),
+        ...usageSummary.byRole.map(
+          (entry) =>
+            `<tr><td>Role</td><td>${escapeHtml(entry.key)}</td><td>${String(entry.invocationCount)}</td><td>${(entry.providerDurationMs / 1000).toFixed(1)}s</td><td>${entry.usage.processedTokens === null ? "unavailable" : entry.usage.processedTokens.toLocaleString("en-US")}</td><td>${entry.cost.usd === null ? "unavailable" : `$${entry.cost.usd.toFixed(4)}`}</td></tr>`,
+        ),
+      ].join("")
+    : `<tr><td colspan="6">Telemetry unavailable (legacy or incomplete run).</td></tr>`;
   if (state.terminalOutcome) {
     const terminal = state.terminalOutcome;
     const recommended =
@@ -121,7 +141,7 @@ export function renderBattleHtml(state: RunState): string {
                 `<tr><td>${escapeHtml(contestantLabel(state.config.contestants, id))}</td><td>ineligible</td><td>${escapeHtml(terminal.reasonCode)}</td></tr>`,
             )
             .join("");
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Arena — pre-review result</title><style>:root{color-scheme:dark}body{margin:0;background:#0b1017;color:#edf3f8;font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}main{max-width:980px;margin:auto;padding:48px}.panel{background:#121b26;border:1px solid #36526b;border-radius:14px;padding:24px;margin-top:24px}h1{margin:0}p{color:#d7e0ea}table{border-collapse:collapse;width:100%;margin-top:20px}th,td{text-align:left;padding:12px;border-bottom:1px solid #36526b}</style></head><body><main><h1>Agent Arena — pre-review result</h1><div class="panel"><strong>${escapeHtml(terminal.kind.toUpperCase())} · ${escapeHtml(terminal.reasonCode)}</strong><p>${escapeHtml(terminal.reason)}</p><p>Recommended production patch: ${escapeHtml(recommended)}.</p><p>No review, attack, repair, quality comparison, or coverage stage ran.</p><table><thead><tr><th>Contestant</th><th>Eligibility</th><th>Cause</th></tr></thead><tbody>${rows}</tbody></table></div></main></body></html>`;
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Arena — pre-review result</title><style>:root{color-scheme:dark}body{margin:0;background:#0b1017;color:#edf3f8;font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}main{max-width:980px;margin:auto;padding:48px}.panel{background:#121b26;border:1px solid #36526b;border-radius:14px;padding:24px;margin-top:24px}h1{margin:0}p{color:#d7e0ea}table{border-collapse:collapse;width:100%;margin-top:20px}th,td{text-align:left;padding:12px;border-bottom:1px solid #36526b}</style></head><body><main><h1>Agent Arena — pre-review result</h1><div class="panel"><strong>${escapeHtml(terminal.kind.toUpperCase())} · ${escapeHtml(terminal.reasonCode)}</strong><p>${escapeHtml(terminal.reason)}</p><p>Recommended production patch: ${escapeHtml(recommended)}.</p><p>No review, attack, repair, quality comparison, or coverage stage ran.</p><p>Provider usage: ${escapeHtml(conciseUsage(usageSummary))}</p><table><thead><tr><th>Contestant</th><th>Eligibility</th><th>Cause</th></tr></thead><tbody>${rows}</tbody></table></div></main></body></html>`;
   }
   const contestants = reportContestants(state);
   const outcome = reportOutcome(state);
@@ -405,6 +425,7 @@ export function renderBattleHtml(state: RunState): string {
 </style></head><body><main>
 <header class="masthead"><div><p class="eyebrow">AGENT ARENA · EVIDENCE-LINKED BATTLE DOSSIER</p><h1>${escapeHtml(outcomeHeading)}</h1><p class="summary">${escapeHtml(state.ranking?.reason ?? "This run did not reach a final ranking.")} This dossier separates proven defects, unsuccessful attacks, verified checks, and the recommendation so the score is explainable.</p></div><nav class="artifacts" aria-label="Battle artifacts">${link(state, "Full report", state.artifacts.battle)} · ${link(state, "Raw result", state.artifacts.result)} · ${link(state, "Share image", state.artifacts.battleVisual)}</nav></header>
 <section class="section"><h2>Final decision</h2><div class="contestants">${contestantCards}</div></section>
+<section class="section"><h2>Provider usage</h2><p class="note">${escapeHtml(conciseUsage(usageSummary))}</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Dimension</th><th>Value</th><th>Invocations</th><th>Provider time</th><th>Processed tokens</th><th>Cost</th></tr></thead><tbody>${usageRows}</tbody></table></div></section>
 <section class="section"><h2>Effort and adaptive coverage</h2><p class="note"><strong>${escapeHtml(state.config.resolvedEffortProfile?.tier ?? state.config.effortMode)}</strong> · ${state.config.fixedRounds ? `${String(state.config.rounds)} exact rounds` : `${String(state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds)} planned, up to ${String(state.config.resolvedEffortProfile?.maxRounds ?? state.config.rounds)}`} · ${escapeHtml(state.adaptiveCompletion?.reason ?? "run in progress or fixed-round completion")}. Skipped briefs: ${escapeHtml(state.adaptiveCompletion?.skippedBriefs.join(", ") || "none")}.</p><p class="note">Configured budget: ${escapeHtml(effortBudget)}.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Boundary</th><th>Wall time</th><th>Calls</th><th>Tokens</th><th>Converged</th><th>Signal</th><th>Low-signal streak</th><th>Extension triggers</th><th>Exact decision</th></tr></thead><tbody>${adaptiveRows}</tbody></table></div></section>
 ${laneCoverage}
 ${terminalNotice}

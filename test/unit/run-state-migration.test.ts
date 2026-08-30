@@ -75,10 +75,10 @@ describe("legacy run-state migration", () => {
     });
   });
 
-  it("reads legacy v8 outcomes while requiring versioned outcomes for current v9 state", () => {
+  it("reads legacy v8 outcomes while requiring versioned outcomes for current v10 state", () => {
     const current = makeRunState();
     expect(parseRunState(current)).toMatchObject({
-      schemaVersion: 9,
+      schemaVersion: 10,
       arenaOutcome: { version: 2, kind: "winner" },
     });
 

@@ -4,6 +4,7 @@ import type {
   ContestantResult,
   RunState,
 } from "../core/types.js";
+import { conciseUsage, readRunUsageSummarySync } from "../telemetry/usage.js";
 import { contestantLabel } from "../core/labels.js";
 import {
   reportCheckStatus,
@@ -304,6 +305,40 @@ function contestantSection(contestant: ContestantResult): string[] {
 }
 
 export function renderBattleReport(state: RunState): string {
+  const usageSummary = readRunUsageSummarySync(
+    `${state.config.artifactRoot}/${state.runId}`,
+  );
+  const usageSection = usageSummary
+    ? [
+        "## Provider usage",
+        "",
+        conciseUsage(usageSummary),
+        "",
+        "| Provider | Invocations | Provider time | Processed tokens | Cost |",
+        "| --- | ---: | ---: | ---: | --- |",
+        ...usageSummary.byProvider.map(
+          (entry) =>
+            `| ${entry.key} | ${String(entry.invocationCount)} | ${(entry.providerDurationMs / 1000).toFixed(1)}s | ${entry.usage.processedTokens === null ? `unavailable (${entry.usage.completeness})` : `${entry.usage.processedTokens.toLocaleString("en-US")} (${entry.usage.completeness})`} | ${entry.cost.usd === null ? `unavailable (${entry.cost.unavailableReason ?? "unknown"})` : `$${entry.cost.usd.toFixed(4)}`} |`,
+        ),
+        "",
+        "| Dimension | Value | Invocations | Processed tokens |",
+        "| --- | --- | ---: | ---: |",
+        ...usageSummary.byResolvedModel.map(
+          (entry) =>
+            `| Resolved model | ${entry.key} | ${String(entry.invocationCount)} | ${entry.usage.processedTokens === null ? "unavailable" : entry.usage.processedTokens.toLocaleString("en-US")} |`,
+        ),
+        ...usageSummary.byRole.map(
+          (entry) =>
+            `| Role | ${entry.key} | ${String(entry.invocationCount)} | ${entry.usage.processedTokens === null ? "unavailable" : entry.usage.processedTokens.toLocaleString("en-US")} |`,
+        ),
+        "",
+      ]
+    : [
+        "## Provider usage",
+        "",
+        "Telemetry unavailable (legacy or incomplete run).",
+        "",
+      ];
   if (state.terminalOutcome) {
     const terminal = state.terminalOutcome;
     const recommended =
@@ -339,6 +374,7 @@ export function renderBattleReport(state: RunState): string {
       "",
       "No review, attack, repair, quality comparison, or coverage stage ran.",
       "",
+      ...usageSection,
       "| Contestant | Eligibility | Cause | Diagnostics |",
       "| --- | --- | --- | --- |",
       ...dispositions,
@@ -408,6 +444,7 @@ export function renderBattleReport(state: RunState): string {
     "",
     "Surviving the arena is additional evidence, not a correctness guarantee.",
     "",
+    ...usageSection,
     ...pullRequestProvenance(state),
     "## Final result",
     "",

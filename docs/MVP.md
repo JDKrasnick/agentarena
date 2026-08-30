@@ -154,9 +154,9 @@ violations, or programming invariants.
 `Arena`'s direct mechanism import allowlist is empty. Each terminal result is
 sealed in a digest-chained immutable envelope. Completed envelopes apply through
 an ordered exactly-once ledger; inconclusive, cancelled, and failed envelopes
-preserve evidence without advancing state. Schema-v8 summaries rebuild detailed
-state from the immutable preflight baseline and applied V4 envelopes, while
-v1–v7
+preserve evidence without advancing state. Schema-v11 summaries rebuild detailed
+state from the immutable preflight baseline and applied V6 envelopes, while
+v1–v10
 runs retain their legacy authority model.
 
 ## Who it is for
@@ -1237,11 +1237,20 @@ containing:
   run-scoped policy, authentication/readiness metadata, the exact frozen
   allowlist, exclusions, coverage gaps, policy hash, and the hash-bound final
   operator decision.
-- `result.json`: compact schema-v10 status, stage, contestant health, outcome,
+- `result.json`: compact schema-v11 status, stage, contestant health, outcome,
   recommendation, warnings, artifact pointers, provenance, and ordered
   applied-envelope ledger. Detailed state is rebuilt from `baseline.json` and
   `rounds/<round>/envelope.json`; the immutable `finalization.json` projection
   supplies post-round validation and recommendation details.
+- `telemetry/invocations/<invocation-id>.json`: immutable, prompt-free provider
+  process metadata, normalized usage, duration, model identity, status, cost
+  provenance, and diagnostic artifact references. Failed, cancelled, timed-out,
+  retried, probe, contestant, and judge invocations remain visible.
+- `telemetry/summary.json`: atomically replaceable whole-run totals and rollups
+  by provider, resolved model (with an explicit `unknown` bucket), role, stage,
+  and round. Reasoning is an output subset; partial or missing fields are never
+  guessed. Soft token budgets use only complete ledger totals, independently of
+  subprocess timeout enforcement.
 - `rounds/<round>/adjudications/`: complete local immutable semantic verdicts, frozen
   severities, evidence provenance, retry diagnostics, canonical-defect history,
   exact score effects, and upgrade links. Pre-change completed runs remain

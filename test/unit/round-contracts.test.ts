@@ -131,7 +131,7 @@ function contestant(contestantId: "a" | "b") {
 
 function snapshot() {
   return {
-    version: 5 as const,
+    version: 6 as const,
     runId: "run-1",
     roundId: 1 as const,
     snapshotHash: HASH,
@@ -145,7 +145,7 @@ function snapshot() {
 
 function replay() {
   return {
-    version: 5 as const,
+    version: 6 as const,
     runId: "run-1",
     roundId: 1 as const,
     snapshotHash: HASH,
@@ -157,6 +157,7 @@ function replay() {
     scoreEvents: [],
     diagnostics: [],
     failureRecords: [],
+    telemetryInvocations: [],
     artifacts: [
       {
         id: "round-state-delta-1",
@@ -222,7 +223,7 @@ describe("round boundary contracts", () => {
     expect(roundTrip(RoundReplaySchema, replay()).replayHash).toBe(OTHER_HASH);
     expect(
       roundTrip(RoundResultSchema, {
-        version: 5,
+        version: 6,
         runId: "run-1",
         roundId: 1,
         status: "completed",
@@ -272,7 +273,7 @@ describe("round boundary contracts", () => {
       priorReplayHash: OTHER_HASH,
     });
     const resultValue = roundTrip(RoundResultSchema, {
-      version: 5,
+      version: 6,
       runId: "run-1",
       roundId: 2,
       status: "completed",
@@ -309,7 +310,7 @@ describe("round boundary contracts", () => {
     expect(
       validateRoundResult(
         {
-          version: 5,
+          version: 6,
           runId: accepted.runId,
           roundId: accepted.roundId,
           status: "completed",
@@ -333,7 +334,7 @@ describe("round boundary contracts", () => {
     expect(() =>
       validateRoundResult(
         {
-          version: 5,
+          version: 6,
           runId: accepted.runId,
           roundId: accepted.roundId,
           status: "completed",
@@ -370,7 +371,7 @@ describe("round boundary contracts", () => {
     ).toThrow(/Only round 1/);
     expect(() =>
       RoundResultSchema.parse({
-        version: 5,
+        version: 6,
         runId: "run-1",
         roundId: 1,
         status: "completed",
@@ -434,7 +435,7 @@ describe("round boundary contracts", () => {
     ).toThrow(/runId/);
     expect(() =>
       RoundResultSchema.parse({
-        version: 5,
+        version: 6,
         runId: "run-1",
         roundId: 2,
         status: "completed",
@@ -451,7 +452,7 @@ describe("round boundary contracts", () => {
     ).toThrow(/topology order/);
     expect(() =>
       RoundResultSchema.parse({
-        version: 5,
+        version: 6,
         runId: "run-1",
         roundId: 1,
         status: "completed",
@@ -548,7 +549,7 @@ describe("round boundary contracts", () => {
 
   it("requires every outcome to include a replay and failure diagnostics", () => {
     const base = {
-      version: 5,
+      version: 6,
       runId: "run-1",
       roundId: 1,
       resultingContestants: [contestant("a"), contestant("b")],

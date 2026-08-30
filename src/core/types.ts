@@ -230,9 +230,17 @@ export const CommandResultSchema = z.object({
           cacheReadTokens: z.number().int().nonnegative().optional(),
           cacheWriteTokens: z.number().int().nonnegative().optional(),
           outputTokens: z.number().int().nonnegative().optional(),
+          reasoningTokens: z.number().int().nonnegative().optional(),
         })
         .strict()
         .optional(),
+      resolvedModel: z.string().min(1).optional(),
+      usageCompleteness: z
+        .enum(["complete", "partial", "unavailable"])
+        .optional(),
+      usageAccountingVersion: z.literal(1).optional(),
+      reportedCostUsd: z.number().nonnegative().optional(),
+      reportedCostSource: z.literal("provider_billing").optional(),
     })
     .optional(),
 });
@@ -1804,7 +1812,10 @@ export const RunStateV9Schema = RunStateV8CoreSchema.extend({
   deliveryTarget: DeliveryTargetSchema.optional(),
   pullRequestFixture: PullRequestFixtureSchema.optional(),
 });
-export const RunStateSchema = RunStateV9Schema;
+export const RunStateV10Schema = RunStateV9Schema.omit({
+  schemaVersion: true,
+}).extend({ schemaVersion: z.literal(10) });
+export const RunStateSchema = RunStateV10Schema;
 export type RunStateV3 = z.infer<typeof RunStateV3Schema>;
 export type RunStateV4 = z.infer<typeof RunStateV4Schema>;
 export type RunStateV5 = z.infer<typeof RunStateV5Schema>;
@@ -1812,6 +1823,7 @@ export type RunStateV6 = z.infer<typeof RunStateV6Schema>;
 export type RunStateV7 = z.infer<typeof RunStateV7Schema>;
 export type RunStateV8 = z.infer<typeof RunStateV8Schema>;
 export type RunStateV9 = z.infer<typeof RunStateV9Schema>;
+export type RunStateV10 = z.infer<typeof RunStateV10Schema>;
 export type RunState =
   | RunStateV3
   | RunStateV4
@@ -1819,7 +1831,8 @@ export type RunState =
   | RunStateV6
   | RunStateV7
   | RunStateV8
-  | RunStateV9;
+  | RunStateV9
+  | RunStateV10;
 
 // --- Legacy readers: in schema versions 1 and 2 the provider was the
 // contestant identity. They are migrated to contestant slots at load time. ---
@@ -1934,6 +1947,7 @@ export const AnyRunStateSchema = z.discriminatedUnion("schemaVersion", [
   RunStateV7Schema,
   RunStateV8Schema,
   RunStateV9Schema,
+  RunStateV10Schema,
 ]);
 export type AnyRunState = z.infer<typeof AnyRunStateSchema>;
 

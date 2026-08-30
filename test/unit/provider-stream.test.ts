@@ -107,4 +107,110 @@ describe("provider stream decoding", () => {
       "Malformed provider JSONL record",
     ]);
   });
+
+  it("uses the latest cumulative Codex usage without double counting reasoning", () => {
+    const decoder = new ProviderStreamDecoder("codex");
+    decoder.push(
+      [
+        JSON.stringify({
+          type: "turn.completed",
+          usage: {
+            input_tokens: 100,
+            cached_input_tokens: 20,
+            cache_write_input_tokens: 2,
+            output_tokens: 10,
+            reasoning_output_tokens: 4,
+          },
+          model: "gpt-5.6-sol",
+        }),
+        JSON.stringify({
+          type: "turn.completed",
+          usage: {
+            input_tokens: 220,
+            cached_input_tokens: 50,
+            cache_write_input_tokens: 7,
+            output_tokens: 30,
+            reasoning_output_tokens: 12,
+          },
+        }),
+        "",
+      ].join("\n"),
+    );
+    expect(decoder.diagnostics()).toMatchObject({
+      resolvedModel: "gpt-5.6-sol",
+      usageCompleteness: "complete",
+      usageAccountingVersion: 1,
+      tokenUsage: {
+        uncachedInputTokens: 170,
+        cacheReadTokens: 50,
+        cacheWriteTokens: 7,
+        outputTokens: 30,
+        reasoningTokens: 12,
+      },
+    });
+  });
+
+  it("deduplicates Claude messages and prefers a final aggregate", () => {
+    const decoder = new ProviderStreamDecoder("claude");
+    const message = {
+      type: "assistant",
+      message: { id: "msg-1", model: "claude-opus-4-6", content: [] },
+      usage: {
+        input_tokens: 10,
+        cache_creation_input_tokens: 3,
+        cache_read_input_tokens: 2,
+        output_tokens: 4,
+      },
+    };
+    decoder.push(
+      [
+        JSON.stringify(message),
+        JSON.stringify(message),
+        JSON.stringify({
+          type: "assistant",
+          message: { id: "msg-2", content: [] },
+          usage: { input_tokens: 5, output_tokens: 2 },
+        }),
+        JSON.stringify({
+          type: "result",
+          total_cost_usd: 0.42,
+          usage: {
+            input_tokens: 30,
+            cache_read_input_tokens: 8,
+            cache_creation_input_tokens: 5,
+            output_tokens: 9,
+          },
+        }),
+        "",
+      ].join("\n"),
+    );
+    expect(decoder.diagnostics()).toMatchObject({
+      resolvedModel: "claude-opus-4-6",
+      tokenUsage: {
+        uncachedInputTokens: 30,
+        cacheReadTokens: 8,
+        cacheWriteTokens: 5,
+        outputTokens: 9,
+      },
+    });
+    expect(decoder.diagnostics()).not.toHaveProperty("reportedCostUsd");
+  });
+
+  it("captures USD only from explicitly authoritative billing telemetry", () => {
+    const decoder = new ProviderStreamDecoder("claude");
+    decoder.push(
+      `${JSON.stringify({
+        type: "result",
+        total_cost_usd: 0.99,
+        billing: {
+          source: "provider_billing",
+          usd: 0.42,
+        },
+      })}\n`,
+    );
+    expect(decoder.diagnostics()).toMatchObject({
+      reportedCostUsd: 0.42,
+      reportedCostSource: "provider_billing",
+    });
+  });
 });

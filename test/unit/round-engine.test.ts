@@ -12,7 +12,7 @@ const HASH = "a".repeat(64);
 
 function snapshot(): RoundSnapshot {
   const draft = {
-    version: 5 as const,
+    version: 6 as const,
     runId: "run-1",
     roundId: 1 as const,
     snapshotHash: HASH,
@@ -141,7 +141,7 @@ function result(
     status: "active" as const,
   })) as [(typeof accepted.contestants)[0], (typeof accepted.contestants)[1]];
   const replay = {
-    version: 5 as const,
+    version: 6 as const,
     runId: accepted.runId,
     roundId: accepted.roundId,
     snapshotHash: accepted.snapshotHash,
@@ -153,6 +153,7 @@ function result(
     scoreEvents: [],
     diagnostics: [],
     failureRecords: [],
+    telemetryInvocations: [],
     artifacts: [
       {
         id: "delta",
@@ -166,7 +167,7 @@ function result(
   };
   replay.replayHash = calculateReplayHash(replay);
   const base = {
-    version: 5 as const,
+    version: 6 as const,
     runId: accepted.runId,
     roundId: accepted.roundId,
     resultingContestants: contestants,
