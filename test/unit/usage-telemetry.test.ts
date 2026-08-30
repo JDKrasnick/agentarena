@@ -18,6 +18,7 @@ const invocation = (overrides: Partial<InvocationUsage> = {}) =>
     provider: "codex",
     requestedModel: "gpt-5.6-sol",
     resolvedModel: "gpt-5.6-sol-202608",
+    resolvedModelSource: "provider",
     role: "contestant",
     contestantId: "a",
     stage: "implement",
@@ -92,6 +93,7 @@ describe("usage telemetry", () => {
         provider: "claude",
         requestedModel: null,
         resolvedModel: null,
+        resolvedModelSource: "unavailable",
         role: "judge",
         contestantId: null,
         stage: "attack-verifier",
@@ -163,6 +165,16 @@ describe("usage telemetry", () => {
     );
     expect(record).not.toHaveProperty("prompt");
     expect(record.usage.completeness).toBe("unavailable");
+    expect(record).toMatchObject({
+      requestedModel: "gpt-5.6-sol",
+      resolvedModel: "gpt-5.6-sol",
+      resolvedModelSource: "requested",
+      cost: {
+        usd: null,
+        source: "unavailable",
+        unavailableReason: "subscription_cli_no_metered_cost",
+      },
+    });
     const summary = JSON.parse(
       await readFile(
         path.join(runDirectory, "telemetry", "summary.json"),

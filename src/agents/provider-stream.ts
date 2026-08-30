@@ -31,6 +31,7 @@ export interface ProviderStreamDiagnostics {
   usageCompleteness?: "complete" | "partial" | "unavailable";
   usageAccountingVersion?: 1;
   reportedCostUsd?: number;
+  reportedCostSource?: "provider_billing";
   tokenUsage?: {
     uncachedInputTokens?: number;
     cacheReadTokens?: number;
@@ -74,6 +75,7 @@ export class ProviderStreamDecoder {
   private tokenUsage?: ProviderStreamDiagnostics["tokenUsage"];
   private resolvedModel?: string;
   private reportedCostUsd?: number;
+  private reportedCostSource?: "provider_billing";
   private readonly claudeMessageUsage = new Map<
     string,
     NonNullable<ProviderStreamDiagnostics["tokenUsage"]>
@@ -122,7 +124,10 @@ export class ProviderStreamDecoder {
       usageAccountingVersion: 1,
       ...(this.reportedCostUsd === undefined
         ? {}
-        : { reportedCostUsd: this.reportedCostUsd }),
+        : {
+            reportedCostUsd: this.reportedCostUsd,
+            reportedCostSource: this.reportedCostSource,
+          }),
       ...(this.tokenUsage ? { tokenUsage: { ...this.tokenUsage } } : {}),
     };
   }
@@ -270,19 +275,21 @@ export class ProviderStreamDecoder {
 
   private captureCost(record: Record<string, unknown>): void {
     const usage = recordAt(record, "usage");
-    const candidates = [
-      record.total_cost_usd,
-      record.cost_usd,
-      usage?.total_cost_usd,
-      usage?.cost_usd,
-    ];
+    const billing =
+      recordAt(record, "billing") ??
+      (usage ? recordAt(usage, "billing") : undefined);
+    if (!billing || stringAt(billing, "source") !== "provider_billing") return;
+    const candidates = [billing.usd, billing.cost_usd];
     const value = candidates.find(
       (candidate): candidate is number =>
         typeof candidate === "number" &&
         Number.isFinite(candidate) &&
         candidate >= 0,
     );
-    if (value !== undefined) this.reportedCostUsd = value;
+    if (value !== undefined) {
+      this.reportedCostUsd = value;
+      this.reportedCostSource = "provider_billing";
+    }
   }
 
   private captureTokenUsage(record: Record<string, unknown>) {
@@ -307,6 +314,7 @@ export class ProviderStreamDecoder {
     );
     const cacheWrite = numberAt(
       "cache_creation_input_tokens",
+      "cache_write_input_tokens",
       "cacheWriteInputTokens",
     );
     const output = numberAt(
@@ -316,6 +324,7 @@ export class ProviderStreamDecoder {
     );
     const reasoning = numberAt(
       "reasoning_tokens",
+      "reasoning_output_tokens",
       "reasoningTokens",
       "output_reasoning_tokens",
     );

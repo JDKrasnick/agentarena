@@ -240,6 +240,7 @@ export const CommandResultSchema = z.object({
         .optional(),
       usageAccountingVersion: z.literal(1).optional(),
       reportedCostUsd: z.number().nonnegative().optional(),
+      reportedCostSource: z.literal("provider_billing").optional(),
     })
     .optional(),
 });

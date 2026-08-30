@@ -117,8 +117,9 @@ describe("provider stream decoding", () => {
           usage: {
             input_tokens: 100,
             cached_input_tokens: 20,
+            cache_write_input_tokens: 2,
             output_tokens: 10,
-            reasoning_tokens: 4,
+            reasoning_output_tokens: 4,
           },
           model: "gpt-5.6-sol",
         }),
@@ -127,8 +128,9 @@ describe("provider stream decoding", () => {
           usage: {
             input_tokens: 220,
             cached_input_tokens: 50,
+            cache_write_input_tokens: 7,
             output_tokens: 30,
-            reasoning_tokens: 12,
+            reasoning_output_tokens: 12,
           },
         }),
         "",
@@ -141,6 +143,7 @@ describe("provider stream decoding", () => {
       tokenUsage: {
         uncachedInputTokens: 170,
         cacheReadTokens: 50,
+        cacheWriteTokens: 7,
         outputTokens: 30,
         reasoningTokens: 12,
       },
@@ -183,13 +186,31 @@ describe("provider stream decoding", () => {
     );
     expect(decoder.diagnostics()).toMatchObject({
       resolvedModel: "claude-opus-4-6",
-      reportedCostUsd: 0.42,
       tokenUsage: {
         uncachedInputTokens: 30,
         cacheReadTokens: 8,
         cacheWriteTokens: 5,
         outputTokens: 9,
       },
+    });
+    expect(decoder.diagnostics()).not.toHaveProperty("reportedCostUsd");
+  });
+
+  it("captures USD only from explicitly authoritative billing telemetry", () => {
+    const decoder = new ProviderStreamDecoder("claude");
+    decoder.push(
+      `${JSON.stringify({
+        type: "result",
+        total_cost_usd: 0.99,
+        billing: {
+          source: "provider_billing",
+          usd: 0.42,
+        },
+      })}\n`,
+    );
+    expect(decoder.diagnostics()).toMatchObject({
+      reportedCostUsd: 0.42,
+      reportedCostSource: "provider_billing",
     });
   });
 });

@@ -88,6 +88,7 @@ export const InvocationUsageSchema = z
     provider: z.string().min(1),
     requestedModel: z.string().min(1).nullable(),
     resolvedModel: z.string().min(1).nullable(),
+    resolvedModelSource: z.enum(["provider", "requested", "unavailable"]),
     role: z.enum(["contestant", "judge"]),
     contestantId: z.enum(["a", "b"]).nullable(),
     stage: z.string().min(1),
@@ -107,6 +108,20 @@ export const InvocationUsageSchema = z
     artifactRefs: z.array(z.string().min(1)),
   })
   .strict()
+  .superRefine((invocation, context) => {
+    if (
+      (invocation.resolvedModel === null &&
+        invocation.resolvedModelSource !== "unavailable") ||
+      (invocation.resolvedModel !== null &&
+        invocation.resolvedModelSource === "unavailable")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["resolvedModelSource"],
+        message: "Resolved model identity and source must agree",
+      });
+    }
+  })
   .readonly();
 export type InvocationUsage = z.infer<typeof InvocationUsageSchema>;
 
@@ -198,7 +213,8 @@ const unavailableCost = (provider: string) => ({
 });
 
 const costFromCommand = (provider: string, result: CommandResult) =>
-  result.providerDiagnostics?.reportedCostUsd === undefined
+  result.providerDiagnostics?.reportedCostUsd === undefined ||
+  result.providerDiagnostics.reportedCostSource !== "provider_billing"
     ? unavailableCost(provider)
     : {
         usd: result.providerDiagnostics.reportedCostUsd,
@@ -371,13 +387,21 @@ export async function sealInvocationUsage(options: {
   const runDirectory = await findRunDirectory(options.logPrefix);
   if (!runDirectory) return undefined;
   const invocationId = randomUUID();
+  const providerResolvedModel =
+    options.result.providerDiagnostics?.resolvedModel ?? null;
+  const requestedModel = options.metadata.requestedModel ?? null;
   const record = InvocationUsageSchema.parse({
     version: 1,
     accountingVersion: 1,
     invocationId,
     provider: options.metadata.provider,
-    requestedModel: options.metadata.requestedModel ?? null,
-    resolvedModel: options.result.providerDiagnostics?.resolvedModel ?? null,
+    requestedModel,
+    resolvedModel: providerResolvedModel ?? requestedModel,
+    resolvedModelSource: providerResolvedModel
+      ? "provider"
+      : requestedModel
+        ? "requested"
+        : "unavailable",
     role: options.metadata.role,
     contestantId: options.metadata.contestantId ?? null,
     stage: options.metadata.stage,
