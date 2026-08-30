@@ -183,12 +183,23 @@ configuration, invalid schemas, and programming invariants.
 
 `Arena` has no direct mechanism imports. Durable recovery treats the immutable
 preflight baseline and sealed per-round envelopes as authority. `result.json`
-is a compact schema-v10 summary with an ordered applied-envelope ledger. Runtime
-state is V9 and round snapshots, results, replays, envelopes, and state deltas
-are V4. Resume
+is a compact schema-v11 summary with an ordered applied-envelope ledger and a
+digest-linked telemetry projection. Runtime state is V10 and round snapshots,
+results, replays, envelopes, and state deltas are V6. Resume
 validates the digest chain and runtime drift, applies a sealed boundary exactly
 once, and never reruns an interrupted unsealed round under the original run ID.
 Production prompts consume only persisted lane-safe `ContestantFeedback`.
+
+Every fight-owned provider process seals one prompt-free invocation record at
+`telemetry/invocations/<invocation-id>.json`, including retries, probes, effort
+assessment, adjudication, repair judgment, and quality comparison.
+`telemetry/summary.json` is an atomic projection by provider, resolved model,
+contestant/judge role, stage, and round. Uncached input, cache creation, cache
+reads, output, and reasoning-output subsets remain separate, so reasoning is
+never counted twice. Missing usage stays partial or unavailable and is never
+treated as zero for soft budgets. Subscription CLI cost is null with explicit
+provenance; aggregate USD is non-null only with complete authoritative billing
+or one stable versioned rate card.
 
 Every attack outcome is normalized into an immutable, versioned adjudication
 record before scoring. Semantic verdict, rejection basis, canonical defect,

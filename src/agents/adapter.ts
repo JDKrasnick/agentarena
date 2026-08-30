@@ -669,6 +669,12 @@ export class CommandAgentAdapter implements AgentAdapter {
       ...(this.options.providerStream
         ? { providerStream: this.options.providerStream }
         : {}),
+      providerInvocation: {
+        provider: this.id,
+        ...(this.options.model ? { requestedModel: this.options.model } : {}),
+        role: "contestant",
+        stage: "provider_health_probe",
+      },
     });
     const finished = new Date();
     let stderr = "";
@@ -778,6 +784,14 @@ export class CommandAgentAdapter implements AgentAdapter {
       ...(this.options.providerStream
         ? { providerStream: this.options.providerStream }
         : {}),
+      providerInvocation: {
+        provider: this.id,
+        ...(this.options.model ? { requestedModel: this.options.model } : {}),
+        role: "contestant",
+        ...(input.contestantId ? { contestantId: input.contestantId } : {}),
+        stage,
+        ...(input.round === undefined ? {} : { round: input.round }),
+      },
       onOutput: (stream, text) =>
         input.observer?.publish({
           type: "output",
@@ -1042,6 +1056,12 @@ export class CommandAttackVerifier implements AttackVerifier {
         ...(this.command.providerStream
           ? { providerStream: this.command.providerStream }
           : {}),
+        providerInvocation: {
+          provider: this.id,
+          ...(this.command.model ? { requestedModel: this.command.model } : {}),
+          role: "judge",
+          stage: "effort-assessment",
+        },
       },
       {
         ...(input.observer ? { observer: input.observer } : {}),
@@ -1184,6 +1204,12 @@ export class CommandAttackVerifier implements AttackVerifier {
         ...(this.command.providerStream
           ? { providerStream: this.command.providerStream }
           : {}),
+        providerInvocation: {
+          provider: this.id,
+          ...(this.command.model ? { requestedModel: this.command.model } : {}),
+          role: "judge",
+          stage: "attack-verifier",
+        },
       },
       {
         ...(input.observer ? { observer: input.observer } : {}),
@@ -1337,6 +1363,12 @@ export class CommandAttackVerifier implements AttackVerifier {
         ...(this.command.providerStream
           ? { providerStream: this.command.providerStream }
           : {}),
+        providerInvocation: {
+          provider: this.id,
+          ...(this.command.model ? { requestedModel: this.command.model } : {}),
+          role: "judge",
+          stage: "judge-fallback",
+        },
       },
       {
         ...(input.observer ? { observer: input.observer } : {}),
@@ -1456,6 +1488,12 @@ export class CommandAttackVerifier implements AttackVerifier {
         ...(this.command.providerStream
           ? { providerStream: this.command.providerStream }
           : {}),
+        providerInvocation: {
+          provider: this.id,
+          ...(this.command.model ? { requestedModel: this.command.model } : {}),
+          role: "judge",
+          stage: "repair-judge",
+        },
       },
       {
         ...(input.observer ? { observer: input.observer } : {}),
@@ -1516,6 +1554,13 @@ async function invokeStructuredGenerator(
       ...(command.providerStream
         ? { providerStream: command.providerStream }
         : {}),
+      providerInvocation: {
+        provider: id,
+        ...(command.model ? { requestedModel: command.model } : {}),
+        role: "judge",
+        stage,
+        round: input.round,
+      },
       env: {
         AGENT_ARENA_AGENT: id,
         AGENT_ARENA_STAGE: stage,

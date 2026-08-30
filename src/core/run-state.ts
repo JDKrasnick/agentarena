@@ -6,6 +6,7 @@ import {
   RunStateV7Schema,
   RunStateV8Schema,
   RunStateV9Schema,
+  RunStateV10Schema,
   type AgentId,
   type AnyRunState,
   type ContestantId,
@@ -171,5 +172,7 @@ export function parseRunState(value: unknown): RunState {
       return RunStateV8Schema.parse(state);
     case 9:
       return RunStateV9Schema.parse(state);
+    case 10:
+      return RunStateV10Schema.parse(state);
   }
 }

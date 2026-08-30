@@ -105,7 +105,7 @@ export function projectRoundStateDelta(
   // heal, so the projection carries the authoritative collection.
   const attacks = after.attacks;
   return RoundStateDeltaSchema.parse({
-    version: 5,
+    version: 6,
     runId: after.runId,
     roundId,
     attacks,

@@ -13,6 +13,10 @@ import {
   type ProviderStreamDiagnostics,
   type ProviderStreamKind,
 } from "../agents/provider-stream.js";
+import {
+  sealInvocationUsage,
+  type ProviderInvocationMetadata,
+} from "../telemetry/usage.js";
 
 const INHERITED_ENV = [
   "PATH",
@@ -46,6 +50,7 @@ export interface ProcessRequest {
   ) => void | Promise<void>;
   providerStream?: ProviderStreamKind;
   onActivity?: (activity: ProviderActivity) => void | Promise<void>;
+  providerInvocation?: ProviderInvocationMetadata;
 }
 
 export function minimalEnvironment(
@@ -514,7 +519,23 @@ async function run(
         }
       : {}),
   };
-  return failureClass ? { ...base, failureClass } : base;
+  const commandResult: CommandResult = failureClass
+    ? { ...base, failureClass }
+    : base;
+  if (request.providerInvocation) {
+    try {
+      await sealInvocationUsage({
+        logPrefix: request.logPrefix,
+        metadata: request.providerInvocation,
+        result: commandResult,
+        startedAt: new Date(started),
+        finishedAt: new Date(),
+      });
+    } catch {
+      // Evidence-only telemetry cannot change an invocation's outcome.
+    }
+  }
+  return commandResult;
 }
 
 export function runProcess(request: ProcessRequest): Promise<CommandResult> {

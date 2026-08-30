@@ -85,6 +85,12 @@ export class CommandPatchQualityVerifier implements PatchQualityVerifier {
       ...(command.providerStream
         ? { providerStream: command.providerStream }
         : {}),
+      providerInvocation: {
+        provider: this.id.replace(/^quality-/, ""),
+        ...(command.model ? { requestedModel: command.model } : {}),
+        role: "judge",
+        stage: "quality-verifier",
+      },
       input: prompt,
       cwd: input.worktree,
       timeoutMs: input.timeoutMs,
