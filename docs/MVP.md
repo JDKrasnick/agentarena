@@ -1053,8 +1053,8 @@ after a round's repair is also eliminated. If only one contestant remains, the
 fight ends early. Otherwise, after the adaptive or fixed plan completes:
 
 1. Highest final HP wins.
-2. At equal HP, a decisive fresh identity-blind quality verdict selects the
-   champion.
+2. At equal HP and equal active defect damage, a decisive fresh identity-blind
+   quality verdict selects the champion.
 3. Disabled or unusable judging, `equivalent`, `inconclusive`, or two failed
    attempts produces a draw. Raw patch size never selects a winner.
 
@@ -1074,8 +1074,9 @@ the published damage and recoil tables determine its numeric effect.
 ### The user owns the merge
 
 Agent Arena distinguishes an arena champion from an independently recommended
-patch. A decisive identity-blind quality verdict resolves a competitive equal-HP
-tie. A non-discriminating battle has no champion; there, the same fresh judge
+patch. A decisive identity-blind quality verdict resolves a competitive tie
+only when both HP and active defect damage are equal. A non-discriminating
+battle has no champion; there, the same fresh judge
 invocation may only recommend a patch without changing the competitive result.
 The judge compares anonymized, equally correct patches using the frozen task
 contract, final validation, and recorded v2 quality facts under the frozen MCP

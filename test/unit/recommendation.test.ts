@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { selectRecommendedPatch } from "../../src/recommendation/select-patch.js";
+import {
+  isCompetitiveQualityTie,
+  selectRecommendedPatch,
+} from "../../src/recommendation/select-patch.js";
 import { makeRunState } from "../helpers/run-state.js";
 
 describe("recommended patch selection", () => {
@@ -147,7 +150,7 @@ describe("recommended patch selection", () => {
     ).toMatchObject({ reason: "draw" });
   });
 
-  it("keeps a quality-resolved HP-tie champion and recommendation aligned", () => {
+  it("does not let quality override unequal active defect damage at equal HP", () => {
     const state = makeRunState({
       codexHealth: 85,
       codexDamage: 15,
@@ -156,10 +159,12 @@ describe("recommended patch selection", () => {
       claudeDamage: 5,
     });
     expect(
+      isCompetitiveQualityTie(Object.values(state.contestants), "draw"),
+    ).toBe(false);
+    expect(
       selectRecommendedPatch({
         contestants: state.contestants,
-        championId: "a",
-        outcomeKind: "winner",
+        outcomeKind: "draw",
         qualityVerdict: {
           version: 1,
           verdict: "patch_a",
@@ -169,8 +174,21 @@ describe("recommended patch selection", () => {
         anonymizationMap: { patch_a: "a", patch_b: "b" },
       }),
     ).toMatchObject({
-      contestantId: "a",
-      reason: "implementation_quality",
+      contestantId: "b",
+      reason: "correctness",
     });
+  });
+
+  it("permits quality judging when both HP and active defect damage tie", () => {
+    const state = makeRunState({
+      codexHealth: 85,
+      codexDamage: 15,
+      claudeHealth: 85,
+      claudeRecoil: 0,
+      claudeDamage: 15,
+    });
+    expect(
+      isCompetitiveQualityTie(Object.values(state.contestants), "draw"),
+    ).toBe(true);
   });
 });

@@ -16,8 +16,9 @@ adjudication, and repair judgments when mechanics remain unavailable. House
 scouting, case-building, held-out sibling generation, and harness maintenance
 are legacy-only extensions and are not invoked by new runs. The one permitted
 new-run quality comparison is a fresh post-validation invocation of the same
-configured judge role, used for an equal-HP competitive tie or to provide an
-independent recommendation for a non-discriminating duel or catch-up.
+configured judge role, used for an equal-HP, equal-active-damage competitive
+tie or to provide an independent recommendation for a non-discriminating duel
+or catch-up.
 
 Champion and patch-recommendation language is conditional on coverage. Duel
 and catch-up require both attack directions in every executed round; siege
@@ -830,9 +831,10 @@ Health is calculated from a ledger: `100 - permanent recoil - active distinct de
 Attackers may propose a severity, but they do not control damage. A neutral verifier should apply the published rubric to anonymized executable evidence, choose the lowest level fully supported, and provide a saved rationale. Ambiguous High or Critical ratings should be capped at Medium. The harness then calculates health deterministically from landed tests, persisted severity verdicts, recoil, and repair results.
 
 After the adaptive or fixed round plan completes, ordinary competitive battles
-award the surviving contestant with the most HP. A decisive fresh,
-identity-blind quality verdict breaks an HP tie; unavailable, equivalent,
-inconclusive, or twice-failed judging produces a draw. If only one contestant survives earlier,
+award the surviving contestant with the most HP. When active defect damage is
+also equal, a decisive fresh, identity-blind quality verdict breaks an HP tie;
+unavailable, equivalent, inconclusive, or twice-failed judging produces a draw.
+If only one contestant survives earlier,
 the fight ends early. Cost and duration are reported but do not change health.
 
 A completed duel or catch-up is instead **non-discriminating** when every
@@ -844,8 +846,9 @@ no champion and is not a draw. Raw HP, recoil, shared neutral defects, repair
 history, and patch size stay visible but cannot manufacture a champion.
 
 For ordinary competitive results, the **arena champion** is the health-ledger
-leader or, at equal HP, the patch selected by a decisive identity-blind quality
-verdict. A non-discriminating result has no champion. With selection enabled,
+leader or, at equal HP and equal active defect damage, the patch selected by a
+decisive identity-blind quality verdict. A non-discriminating result has no
+champion. With selection enabled,
 Agent Arena runs the comparison using the configured judge, frozen MCP policy,
 anonymized patches, final validation, frozen task contract, and deterministic
 quality facts. The judge sees production-only minimality facts; relevant passing

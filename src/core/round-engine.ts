@@ -86,7 +86,10 @@ import {
   type PatchQualityVerifier,
 } from "../quality/verifier.js";
 import { compareQualityWithRetry } from "../quality/retry.js";
-import { selectRecommendedPatch } from "../recommendation/select-patch.js";
+import {
+  isCompetitiveQualityTie,
+  selectRecommendedPatch,
+} from "../recommendation/select-patch.js";
 import { buildReviewPrompt } from "../review/prompt.js";
 import {
   buildEvidenceHandoffPacket,
@@ -10300,11 +10303,10 @@ export class RoundEngine {
       left && right
         ? [left, right].map((agent) => getContestant(context.state, agent))
         : [];
-    const competitiveHpTie =
-      arenaOutcome.kind === "draw" &&
-      comparableContestants.length === 2 &&
-      new Set(comparableContestants.map((contestant) => contestant.finalHealth))
-        .size === 1;
+    const competitiveHpTie = isCompetitiveQualityTie(
+      comparableContestants,
+      arenaOutcome.kind,
+    );
     const shouldCompareQuality =
       (arenaOutcome.kind === "non_discriminating" || competitiveHpTie) &&
       context.state.coverageAssessment?.confidence !== "provisional" &&

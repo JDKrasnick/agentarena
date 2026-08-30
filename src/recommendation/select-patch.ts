@@ -1,6 +1,7 @@
 import {
   PatchRecommendationSchema,
   type ContestantId,
+  type ContestantResult,
   type PatchQualityVerdict,
   type PatchRecommendation,
   type RunState,
@@ -12,6 +13,26 @@ export interface RecommendationInput {
   outcomeKind?: "winner" | "draw" | "non_discriminating";
   qualityVerdict?: PatchQualityVerdict;
   anonymizationMap?: { patch_a: ContestantId; patch_b: ContestantId };
+}
+
+export function isCompetitiveQualityTie(
+  contestants: readonly ContestantResult[],
+  outcomeKind: RecommendationInput["outcomeKind"],
+): boolean {
+  return (
+    outcomeKind === "draw" &&
+    contestants.length === 2 &&
+    new Set(contestants.map((contestant) => contestant.finalHealth)).size ===
+      1 &&
+    new Set(
+      contestants.map((contestant) =>
+        contestant.healthLedger.activeDefects.reduce(
+          (total, defect) => total + defect.damage,
+          0,
+        ),
+      ),
+    ).size === 1
+  );
 }
 
 function finalRequiredPassed(
