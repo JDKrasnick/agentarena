@@ -334,7 +334,7 @@ cross-component failures. It does not grant production access.
 
 Before focused failure analysis, each agent receives a separate
 `review_minutes` budget for read-only inspection of the opponent's frozen patch.
-The budget defaults to 30 minutes and has a 30-minute ceiling. Every provider
+The budget defaults to 10 minutes and has a 10-minute ceiling. Every provider
 and judge invocation records normalized message, tool lifecycle, progress, and
 result activity without tool arguments or private reasoning. A review deadline
 still terminates and cleans up the owned process tree. Only a complete
@@ -342,12 +342,6 @@ schema-valid `valid`, `valid_empty`, or `partial` file with at least one
 accepted finding already present after cleanup is salvaged into the normal
 handoff path; the underlying invocation stays `timed_out`. Invalid, empty
 partial, and missing output follow the existing one-retry path.
-
-Implementation defaults to 45 minutes. Focused attack generation, verifier or
-judge work, and repair calls default to 30 minutes each. Hard deadlines are
-last-ditch process-safety backstops, while heartbeat activity is the normal
-operational signal. Operators may still configure smaller positive budgets for
-deliberately cost-bounded runs.
 
 The resulting v2 packet records harness-attested target and complete resolved
 permission fingerprints plus at most 12 ordered reviewer hypotheses. Each
@@ -357,6 +351,11 @@ behavior, confidence, required capabilities, and focused regression plan. Stable
 finding IDs reject exact duplicates while preserving the first priority; they
 never identify canonical defects. Deterministic tail compaction records omitted
 IDs and enforces a 16 KiB canonical UTF-8 ceiling.
+
+The review prompt lists the complete observation provenance vocabulary:
+`code_inspection`, `task_source`, `test_inspection`, `test_run`,
+`tool_summary`, and `other`. `test_run` means the reviewer executed a test;
+`test_inspection` means the reviewer read test code without claiming execution.
 
 Immediately before attack invocation, the harness recomputes both fingerprints.
 A stale or malformed packet skips invocation and receives one targeted review
@@ -941,11 +940,18 @@ auditable variance: NFC/LF/outer whitespace, published enum case, known
 snake/camel aliases, set ordering and duplicates, omitted untrusted review
 labels, `execution` as an alias for tool-summary provenance, and deterministic
 UTF-8-safe truncation of oversized descriptive review fields. The persisted
-value always uses the canonical schema and records the normalization. Commands,
-paths, identifiers, unknown or conflicting fields, absent semantic evidence,
-and ambiguous numeric or enum values remain errors. A partially valid review
-retains its accepted findings immediately rather than asking a retry to
-reproduce them.
+value always uses the canonical schema and records the normalization. Review
+observation provenance additionally canonicalizes only `TEST_RUN`, `test-run`,
+and `test run` spelling, case, and outer-whitespace variants to `test_run`;
+exact `test_run` is unchanged, and values such as `test_execution` remain
+ambiguous errors. Safe normalization preserves the finding and creates the
+handoff without another provider invocation. A partially valid review retains
+accepted findings immediately and counts only genuinely rejected sibling
+findings in the schema-rejected total. When none survive, the single targeted
+review retry receives only invalid JSON paths, received values, and the allowed
+provenance vocabulary. Commands, paths, identifiers, unknown or conflicting
+fields, absent semantic evidence, and ambiguous numeric or enum values remain
+strict.
 
 ### Conservative attack acceptance
 
@@ -1161,11 +1167,10 @@ sources:
 effort: auto
 limits:
   attacks_per_round: 3
-  implementation_minutes: 45
-  review_minutes: 30
-  attack_minutes: 30
-  verifier_minutes: 30
-  repair_minutes: 30
+  implementation_minutes: 15
+  attack_minutes: 8
+  verifier_minutes: 2
+  repair_minutes: 8
 selection:
   enabled: true
 review:

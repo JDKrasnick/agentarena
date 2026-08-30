@@ -551,17 +551,13 @@ low signal, but their continued rounds receive the same pivot instruction.
 In each round, the harness first freezes both current implementation patches.
 Each eligible reviewer then gets a dedicated read-only budget, configured by
 `review_minutes` separately from the focused test-generation budget. The budget
-defaults to 30 minutes, accepts smaller positive values, and cannot
-exceed 30 minutes. At the deadline the harness terminates the owned process
+defaults to 10 minutes, accepts smaller positive values, and cannot
+exceed 10 minutes. At the deadline the harness terminates the owned process
 tree, then accepts an already-written review only when fault-isolated parsing
 classifies the complete file as `valid`, `valid_empty`, or a `partial` with at
 least one accepted finding. The review record is marked salvaged while its
 invocation remains `timed_out`; invalid, empty partial, and missing files
 receive the ordinary targeted retry and may lose coverage.
-Implementation defaults to 45 minutes. Focused attack generation, verifier or
-judge work, and repair calls default to 30 minutes each. These deadlines are
-last-ditch process-safety backstops; heartbeat activity is the normal operational
-signal. Explicit positive lower budgets remain available for cost-bounded runs.
 
 Provider calls emit structured operational activity independently of visible
 stdout: assistant messages, tool starts and finishes, progress, and completion.
@@ -586,7 +582,11 @@ worktree state, the declared integration topology, and previously adjudicated
 root defects. It includes the complete approved/denied capability policy with
 scope, execution role, and `enforced`, `brokered`, or `advisory` semantics.
 Agents may use only approved `agent` or `both` capabilities directly;
-`harness_only` checks remain mediated by the harness.
+`harness_only` checks remain mediated by the harness. The prompt enumerates
+`code_inspection`, `task_source`, `test_inspection`, `test_run`,
+`tool_summary`, and `other` as the complete provenance vocabulary:
+`test_run` records evidence derived from executing a test, while
+`test_inspection` records evidence derived from reading test code.
 
 Immediately before attack invocation, the harness recomputes both fingerprints.
 A stale or malformed packet skips invocation and receives one targeted review
@@ -716,11 +716,18 @@ carried into another round.
 LLM-facing normalization is deliberately softer than persisted contracts.
 Known snake/camel field aliases, normalized text, case-insensitive published
 enums, sorted unique set fields, omitted untrusted review labels, and the
-`execution` provenance alias are canonicalized with an audit record. Unknown
-or contradictory fields, missing evidence, invalid numbers, and unsupported
-semantic values remain rejected. A partially valid review immediately keeps
-its accepted findings; rejected siblings cannot force the model to rewrite or
-discard them.
+`execution` provenance alias are canonicalized with an audit record. At the
+review-observation provenance path only, case and outer whitespace plus the
+safe `TEST_RUN`, `test-run`, and `test run` spellings canonicalize to
+`test_run`; exact `test_run` records no normalization. Values such as
+`test_execution` remain ambiguous and are rejected. Safe normalization keeps
+the finding and creates its handoff without another provider call. A partially
+valid review immediately keeps its accepted findings; genuinely rejected
+siblings remain the only entries counted as schema-rejected. When no finding
+survives, the single review retry receives only the invalid JSON paths,
+received values, and allowed provenance vocabulary. Unknown or contradictory
+fields, missing evidence, invalid numbers, and unsupported semantic values
+remain rejected.
 
 Case-judge worktrees start from the frozen base implementation. The case judge
 receives an anonymized failure description and immutable RunSpec, snapshots

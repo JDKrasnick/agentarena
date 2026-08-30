@@ -171,7 +171,27 @@ export function reportDefects(state: RunState): ReportDefect[] {
 
 export function reportRounds(state: RunState): ReportRound[] {
   const contestants = reportContestants(state);
-  const ids: RoundId[] = [1, 2, 3, 4, 5];
+  const recordedNumericRounds = [
+    ...state.attacks.map((attack) => attack.round),
+    ...contestants.flatMap((contestant) =>
+      contestant.rounds.map((round) => round.round),
+    ),
+    ...state.reviewInvocations.map((invocation) => invocation.round),
+    ...state.attackInvocations.map((invocation) => invocation.round),
+    ...state.adaptiveDecisions.map((decision) => decision.round),
+  ].filter((round): round is 1 | 2 | 3 | 4 | 5 => typeof round === "number");
+  const configuredRounds = state.config.fixedRounds
+    ? state.config.rounds
+    : (state.config.resolvedEffortProfile?.plannedRounds ??
+      state.config.rounds);
+  const numericRoundCount = Math.min(
+    5,
+    Math.max(configuredRounds, ...recordedNumericRounds),
+  );
+  const ids: RoundId[] = Array.from(
+    { length: numericRoundCount },
+    (_, index) => (index + 1) as 1 | 2 | 3 | 4 | 5,
+  );
   if (
     state.attacks.some((attack) => attack.round === "recovery") ||
     contestants.some((contestant) =>

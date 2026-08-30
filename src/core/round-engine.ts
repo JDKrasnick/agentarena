@@ -55,6 +55,7 @@ import {
   declaredAttackPaths,
   isCorrectionEligible,
   mergeCorrectionFields,
+  reviewRetryFeedback,
   type ParsedSubmission,
   type SubmissionKind,
 } from "../attacks/fault-isolated-submission.js";
@@ -5430,13 +5431,15 @@ export class RoundEngine {
         let salvagedAtDeadline = false;
         let finalAttemptStartedAt = this.now().toISOString();
         let finalAttemptFinishedAt = finalAttemptStartedAt;
+        let attemptPrompt = prompt;
+        let attemptPromptPath = promptPath;
         for (const attemptNumber of [1, 2] as const) {
           const attemptStartedAt = this.now().toISOString();
           const candidate = await this.adapterFor(context, reviewer).review({
             worktree,
             contestantId: reviewer,
-            prompt,
-            promptPath,
+            prompt: attemptPrompt,
+            promptPath: attemptPromptPath,
             transcriptPrefix: context.store.resolve(
               `logs/round-${String(round)}-review-${reviewer}-attempt-${String(attemptNumber)}`,
             ),
@@ -5537,6 +5540,16 @@ export class RoundEngine {
               ? JSON.stringify(failedCapture.parsed.rejections)
               : candidate.status,
           });
+          if (failedCapture) {
+            const feedback = reviewRetryFeedback(failedCapture.parsed);
+            if (feedback) {
+              attemptPrompt = `${prompt}\n# Targeted review schema retry\n${feedback}\n`;
+              attemptPromptPath = await context.store.writeText(
+                `prompts/round-${String(round)}-review-${reviewer}-attempt-2.md`,
+                attemptPrompt,
+              );
+            }
+          }
           await removeSubmission(worktree);
           assertTargetedRetryAllowed(attemptNumber);
         }

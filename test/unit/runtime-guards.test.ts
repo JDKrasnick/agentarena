@@ -352,6 +352,28 @@ describe("runtime guards and deterministic prompts", () => {
     expect(prompt).not.toContain("diff --git");
   });
 
+  it("enumerates canonical review provenance and distinguishes test execution from inspection", () => {
+    const prompt = composeAttackReviewPrompt({
+      agent: "a",
+      target: "b",
+      round: 1,
+      runSpec,
+      config,
+      permissions,
+      methodSelection: selectMethods(1, ["typescript"], []),
+    });
+
+    expect(prompt).toContain(
+      "code_inspection, task_source, test_inspection, test_run, tool_summary, other",
+    );
+    expect(prompt).toContain(
+      "Use test_run only for observations derived from executing a test",
+    );
+    expect(prompt).toContain(
+      "Use test_inspection for evidence obtained by reading test code",
+    );
+  });
+
   it("binds neutral case generation to declared direct capabilities", () => {
     const prompt = composeNeutralCasePrompt({
       runSpec,

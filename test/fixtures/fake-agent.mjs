@@ -209,6 +209,31 @@ if (stage === "provider_health_probe") {
     );
   }
 } else if (stage === "review_attacks") {
+  const targetedReviewRetry = prompt.includes("# Targeted review schema retry");
+  if (
+    process.env.AGENT_ARENA_FAKE_AMBIGUOUS_REVIEW_ONCE === "1" &&
+    round === "1" &&
+    agent === "codex" &&
+    targetedReviewRetry &&
+    (!prompt.includes(
+      '"path": "$.findings[0].observations[0].provenance.kind"',
+    ) ||
+      !prompt.includes('"received": "\\\"test_execution\\\""') ||
+      !prompt.includes('"test_run"'))
+  ) {
+    process.exit(3);
+  }
+  const reviewProvenanceKind =
+    process.env.AGENT_ARENA_FAKE_AMBIGUOUS_REVIEW_ONCE === "1" &&
+    round === "1" &&
+    agent === "codex" &&
+    !targetedReviewRetry
+      ? "test_execution"
+      : process.env.AGENT_ARENA_FAKE_TEST_RUN_ALIAS === "1" &&
+          round === "1" &&
+          agent === "codex"
+        ? "test-run"
+        : "code_inspection";
   if (
     process.env.AGENT_ARENA_FAKE_UNKNOWN_REVIEW_FIELD_ALWAYS === "1" &&
     round === "1"
@@ -302,7 +327,7 @@ if (stage === "provider_health_probe") {
               statement:
                 "The implementation replaces individual spaces instead of whitespace runs.",
               provenance: {
-                kind: "code_inspection",
+                kind: reviewProvenanceKind,
                 references: ["src/slug.mjs:1"],
               },
             },
@@ -345,7 +370,7 @@ if (stage === "provider_health_probe") {
               statement:
                 "Mixed-case input should be checked against the frozen lowercase requirement.",
               provenance: {
-                kind: "code_inspection",
+                kind: reviewProvenanceKind,
                 references: ["src/slug.mjs:1"],
               },
             },

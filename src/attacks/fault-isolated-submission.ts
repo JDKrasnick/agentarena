@@ -10,6 +10,7 @@ import {
   type HouseSubmission,
 } from "../core/types.js";
 import {
+  HANDOFF_OBSERVATION_PROVENANCE_KINDS,
   HandoffFindingPayloadSchema,
   TrustedReviewSubmissionSchema,
   type TrustedReviewSubmission,
@@ -387,6 +388,28 @@ function normalizeEntry(
     }
     if (typeof current !== "string") return current;
     const key = String(path.at(-1) ?? "");
+    const isReviewProvenanceKind =
+      prefix[0] === "findings" &&
+      path.length === 6 &&
+      path.at(-4) === "observations" &&
+      path.at(-2) === "provenance" &&
+      key === "kind";
+    if (isReviewProvenanceKind) {
+      const candidate = current
+        .replaceAll("\r\n", "\n")
+        .replaceAll("\r", "\n")
+        .normalize("NFC")
+        .trim();
+      if (current !== "test_run" && /^test(?:_|-|\s+)run$/iu.test(candidate)) {
+        record(
+          path,
+          current,
+          "test_run",
+          "v1.review.provenance.test_run_alias",
+        );
+        return "test_run";
+      }
+    }
     let text = current;
     const normalizedText = text
       .replaceAll("\r\n", "\n")
@@ -411,11 +434,7 @@ function normalizeEntry(
       );
       text = truncated;
     }
-    if (
-      prefix[0] === "findings" &&
-      key === "kind" &&
-      text.toLowerCase() === "execution"
-    ) {
+    if (isReviewProvenanceKind && text.toLowerCase() === "execution") {
       record(
         path,
         text,
@@ -460,6 +479,29 @@ function normalizeEntry(
     return text;
   };
   return { value: visit(value, prefix), normalizations };
+}
+
+export function reviewRetryFeedback(
+  parsed: ParsedSubmission<unknown>,
+): string | undefined {
+  if (parsed.kind !== "review" || parsed.rejections.length === 0)
+    return undefined;
+  const invalidFields = [
+    ...new Map(
+      parsed.rejections.map((rejection) => [
+        `${rejection.path}\0${rejection.received}`,
+        { path: rejection.path, received: rejection.received },
+      ]),
+    ).values(),
+  ];
+  return JSON.stringify(
+    {
+      invalid_fields: invalidFields,
+      allowed_provenance_kinds: HANDOFF_OBSERVATION_PROVENANCE_KINDS,
+    },
+    null,
+    2,
+  );
 }
 
 function collectValidatedFields(

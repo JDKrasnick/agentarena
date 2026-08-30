@@ -251,7 +251,8 @@ export function assessBattleCoverage(
       ) ?? false;
     const expectedFinalCheckIds = attacks
       .filter(
-        (entry) => entry.status === "landed" || entry.status === "shared_defect",
+        (entry) =>
+          entry.status === "landed" || entry.status === "shared_defect",
       )
       .flatMap((entry) => [
         ...(entry.browserProbe ? [`final-browser-${entry.id}`] : []),

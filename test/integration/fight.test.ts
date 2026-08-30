@@ -1753,6 +1753,154 @@ describe("fake-adapter fight on a mocked real issue", () => {
     ).toBe(true);
   }, 30_000);
 
+  it("canonicalizes test-run review provenance without another provider invocation", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      rounds: 1,
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_TEST_RUN_ALIAS: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+
+    const reviews = outcome.state.reviewInvocations.filter(
+      (entry) => entry.round === 1 && entry.reviewer === "a",
+    );
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toMatchObject({
+      submissionStatus: "submitted",
+      findingCount: 1,
+      parseOutcome: "valid",
+    });
+    const parsed = JSON.parse(
+      await readFile(reviews[0]!.parsedArtifactPath!, "utf8"),
+    ) as {
+      normalizations: Array<{
+        path: string;
+        original: string;
+        normalized: string;
+        rule: string;
+      }>;
+    };
+    expect(parsed.normalizations).toContainEqual({
+      path: "$.findings[0].observations[0].provenance.kind",
+      original: "test-run",
+      normalized: "test_run",
+      rule: "v1.review.provenance.test_run_alias",
+    });
+    expect(await readFile(reviews[0]!.rawArtifactPath!, "utf8")).toContain(
+      '"kind":"test-run"',
+    );
+    const packet = EvidenceHandoffPacketSchema.parse(
+      JSON.parse(await readFile(reviews[0]!.artifactPath!, "utf8")),
+    );
+    expect(packet.findings[0]?.observations[0]?.provenance.kind).toBe(
+      "test_run",
+    );
+    expect(
+      outcome.state.submissionArtifacts
+        .filter((artifact) => artifact.kind === "review")
+        .reduce(
+          (total, artifact) =>
+            total + (artifact.schemaRejectedFindingCount ?? 0),
+          0,
+        ),
+    ).toBe(0);
+    expect(
+      outcome.state.attackInvocations.some(
+        (entry) =>
+          entry.round === 1 && entry.attacker === "a" && entry.target === "b",
+      ),
+    ).toBe(true);
+  }, 30_000);
+
+  it("retries wholly ambiguous review provenance with focused schema feedback", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      rounds: 1,
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_AMBIGUOUS_REVIEW_ONCE: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+
+    const reviews = outcome.state.reviewInvocations.filter(
+      (entry) => entry.round === 1 && entry.reviewer === "a",
+    );
+    expect(reviews).toHaveLength(2);
+    expect(reviews[0]).toMatchObject({
+      submissionStatus: "invalid_submission",
+      parseOutcome: "invalid",
+      findingCount: 0,
+    });
+    expect(reviews[1]).toMatchObject({
+      submissionStatus: "submitted",
+      parseOutcome: "valid",
+      findingCount: 1,
+    });
+    const retryPrompt = await readFile(
+      path.join(
+        outcome.state.artifacts.runDirectory!,
+        "prompts",
+        "round-1-review-a-attempt-2.md",
+      ),
+      "utf8",
+    );
+    expect(
+      JSON.parse(retryPrompt.split("# Targeted review schema retry\n")[1]!),
+    ).toEqual({
+      invalid_fields: [
+        {
+          path: "$.findings[0].observations[0].provenance.kind",
+          received: '"test_execution"',
+        },
+      ],
+      allowed_provenance_kinds: [
+        "code_inspection",
+        "task_source",
+        "test_inspection",
+        "test_run",
+        "tool_summary",
+        "other",
+      ],
+    });
+    expect(
+      outcome.state.submissionArtifacts
+        .filter((artifact) => artifact.kind === "review")
+        .reduce(
+          (total, artifact) =>
+            total + (artifact.schemaRejectedFindingCount ?? 0),
+          0,
+        ),
+    ).toBe(1);
+  }, 30_000);
+
   it("refreshes a blocker from a clean frozen target worktree", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = duelConfig(repositoryRoot);
