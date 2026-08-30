@@ -10,6 +10,7 @@ import {
   reportCheckStatus,
   reportContestants,
   reportDefects,
+  reportOutcome,
   reportOutcomeTotals,
   reportRounds,
   resolveArtifactHref,
@@ -385,11 +386,8 @@ export function renderBattleReport(state: RunState): string {
   const sharedDefects = defects.filter(
     (defect) => defect.evidenceClass === "shared",
   );
-  const nonDiscriminating = Boolean(
-    state.arenaOutcome &&
-    "kind" in state.arenaOutcome &&
-    state.arenaOutcome.kind === "non_discriminating",
-  );
+  const outcome = reportOutcome(state);
+  const nonDiscriminating = outcome.kind === "non_discriminating";
   const outcomeTotals = reportOutcomeTotals(state);
   const lines = [
     "# Agent Arena Battle Report",
@@ -442,11 +440,18 @@ export function renderBattleReport(state: RunState): string {
     ...pullRequestProvenance(state),
     "## Final result",
     "",
-    nonDiscriminating
-      ? `**Non-discriminating battle** — ${state.ranking?.reason ?? "complete bidirectional coverage found no competitive differentiator"}`
-      : state.ranking?.draw
-        ? `Draw: ${state.ranking.reason}`
-        : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Winner"}: **${state.coverageDecision?.decision === "inconclusive" ? (state.ranking?.order[0] ?? "none") : (state.ranking?.winner ?? "none")}** — ${state.ranking?.reason ?? "run incomplete"}`,
+    state.coverageDecision?.decision === "inconclusive"
+      ? `Inconclusive; ledger leader: **${state.ranking?.order[0] ?? "none"}** — ${state.ranking?.reason ?? "run incomplete"}`
+      : state.coverageAssessment?.confidence === "provisional" &&
+          !state.coverageDecision
+        ? `Provisional leader: **${state.ranking?.winner ?? "none"}** — ${state.ranking?.reason ?? "run incomplete"}`
+        : nonDiscriminating
+          ? `**Non-discriminating battle** — ${state.ranking?.reason ?? "complete bidirectional coverage found no competitive differentiator"}`
+          : outcome.kind === "draw"
+            ? `Draw: ${state.ranking?.reason ?? "equal evidence"}`
+            : outcome.kind === "winner"
+              ? `${state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Winner"}: **${outcome.winner}** — ${state.ranking?.reason ?? "arena outcome"}`
+              : `Battle incomplete: **${state.ranking?.order[0] ?? "none"}** — ${state.ranking?.reason ?? "run incomplete"}`,
     state.coverageDecision?.decision === "inconclusive" ||
     (state.coverageAssessment?.confidence === "provisional" &&
       !state.coverageDecision)
@@ -454,7 +459,9 @@ export function renderBattleReport(state: RunState): string {
       : state.arenaOutcome
         ? nonDiscriminating
           ? `Arena champion: **none**. Raw health is preserved (${String(state.arenaOutcome.marginHp)} HP margin) without implying leadership.`
-          : `${state.integrity === "assisted" ? "Assisted leader" : "Arena champion"}: **${state.arenaOutcome.championId ?? "draw"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
+          : outcome.kind === "draw"
+            ? `Arena champion: **draw** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
+            : `${state.integrity === "assisted" ? "Assisted leader" : "Arena champion"}: **${outcome.kind === "winner" ? outcome.winner : "unavailable"}** (${String(state.arenaOutcome.marginHp)} HP, ${state.arenaOutcome.marginClass})`
         : "Arena champion: unavailable",
     state.config.mode === "siege"
       ? "Production artifact: **defender final patch only** (patch comparison disabled)"

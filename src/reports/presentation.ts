@@ -92,13 +92,15 @@ export function reportOutcome(state: RunState): ReportOutcome {
       state.coverageDecision?.decision !== "accept-reduced")
   )
     return { kind: "incomplete" };
+  if (state.arenaOutcome && "kind" in state.arenaOutcome) {
+    if (state.arenaOutcome.kind === "draw") return { kind: "draw" };
+    if (state.arenaOutcome.kind === "non_discriminating")
+      return { kind: "non_discriminating" };
+    return state.arenaOutcome.championId
+      ? { kind: "winner", winner: state.arenaOutcome.championId }
+      : { kind: "incomplete" };
+  }
   if (!state.ranking) return { kind: "incomplete" };
-  if (
-    state.arenaOutcome &&
-    "kind" in state.arenaOutcome &&
-    state.arenaOutcome.kind === "non_discriminating"
-  )
-    return { kind: "non_discriminating" };
   if (state.ranking.draw) return { kind: "draw" };
   return state.ranking.winner
     ? { kind: "winner", winner: state.ranking.winner }

@@ -6,6 +6,7 @@ import {
   reportCheckStatus,
   reportContestants,
   reportDefects,
+  reportOutcome,
   reportOutcomeTotals,
   truncateReportText,
 } from "./presentation.js";
@@ -75,16 +76,16 @@ export function renderConsoleSummary(
         .map((round) => Number(round.round)),
     ),
   );
-  const nonDiscriminating = Boolean(
-    state.arenaOutcome &&
-    "kind" in state.arenaOutcome &&
-    state.arenaOutcome.kind === "non_discriminating",
-  );
-  const champion = nonDiscriminating
-    ? `Non-discriminating battle: no arena champion (${String(state.arenaOutcome?.marginHp ?? 0)} HP raw ledger margin)`
-    : state.ranking?.draw
-      ? `Draw: ${state.ranking.reason}`
-      : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Arena champion"}: ${state.coverageDecision?.decision === "inconclusive" && state.ranking?.order[0] ? contestantLabel(state.config.contestants, state.ranking.order[0]) : state.ranking?.winner ? contestantLabel(state.config.contestants, state.ranking.winner) : "none"} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`;
+  const outcome = reportOutcome(state);
+  const nonDiscriminating = outcome.kind === "non_discriminating";
+  const champion =
+    outcome.kind === "non_discriminating"
+      ? `Non-discriminating battle: no arena champion (${String(state.arenaOutcome?.marginHp ?? 0)} HP raw ledger margin)`
+      : outcome.kind === "draw"
+        ? `Draw: ${state.ranking?.reason ?? "equal evidence"}`
+        : outcome.kind === "winner"
+          ? `${state.coverageAssessment?.confidence === "reduced_confidence" || state.coverageDecision?.decision === "accept-reduced" ? "Reduced-confidence champion" : "Arena champion"}: ${contestantLabel(state.config.contestants, outcome.winner)} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`
+          : `${state.coverageDecision?.decision === "inconclusive" ? "Inconclusive; ledger leader" : state.coverageAssessment?.confidence === "provisional" && !state.coverageDecision ? "Provisional leader" : "Arena champion"}: ${state.ranking?.order[0] ? contestantLabel(state.config.contestants, state.ranking.order[0]) : "none"} (${String(state.arenaOutcome?.marginHp ?? 0)} HP, ${state.arenaOutcome?.marginClass ?? "unknown"})`;
   const recommendation = state.patchRecommendation?.contestantId
     ? contestantLabel(
         state.config.contestants,

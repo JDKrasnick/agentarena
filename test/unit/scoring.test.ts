@@ -7,6 +7,7 @@ import {
   normalizeAttackAdjudication,
   PARTIAL_DAMAGE_BY_SEVERITY,
   rankContestants,
+  repairEvidenceAttacks,
   resolveRound,
 } from "../../src/core/scoring.js";
 import type { Attack, ContestantResult } from "../../src/core/types.js";
@@ -572,13 +573,40 @@ describe("ledger scoring", () => {
       status: "shared_defect" as const,
     };
     const unrelated = { ...original, id: "other", rootDefectId: "other" };
+    const superseded = {
+      ...original,
+      id: "superseded",
+      adjudication: { ...normalizeAttackAdjudication(original), id: "old" },
+    };
+    const replacement = {
+      ...original,
+      id: "replacement",
+      adjudication: {
+        ...normalizeAttackAdjudication(original),
+        id: "replacement-adjudication",
+        supersedesAdjudicationId: "old",
+      },
+    };
 
     expect(
       defectEvidenceAttacks(
-        [original, affirm, shared, unrelated],
+        [original, affirm, shared, unrelated, superseded, replacement],
         "b",
         "root",
       ).map((attack) => attack.id),
-    ).toEqual(["land", "affirm-variant", "shared-variant"]);
+    ).toEqual(["land", "affirm-variant", "shared-variant", "replacement"]);
+  });
+
+  it("expands one canonical repair unit into every non-overturned evidence case", () => {
+    const original = attacks()[0]!;
+    const sibling = { ...original, id: "same-root-sibling" };
+    const otherRoot = { ...original, id: "other", rootDefectId: "other" };
+
+    expect(
+      repairEvidenceAttacks([original, sibling, otherRoot], "b", [
+        sibling,
+        otherRoot,
+      ]).map((attack) => attack.id),
+    ).toEqual(["land", "same-root-sibling", "other"]);
   });
 });

@@ -10,6 +10,7 @@ import {
   type RoundId,
   type Severity,
 } from "./types.js";
+import { supersededAdjudicationIds } from "../attacks/challenges.js";
 
 export const DAMAGE_BY_SEVERITY = {
   critical: 50,
@@ -249,12 +250,33 @@ export function defectEvidenceAttacks(
   target: ContestantId,
   rootDefectId: string,
 ): Attack[] {
+  const superseded = supersededAdjudicationIds(attacks);
   return attacks.filter(
     (attack) =>
       attack.rootDefectId === rootDefectId &&
       attack.targets.includes(target) &&
+      (!attack.adjudication || !superseded.has(attack.adjudication.id)) &&
       (attack.status === "landed" || attack.status === "shared_defect"),
   );
+}
+
+/** Expand canonical repair units into every accepted reproducer to replay. */
+export function repairEvidenceAttacks(
+  attacks: readonly Attack[],
+  target: ContestantId,
+  activeDefects: readonly Attack[],
+): Attack[] {
+  return [
+    ...new Map(
+      activeDefects
+        .flatMap((attack) =>
+          attack.rootDefectId
+            ? defectEvidenceAttacks(attacks, target, attack.rootDefectId)
+            : [],
+        )
+        .map((attack) => [attack.id, attack]),
+    ).values(),
+  ];
 }
 
 function cloneContestant(contestant: ContestantResult): ContestantResult {

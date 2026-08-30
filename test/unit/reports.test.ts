@@ -454,6 +454,42 @@ describe("battle reports", () => {
     expect(visual).not.toContain("Winner:");
   });
 
+  it("renders the authoritative draw when legacy ranking still names a winner", () => {
+    const state = makeRunState();
+    state.arenaOutcome = {
+      version: 2,
+      kind: "draw",
+      contestants: {},
+      marginHp: 0,
+      marginClass: "tied",
+      decidingFactors: [],
+      decisionBasis: "no_differentiator",
+      competitiveLandingCount: 0,
+      sharedDefectCount: 1,
+      explicitEmptyLaneCount: 0,
+    };
+    state.ranking = {
+      winner: "a",
+      draw: false,
+      order: ["a", "b"],
+      reason: "Stale pre-outcome ranking",
+    };
+
+    const consoleReport = renderConsoleSummary(state);
+    const markdown = renderBattleReport(state);
+    const html = renderBattleHtml(state);
+    const visual = renderBattleVisual(state);
+
+    expect(consoleReport).toContain("Draw: Stale pre-outcome ranking");
+    expect(markdown).toContain("Draw: Stale pre-outcome ranking");
+    expect(html).toContain("Draw result");
+    expect(visual).toContain("Result: DRAW");
+    expect(consoleReport).not.toContain("Arena champion: Codex");
+    expect(markdown).not.toContain("Winner: **a**");
+    expect(html).not.toContain("Codex won");
+    expect(visual).not.toContain("Winner: Codex");
+  });
+
   it("renders implementation, round phases, failures, and review in causal order", () => {
     const state = makeRunState();
     state.attacks = [
@@ -485,6 +521,18 @@ describe("battle reports", () => {
       draw: true,
       order: ["a", "b"],
       reason: "equal evidence",
+    };
+    draw.arenaOutcome = {
+      version: 2,
+      kind: "draw",
+      contestants: {},
+      marginHp: 0,
+      marginClass: "tied",
+      decidingFactors: [],
+      decisionBasis: "no_differentiator",
+      competitiveLandingCount: 0,
+      sharedDefectCount: 0,
+      explicitEmptyLaneCount: 0,
     };
     expect(renderConsoleSummary(draw)).toContain("Draw: equal evidence");
     expect(renderBattleHtml(draw)).toContain("Draw result");

@@ -174,6 +174,7 @@ import {
   healDefect,
   normalizeAttackAdjudication,
   defectEvidenceAttacks,
+  repairEvidenceAttacks,
   PARTIAL_DAMAGE_BY_SEVERITY,
   rankContestants,
   resolveRound,
@@ -8560,6 +8561,11 @@ export class RoundEngine {
                   : 2))
             );
           });
+          const remainingEvidenceAttacks = repairEvidenceAttacks(
+            context.state.attacks,
+            agent,
+            remainingAttacks,
+          );
           if (remainingAttacks.length === 0 && latestRequiredPass(contestant))
             break;
           let attemptPrompt = [
@@ -8567,7 +8573,7 @@ export class RoundEngine {
             "",
             "# Remaining failures for this attempt",
             JSON.stringify(
-              remainingAttacks.map((attack) => ({
+              remainingEvidenceAttacks.map((attack) => ({
                 canonicalDefectId: attack.rootDefectId,
                 claim: attack.claim,
                 focusedCommand: attack.focusedCommand,
@@ -8616,7 +8622,7 @@ export class RoundEngine {
               timeoutMs: context.config.limits.repairMs,
               signal: context.controller.signal,
               round,
-              activeAttacks: remainingAttacks,
+              activeAttacks: remainingEvidenceAttacks,
               observer: context.observer,
             });
             attempts.push(invocation);
@@ -8710,10 +8716,9 @@ export class RoundEngine {
           });
           const checksToRun = [
             ...new Map(
-              [...remainingAttacks, ...regressionAttacks].map((attack) => [
-                attack.id,
-                attack,
-              ]),
+              [...remainingEvidenceAttacks, ...regressionAttacks].map(
+                (attack) => [attack.id, attack],
+              ),
             ).values(),
           ];
           let mechanicsPassed = true;
@@ -8888,7 +8893,7 @@ export class RoundEngine {
             mechanicalFallback = {
               attemptId,
               candidatePath,
-              attacks: remainingAttacks,
+              attacks: remainingEvidenceAttacks,
               reason:
                 "Mechanical repair validation remained unavailable after the targeted retry",
             };
@@ -8896,7 +8901,7 @@ export class RoundEngine {
           }
           mechanicalFallback = undefined;
           if (mechanicsPassed) {
-            for (const attack of remainingAttacks) {
+            for (const attack of remainingEvidenceAttacks) {
               if (attack.status !== "shared_defect") continue;
               attack.sharedRepairStatus = {
                 ...attack.sharedRepairStatus,
