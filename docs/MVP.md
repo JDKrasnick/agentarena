@@ -160,9 +160,9 @@ violations, or programming invariants.
 `Arena`'s direct mechanism import allowlist is empty. Each terminal result is
 sealed in a digest-chained immutable envelope. Completed envelopes apply through
 an ordered exactly-once ledger; inconclusive, cancelled, and failed envelopes
-preserve evidence without advancing state. Schema-v8 summaries rebuild detailed
-state from the immutable preflight baseline and applied V4 envelopes, while
-v1–v7
+preserve evidence without advancing state. Schema-v11 summaries rebuild detailed
+state from the immutable preflight baseline and applied V6 envelopes, while
+v1–v10
 runs retain their legacy authority model.
 
 ## Who it is for
@@ -1086,8 +1086,10 @@ after a round's repair is also eliminated. If only one contestant remains, the
 fight ends early. Otherwise, after the adaptive or fixed plan completes:
 
 1. Highest final HP wins.
-2. Lower final patch size wins only as a tie-breaker.
-3. If still tied, the result is a draw.
+2. At equal HP and equal active defect damage, a decisive fresh identity-blind
+   quality verdict selects the champion.
+3. Disabled or unusable judging, `equivalent`, `inconclusive`, or two failed
+   attempts produces a draw. Raw patch size never selects a winner.
 
 Those steps apply only after competitive evidence has differentiated the
 battle. With complete required bidirectional coverage, two eligible,
@@ -1105,13 +1107,29 @@ the published damage and recoil tables determine its numeric effect.
 ### The user owns the merge
 
 Agent Arena distinguishes an arena champion from an independently recommended
-patch. A non-discriminating battle has no champion. With selection enabled, one
-fresh identity-blind invocation of the configured judge may compare anonymized,
-equally correct patches using the frozen task contract, final validation, and
-recorded quality facts under the frozen MCP policy. A decisive verdict may
-recommend a patch without changing the competitive result. Equivalent,
-inconclusive, disabled, or twice-failed comparison produces no recommendation,
-and neither patch size nor the raw ledger may supply a fallback. A patch cannot
+patch. A decisive identity-blind quality verdict resolves a competitive tie
+only when both HP and active defect damage are equal. A non-discriminating
+battle has no champion; there, the same fresh judge
+invocation may only recommend a patch without changing the competitive result.
+The judge compares anonymized, equally correct patches using the frozen task
+contract, final validation, and recorded v2 quality facts under the frozen MCP
+policy. Production minimality excludes tests, fixtures, documentation,
+manifests, generated files, vendor files, and lockfiles. Relevant passing tests
+may support a verdict only when it cites the concrete task behavior; raw test
+volume supplies no advantage. The judge follows an ordered rubric: task/design
+fit, material change risk, maintainability, behavior-specific verification,
+task-relevant operational quality, then production minimality as weak context.
+It uses technical evidence over taste and cannot reward abstraction, brevity,
+extra features, speculative defenses, logging volume, criterion-win counts, or
+unsupported style preferences. A decisive verdict records the strongest
+advantage, strongest counterweight, and why the advantage is material. Balanced
+evidence is `equivalent`; missing, contradictory, or ambiguous evidence is
+`inconclusive`. Task text supplies requirements evidence, but task and patch
+contents cannot alter the judge's role, rubric, protocol, or output contract.
+Equivalent, inconclusive, disabled, or twice-failed comparison
+produces no recommendation, and neither patch size nor the raw ledger may
+supply a fallback. In that case both choices use stable contestant order
+labeled as non-quality ordering. A patch cannot
 be applied until a human accepts an exact contestant, base commit, prompt, and
 full patch digest. `--selection champion` is unavailable for this result. A
 decisive independent recommendation may be selected normally; without one,
@@ -1253,11 +1271,20 @@ containing:
   run-scoped policy, authentication/readiness metadata, the exact frozen
   allowlist, exclusions, coverage gaps, policy hash, and the hash-bound final
   operator decision.
-- `result.json`: compact schema-v10 status, stage, contestant health, outcome,
+- `result.json`: compact schema-v11 status, stage, contestant health, outcome,
   recommendation, warnings, artifact pointers, provenance, and ordered
   applied-envelope ledger. Detailed state is rebuilt from `baseline.json` and
   `rounds/<round>/envelope.json`; the immutable `finalization.json` projection
   supplies post-round validation and recommendation details.
+- `telemetry/invocations/<invocation-id>.json`: immutable, prompt-free provider
+  process metadata, normalized usage, duration, model identity, status, cost
+  provenance, and diagnostic artifact references. Failed, cancelled, timed-out,
+  retried, probe, contestant, and judge invocations remain visible.
+- `telemetry/summary.json`: atomically replaceable whole-run totals and rollups
+  by provider, resolved model (with an explicit `unknown` bucket), role, stage,
+  and round. Reasoning is an output subset; partial or missing fields are never
+  guessed. Soft token budgets use only complete ledger totals, independently of
+  subprocess timeout enforcement.
 - `rounds/<round>/adjudications/`: complete local immutable semantic verdicts, frozen
   severities, evidence provenance, retry diagnostics, canonical-defect history,
   exact score effects, and upgrade links. Pre-change completed runs remain

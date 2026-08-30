@@ -10,7 +10,7 @@ import {
 
 const PointValueSchema = z.number().min(0).max(100).multipleOf(0.25);
 const DamageValueSchema = z.number().positive().max(50).multipleOf(0.25);
-const ContractVersionSchema = z.literal(5);
+const ContractVersionSchema = z.literal(6);
 const FeedbackVersionSchema = z.union([
   z.literal(1),
   z.literal(2),
@@ -601,6 +601,15 @@ export const RoundReplaySchema = z
     diagnostics: z.array(RoundDiagnosticSchema),
     failureRecords: z.array(FailureRecordSchema),
     artifacts: z.array(ArtifactReferenceSchema),
+    telemetryInvocations: z.array(
+      z
+        .object({
+          invocationId: IdentifierSchema,
+          path: z.string().min(1),
+          sha256: Sha256Schema,
+        })
+        .strict(),
+    ),
     stateDeltaArtifactId: IdentifierSchema,
     adaptiveDecision: AdaptiveRoundDecisionSchema.optional(),
     replayHash: Sha256Schema,

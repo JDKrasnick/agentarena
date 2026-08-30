@@ -230,9 +230,17 @@ export const CommandResultSchema = z.object({
           cacheReadTokens: z.number().int().nonnegative().optional(),
           cacheWriteTokens: z.number().int().nonnegative().optional(),
           outputTokens: z.number().int().nonnegative().optional(),
+          reasoningTokens: z.number().int().nonnegative().optional(),
         })
         .strict()
         .optional(),
+      resolvedModel: z.string().min(1).optional(),
+      usageCompleteness: z
+        .enum(["complete", "partial", "unavailable"])
+        .optional(),
+      usageAccountingVersion: z.literal(1).optional(),
+      reportedCostUsd: z.number().nonnegative().optional(),
+      reportedCostSource: z.literal("provider_billing").optional(),
     })
     .optional(),
 });
@@ -1287,7 +1295,7 @@ export const ManifestDeltaSchema = z.object({
 });
 export type ManifestDelta = z.infer<typeof ManifestDeltaSchema>;
 
-export const PatchQualityFactsSchema = z.object({
+export const PatchQualityFactsV1Schema = z.object({
   version: z.literal(1),
   contestantId: ContestantIdSchema,
   patchSha256: z.string().length(64),
@@ -1311,6 +1319,49 @@ export const PatchQualityFactsSchema = z.object({
   observabilityRisks: z.array(z.string()),
   evidence: z.array(z.string()),
 });
+export const ChangeDeltaSchema = z.object({
+  filesChanged: z.number().int().nonnegative(),
+  addedLines: z.number().int().nonnegative(),
+  deletedLines: z.number().int().nonnegative(),
+  normalizedLines: z.number().int().nonnegative(),
+  paths: z.array(z.string()),
+  binaryPaths: z.array(z.string()),
+});
+export const HeuristicFacetDeltaSchema = z.object({
+  status: z.literal("heuristic"),
+  filesChanged: z.number().int().nonnegative(),
+  matchedAddedLines: z.number().int().nonnegative(),
+  matchedDeletedLines: z.number().int().nonnegative(),
+  paths: z.array(z.string()),
+  risks: z.array(z.string()),
+});
+export const PatchQualityFactsV2Schema = z.object({
+  version: z.literal(2),
+  contestantId: ContestantIdSchema,
+  patchSha256: z.string().length(64),
+  totals: ChangeDeltaSchema,
+  categories: z.object({
+    production: ChangeDeltaSchema,
+    test: ChangeDeltaSchema,
+    fixture: ChangeDeltaSchema,
+    manifest: ChangeDeltaSchema,
+    documentation: ChangeDeltaSchema,
+    generated: ChangeDeltaSchema,
+    vendor: ChangeDeltaSchema,
+    lockfile: ChangeDeltaSchema,
+  }),
+  facets: z.object({ observability: HeuristicFacetDeltaSchema }),
+  manifestDeltas: z.array(ManifestDeltaSchema),
+  publicSurfaceChanges: EvidenceValueSchema,
+  operationalRequirementsAdded: EvidenceValueSchema,
+  verificationEvidence: z.array(z.string()),
+  formattingOnly: z.boolean(),
+  evidence: z.array(z.string()),
+});
+export const PatchQualityFactsSchema = z.discriminatedUnion("version", [
+  PatchQualityFactsV1Schema,
+  PatchQualityFactsV2Schema,
+]);
 export type PatchQualityFacts = z.infer<typeof PatchQualityFactsSchema>;
 
 export const PatchQualityVerdictSchema = z.object({
@@ -1769,7 +1820,10 @@ export const RunStateV9Schema = RunStateV8CoreSchema.extend({
   deliveryTarget: DeliveryTargetSchema.optional(),
   pullRequestFixture: PullRequestFixtureSchema.optional(),
 });
-export const RunStateSchema = RunStateV9Schema;
+export const RunStateV10Schema = RunStateV9Schema.omit({
+  schemaVersion: true,
+}).extend({ schemaVersion: z.literal(10) });
+export const RunStateSchema = RunStateV10Schema;
 export type RunStateV3 = z.infer<typeof RunStateV3Schema>;
 export type RunStateV4 = z.infer<typeof RunStateV4Schema>;
 export type RunStateV5 = z.infer<typeof RunStateV5Schema>;
@@ -1777,6 +1831,7 @@ export type RunStateV6 = z.infer<typeof RunStateV6Schema>;
 export type RunStateV7 = z.infer<typeof RunStateV7Schema>;
 export type RunStateV8 = z.infer<typeof RunStateV8Schema>;
 export type RunStateV9 = z.infer<typeof RunStateV9Schema>;
+export type RunStateV10 = z.infer<typeof RunStateV10Schema>;
 export type RunState =
   | RunStateV3
   | RunStateV4
@@ -1784,7 +1839,8 @@ export type RunState =
   | RunStateV6
   | RunStateV7
   | RunStateV8
-  | RunStateV9;
+  | RunStateV9
+  | RunStateV10;
 
 // --- Legacy readers: in schema versions 1 and 2 the provider was the
 // contestant identity. They are migrated to contestant slots at load time. ---
@@ -1829,7 +1885,7 @@ const LegacyArenaOutcomeSchema = ArenaOutcomeV1Schema.omit({
   ),
 });
 
-const LegacyPatchQualityFactsSchema = PatchQualityFactsSchema.omit({
+const LegacyPatchQualityFactsSchema = PatchQualityFactsV1Schema.omit({
   contestantId: true,
 }).extend({ contestantId: AgentIdSchema });
 
@@ -1899,6 +1955,7 @@ export const AnyRunStateSchema = z.discriminatedUnion("schemaVersion", [
   RunStateV7Schema,
   RunStateV8Schema,
   RunStateV9Schema,
+  RunStateV10Schema,
 ]);
 export type AnyRunState = z.infer<typeof AnyRunStateSchema>;
 

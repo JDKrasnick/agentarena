@@ -11,6 +11,7 @@ import {
   EffortProfileSchema,
   TaskEffortAssessmentV1Schema,
 } from "../effort/policy.js";
+import { UsageAggregateSchema } from "../telemetry/usage.js";
 
 const IdentifierSchema = z.string().trim().min(1);
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -47,7 +48,7 @@ export type AppliedEnvelope = z.infer<typeof AppliedEnvelopeSchema>;
 
 export const RoundEnvelopeSchema = z
   .object({
-    version: z.literal(5),
+    version: z.literal(6),
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     sealedAt: IsoDateSchema,
@@ -86,7 +87,13 @@ export type RoundEnvelope = z.infer<typeof RoundEnvelopeSchema>;
  */
 const LegacyRoundReplayHeaderSchema = z
   .object({
-    version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+    version: z.union([
+      z.literal(1),
+      z.literal(2),
+      z.literal(3),
+      z.literal(4),
+      z.literal(5),
+    ]),
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     snapshotHash: Sha256Schema,
@@ -97,7 +104,13 @@ const LegacyRoundReplayHeaderSchema = z
 
 const LegacyRoundResultHeaderSchema = z
   .object({
-    version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+    version: z.union([
+      z.literal(1),
+      z.literal(2),
+      z.literal(3),
+      z.literal(4),
+      z.literal(5),
+    ]),
     status: z.enum(["completed", "inconclusive", "cancelled", "failed"]),
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
@@ -108,7 +121,13 @@ const LegacyRoundResultHeaderSchema = z
 
 export const LegacyRoundEnvelopeSchema = z
   .object({
-    version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+    version: z.union([
+      z.literal(1),
+      z.literal(2),
+      z.literal(3),
+      z.literal(4),
+      z.literal(5),
+    ]),
     runId: IdentifierSchema,
     roundId: RoundIdSchema,
     sealedAt: IsoDateSchema,
@@ -401,6 +420,34 @@ export const RunSummaryV10Schema = RunSummaryV9Schema.omit({
   schemaVersion: true,
 }).extend({ schemaVersion: z.literal(10) });
 export type RunSummaryV10 = z.infer<typeof RunSummaryV10Schema>;
+export const RunSummaryV11Schema = RunSummaryV10Schema.omit({
+  schemaVersion: true,
+}).extend({
+  schemaVersion: z.literal(11),
+  telemetry: z
+    .object({
+      state: z.enum(["available", "unavailable"]),
+      path: z.string().min(1).nullable(),
+      sha256: Sha256Schema.nullable(),
+      total: UsageAggregateSchema.nullable(),
+    })
+    .strict()
+    .superRefine((telemetry, context) => {
+      const values = [telemetry.path, telemetry.sha256, telemetry.total];
+      const present = values.filter((value) => value !== null).length;
+      if (
+        (telemetry.state === "available" && present !== values.length) ||
+        (telemetry.state === "unavailable" && present !== 0)
+      ) {
+        context.addIssue({
+          code: "custom",
+          message:
+            "Telemetry availability must agree with its path, hash, and total",
+        });
+      }
+    }),
+});
+export type RunSummaryV11 = z.infer<typeof RunSummaryV11Schema>;
 export const AnyRunSummarySchema = z.discriminatedUnion("schemaVersion", [
   RunSummaryV5Schema,
   RunSummaryV6Schema,
@@ -408,6 +455,7 @@ export const AnyRunSummarySchema = z.discriminatedUnion("schemaVersion", [
   RunSummaryV8Schema,
   RunSummaryV9Schema,
   RunSummaryV10Schema,
+  RunSummaryV11Schema,
 ]);
 
 export const CheckpointDescriptorSchema = z

@@ -35,6 +35,7 @@ import {
   createPromptManifest,
 } from "../agents/prompts.js";
 import { ArtifactStore } from "../artifacts/store.js";
+import { readInvocationUsages } from "../telemetry/usage.js";
 import {
   browserProbeEvidencePatch,
   materializeAttack,
@@ -92,13 +93,15 @@ import {
   sharedDefects,
 } from "../outcomes/evidence.js";
 import { collectPatchQualityFacts } from "../quality/collect-facts.js";
-import { isManifestPath } from "../quality/manifest-adapters.js";
 import {
   inconclusiveQualityVerdict,
   type PatchQualityVerifier,
 } from "../quality/verifier.js";
 import { compareQualityWithRetry } from "../quality/retry.js";
-import { selectRecommendedPatch } from "../recommendation/select-patch.js";
+import {
+  isCompetitiveQualityTie,
+  selectRecommendedPatch,
+} from "../recommendation/select-patch.js";
 import { buildReviewPrompt } from "../review/prompt.js";
 import {
   buildEvidenceHandoffPacket,
@@ -1144,7 +1147,7 @@ export class RoundEngine {
         contractWarnings.push(targetResolution.reason);
       const startedAt = this.now().toISOString();
       let state: RunState = {
-        schemaVersion: 9,
+        schemaVersion: 10,
         runId,
         harnessVersion: "0.1.0",
         status: "running",
@@ -1199,8 +1202,10 @@ export class RoundEngine {
       };
       if (replacement?.inheritedState) {
         const inherited = structuredClone(replacement.inheritedState);
-        if (inherited.schemaVersion !== 9)
-          throw new Error("Provider recovery requires durable V9 parent state");
+        if (inherited.schemaVersion !== 10)
+          throw new Error(
+            "Provider recovery requires durable V10 parent state",
+          );
         delete inherited.terminalOutcome;
         delete inherited.providerFailure;
         delete inherited.completedAt;
@@ -1446,9 +1451,9 @@ export class RoundEngine {
     });
     await store.initialize();
     const summary = await store.readSummary();
-    if (!summary || summary.schemaVersion !== 10)
+    if (!summary || summary.schemaVersion !== 11)
       throw new Error(
-        "Interrupted runs older than outcome schema v10 cannot resume; restart the fight. Completed legacy artifacts remain readable.",
+        "Interrupted runs older than outcome schema v11 cannot resume; restart the fight. Completed legacy artifacts remain readable.",
       );
     await appendRecoveryEvent({
       store,
@@ -1456,9 +1461,9 @@ export class RoundEngine {
       now: this.now(),
     });
     let state = await store.readState();
-    if (state.schemaVersion !== 9)
+    if (state.schemaVersion !== 10)
       throw new Error(
-        "Interrupted pre-V9 runs are read-only legacy artifacts and cannot continue; restart the fight to create a V9 run",
+        "Interrupted pre-V10 runs are read-only legacy artifacts and cannot continue; restart the fight to create a V10 run",
       );
     const config = FightConfigSchema.parse({
       ...state.config,
@@ -2357,7 +2362,8 @@ export class RoundEngine {
         .slice(before.attackInvocations.length)
         .map((entry) => entry.invocation),
     );
-    const providerCalls = invocations.length + context.roundInvocations.length;
+    const legacyProviderCalls =
+      invocations.length + context.roundInvocations.length;
     const invocationTelemetry: TokenTelemetry[] = invocations.map(
       (invocation) => {
         const usage = invocation.command?.providerDiagnostics?.tokenUsage;
@@ -2415,19 +2421,84 @@ export class RoundEngine {
       (sum, value) => sum + value,
       0,
     );
-    const completeTelemetry =
-      providerCalls > 0 &&
-      allTelemetry.length === providerCalls &&
+    const legacyCompleteTelemetry =
+      legacyProviderCalls > 0 &&
+      allTelemetry.length === legacyProviderCalls &&
       allTelemetry.every((telemetry) => telemetry.state === "complete");
-    const tokenTelemetry = {
+    const legacyTokenTelemetry = {
       state:
         availableTelemetry.length === 0
           ? ("unavailable" as const)
-          : completeTelemetry
+          : legacyCompleteTelemetry
             ? ("complete" as const)
             : ("partial" as const),
       ...(availableTelemetry.length ? { ...tokenFields, totalTokens } : {}),
     };
+    const ledgerInvocations = (
+      await readInvocationUsages(context.store.runDirectory)
+    ).filter(
+      (invocation) =>
+        new Date(invocation.startedAt).getTime() >= startedAt.getTime() &&
+        new Date(invocation.finishedAt).getTime() <= finishedAt.getTime(),
+    );
+    const providerCalls = ledgerInvocations.length || legacyProviderCalls;
+    const providerDurationMs = ledgerInvocations.reduce(
+      (sum, invocation) => sum + invocation.durationMs,
+      0,
+    );
+    const ledgerAvailable = ledgerInvocations.filter(
+      (invocation) => invocation.usage.completeness !== "unavailable",
+    );
+    const ledgerComplete =
+      ledgerInvocations.length > 0 &&
+      ledgerInvocations.every(
+        (invocation) => invocation.usage.completeness === "complete",
+      );
+    const ledgerProcessedTokens = ledgerAvailable.reduce(
+      (sum, invocation) => sum + (invocation.usage.processedTokens ?? 0),
+      0,
+    );
+    const tokenTelemetry = ledgerInvocations.length
+      ? {
+          state:
+            ledgerAvailable.length === 0
+              ? ("unavailable" as const)
+              : ledgerComplete
+                ? ("complete" as const)
+                : ("partial" as const),
+          ...(ledgerAvailable.length
+            ? {
+                uncachedInputTokens: ledgerAvailable.reduce(
+                  (sum, invocation) =>
+                    sum + (invocation.usage.uncachedInputTokens ?? 0),
+                  0,
+                ),
+                cacheReadTokens: ledgerAvailable.reduce(
+                  (sum, invocation) =>
+                    sum + (invocation.usage.cacheReadTokens ?? 0),
+                  0,
+                ),
+                cacheWriteTokens: ledgerAvailable.reduce(
+                  (sum, invocation) =>
+                    sum + (invocation.usage.cacheCreationTokens ?? 0),
+                  0,
+                ),
+                outputTokens: ledgerAvailable.reduce(
+                  (sum, invocation) =>
+                    sum + (invocation.usage.outputTokens ?? 0),
+                  0,
+                ),
+                totalTokens: ledgerProcessedTokens,
+              }
+            : {}),
+        }
+      : legacyTokenTelemetry;
+    const completeTelemetry = ledgerInvocations.length
+      ? ledgerComplete
+      : legacyCompleteTelemetry;
+    const budgetTokens = ledgerInvocations.length
+      ? ledgerProcessedTokens
+      : totalTokens;
     const roundAttacks = context.state.attacks.filter(
       (attack) => attack.round === round,
     );
@@ -2622,12 +2693,13 @@ export class RoundEngine {
     const extensionQualified = extensionTriggerDefectIds.length > 0;
     const consumption = {
       wallTimeMs,
+      providerDurationMs,
       providerCalls,
       tokenTelemetry,
       wallTimePressure: wallTimeMs >= profile.roundEnvelopeMs,
       invocationPressure: hasProviderCallPressure(profile, providerCalls),
       tokenPressure:
-        completeTelemetry && totalTokens >= profile.maxTokensPerRound,
+        completeTelemetry && budgetTokens >= profile.maxTokensPerRound,
       overrunMs: Math.max(0, wallTimeMs - profile.roundEnvelopeMs),
     };
     const pressureReason = consumption.wallTimePressure
@@ -2811,7 +2883,7 @@ export class RoundEngine {
       });
     });
     const draft = {
-      version: 5 as const,
+      version: 6 as const,
       runId: context.state.runId,
       roundId,
       snapshotHash: "0".repeat(64),
@@ -3451,6 +3523,37 @@ export class RoundEngine {
         artifactIds: invocation.artifactPaths.flatMap(artifactIdFor),
       })),
     ];
+    const roundStartedAt = Math.min(
+      ...invocations.map((invocation) =>
+        new Date(invocation.startedAt).getTime(),
+      ),
+    );
+    const roundFinishedAt = Math.max(
+      ...invocations.map((invocation) =>
+        new Date(invocation.finishedAt).getTime(),
+      ),
+    );
+    const telemetryInvocations = await Promise.all(
+      (await readInvocationUsages(context.store.runDirectory))
+        .filter((invocation) => {
+          if (invocation.round === roundId) return true;
+          if (invocation.round !== null || invocations.length === 0)
+            return false;
+          const startedAt = new Date(invocation.startedAt).getTime();
+          const finishedAt = new Date(invocation.finishedAt).getTime();
+          return startedAt >= roundStartedAt && finishedAt <= roundFinishedAt;
+        })
+        .map(async (invocation) => {
+          const artifactPath = context.store.resolve(
+            `telemetry/invocations/${invocation.invocationId}.json`,
+          );
+          return {
+            invocationId: invocation.invocationId,
+            path: artifactPath,
+            sha256: sha256(await readFile(artifactPath)),
+          };
+        }),
+    );
     const attacks = (delta.attacks as Attack[]).flatMap((attack) =>
       attack.targets.map((target) => ({
         attackId: attack.id,
@@ -3551,7 +3654,7 @@ export class RoundEngine {
       };
     });
     const replayDraft = {
-      version: 5 as const,
+      version: 6 as const,
       runId: snapshot.runId,
       roundId,
       snapshotHash: snapshot.snapshotHash,
@@ -3613,6 +3716,7 @@ export class RoundEngine {
             ],
       failureRecords: structuredClone(context.state.failureRecords),
       artifacts,
+      telemetryInvocations,
       stateDeltaArtifactId: deltaArtifact.id,
       ...(context.state.adaptiveDecisions.find(
         (entry) => entry.round === roundId,
@@ -3693,7 +3797,7 @@ export class RoundEngine {
       }),
     );
     const baseResult = {
-      version: 5,
+      version: 6,
       runId: snapshot.runId,
       roundId,
       resultingContestants: [
@@ -10480,7 +10584,7 @@ export class RoundEngine {
     }
     context.state.ranking = rankContestants(
       context.config.agents.map((agent) => getContestant(context.state, agent)),
-      { patchSizeTieBreaker: context.config.mode !== "siege" },
+      { patchSizeTieBreaker: false },
     );
     await this.persist(context);
   }
@@ -10497,7 +10601,8 @@ export class RoundEngine {
       patch,
       patchBytes,
     });
-    const manifestPaths = facts.changedPaths.filter(isManifestPath);
+    const manifestPaths =
+      facts.version === 2 ? facts.categories.manifest.paths : [];
     if (manifestPaths.length > 0 && context.config.baseCommit) {
       const worktree = await context.worktrees.create(`quality-facts-${agent}`);
       try {
@@ -10548,7 +10653,7 @@ export class RoundEngine {
         draw: false,
         order: [...context.config.agents].sort(),
         reason:
-          "Non-discriminating battle: complete bidirectional coverage produced no still-valid competitive landing and both eligible patches retain equal active defect damage.",
+          "Non-discriminating battle: complete bidirectional coverage produced no still-valid competitive landing and both eligible patches retain equal active defect damage. Display order is stable contestant order, not a quality ranking.",
       };
     }
     const productionAgents = context.config.agents.filter(
@@ -10589,25 +10694,27 @@ export class RoundEngine {
       left && right
         ? [left, right].map((agent) => getContestant(context.state, agent))
         : [];
+    const competitiveHpTie = isCompetitiveQualityTie(
+      comparableContestants,
+      arenaOutcome.kind,
+    );
     const shouldCompareQuality =
-      arenaOutcome.kind === "non_discriminating" &&
+      (arenaOutcome.kind === "non_discriminating" || competitiveHpTie) &&
       context.state.coverageAssessment?.confidence !== "provisional" &&
       comparableContestants.length === 2 &&
       context.config.agents.every((agent) =>
         finalPatchEligible(context.state, agent),
       ) &&
-      new Set(
-        comparableContestants.map((contestant) =>
-          contestant.healthLedger.activeDefects.reduce(
-            (total, defect) => total + defect.damage,
-            0,
-          ),
-        ),
-      ).size === 1;
+      comparableContestants.every(
+        (contestant) =>
+          contestant.status !== "eliminated" &&
+          latestRequiredPass(contestant) &&
+          Boolean(contestant.finalPatchPath),
+      );
     let verdict = inconclusiveQualityVerdict(
       shouldCompareQuality
         ? "No quality verifier was configured."
-        : "Patches were not equally correct and did not require a quality tie-break.",
+        : "Patches did not require an implementation-quality comparison.",
     );
     const qualityStartedAt = this.now();
     if (
@@ -10725,6 +10832,28 @@ export class RoundEngine {
       cost: { status: "unknown", amountUsd: null },
       status: verdict.verdict,
     });
+    if (
+      competitiveHpTie &&
+      anonymizationMap &&
+      (verdict.verdict === "patch_a" || verdict.verdict === "patch_b")
+    ) {
+      const championId = anonymizationMap[verdict.verdict];
+      arenaOutcome.kind = "winner";
+      arenaOutcome.championId = championId;
+      arenaOutcome.decisionBasis = "independent_patch_quality";
+      if (!arenaOutcome.decidingFactors.includes("tie_breaker"))
+        arenaOutcome.decidingFactors.push("tie_breaker");
+      context.state.ranking = {
+        winner: championId,
+        draw: false,
+        order: [
+          championId,
+          ...context.config.agents.filter((agent) => agent !== championId),
+        ],
+        reason:
+          "Equal-HP competitive tie resolved by a decisive identity-blind implementation-quality verdict.",
+      };
+    }
     context.state.patchRecommendation = selectRecommendedPatch({
       contestants: context.state.contestants,
       attacks: context.state.attacks,

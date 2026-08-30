@@ -62,7 +62,7 @@ async function fixture() {
   after.warnings.push("sealed warning");
   const delta = projectRoundStateDelta(before, after, 1);
   const snapshotDraft = {
-    version: 5 as const,
+    version: 6 as const,
     runId: before.runId,
     roundId: 1 as const,
     snapshotHash: "0".repeat(64),
@@ -171,7 +171,7 @@ async function fixture() {
     sha256: sha256(deltaBytes),
   };
   const replayDraft = {
-    version: 5 as const,
+    version: 6 as const,
     runId: before.runId,
     roundId: 1 as const,
     snapshotHash: snapshot.snapshotHash,
@@ -183,6 +183,7 @@ async function fixture() {
     scoreEvents: [],
     diagnostics: [],
     failureRecords: [],
+    telemetryInvocations: [],
     artifacts: [deltaArtifact],
     stateDeltaArtifactId: deltaArtifact.id,
     replayHash: "0".repeat(64),
@@ -219,7 +220,7 @@ async function fixture() {
     return RoundResultSchema.parse(
       status === "completed"
         ? {
-            version: 5,
+            version: 6,
             status,
             runId: before.runId,
             roundId: 1,
@@ -228,7 +229,7 @@ async function fixture() {
             replay,
           }
         : {
-            version: 5,
+            version: 6,
             status,
             runId: before.runId,
             roundId: 1,
@@ -427,7 +428,7 @@ describe("durable round recovery", () => {
     },
   );
 
-  it("rebuilds a v9 result from its immutable baseline and applied envelopes", async () => {
+  it("rebuilds a v10 result from its immutable baseline and applied envelopes", async () => {
     const { store, before, resultFor } = await fixture();
     await writeBaseline({
       store,
@@ -493,8 +494,18 @@ describe("durable round recovery", () => {
     await store.writeState(applied, application.ledger);
     const summary = JSON.parse(
       await readFile(store.resolve("result.json"), "utf8"),
-    ) as { schemaVersion: number; appliedEnvelopes: unknown[] };
-    expect(summary.schemaVersion).toBe(10);
+    ) as {
+      schemaVersion: number;
+      appliedEnvelopes: unknown[];
+      telemetry: { state: string; path: string | null };
+    };
+    expect(summary.schemaVersion).toBe(11);
+    expect(summary.telemetry).toEqual({
+      state: "unavailable",
+      path: null,
+      sha256: null,
+      total: null,
+    });
     expect(summary.appliedEnvelopes).toHaveLength(1);
     const rebuilt = await store.readState();
     expect(rebuilt.warnings).toEqual(["sealed warning"]);

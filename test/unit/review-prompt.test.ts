@@ -5,6 +5,20 @@ import { buildReviewPrompt } from "../../src/review/prompt.js";
 import { makeRunState } from "../helpers/run-state.js";
 
 describe("review prompt", () => {
+  it("binds a legacy patch digest without inventing quality classifications", () => {
+    const state = makeRunState();
+    delete state.patchQualityFacts.a;
+
+    const prompt = buildReviewPrompt(state, { a: "f".repeat(64) });
+
+    expect(
+      prompt.choices.find((choice) => choice.contestantId === "a"),
+    ).toMatchObject({
+      patchSha256: "f".repeat(64),
+    });
+    expect(state.patchQualityFacts.a).toBeUndefined();
+  });
+
   it("keeps recommendation and arena champion badges independent", () => {
     const prompt = buildReviewPrompt(makeRunState());
     expect(

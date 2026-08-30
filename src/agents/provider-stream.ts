@@ -27,11 +27,17 @@ export interface ProviderStreamDiagnostics {
   lastActivityAt?: string;
   currentOpenTool?: string;
   decodingWarnings: string[];
+  resolvedModel?: string;
+  usageCompleteness?: "complete" | "partial" | "unavailable";
+  usageAccountingVersion?: 1;
+  reportedCostUsd?: number;
+  reportedCostSource?: "provider_billing";
   tokenUsage?: {
     uncachedInputTokens?: number;
     cacheReadTokens?: number;
     cacheWriteTokens?: number;
     outputTokens?: number;
+    reasoningTokens?: number;
   };
 }
 
@@ -67,6 +73,17 @@ export class ProviderStreamDecoder {
   private toolFinishedCount = 0;
   private lastAssistantText?: string;
   private tokenUsage?: ProviderStreamDiagnostics["tokenUsage"];
+  private resolvedModel?: string;
+  private reportedCostUsd?: number;
+  private reportedCostSource?: "provider_billing";
+  private readonly claudeMessageUsage = new Map<
+    string,
+    NonNullable<ProviderStreamDiagnostics["tokenUsage"]>
+  >();
+  private claudeFinalUsage?: NonNullable<
+    ProviderStreamDiagnostics["tokenUsage"]
+  >;
+  private usageRecordSequence = 0;
 
   constructor(
     readonly kind: ProviderStreamKind,
@@ -102,6 +119,15 @@ export class ProviderStreamDecoder {
         ? { currentOpenTool: [...this.openTools.values()].at(-1)! }
         : {}),
       decodingWarnings: [...this.warnings],
+      ...(this.resolvedModel ? { resolvedModel: this.resolvedModel } : {}),
+      usageCompleteness: this.usageCompleteness(),
+      usageAccountingVersion: 1,
+      ...(this.reportedCostUsd === undefined
+        ? {}
+        : {
+            reportedCostUsd: this.reportedCostUsd,
+            reportedCostSource: this.reportedCostSource,
+          }),
       ...(this.tokenUsage ? { tokenUsage: { ...this.tokenUsage } } : {}),
     };
   }
@@ -146,6 +172,8 @@ export class ProviderStreamDecoder {
       stringAt(record, "sessionId") ??
       stringAt(record, "thread_id");
     if (!this.sessionId && sessionId) this.sessionId = sessionId;
+    this.captureModel(record, message);
+    this.captureCost(record);
     this.captureTokenUsage(record);
 
     if (this.kind === "codex") {
@@ -233,6 +261,37 @@ export class ProviderStreamDecoder {
     // design so telemetry can never fail an otherwise usable invocation.
   }
 
+  private captureModel(
+    record: Record<string, unknown>,
+    message?: Record<string, unknown>,
+  ): void {
+    const response = recordAt(record, "response");
+    const model =
+      stringAt(record, "model") ??
+      (message ? stringAt(message, "model") : undefined) ??
+      (response ? stringAt(response, "model") : undefined);
+    if (model?.trim()) this.resolvedModel = model.trim().slice(0, 200);
+  }
+
+  private captureCost(record: Record<string, unknown>): void {
+    const usage = recordAt(record, "usage");
+    const billing =
+      recordAt(record, "billing") ??
+      (usage ? recordAt(usage, "billing") : undefined);
+    if (!billing || stringAt(billing, "source") !== "provider_billing") return;
+    const candidates = [billing.usd, billing.cost_usd];
+    const value = candidates.find(
+      (candidate): candidate is number =>
+        typeof candidate === "number" &&
+        Number.isFinite(candidate) &&
+        candidate >= 0,
+    );
+    if (value !== undefined) {
+      this.reportedCostUsd = value;
+      this.reportedCostSource = "provider_billing";
+    }
+  }
+
   private captureTokenUsage(record: Record<string, unknown>) {
     const usage =
       recordAt(record, "usage") ??
@@ -255,6 +314,7 @@ export class ProviderStreamDecoder {
     );
     const cacheWrite = numberAt(
       "cache_creation_input_tokens",
+      "cache_write_input_tokens",
       "cacheWriteInputTokens",
     );
     const output = numberAt(
@@ -262,20 +322,99 @@ export class ProviderStreamDecoder {
       "outputTokens",
       "completion_tokens",
     );
+    const reasoning = numberAt(
+      "reasoning_tokens",
+      "reasoning_output_tokens",
+      "reasoningTokens",
+      "output_reasoning_tokens",
+    );
     if (
-      [input, cacheRead, cacheWrite, output].every(
+      [input, cacheRead, cacheWrite, output, reasoning].every(
         (value) => value === undefined,
       )
     )
       return;
-    this.tokenUsage = {
+    const normalized = {
       ...(input === undefined
         ? {}
-        : { uncachedInputTokens: Math.max(0, input - (cacheRead ?? 0)) }),
+        : {
+            uncachedInputTokens:
+              this.kind === "codex"
+                ? Math.max(0, input - (cacheRead ?? 0))
+                : input,
+          }),
       ...(cacheRead === undefined ? {} : { cacheReadTokens: cacheRead }),
-      ...(cacheWrite === undefined ? {} : { cacheWriteTokens: cacheWrite }),
+      ...(cacheWrite === undefined
+        ? this.kind === "codex"
+          ? { cacheWriteTokens: 0 }
+          : {}
+        : { cacheWriteTokens: cacheWrite }),
       ...(output === undefined ? {} : { outputTokens: output }),
+      ...(reasoning === undefined ? {} : { reasoningTokens: reasoning }),
     };
+    if (this.kind === "claude") {
+      const type = stringAt(record, "type");
+      if (type === "result") {
+        this.claudeFinalUsage = normalized;
+        this.tokenUsage = normalized;
+        return;
+      }
+      const message = recordAt(record, "message");
+      const identity =
+        (message ? stringAt(message, "id") : undefined) ??
+        stringAt(record, "message_id") ??
+        stringAt(record, "id");
+      if (identity) this.claudeMessageUsage.set(identity, normalized);
+      else {
+        this.usageRecordSequence += 1;
+        this.claudeMessageUsage.set(
+          `event-${String(this.usageRecordSequence)}`,
+          normalized,
+        );
+      }
+      this.tokenUsage = this.sumUsage([...this.claudeMessageUsage.values()]);
+      return;
+    }
+    // Codex emits cumulative turn snapshots. Gemini's supported records are
+    // likewise treated as snapshots; retaining the latest avoids inflation.
+    this.tokenUsage = normalized;
+  }
+
+  private sumUsage(
+    usages: NonNullable<ProviderStreamDiagnostics["tokenUsage"]>[],
+  ): NonNullable<ProviderStreamDiagnostics["tokenUsage"]> {
+    const keys = [
+      "uncachedInputTokens",
+      "cacheReadTokens",
+      "cacheWriteTokens",
+      "outputTokens",
+      "reasoningTokens",
+    ] as const;
+    return Object.fromEntries(
+      keys.flatMap((key) => {
+        const values = usages
+          .map((usage) => usage[key])
+          .filter((value): value is number => value !== undefined);
+        return values.length
+          ? [[key, values.reduce((sum, value) => sum + value, 0)]]
+          : [];
+      }),
+    );
+  }
+
+  private usageCompleteness(): "complete" | "partial" | "unavailable" {
+    const usage = this.claudeFinalUsage ?? this.tokenUsage;
+    if (!usage || Object.values(usage).every((value) => value === undefined))
+      return "unavailable";
+    const required = [
+      usage.uncachedInputTokens,
+      usage.cacheReadTokens,
+      usage.cacheWriteTokens,
+      usage.outputTokens,
+    ];
+    return required.every((value) => value !== undefined)
+      ? "complete"
+      : "partial";
   }
 
   private decodeClaudeContent(value: unknown, update: ProviderStreamUpdate) {

@@ -270,8 +270,6 @@ describe("battle reports", () => {
     expect(html).toContain("Verified test coverage");
     expect(html).toContain("Attack ledger — bugs found, misses, and repairs");
     expect(html).toContain("Health starts at 100");
-    expect(html).toContain("tie between equally validated patches");
-    expect(html).not.toContain("equal-correctness");
     expect(html).toContain('href="./BATTLE.md"');
   });
 

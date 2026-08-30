@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Attack } from "../../src/core/types.js";
-import { selectRecommendedPatch } from "../../src/recommendation/select-patch.js";
+import {
+  isCompetitiveQualityTie,
+  selectRecommendedPatch,
+} from "../../src/recommendation/select-patch.js";
 import { makeRunState } from "../helpers/run-state.js";
 
 describe("recommended patch selection", () => {
@@ -228,18 +231,57 @@ describe("recommended patch selection", () => {
     expect(recommendation).not.toHaveProperty("contestantId");
   });
 
-  it("describes a patch-size tie-break without claiming equal correctness", () => {
+  it("does not reward a smaller raw patch when quality judging is unavailable", () => {
     const state = makeRunState();
     state.contestants.a!.patchSize = 1;
-    state.contestants.b!.patchSize = 2;
+    state.contestants.b!.patchSize = 1000;
+    expect(
+      selectRecommendedPatch({
+        contestants: state.contestants,
+        outcomeKind: "draw",
+      }),
+    ).toMatchObject({ reason: "draw" });
+  });
 
-    const recommendation = selectRecommendedPatch({
-      contestants: state.contestants,
-      championId: "a",
+  it("does not let quality override unequal active defect damage at equal HP", () => {
+    const state = makeRunState({
+      codexHealth: 85,
+      codexDamage: 15,
+      claudeHealth: 85,
+      claudeRecoil: 10,
+      claudeDamage: 5,
     });
+    expect(
+      isCompetitiveQualityTie(Object.values(state.contestants), "draw"),
+    ).toBe(false);
+    expect(
+      selectRecommendedPatch({
+        contestants: state.contestants,
+        outcomeKind: "draw",
+        qualityVerdict: {
+          version: 1,
+          verdict: "patch_a",
+          criteria: [],
+          rationale: ["Patch A wins the quality tie-break."],
+        },
+        anonymizationMap: { patch_a: "a", patch_b: "b" },
+      }),
+    ).toMatchObject({
+      contestantId: "b",
+      reason: "correctness",
+    });
+  });
 
-    expect(recommendation.rationale).toEqual([
-      "Equally validated patches were tied on active defect damage; selected the smaller 1-byte patch.",
-    ]);
+  it("permits quality judging when both HP and active defect damage tie", () => {
+    const state = makeRunState({
+      codexHealth: 85,
+      codexDamage: 15,
+      claudeHealth: 85,
+      claudeRecoil: 0,
+      claudeDamage: 15,
+    });
+    expect(
+      isCompetitiveQualityTie(Object.values(state.contestants), "draw"),
+    ).toBe(true);
   });
 });

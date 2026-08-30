@@ -16,8 +16,9 @@ adjudication, and repair judgments when mechanics remain unavailable. House
 scouting, case-building, held-out sibling generation, and harness maintenance
 are legacy-only extensions and are not invoked by new runs. The one permitted
 new-run quality comparison is a fresh post-validation invocation of the same
-configured judge role, used only when a duel or catch-up result is
-non-discriminating.
+configured judge role, used for an equal-HP, equal-active-damage competitive
+tie or to provide an independent recommendation for a non-discriminating duel
+or catch-up.
 
 Champion and patch-recommendation language is conditional on coverage. Duel
 and catch-up require both attack directions in every executed round; siege
@@ -186,12 +187,23 @@ configuration, invalid schemas, and programming invariants.
 
 `Arena` has no direct mechanism imports. Durable recovery treats the immutable
 preflight baseline and sealed per-round envelopes as authority. `result.json`
-is a compact schema-v10 summary with an ordered applied-envelope ledger. Runtime
-state is V9 and round snapshots, results, replays, envelopes, and state deltas
-are V4. Resume
+is a compact schema-v11 summary with an ordered applied-envelope ledger and a
+digest-linked telemetry projection. Runtime state is V10 and round snapshots,
+results, replays, envelopes, and state deltas are V6. Resume
 validates the digest chain and runtime drift, applies a sealed boundary exactly
 once, and never reruns an interrupted unsealed round under the original run ID.
 Production prompts consume only persisted lane-safe `ContestantFeedback`.
+
+Every fight-owned provider process seals one prompt-free invocation record at
+`telemetry/invocations/<invocation-id>.json`, including retries, probes, effort
+assessment, adjudication, repair judgment, and quality comparison.
+`telemetry/summary.json` is an atomic projection by provider, resolved model,
+contestant/judge role, stage, and round. Uncached input, cache creation, cache
+reads, output, and reasoning-output subsets remain separate, so reasoning is
+never counted twice. Missing usage stays partial or unavailable and is never
+treated as zero for soft budgets. Subscription CLI cost is null with explicit
+provenance; aggregate USD is non-null only with complete authoritative billing
+or one stable versioned rate card.
 
 Every attack outcome is normalized into an immutable, versioned adjudication
 record before scoring. Semantic verdict, rejection basis, canonical defect,
@@ -881,8 +893,10 @@ Health is calculated from a ledger: `100 - permanent recoil - active distinct de
 Attackers may propose a severity, but they do not control damage. A neutral verifier should apply the published rubric to anonymized executable evidence, choose the lowest level fully supported, and provide a saved rationale. Ambiguous High or Critical ratings should be capped at Medium. The harness then calculates health deterministically from landed tests, persisted severity verdicts, recoil, and repair results.
 
 After the adaptive or fixed round plan completes, ordinary competitive battles
-award the surviving contestant with the most HP. Patch simplicity may break an
-HP tie; otherwise the result is a draw. If only one contestant survives earlier,
+award the surviving contestant with the most HP. When active defect damage is
+also equal, a decisive fresh, identity-blind quality verdict breaks an HP tie;
+unavailable, equivalent, inconclusive, or twice-failed judging produces a draw.
+If only one contestant survives earlier,
 the fight ends early. Cost and duration are reported but do not change health.
 
 A completed duel or catch-up is instead **non-discriminating** when every
@@ -893,15 +907,31 @@ landings still discriminate; later-overturned decisions do not. The result has
 no champion and is not a draw. Raw HP, recoil, shared neutral defects, repair
 history, and patch size stay visible but cannot manufacture a champion.
 
-For ordinary competitive results, the **arena champion** remains the
-health-ledger result. A non-discriminating result has no champion. With selection
-enabled, Agent Arena may run one fresh, identity-blind comparison using the
-configured judge, frozen MCP policy, anonymized patches, final validation,
-frozen task contract, and deterministic quality facts. A decisive verdict may
-create an independent `implementation_quality` recommendation. An equivalent,
+For ordinary competitive results, the **arena champion** is the health-ledger
+leader or, at equal HP and equal active defect damage, the patch selected by a
+decisive identity-blind quality verdict. A non-discriminating result has no
+champion. With selection enabled,
+Agent Arena runs the comparison using the configured judge, frozen MCP policy,
+anonymized patches, final validation, frozen task contract, and deterministic
+quality facts. The judge sees production-only minimality facts; relevant passing
+regression coverage may support a cited behavioral judgment, while raw test
+volume never does. Its ordered code-health rubric evaluates task/design fit,
+material change risk, maintainability, behavior-specific verification,
+task-relevant operational quality, and production minimality last. Technical
+evidence outranks taste; abstraction, brevity, extra features, speculative
+defenses, logging volume, criterion-win counts, and style preferences have no
+intrinsic value. A decisive verdict must identify a material advantage, the
+strongest counterweight, and why the advantage matters more. Sufficient but
+balanced evidence produces `equivalent`; missing, conflicting, or ambiguous
+evidence produces `inconclusive`, so the judge never has to force a winner.
+Task contents supply requirements evidence, while task and patch contents cannot
+alter the judge's role, rubric, protocol, or output contract.
+For a non-discriminating battle, a decisive verdict creates only an independent
+`implementation_quality` recommendation. An equivalent,
 inconclusive, disabled, or twice-failed comparison creates no recommendation;
-patch size and the arena ledger cannot break that tie. Quality never changes
-HP, damage, healing, recoil, coverage, run success, or champion status.
+both patches remain visible in stable contestant order explicitly labeled as
+non-quality ordering. Quality never changes HP, damage, healing, recoil,
+coverage, or run success.
 
 Every completed run produces a stable review prompt with all eligible patch
 choices and full SHA-256 digests. Applying a patch requires a current human
@@ -1238,7 +1268,8 @@ Game mechanics should map directly to real engineering events:
 * **Fallback:** After one failed mechanical retry, an eligible immutable attack may receive a clearly labeled judge verdict.
 * **Heal:** A repaired patch restores the exact HP lost to that attack.
 * **Elimination:** A required check remains failing and health becomes 0.
-* **Draw:** Multiple patches finish with equal HP and tie-breakers.
+* **Draw:** Multiple competitive patches finish with equal HP and no decisive
+  quality verdict.
 * **Non-discriminating:** Complete bidirectional coverage finds no effective
   competitive landing; raw HP remains visible but no champion is awarded.
 

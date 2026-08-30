@@ -282,6 +282,7 @@ export const ConvergenceSignalsSchema = z
 export const RoundConsumptionSchema = z
   .object({
     wallTimeMs: z.number().int().nonnegative(),
+    providerDurationMs: z.number().int().nonnegative().optional(),
     providerCalls: z.number().int().nonnegative(),
     tokenTelemetry: TokenTelemetrySchema,
     wallTimePressure: z.boolean(),

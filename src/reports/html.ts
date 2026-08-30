@@ -6,6 +6,7 @@ import type {
 } from "../core/types.js";
 import { contestantLabel } from "../core/labels.js";
 import { sharedDefectIsActive } from "../outcomes/evidence.js";
+import { conciseUsage, readRunUsageSummarySync } from "../telemetry/usage.js";
 import {
   latestCheck,
   reportCheckStatus,
@@ -16,6 +17,7 @@ import {
   reportRounds,
   resolveArtifactHref,
 } from "./presentation.js";
+import { qualityCategoryRows } from "../quality/presentation.js";
 
 function escapeHtml(value: string): string {
   return value.replace(
@@ -103,6 +105,25 @@ function attackNarrative(attack: Attack): string {
 
 /** A deterministic, self-contained, clickable battle dossier for local review. */
 export function renderBattleHtml(state: RunState): string {
+  const usageSummary = readRunUsageSummarySync(
+    `${state.config.artifactRoot}/${state.runId}`,
+  );
+  const usageRows = usageSummary
+    ? [
+        ...usageSummary.byProvider.map(
+          (entry) =>
+            `<tr><td>Provider</td><td>${escapeHtml(entry.key)}</td><td>${String(entry.invocationCount)}</td><td>${(entry.providerDurationMs / 1000).toFixed(1)}s</td><td>${entry.usage.processedTokens === null ? "unavailable" : entry.usage.processedTokens.toLocaleString("en-US")}</td><td>${entry.cost.usd === null ? escapeHtml(`unavailable (${entry.cost.unavailableReason ?? "unknown"})`) : `$${entry.cost.usd.toFixed(4)}`}</td></tr>`,
+        ),
+        ...usageSummary.byResolvedModel.map(
+          (entry) =>
+            `<tr><td>Resolved model</td><td>${escapeHtml(entry.key)}</td><td>${String(entry.invocationCount)}</td><td>${(entry.providerDurationMs / 1000).toFixed(1)}s</td><td>${entry.usage.processedTokens === null ? "unavailable" : entry.usage.processedTokens.toLocaleString("en-US")}</td><td>${entry.cost.usd === null ? "unavailable" : `$${entry.cost.usd.toFixed(4)}`}</td></tr>`,
+        ),
+        ...usageSummary.byRole.map(
+          (entry) =>
+            `<tr><td>Role</td><td>${escapeHtml(entry.key)}</td><td>${String(entry.invocationCount)}</td><td>${(entry.providerDurationMs / 1000).toFixed(1)}s</td><td>${entry.usage.processedTokens === null ? "unavailable" : entry.usage.processedTokens.toLocaleString("en-US")}</td><td>${entry.cost.usd === null ? "unavailable" : `$${entry.cost.usd.toFixed(4)}`}</td></tr>`,
+        ),
+      ].join("")
+    : `<tr><td colspan="6">Telemetry unavailable (legacy or incomplete run).</td></tr>`;
   if (state.terminalOutcome) {
     const terminal = state.terminalOutcome;
     const recommended =
@@ -126,7 +147,7 @@ export function renderBattleHtml(state: RunState): string {
                 `<tr><td>${escapeHtml(contestantLabel(state.config.contestants, id))}</td><td>ineligible</td><td>${escapeHtml(terminal.reasonCode)}</td></tr>`,
             )
             .join("");
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Arena — pre-review result</title><style>:root{color-scheme:dark}body{margin:0;background:#0b1017;color:#edf3f8;font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}main{max-width:980px;margin:auto;padding:48px}.panel{background:#121b26;border:1px solid #36526b;border-radius:14px;padding:24px;margin-top:24px}h1{margin:0}p{color:#d7e0ea}table{border-collapse:collapse;width:100%;margin-top:20px}th,td{text-align:left;padding:12px;border-bottom:1px solid #36526b}</style></head><body><main><h1>Agent Arena — pre-review result</h1><div class="panel"><strong>${escapeHtml(terminal.kind.toUpperCase())} · ${escapeHtml(terminal.reasonCode)}</strong><p>${escapeHtml(terminal.reason)}</p><p>Recommended production patch: ${escapeHtml(recommended)}.</p><p>No review, attack, repair, quality comparison, or coverage stage ran.</p><table><thead><tr><th>Contestant</th><th>Eligibility</th><th>Cause</th></tr></thead><tbody>${rows}</tbody></table></div></main></body></html>`;
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Arena — pre-review result</title><style>:root{color-scheme:dark}body{margin:0;background:#0b1017;color:#edf3f8;font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}main{max-width:980px;margin:auto;padding:48px}.panel{background:#121b26;border:1px solid #36526b;border-radius:14px;padding:24px;margin-top:24px}h1{margin:0}p{color:#d7e0ea}table{border-collapse:collapse;width:100%;margin-top:20px}th,td{text-align:left;padding:12px;border-bottom:1px solid #36526b}</style></head><body><main><h1>Agent Arena — pre-review result</h1><div class="panel"><strong>${escapeHtml(terminal.kind.toUpperCase())} · ${escapeHtml(terminal.reasonCode)}</strong><p>${escapeHtml(terminal.reason)}</p><p>Recommended production patch: ${escapeHtml(recommended)}.</p><p>No review, attack, repair, quality comparison, or coverage stage ran.</p><p>Provider usage: ${escapeHtml(conciseUsage(usageSummary))}</p><table><thead><tr><th>Contestant</th><th>Eligibility</th><th>Cause</th></tr></thead><tbody>${rows}</tbody></table></div></main></body></html>`;
   }
   const contestants = reportContestants(state);
   const outcome = reportOutcome(state);
@@ -207,6 +228,31 @@ export function renderBattleHtml(state: RunState): string {
     </article>`;
     })
     .join("\n");
+  const qualityRows = contestants
+    .flatMap((contestant) => {
+      const facts = state.patchQualityFacts[contestant.id];
+      const label = contestantLabel(state.config.contestants, contestant.id);
+      const rows = qualityCategoryRows(facts);
+      if (!rows.length)
+        return [
+          `<tr><td>${escapeHtml(label)}</td><td>legacy v1 facts</td><td colspan="5">Stored historical schema retained unchanged</td></tr>`,
+        ];
+      return rows.map(
+        (row) =>
+          `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(row.category)}</td><td>${String(row.filesChanged)}</td><td>+${String(row.addedLines)}</td><td>-${String(row.deletedLines)}</td><td>${String(row.normalizedLines)}</td><td>${escapeHtml(row.paths.join(", ") || "—")}</td></tr>`,
+      );
+    })
+    .join("");
+  const observabilityRows = contestants
+    .map((contestant) => {
+      const facts = state.patchQualityFacts[contestant.id];
+      const label = contestantLabel(state.config.contestants, contestant.id);
+      if (!facts || facts.version !== 2)
+        return `<li><strong>${escapeHtml(label)}</strong>: legacy v1 observability facts.</li>`;
+      const facet = facts.facets.observability;
+      return `<li><strong>${escapeHtml(label)}</strong>: heuristic matches in ${String(facet.filesChanged)} file(s), +${String(facet.matchedAddedLines)} / -${String(facet.matchedDeletedLines)} lines; paths: ${escapeHtml(facet.paths.join(", ") || "none")}${facet.risks.length ? `; risks: ${escapeHtml(facet.risks.join("; "))}` : ""}.</li>`;
+    })
+    .join("");
   const coverageRows = checkIds.length
     ? checkIds
         .map((id) => {
@@ -385,10 +431,12 @@ export function renderBattleHtml(state: RunState): string {
 </style></head><body><main>
 <header class="masthead"><div><p class="eyebrow">AGENT ARENA · EVIDENCE-LINKED BATTLE DOSSIER</p><h1>${escapeHtml(outcomeHeading)}</h1><p class="summary">${escapeHtml(state.ranking?.reason ?? "This run did not reach a final ranking.")} This dossier separates proven defects, unsuccessful attacks, verified checks, and the recommendation so the score is explainable.</p></div><nav class="artifacts" aria-label="Battle artifacts">${link(state, "Full report", state.artifacts.battle)} · ${link(state, "Raw result", state.artifacts.result)} · ${link(state, "Share image", state.artifacts.battleVisual)}</nav></header>
 <section class="section"><h2>Final decision</h2><div class="contestants">${contestantCards}</div></section>
+<section class="section"><h2>Provider usage</h2><p class="note">${escapeHtml(conciseUsage(usageSummary))}</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Dimension</th><th>Value</th><th>Invocations</th><th>Provider time</th><th>Processed tokens</th><th>Cost</th></tr></thead><tbody>${usageRows}</tbody></table></div></section>
 <section class="section"><h2>Effort and adaptive coverage</h2><p class="note"><strong>${escapeHtml(state.config.resolvedEffortProfile?.tier ?? state.config.effortMode)}</strong> · ${state.config.fixedRounds ? `${String(state.config.rounds)} exact rounds` : `${String(state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds)} planned, up to ${String(state.config.resolvedEffortProfile?.maxRounds ?? state.config.rounds)}`} · ${escapeHtml(state.adaptiveCompletion?.reason ?? "run in progress or fixed-round completion")}. Skipped briefs: ${escapeHtml(state.adaptiveCompletion?.skippedBriefs.join(", ") || "none")}.</p><p class="note">Configured budget: ${escapeHtml(effortBudget)}.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Boundary</th><th>Wall time</th><th>Calls</th><th>Tokens</th><th>Converged</th><th>Signal</th><th>Low-signal streak</th><th>Extension triggers</th><th>Exact decision</th></tr></thead><tbody>${adaptiveRows}</tbody></table></div></section>
 ${laneCoverage}
 ${terminalNotice}
-<section class="section decision"><div class="callout"><strong>${escapeHtml(decisionHeading)}</strong><p>${escapeHtml(state.ranking?.reason ?? "No final ranking reason was recorded.")}</p><p class="note">${outcome.kind === "non_discriminating" ? "Raw HP, recoil, shared defects, and patch size remain evidence, but none creates an arena champion. Any recommendation below is an independent identity-blind quality judgment." : "The champion is determined by remaining health. Health starts at 100, then subtracts missed-attack recoil and active, un-repaired defect damage. Patch size only breaks a tie between equally validated patches."}</p></div><div class="score"><dl><dt>Verified required suites</dt><dd>${requiredPassed ? chip("Both pass", "pass") : chip("Review failures", "fail")}</dd><dt>Distinct defects</dt><dd>${String(defects.length)} (${String(unresolved.length)} unresolved, ${String(defects.length - unresolved.length)} repaired)</dd><dt>Competitive landings</dt><dd>${String(outcomeTotals.competitiveLandings)}</dd><dt>Shared defects</dt><dd>${String(outcomeTotals.sharedDefects)}</dd><dt>Schema-rejected findings</dt><dd>${String(outcomeTotals.schemaRejectedFindings)}</dd><dt>Explicit-empty lanes</dt><dd>${String(state.arenaOutcome && "explicitEmptyLaneCount" in state.arenaOutcome ? state.arenaOutcome.explicitEmptyLaneCount : (state.coverageAssessment?.evidenceCounts.explicitEmpty ?? 0))}</dd><dt>Deciding factors</dt><dd>${escapeHtml(state.arenaOutcome?.decidingFactors.join(", ") || "none")}</dd><dt>${outcome.kind === "non_discriminating" ? "Independent recommendation" : "Recommended patch"}</dt><dd>${escapeHtml(recommendation)}</dd></dl></div></section>
+<section class="section decision"><div class="callout"><strong>${escapeHtml(decisionHeading)}</strong><p>${escapeHtml(state.ranking?.reason ?? "No final ranking reason was recorded.")}</p><p class="note">${outcome.kind === "non_discriminating" ? "Raw HP, recoil, shared defects, and patch size remain evidence, but none creates an arena champion. Any recommendation below is an independent identity-blind quality judgment." : "The champion is determined by remaining health. Health starts at 100, then subtracts missed-attack recoil and active, un-repaired defect damage."}</p></div><div class="score"><dl><dt>Verified required suites</dt><dd>${requiredPassed ? chip("Both pass", "pass") : chip("Review failures", "fail")}</dd><dt>Distinct defects</dt><dd>${String(defects.length)} (${String(unresolved.length)} unresolved, ${String(defects.length - unresolved.length)} repaired)</dd><dt>Competitive landings</dt><dd>${String(outcomeTotals.competitiveLandings)}</dd><dt>Shared defects</dt><dd>${String(outcomeTotals.sharedDefects)}</dd><dt>Schema-rejected findings</dt><dd>${String(outcomeTotals.schemaRejectedFindings)}</dd><dt>Explicit-empty lanes</dt><dd>${String(state.arenaOutcome && "explicitEmptyLaneCount" in state.arenaOutcome ? state.arenaOutcome.explicitEmptyLaneCount : (state.coverageAssessment?.evidenceCounts.explicitEmpty ?? 0))}</dd><dt>Deciding factors</dt><dd>${escapeHtml(state.arenaOutcome?.decidingFactors.join(", ") || "none")}</dd><dt>${outcome.kind === "non_discriminating" ? "Independent recommendation" : "Recommended patch"}</dt><dd>${escapeHtml(recommendation)}</dd></dl></div></section>
+<section class="section"><h2>Patch quality facts</h2><p class="note">Primary categories are mutually exclusive. Production minimality excludes every other category; raw test volume is not a quality advantage.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Contestant</th><th>Primary category</th><th>Files</th><th>Added</th><th>Deleted</th><th>Normalized</th><th>Paths</th></tr></thead><tbody>${qualityRows}</tbody></table></div><p class="note">Observability is an overlapping heuristic; zero matches do not prove absence.</p><ul>${observabilityRows}</ul></section>
 <section class="section"><h2>Verified test coverage</h2><p class="note">These results apply to each named final patch in this run. “Not run” is intentionally not shown as a pass. Open stdout/stderr to inspect the harness evidence.</p><div class="table-wrap" tabindex="0"><table><caption>Recorded checks by contestant and exact command</caption><thead><tr><th>Check / command</th>${contestants.map((contestant) => `<th>${escapeHtml(contestantLabel(state.config.contestants, contestant.id))}</th>`).join("")}</tr></thead><tbody>${coverageRows}</tbody></table></div></section>
 <section class="section"><h2>What happened in each round</h2><div class="table-wrap" tabindex="0"><table><caption>Round outcomes and health after repair</caption><thead><tr><th>Investigation</th><th>Attack outcome</th><th>Health after repair</th><th>Artifacts</th></tr></thead><tbody>${roundRows}</tbody></table></div></section>
 <section class="section" aria-labelledby="phase-heading"><h2 id="phase-heading">Phase replay</h2>${phaseReplay}</section>

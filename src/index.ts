@@ -41,6 +41,7 @@ export * from "./attacks/adjudicate.js";
 export * from "./judge/packets.js";
 export * from "./task/task-contract.js";
 export * from "./task/run-spec.js";
+export * from "./telemetry/usage.js";
 export * from "./recovery/contracts.js";
 export * from "./recovery/durable.js";
 export * from "./recovery/events.js";
