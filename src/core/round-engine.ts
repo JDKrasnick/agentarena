@@ -81,7 +81,6 @@ import {
   sharedDefects,
 } from "../outcomes/evidence.js";
 import { collectPatchQualityFacts } from "../quality/collect-facts.js";
-import { isManifestPath } from "../quality/manifest-adapters.js";
 import {
   inconclusiveQualityVerdict,
   type PatchQualityVerifier,
@@ -10191,7 +10190,7 @@ export class RoundEngine {
     }
     context.state.ranking = rankContestants(
       context.config.agents.map((agent) => getContestant(context.state, agent)),
-      { patchSizeTieBreaker: context.config.mode !== "siege" },
+      { patchSizeTieBreaker: false },
     );
     await this.persist(context);
   }
@@ -10208,7 +10207,8 @@ export class RoundEngine {
       patch,
       patchBytes,
     });
-    const manifestPaths = facts.changedPaths.filter(isManifestPath);
+    const manifestPaths =
+      facts.version === 2 ? facts.categories.manifest.paths : [];
     if (manifestPaths.length > 0 && context.config.baseCommit) {
       const worktree = await context.worktrees.create(`quality-facts-${agent}`);
       try {
@@ -10259,7 +10259,7 @@ export class RoundEngine {
         draw: false,
         order: [...context.config.agents].sort(),
         reason:
-          "Non-discriminating battle: complete bidirectional coverage produced no still-valid competitive landing and both eligible patches retain equal active defect damage.",
+          "Non-discriminating battle: complete bidirectional coverage produced no still-valid competitive landing and both eligible patches retain equal active defect damage. Display order is stable contestant order, not a quality ranking.",
       };
     }
     const productionAgents = context.config.agents.filter(
@@ -10300,8 +10300,13 @@ export class RoundEngine {
       left && right
         ? [left, right].map((agent) => getContestant(context.state, agent))
         : [];
+    const competitiveHpTie =
+      arenaOutcome.kind === "draw" &&
+      comparableContestants.length === 2 &&
+      new Set(comparableContestants.map((contestant) => contestant.finalHealth))
+        .size === 1;
     const shouldCompareQuality =
-      arenaOutcome.kind === "non_discriminating" &&
+      (arenaOutcome.kind === "non_discriminating" || competitiveHpTie) &&
       context.state.coverageAssessment?.confidence !== "provisional" &&
       comparableContestants.length === 2 &&
       comparableContestants.every(
@@ -10309,19 +10314,11 @@ export class RoundEngine {
           contestant.status !== "eliminated" &&
           latestRequiredPass(contestant) &&
           Boolean(contestant.finalPatchPath),
-      ) &&
-      new Set(
-        comparableContestants.map((contestant) =>
-          contestant.healthLedger.activeDefects.reduce(
-            (total, defect) => total + defect.damage,
-            0,
-          ),
-        ),
-      ).size === 1;
+      );
     let verdict = inconclusiveQualityVerdict(
       shouldCompareQuality
         ? "No quality verifier was configured."
-        : "Patches were not equally correct and did not require a quality tie-break.",
+        : "Patches did not require an implementation-quality comparison.",
     );
     const qualityStartedAt = this.now();
     if (
@@ -10439,6 +10436,28 @@ export class RoundEngine {
       cost: { status: "unknown", amountUsd: null },
       status: verdict.verdict,
     });
+    if (
+      competitiveHpTie &&
+      anonymizationMap &&
+      (verdict.verdict === "patch_a" || verdict.verdict === "patch_b")
+    ) {
+      const championId = anonymizationMap[verdict.verdict];
+      arenaOutcome.kind = "winner";
+      arenaOutcome.championId = championId;
+      arenaOutcome.decisionBasis = "independent_patch_quality";
+      if (!arenaOutcome.decidingFactors.includes("tie_breaker"))
+        arenaOutcome.decidingFactors.push("tie_breaker");
+      context.state.ranking = {
+        winner: championId,
+        draw: false,
+        order: [
+          championId,
+          ...context.config.agents.filter((agent) => agent !== championId),
+        ],
+        reason:
+          "Equal-HP competitive tie resolved by a decisive identity-blind implementation-quality verdict.",
+      };
+    }
     context.state.patchRecommendation = selectRecommendedPatch({
       contestants: context.state.contestants,
       ...(arenaOutcome.championId

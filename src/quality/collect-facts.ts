@@ -30,6 +30,17 @@ interface DiffFile {
   deletedText: string[];
 }
 
+const PRIMARY_KINDS = [
+  "production",
+  "test",
+  "fixture",
+  "manifest",
+  "documentation",
+  "generated",
+  "vendor",
+  "lockfile",
+] as const;
+
 function whitespaceInsensitiveKey(line: string): string {
   return line.replace(/\s+/gu, "");
 }
@@ -100,6 +111,17 @@ function matchingPaths(files: DiffFile[], pattern: RegExp): string[] {
     .map((file) => file.path);
 }
 
+function changeDelta(files: DiffFile[]) {
+  return {
+    filesChanged: files.length,
+    addedLines: files.reduce((total, file) => total + file.added, 0),
+    deletedLines: files.reduce((total, file) => total + file.deleted, 0),
+    normalizedLines: files.reduce((total, file) => total + file.normalized, 0),
+    paths: files.map((file) => file.path),
+    binaryPaths: files.filter((file) => file.binary).map((file) => file.path),
+  };
+}
+
 export function collectPatchQualityFacts(
   input: CollectPatchFactsInput,
 ): PatchQualityFacts {
@@ -127,9 +149,12 @@ export function collectPatchQualityFacts(
   const verification = classified
     .filter((file) => file.kind === "test")
     .map((file) => file.path);
-  const observability = matchingPaths(
-    files,
-    /\b(log(?:ger)?|metric|trace|health|readiness|audit)\b/iu,
+  const observabilityPattern =
+    /\b(log(?:ger)?|metric|trace|health|readiness|audit)\b/iu;
+  const observabilityFiles = files.filter(
+    (file) =>
+      file.addedText.some((line) => observabilityPattern.test(line)) ||
+      file.deletedText.some((line) => observabilityPattern.test(line)),
   );
   const risks = files.flatMap((file) => {
     const text = file.addedText.join("\n");
@@ -144,37 +169,45 @@ export function collectPatchQualityFacts(
       values.push(`${file.path}: possible noisy logging`);
     return values;
   });
-  const production = classified.filter((file) => file.kind === "production");
   const formattingOnly =
     files.length > 0 &&
     files.every((file) => !file.binary && file.normalized === 0);
 
   return PatchQualityFactsSchema.parse({
-    version: 1,
+    version: 2,
     contestantId: input.contestantId,
     patchSha256: createHash("sha256")
       .update(input.patchBytes ?? Buffer.from(input.patch, "utf8"))
       .digest("hex"),
-    changedPaths: files.map((file) => file.path),
-    binaryPaths: files.filter((file) => file.binary).map((file) => file.path),
-    productionFilesChanged: production.length,
-    testFilesChanged: classified.filter((file) => file.kind === "test").length,
-    generatedFilesChanged: classified.filter(
-      (file) => file.kind === "generated",
-    ).length,
-    vendorFilesChanged: classified.filter((file) => file.kind === "vendor")
-      .length,
-    lockfilesChanged: classified.filter((file) => file.kind === "lockfile")
-      .length,
-    documentationFilesChanged: classified.filter(
-      (file) => file.kind === "documentation",
-    ).length,
-    addedLines: files.reduce((total, file) => total + file.added, 0),
-    deletedLines: files.reduce((total, file) => total + file.deleted, 0),
-    normalizedProductionLines: production.reduce(
-      (total, file) => total + file.normalized,
-      0,
+    totals: changeDelta(files),
+    categories: Object.fromEntries(
+      PRIMARY_KINDS.map((kind) => [
+        kind,
+        changeDelta(classified.filter((file) => file.kind === kind)),
+      ]),
     ),
+    facets: {
+      observability: {
+        status: "heuristic",
+        filesChanged: observabilityFiles.length,
+        matchedAddedLines: observabilityFiles.reduce(
+          (total, file) =>
+            total +
+            file.addedText.filter((line) => observabilityPattern.test(line))
+              .length,
+          0,
+        ),
+        matchedDeletedLines: observabilityFiles.reduce(
+          (total, file) =>
+            total +
+            file.deletedText.filter((line) => observabilityPattern.test(line))
+              .length,
+          0,
+        ),
+        paths: observabilityFiles.map((file) => file.path),
+        risks,
+      },
+    },
     formattingOnly,
     manifestDeltas,
     publicSurfaceChanges: {
@@ -188,8 +221,6 @@ export function collectPatchQualityFacts(
       evidencePaths: operational,
     },
     verificationEvidence: verification,
-    observabilityChanges: observability,
-    observabilityRisks: risks,
     evidence: files.map((file) => file.path),
   });
 }

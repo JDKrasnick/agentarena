@@ -14,6 +14,7 @@ import {
   reportRounds,
   resolveArtifactHref,
 } from "./presentation.js";
+import { qualityCategoryRows } from "../quality/presentation.js";
 
 function escapeHtml(value: string): string {
   return value.replace(
@@ -206,6 +207,31 @@ export function renderBattleHtml(state: RunState): string {
     </article>`;
     })
     .join("\n");
+  const qualityRows = contestants
+    .flatMap((contestant) => {
+      const facts = state.patchQualityFacts[contestant.id];
+      const label = contestantLabel(state.config.contestants, contestant.id);
+      const rows = qualityCategoryRows(facts);
+      if (!rows.length)
+        return [
+          `<tr><td>${escapeHtml(label)}</td><td>legacy v1 facts</td><td colspan="5">Stored historical schema retained unchanged</td></tr>`,
+        ];
+      return rows.map(
+        (row) =>
+          `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(row.category)}</td><td>${String(row.filesChanged)}</td><td>+${String(row.addedLines)}</td><td>-${String(row.deletedLines)}</td><td>${String(row.normalizedLines)}</td><td>${escapeHtml(row.paths.join(", ") || "—")}</td></tr>`,
+      );
+    })
+    .join("");
+  const observabilityRows = contestants
+    .map((contestant) => {
+      const facts = state.patchQualityFacts[contestant.id];
+      const label = contestantLabel(state.config.contestants, contestant.id);
+      if (!facts || facts.version !== 2)
+        return `<li><strong>${escapeHtml(label)}</strong>: legacy v1 observability facts.</li>`;
+      const facet = facts.facets.observability;
+      return `<li><strong>${escapeHtml(label)}</strong>: heuristic matches in ${String(facet.filesChanged)} file(s), +${String(facet.matchedAddedLines)} / -${String(facet.matchedDeletedLines)} lines; paths: ${escapeHtml(facet.paths.join(", ") || "none")}${facet.risks.length ? `; risks: ${escapeHtml(facet.risks.join("; "))}` : ""}.</li>`;
+    })
+    .join("");
   const coverageRows = checkIds.length
     ? checkIds
         .map((id) => {
@@ -383,6 +409,7 @@ export function renderBattleHtml(state: RunState): string {
 ${laneCoverage}
 ${terminalNotice}
 <section class="section decision"><div class="callout"><strong>${escapeHtml(decisionHeading)}</strong><p>${escapeHtml(state.ranking?.reason ?? "No final ranking reason was recorded.")}</p><p class="note">${outcome.kind === "non_discriminating" ? "Raw HP, recoil, shared defects, and patch size remain evidence, but none creates an arena champion. Any recommendation below is an independent identity-blind quality judgment." : "The champion is determined by remaining health. Health starts at 100, then subtracts missed-attack recoil and active, un-repaired defect damage."}</p></div><div class="score"><dl><dt>Verified required suites</dt><dd>${requiredPassed ? chip("Both pass", "pass") : chip("Review failures", "fail")}</dd><dt>Distinct defects</dt><dd>${String(defects.length)} (${String(unresolved.length)} unresolved, ${String(defects.length - unresolved.length)} repaired)</dd><dt>Competitive landings</dt><dd>${String(competitiveDefects.length)}</dd><dt>Shared QA defects</dt><dd>${String(sharedDefects.length)}</dd><dt>Explicit-empty lanes</dt><dd>${String(state.arenaOutcome && "explicitEmptyLaneCount" in state.arenaOutcome ? state.arenaOutcome.explicitEmptyLaneCount : (state.coverageAssessment?.evidenceCounts.explicitEmpty ?? 0))}</dd><dt>Deciding factors</dt><dd>${escapeHtml(state.arenaOutcome?.decidingFactors.join(", ") || "none")}</dd><dt>${outcome.kind === "non_discriminating" ? "Independent recommendation" : "Recommended patch"}</dt><dd>${escapeHtml(recommendation)}</dd></dl></div></section>
+<section class="section"><h2>Patch quality facts</h2><p class="note">Primary categories are mutually exclusive. Production minimality excludes every other category; raw test volume is not a quality advantage.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Contestant</th><th>Primary category</th><th>Files</th><th>Added</th><th>Deleted</th><th>Normalized</th><th>Paths</th></tr></thead><tbody>${qualityRows}</tbody></table></div><p class="note">Observability is an overlapping heuristic; zero matches do not prove absence.</p><ul>${observabilityRows}</ul></section>
 <section class="section"><h2>Verified test coverage</h2><p class="note">These results apply to each named final patch in this run. “Not run” is intentionally not shown as a pass. Open stdout/stderr to inspect the harness evidence.</p><div class="table-wrap" tabindex="0"><table><caption>Recorded checks by contestant and exact command</caption><thead><tr><th>Check / command</th>${contestants.map((contestant) => `<th>${escapeHtml(contestantLabel(state.config.contestants, contestant.id))}</th>`).join("")}</tr></thead><tbody>${coverageRows}</tbody></table></div></section>
 <section class="section"><h2>What happened in each round</h2><div class="table-wrap" tabindex="0"><table><caption>Round outcomes and health after repair</caption><thead><tr><th>Investigation</th><th>Attack outcome</th><th>Health after repair</th><th>Artifacts</th></tr></thead><tbody>${roundRows}</tbody></table></div></section>
 <section class="section" aria-labelledby="phase-heading"><h2 id="phase-heading">Phase replay</h2>${phaseReplay}</section>

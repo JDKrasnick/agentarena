@@ -134,4 +134,43 @@ describe("recommended patch selection", () => {
     });
     expect(recommendation).not.toHaveProperty("contestantId");
   });
+
+  it("does not reward a smaller raw patch when quality judging is unavailable", () => {
+    const state = makeRunState();
+    state.contestants.a!.patchSize = 1;
+    state.contestants.b!.patchSize = 1000;
+    expect(
+      selectRecommendedPatch({
+        contestants: state.contestants,
+        outcomeKind: "draw",
+      }),
+    ).toMatchObject({ reason: "draw" });
+  });
+
+  it("keeps a quality-resolved HP-tie champion and recommendation aligned", () => {
+    const state = makeRunState({
+      codexHealth: 85,
+      codexDamage: 15,
+      claudeHealth: 85,
+      claudeRecoil: 10,
+      claudeDamage: 5,
+    });
+    expect(
+      selectRecommendedPatch({
+        contestants: state.contestants,
+        championId: "a",
+        outcomeKind: "winner",
+        qualityVerdict: {
+          version: 1,
+          verdict: "patch_a",
+          criteria: [],
+          rationale: ["Patch A wins the quality tie-break."],
+        },
+        anonymizationMap: { patch_a: "a", patch_b: "b" },
+      }),
+    ).toMatchObject({
+      contestantId: "a",
+      reason: "implementation_quality",
+    });
+  });
 });

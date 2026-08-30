@@ -1255,7 +1255,7 @@ export const ManifestDeltaSchema = z.object({
 });
 export type ManifestDelta = z.infer<typeof ManifestDeltaSchema>;
 
-export const PatchQualityFactsSchema = z.object({
+export const PatchQualityFactsV1Schema = z.object({
   version: z.literal(1),
   contestantId: ContestantIdSchema,
   patchSha256: z.string().length(64),
@@ -1279,6 +1279,49 @@ export const PatchQualityFactsSchema = z.object({
   observabilityRisks: z.array(z.string()),
   evidence: z.array(z.string()),
 });
+export const ChangeDeltaSchema = z.object({
+  filesChanged: z.number().int().nonnegative(),
+  addedLines: z.number().int().nonnegative(),
+  deletedLines: z.number().int().nonnegative(),
+  normalizedLines: z.number().int().nonnegative(),
+  paths: z.array(z.string()),
+  binaryPaths: z.array(z.string()),
+});
+export const HeuristicFacetDeltaSchema = z.object({
+  status: z.literal("heuristic"),
+  filesChanged: z.number().int().nonnegative(),
+  matchedAddedLines: z.number().int().nonnegative(),
+  matchedDeletedLines: z.number().int().nonnegative(),
+  paths: z.array(z.string()),
+  risks: z.array(z.string()),
+});
+export const PatchQualityFactsV2Schema = z.object({
+  version: z.literal(2),
+  contestantId: ContestantIdSchema,
+  patchSha256: z.string().length(64),
+  totals: ChangeDeltaSchema,
+  categories: z.object({
+    production: ChangeDeltaSchema,
+    test: ChangeDeltaSchema,
+    fixture: ChangeDeltaSchema,
+    manifest: ChangeDeltaSchema,
+    documentation: ChangeDeltaSchema,
+    generated: ChangeDeltaSchema,
+    vendor: ChangeDeltaSchema,
+    lockfile: ChangeDeltaSchema,
+  }),
+  facets: z.object({ observability: HeuristicFacetDeltaSchema }),
+  manifestDeltas: z.array(ManifestDeltaSchema),
+  publicSurfaceChanges: EvidenceValueSchema,
+  operationalRequirementsAdded: EvidenceValueSchema,
+  verificationEvidence: z.array(z.string()),
+  formattingOnly: z.boolean(),
+  evidence: z.array(z.string()),
+});
+export const PatchQualityFactsSchema = z.discriminatedUnion("version", [
+  PatchQualityFactsV1Schema,
+  PatchQualityFactsV2Schema,
+]);
 export type PatchQualityFacts = z.infer<typeof PatchQualityFactsSchema>;
 
 export const PatchQualityVerdictSchema = z.object({
@@ -1797,7 +1840,7 @@ const LegacyArenaOutcomeSchema = ArenaOutcomeV1Schema.omit({
   ),
 });
 
-const LegacyPatchQualityFactsSchema = PatchQualityFactsSchema.omit({
+const LegacyPatchQualityFactsSchema = PatchQualityFactsV1Schema.omit({
   contestantId: true,
 }).extend({ contestantId: AgentIdSchema });
 

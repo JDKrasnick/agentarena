@@ -4,7 +4,6 @@ import path from "node:path";
 import { ArtifactStore } from "../artifacts/store.js";
 import { stableId } from "../core/ids.js";
 import type { ContestantId, ReviewPrompt, RunState } from "../core/types.js";
-import { collectPatchQualityFacts } from "../quality/collect-facts.js";
 import {
   ApprovalContextSchema,
   DirectApprovalVerifier,
@@ -62,12 +61,9 @@ async function ensureReviewFacts(
     const digest = createHash("sha256").update(patchBytes).digest("hex");
     if (state.patchQualityFacts[contestant.id]?.patchSha256 === digest)
       continue;
-    state.patchQualityFacts[contestant.id] = collectPatchQualityFacts({
-      contestantId: contestant.id,
-      patch: patchBytes.toString("utf8"),
-      patchBytes,
-    });
-    changed = true;
+    throw new Error(
+      `Run has no matching stored quality facts for ${contestant.id}; review will not reclassify a historical patch`,
+    );
   }
   if (!state.reviewPrompt || changed) {
     state.reviewPrompt = buildReviewPrompt(state);

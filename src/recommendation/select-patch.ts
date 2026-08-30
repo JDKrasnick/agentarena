@@ -54,6 +54,26 @@ export function selectRecommendedPatch(
       comparison,
     });
   }
+  const decisiveQualityVerdict = input.qualityVerdict?.verdict;
+  if (
+    input.outcomeKind === "winner" &&
+    input.championId &&
+    input.anonymizationMap &&
+    (decisiveQualityVerdict === "patch_a" ||
+      decisiveQualityVerdict === "patch_b") &&
+    input.anonymizationMap[decisiveQualityVerdict] === input.championId &&
+    eligible.some((candidate) => candidate.contestantId === input.championId)
+  ) {
+    return PatchRecommendationSchema.parse({
+      contestantId: input.championId,
+      reason: "implementation_quality",
+      qualityVerdict: decisiveQualityVerdict,
+      rationale: input.qualityVerdict?.rationale.length
+        ? input.qualityVerdict.rationale
+        : ["A decisive identity-blind quality verdict resolved the HP tie."],
+      comparison,
+    });
+  }
   const leastDamage = Math.min(
     ...eligible.map((candidate) => candidate.activeDefectDamage),
   );
@@ -102,32 +122,10 @@ export function selectRecommendedPatch(
       comparison,
     });
   }
-  const smallestPatchSize = Math.min(
-    ...correct.map(
-      (candidate) =>
-        contestants.find((entry) => entry.id === candidate.contestantId)!
-          .patchSize,
-    ),
-  );
-  const smallest = correct.filter(
-    (candidate) =>
-      contestants.find((entry) => entry.id === candidate.contestantId)!
-        .patchSize === smallestPatchSize,
-  );
-  if (smallest.length === 1) {
-    return PatchRecommendationSchema.parse({
-      contestantId: smallest[0]!.contestantId,
-      reason: "patch_size",
-      rationale: [
-        `Equal-correctness patches were tied on active defect damage; selected the smaller ${String(smallestPatchSize)}-byte patch.`,
-      ],
-      comparison,
-    });
-  }
   return PatchRecommendationSchema.parse({
     reason: "draw",
     rationale: [
-      "Required-check eligibility, active defect damage, and patch size are tied.",
+      "Required-check eligibility and active defect damage are tied, and no decisive identity-blind quality verdict is available.",
     ],
     comparison,
   });
