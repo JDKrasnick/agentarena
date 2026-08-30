@@ -1,4 +1,5 @@
 import { calculateCanonicalHash } from "../contracts/round.js";
+import { stableId } from "../core/ids.js";
 import {
   CoverageAssessmentSchema,
   CoverageDecisionSchema,
@@ -242,6 +243,48 @@ export function assessBattleCoverage(
       ),
     );
     const hasLanded = usable.some((entry) => entry.status === "landed");
+    const finalValidationAttempted =
+      state.contestants[target]?.checks.some(
+        (check) => check.id === "final-required",
+      ) ?? false;
+    const expectedFinalCheckIds = attacks
+      .filter((entry) => entry.status === "landed")
+      .flatMap((entry) => [
+        ...(entry.browserProbe ? [`final-browser-${entry.id}`] : []),
+        ...(entry.caseBundle?.cases
+          .filter((caseEntry) => caseEntry.status !== "rejected")
+          .map((caseEntry) => `final-${caseEntry.id}`) ??
+          (entry.evidenceKind === "browser_probe"
+            ? []
+            : [`final-${stableId("case", entry.id, "visible")}`])),
+      ]);
+    const finalChecks = expectedFinalCheckIds.flatMap((checkId) => {
+      const check = state.contestants[target]?.checks.find(
+        (candidate) => candidate.id === checkId,
+      );
+      return check ? [check] : [];
+    });
+    const finalEvidenceRequired =
+      hasLanded &&
+      (finalValidationAttempted || state.status === "inconclusive");
+    const finalEvidenceMissing =
+      finalEvidenceRequired &&
+      (expectedFinalCheckIds.length === 0 ||
+        finalChecks.length !== expectedFinalCheckIds.length);
+    const finalEvidenceInfrastructure = finalChecks.some(
+      (check) => check.status === "infrastructure_error",
+    );
+    const finalEvidenceSemanticFailure = finalChecks.some(
+      (check) => check.status === "failed",
+    );
+    const finalEvidenceResolved =
+      !finalEvidenceRequired ||
+      (!finalEvidenceMissing && !finalEvidenceInfrastructure);
+    if (finalEvidenceMissing) reasonCodes.push("final_reproducer_missing");
+    if (finalEvidenceInfrastructure)
+      reasonCodes.push("final_reproducer_infrastructure");
+    if (finalEvidenceSemanticFailure)
+      reasonCodes.push("final_reproducer_failed");
     const targetRound = state.contestants[target]?.rounds.find(
       (entry) => entry.round === round,
     );
@@ -270,7 +313,8 @@ export function assessBattleCoverage(
       reasonCodes.push(
         repairJudgeUnable ? "repair_judge_unable" : "repair_failed",
       );
-    const laneResolved = attackPathResolved && repairCompleted;
+    const laneResolved =
+      attackPathResolved && repairCompleted && finalEvidenceResolved;
     const stages = [
       stage(
         "review",
@@ -319,6 +363,28 @@ export function assessBattleCoverage(
           executionPaths,
           usableTerminal ? undefined : "execution_no_terminal_result",
         ),
+        ...(finalEvidenceRequired
+          ? [
+              attempt(
+                finalEvidenceResolved && !finalEvidenceSemanticFailure
+                  ? "succeeded"
+                  : "failed",
+                finalChecks.flatMap((check) =>
+                  check.command
+                    ? [check.command.stdoutPath, check.command.stderrPath]
+                    : [],
+                ),
+                finalEvidenceMissing
+                  ? "final_reproducer_missing"
+                  : finalEvidenceInfrastructure
+                    ? "final_reproducer_infrastructure"
+                    : finalEvidenceSemanticFailure
+                      ? "final_reproducer_failed"
+                      : undefined,
+                2,
+              ),
+            ]
+          : []),
       ]),
       stage("semantic_adjudication", [
         attempt(
@@ -360,7 +426,8 @@ export function assessBattleCoverage(
       (partial.length > 0 ||
         focused?.parseOutcome === "partial" ||
         review?.parseOutcome === "partial" ||
-        reasonCodes.includes("submitted_path_lost"));
+        reasonCodes.includes("submitted_path_lost") ||
+        finalEvidenceSemanticFailure);
     const evidenceBasis: CoverageLaneAssessment["evidenceBasis"] = explicitEmpty
       ? "explicit_empty"
       : partial.length

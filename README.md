@@ -65,6 +65,7 @@ An optional `agent-arena.yaml` stores repeatable settings:
 ```yaml
 test: npm test
 # `auto` selects a locked install (npm ci, frozen pnpm/Yarn/Bun).
+# Identical post-patch trees reuse the run-local setup cache.
 # Use `none` only when this repository deliberately needs no setup.
 bootstrap: auto
 agents: [codex, claude]

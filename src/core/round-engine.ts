@@ -1,4 +1,13 @@
-import { access, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import {
+  access,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -358,6 +367,7 @@ interface ArenaContext {
   roundInvocations: RecordedRoundInvocation[];
   priorEnvelopeHash: string | null;
   appliedEnvelopes: AppliedEnvelope[];
+  bootstrapCache: Map<string, { directory: string; sourceSubject: string }>;
   continuationCheckpoint?: CheckpointDescriptor;
   browserBaseline?: BrowserValidationResult;
 }
@@ -1222,6 +1232,7 @@ export class RoundEngine {
         roundInvocations: [],
         priorEnvelopeHash: null,
         appliedEnvelopes: [],
+        bootstrapCache: new Map(),
         ...(replacement?.continuationCheckpoint
           ? {
               priorEnvelopeHash:
@@ -1381,6 +1392,8 @@ export class RoundEngine {
         context.state.warnings.push(
           error instanceof Error ? error.message : String(error),
         );
+        if (!cancelled)
+          await this.finalizeCoverage(context).catch(() => undefined);
         await context.store.writeState(context.state).catch(() => undefined);
         await context.store
           .writeText("BATTLE.md", renderBattleReport(context.state))
@@ -1766,6 +1779,7 @@ export class RoundEngine {
         continuationCheckpoint?.envelopeHash ??
         null,
       appliedEnvelopes: ledger,
+      bootstrapCache: new Map(),
       ...(continuationCheckpoint ? { continuationCheckpoint } : {}),
       ...(browserBaseline ? { browserBaseline } : {}),
     };
@@ -2992,9 +3006,44 @@ export class RoundEngine {
       throw new Error(
         `Bootstrap infrastructure unavailable for ${subject}: setup permission was not approved`,
       );
+    const effectiveTreeHash = await context.worktrees.snapshot(worktree);
+    const cacheKey =
+      bootstrap.source === "auto"
+        ? sha256(`${bootstrap.digest}\0${effectiveTreeHash}`)
+        : undefined;
+    const cached = cacheKey ? context.bootstrapCache.get(cacheKey) : undefined;
     const logPrefix = context.store.resolve(
       `logs/bootstrap-${sha256(`${subject}\0${worktree}`).slice(0, 16)}`,
     );
+    if (cached) {
+      try {
+        await this.copyProvisionedTree(cached.directory, worktree);
+        await context.store.writeJson(
+          `provisioning/${sha256(`${subject}\0${worktree}`).slice(0, 24)}.json`,
+          {
+            bootstrapDigest: bootstrap.digest,
+            effectiveTreeHash,
+            subject,
+            worktree,
+            command: bootstrap.command,
+            dependencyInputs: bootstrap.dependencyInputs,
+            status: "ready",
+            cache: {
+              disposition: "reused",
+              key: cacheKey,
+              sourceSubject: cached.sourceSubject,
+            },
+            recordedAt: this.now().toISOString(),
+          },
+        );
+        return;
+      } catch (error) {
+        context.bootstrapCache.delete(cacheKey!);
+        context.state.warnings.push(
+          `Bootstrap cache ${cacheKey!} could not be restored for ${subject}; running the frozen installer instead: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     const result = await runShellCommand(bootstrap.command!, {
       cwd: worktree,
       timeoutMs: bootstrap.timeoutMs,
@@ -3003,6 +3052,7 @@ export class RoundEngine {
     });
     const record = {
       bootstrapDigest: bootstrap.digest,
+      effectiveTreeHash,
       subject,
       worktree,
       command: bootstrap.command,
@@ -3012,6 +3062,15 @@ export class RoundEngine {
           ? "ready"
           : "infrastructure_error",
       commandResult: result,
+      ...(cacheKey
+        ? {
+            cache: {
+              disposition: "created",
+              key: cacheKey,
+              sourceSubject: subject,
+            },
+          }
+        : { cache: { disposition: "disabled_explicit_command" } }),
       recordedAt: this.now().toISOString(),
     };
     await context.store.writeJson(
@@ -3022,6 +3081,48 @@ export class RoundEngine {
       throw new Error(
         `Bootstrap infrastructure failed for ${subject}; repository commands were not run`,
       );
+    if (cacheKey) {
+      const directory = path.join(
+        context.worktrees.temporaryRoot,
+        ".bootstrap-cache",
+        cacheKey,
+      );
+      try {
+        await rm(directory, { recursive: true, force: true });
+        await mkdir(directory, { recursive: true });
+        await this.copyProvisionedTree(worktree, directory);
+        context.bootstrapCache.set(cacheKey, {
+          directory,
+          sourceSubject: subject,
+        });
+      } catch (error) {
+        await rm(directory, { recursive: true, force: true }).catch(
+          () => undefined,
+        );
+        context.state.warnings.push(
+          `Bootstrap succeeded for ${subject}, but its reusable cache could not be saved: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  private async copyProvisionedTree(
+    source: string,
+    destination: string,
+  ): Promise<void> {
+    for (const entry of await readdir(source, { withFileTypes: true })) {
+      if (entry.name === ".git") continue;
+      await cp(
+        path.join(source, entry.name),
+        path.join(destination, entry.name),
+        {
+          recursive: true,
+          force: true,
+          preserveTimestamps: true,
+          verbatimSymlinks: true,
+        },
+      );
+    }
   }
 
   private async recordFailureAttempt(
@@ -8106,6 +8207,8 @@ export class RoundEngine {
           priorAdjudications,
           persistFailureRecord: (record) =>
             this.persistFailureRecord(context, record),
+          provisionWorktree: (worktree, subject) =>
+            this.provisionWorktree(context, worktree, subject),
         });
         if (this.recordVerifierProviderFailure(context, round))
           throw new Error(context.state.providerFailure?.reason);
@@ -8161,6 +8264,8 @@ export class RoundEngine {
               ...this.browserValidatorOption(context, attack),
               persistFailureRecord: (record) =>
                 this.persistFailureRecord(context, record),
+              provisionWorktree: (worktree, subject) =>
+                this.provisionWorktree(context, worktree, subject),
             })
           : authorPatch
             ? await validateAttack({
@@ -8185,6 +8290,8 @@ export class RoundEngine {
                 ...this.browserValidatorOption(context, attack),
                 persistFailureRecord: (record) =>
                   this.persistFailureRecord(context, record),
+                provisionWorktree: (worktree, subject) =>
+                  this.provisionWorktree(context, worktree, subject),
               })
             : undefined;
       if (!result) continue;
@@ -9373,6 +9480,8 @@ export class RoundEngine {
           provisional.targets,
         ),
         ...this.browserValidatorOption(context, provisional),
+        provisionWorktree: (worktree, subject) =>
+          this.provisionWorktree(context, worktree, subject),
       });
       if (this.recordVerifierProviderFailure(context, round))
         throw new Error(context.state.providerFailure?.reason);
@@ -10079,7 +10188,20 @@ export class RoundEngine {
             const finalCases =
               attack.caseBundle?.cases.filter(
                 (caseEntry) => caseEntry.status !== "rejected",
-              ) ?? [];
+              ) ??
+              (attack.evidenceKind === "browser_probe"
+                ? []
+                : [
+                    {
+                      id: stableId("case", attack.id, "visible"),
+                      visibility: "visible" as const,
+                      category: "visible_reproducer",
+                      patchPath: attack.patchPath,
+                      focusedCommand: attack.focusedCommand,
+                      contentHash: sha256(await readFile(attack.patchPath)),
+                      status: "accepted" as const,
+                    },
+                  ]);
             let defectPasses = true;
             if (attack.browserProbe) {
               const validateBrowser = this.browserProbeValidator(
@@ -10116,15 +10238,16 @@ export class RoundEngine {
               defectPasses = probeResult.status === "verified";
             }
             for (const caseEntry of finalCases) {
-              const caseTree = await this.prepareWorktree(context, {
-                name: `final-${agent}-${caseEntry.id}`,
-                subject: `final-case-worktree:${agent}:${caseEntry.id}`,
-                patches: [currentPatch, caseEntry.patchPath],
-                contestantId: agent,
-                attackId: attack.id,
-                runLevel: true,
-              });
+              let caseTree: string | undefined;
               try {
+                caseTree = await this.prepareWorktree(context, {
+                  name: `final-${agent}-${caseEntry.id}`,
+                  subject: `final-case-worktree:${agent}:${caseEntry.id}`,
+                  patches: [currentPatch, caseEntry.patchPath],
+                  contestantId: agent,
+                  attackId: attack.id,
+                  runLevel: true,
+                });
                 let caseCommand!: Awaited<ReturnType<typeof runShellCommand>>;
                 let caseFailure: FailureRecord | undefined;
                 for (const attempt of [1, 2] as const) {
@@ -10208,8 +10331,25 @@ export class RoundEngine {
                   );
                 }
                 if (caseCommand.exitCode !== 0) defectPasses = false;
+              } catch (error) {
+                if (
+                  !contestant.checks.some(
+                    (check) => check.id === `final-${caseEntry.id}`,
+                  )
+                )
+                  contestant.checks.push({
+                    id: `final-${caseEntry.id}`,
+                    kind:
+                      caseEntry.visibility === "held_out"
+                        ? "held_out"
+                        : "focused",
+                    status: "infrastructure_error",
+                    reason:
+                      error instanceof Error ? error.message : String(error),
+                  });
+                throw error;
               } finally {
-                await context.worktrees.remove(caseTree);
+                if (caseTree) await context.worktrees.remove(caseTree);
               }
             }
             if (

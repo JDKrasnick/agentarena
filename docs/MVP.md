@@ -1102,6 +1102,7 @@ Command-line flags are sufficient for the first run. An optional
 ```yaml
 test: npm test
 # Auto-detects only locked installs; use `{ command: "…" }` for other ecosystems.
+# Auto setup is cached only for an identical post-patch tree and frozen contract.
 bootstrap: auto
 integration:
   setup: docker compose up -d postgres
