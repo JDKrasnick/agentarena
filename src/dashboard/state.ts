@@ -469,7 +469,7 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
       return;
     case "battle_completed":
       state.status = event.status;
-      state.stage = "complete";
+      state.stage = event.status;
       state.result = {
         ...(event.roundsCompleted === undefined
           ? {}
