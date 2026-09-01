@@ -201,9 +201,24 @@ export const CommandResultSchema = z.object({
       ),
     })
     .optional(),
+  timeoutPolicy: z
+    .object({
+      mode: z.enum(["fixed", "progress_extended"]),
+      softTimeoutMs: z.number().int().positive(),
+      absoluteTimeoutMs: z.number().int().positive(),
+      startedAt: z.string().datetime(),
+      initialSoftDeadlineAt: z.string().datetime(),
+      absoluteDeadlineAt: z.string().datetime(),
+      lastProgressAt: z.string().datetime().optional(),
+      progressExtensions: z.number().int().nonnegative(),
+    })
+    .optional(),
   deadline: z
     .object({
+      kind: z.enum(["fixed", "idle", "absolute"]).default("fixed"),
       expiredAt: z.string().datetime(),
+      elapsedMs: z.number().int().nonnegative().default(0),
+      lastProgressAt: z.string().datetime().optional(),
       graceMs: z.number().int().nonnegative(),
       cleanupDurationMs: z.number().int().nonnegative(),
       cleanupComplete: z.boolean(),

@@ -246,12 +246,17 @@ describe("provider model selection", () => {
 });
 
 describe("implementation transport classification", () => {
-  async function invoke(script: string, timeoutMs = 2_000) {
+  async function invoke(
+    script: string,
+    timeoutMs = 2_000,
+    providerStream = false,
+  ) {
     const worktree = await mkdtemp(path.join(os.tmpdir(), "arena-adapter-"));
     return new CommandAgentAdapter({
       id: "codex",
       executable: process.execPath,
       args: ["-e", script],
+      ...(providerStream ? { providerStream: "codex" as const } : {}),
     }).implement({
       worktree,
       contestantId: "a",
@@ -289,6 +294,29 @@ describe("implementation transport classification", () => {
     expect(invocation.command?.exitCode).toBe(8);
     expect(invocation.command?.transportFailures?.[0]?.kind).toBe("mcp_auth");
     expect(invocation.status).toBe("succeeded");
+  });
+
+  it("classifies a harness-enforced deadline as timed out despite transport noise", async () => {
+    const invocation = await invoke(
+      'console.error("transport connection lost"); setInterval(() => undefined, 1000)',
+      1_000,
+    );
+
+    expect(invocation.command?.timedOut).toBe(true);
+    expect(invocation.command?.transportFailures).toHaveLength(1);
+    expect(invocation.status).toBe("timed_out");
+  });
+
+  it("preserves a deadline when a usable submission was written before timeout", async () => {
+    const invocation = await invoke(
+      `require("node:fs").writeFileSync(process.env.AGENT_ARENA_SUBMISSION, JSON.stringify({version: 1, explanation: "usable"})); setInterval(() => undefined, 1000)`,
+      1_000,
+      true,
+    );
+
+    expect(invocation.command?.timedOut).toBe(true);
+    expect(invocation.command?.deadline?.kind).toBe("idle");
+    expect(invocation.status).toBe("timed_out");
   });
 });
 

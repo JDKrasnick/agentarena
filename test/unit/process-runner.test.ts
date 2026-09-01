@@ -123,7 +123,13 @@ describe("process runner supervision", () => {
     );
 
     expect(result.timedOut).toBe(true);
-    expect(result.deadline).toBeDefined();
+    expect(result.deadline).toMatchObject({ kind: "fixed" });
+    expect(result.timeoutPolicy).toMatchObject({
+      mode: "fixed",
+      softTimeoutMs: timeoutMs,
+      absoluteTimeoutMs: timeoutMs,
+      progressExtensions: 0,
+    });
     expect(result.failureClass).toBeUndefined();
     expect(result.termination).toMatchObject({
       cause: "timeout",
@@ -191,6 +197,153 @@ describe("process runner supervision", () => {
       ).toBe(true);
     },
   );
+
+  it("extends a provider soft deadline when meaningful activity continues", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "arena-provider-active-"),
+    );
+    const activity = JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: "still working" },
+    });
+    const program = [
+      `setTimeout(() => console.log(${JSON.stringify(activity)}), 1200)`,
+      "setTimeout(() => process.exit(0), 2600)",
+    ].join(";");
+
+    const result = await runProcess({
+      executable: process.execPath,
+      args: ["-e", program],
+      cwd: root,
+      timeoutMs: 2000,
+      absoluteTimeoutMs: 6000,
+      logPrefix: path.join(root, "logs", "active"),
+      providerStream: "codex",
+    });
+
+    expect(result.timedOut).toBe(false);
+    expect(result.exitCode).toBe(0);
+    expect(result.durationMs).toBeGreaterThan(2000);
+    expect(result.timeoutPolicy).toMatchObject({
+      mode: "progress_extended",
+      softTimeoutMs: 2000,
+      absoluteTimeoutMs: 6000,
+      progressExtensions: 1,
+    });
+    expect(result.timeoutPolicy?.lastProgressAt).toBeDefined();
+  });
+
+  it("does not let transport noise refresh a provider idle deadline", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-provider-idle-"));
+    const program =
+      'setInterval(() => console.error("transport keepalive"), 30)';
+
+    const result = await runProcess({
+      executable: process.execPath,
+      args: ["-e", program],
+      cwd: root,
+      timeoutMs: 160,
+      logPrefix: path.join(root, "logs", "idle"),
+      providerStream: "codex",
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.deadline).toMatchObject({ kind: "idle" });
+    expect(result.deadline?.elapsedMs).toBeLessThan(400);
+    expect(result.deadline?.lastProgressAt).toBeUndefined();
+    expect(result.timeoutPolicy).toMatchObject({
+      softTimeoutMs: 160,
+      absoluteTimeoutMs: 480,
+      progressExtensions: 0,
+    });
+  });
+
+  it("does not let unknown provider records refresh the idle deadline", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "arena-provider-unknown-idle-"),
+    );
+    const keepalive = JSON.stringify({ type: "vendor.keepalive.started" });
+    const program = `setInterval(() => console.log(${JSON.stringify(keepalive)}), 30)`;
+
+    const result = await runProcess({
+      executable: process.execPath,
+      args: ["-e", program],
+      cwd: root,
+      timeoutMs: 160,
+      logPrefix: path.join(root, "logs", "unknown-idle"),
+      providerStream: "codex",
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.deadline).toMatchObject({ kind: "idle" });
+    expect(result.deadline?.elapsedMs).toBeLessThan(400);
+    expect(result.deadline?.lastProgressAt).toBeUndefined();
+    expect(result.timeoutPolicy).toMatchObject({
+      softTimeoutMs: 160,
+      absoluteTimeoutMs: 480,
+      progressExtensions: 0,
+    });
+    expect(result.providerDiagnostics?.eventCount).toBeGreaterThan(0);
+  });
+
+  it("does not let system keepalives refresh the idle deadline", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "arena-provider-system-idle-"),
+    );
+    const keepalive = JSON.stringify({
+      type: "system",
+      subtype: "keepalive",
+    });
+    const program = `setInterval(() => console.log(${JSON.stringify(keepalive)}), 30)`;
+
+    const result = await runProcess({
+      executable: process.execPath,
+      args: ["-e", program],
+      cwd: root,
+      timeoutMs: 160,
+      logPrefix: path.join(root, "logs", "system-idle"),
+      providerStream: "claude",
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.deadline).toMatchObject({ kind: "idle" });
+    expect(result.deadline?.elapsedMs).toBeLessThan(400);
+    expect(result.deadline?.lastProgressAt).toBeUndefined();
+    expect(result.timeoutPolicy).toMatchObject({
+      softTimeoutMs: 160,
+      absoluteTimeoutMs: 480,
+      progressExtensions: 0,
+    });
+    expect(result.providerDiagnostics?.eventCount).toBeGreaterThan(0);
+  });
+
+  it("enforces an absolute cap despite continuing provider activity", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "arena-provider-absolute-"),
+    );
+    const activity = JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: "heartbeat" },
+    });
+    const program = `setInterval(() => console.log(${JSON.stringify(activity)}), 60)`;
+
+    const result = await runProcess({
+      executable: process.execPath,
+      args: ["-e", program],
+      cwd: root,
+      timeoutMs: 120,
+      absoluteTimeoutMs: 320,
+      logPrefix: path.join(root, "logs", "absolute"),
+      providerStream: "codex",
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.deadline).toMatchObject({ kind: "absolute" });
+    expect(result.deadline?.lastProgressAt).toBeDefined();
+    expect(result.timeoutPolicy?.progressExtensions).toBeGreaterThan(0);
+    expect(result.deadline?.cleanupComplete).toBe(true);
+    expect(result.deadline?.signalEscalation).toBeInstanceOf(Array);
+  });
 
   it.skipIf(!["darwin", "linux"].includes(process.platform))(
     "never signals an unrelated process",
