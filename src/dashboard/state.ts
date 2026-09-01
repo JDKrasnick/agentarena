@@ -180,6 +180,7 @@ function appendBounded<T>(items: T[], item: T, maximum = 2_000): void {
 export function projectEvent(state: DashboardState, event: ArenaEvent): void {
   switch (event.type) {
     case "battle_started":
+      for (const key of Object.keys(state)) Reflect.deleteProperty(state, key);
       Object.assign(state, initialDashboardState());
       state.runId = event.runId;
       state.task = event.task;

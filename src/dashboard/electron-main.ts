@@ -1,6 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { writeFile } from "node:fs/promises";
-import { app, BrowserWindow, ipcMain, screen, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  screen,
+  shell,
+  type Session,
+} from "electron";
 import { desktopWindowSize, type DesktopWindowMode } from "./window-layout.js";
 import { isArenaTheme, type ArenaTheme } from "./arena-theme.js";
 import {
@@ -44,6 +51,13 @@ async function openExternalTarget(target: string): Promise<void> {
   }
 }
 
+function denyRendererPermissions(rendererSession: Session): void {
+  rendererSession.setPermissionCheckHandler(() => false);
+  rendererSession.setPermissionRequestHandler(
+    (_webContents, _permission, callback) => callback(false),
+  );
+}
+
 function createWindow(): void {
   debug("creating BrowserWindow");
   const workArea = screen.getPrimaryDisplay().workAreaSize;
@@ -69,6 +83,7 @@ function createWindow(): void {
       partition: `agent-arena-${String(process.pid)}-${String(Date.now())}`,
     },
   });
+  denyRendererPermissions(window.webContents.session);
   mainWindow = window;
   debug("BrowserWindow created");
 
@@ -293,9 +308,6 @@ void app
       debug(`renderer painted snapshot ${String(revision)}`);
     });
     if (process.platform === "darwin") app.setActivationPolicy("regular");
-    session.defaultSession.setPermissionRequestHandler(
-      (_webContents, _permission, callback) => callback(false),
-    );
     createWindow();
   })
   .catch((error: unknown) => {

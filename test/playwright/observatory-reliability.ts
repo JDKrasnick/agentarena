@@ -66,6 +66,11 @@ try {
     "normal Electron launch disabled hardware acceleration",
   );
   let page = await desktop.firstWindow();
+  assert.equal(
+    await page.evaluate(() => Notification.requestPermission()),
+    "denied",
+    "isolated renderer session approved a permission request",
+  );
   const shell = page.locator(".app-shell");
   const connection = page.getByRole("status").filter({ hasText: "Live" });
   await connection.waitFor();
@@ -149,6 +154,40 @@ try {
       "final_validate",
   );
   assert.equal(controller.signal.aborted, false, "reload cancelled the fight");
+
+  await publish({
+    type: "battle_completed",
+    status: "failed",
+    roundsCompleted: 0,
+  });
+  await page.getByRole("button", { name: "Finish session" }).waitFor();
+  await publish({
+    type: "battle_started",
+    runId: "playwright-observatory-recovery-child",
+    task: "Continue the active recovery child",
+    contestants: [
+      { id: "a", provider: "codex" },
+      { id: "b", provider: "claude" },
+    ],
+  });
+  await publish({ type: "stage_changed", stage: "initial_validate", round: 1 });
+  await page.waitForFunction(
+    () =>
+      document.querySelector(".app-shell")?.getAttribute("data-live-stage") ===
+        "initial_validate" &&
+      !document.body.innerText.includes("No competitive winner was published"),
+  );
+  assert.equal(
+    await page.getByRole("button", { name: "Finish session" }).count(),
+    0,
+    "recovery child retained the failed parent's terminal controls",
+  );
+  assert.equal(
+    controller.signal.aborted,
+    false,
+    "recovery child transition cancelled the fight",
+  );
+  await publish({ type: "stage_changed", stage: "final_validate", round: 1 });
 
   const recoveredWindow = desktop.waitForEvent("window", { timeout: 15_000 });
   await desktop.evaluate(({ BrowserWindow }) => {
