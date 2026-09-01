@@ -415,8 +415,10 @@ export async function runFight(
           void webDashboard?.close();
         },
       });
+      await desktopWindow.waitUntilReady();
     } catch (error) {
       await webDashboard.close();
+      await desktopWindow?.close();
       throw error;
     }
     observer = webDashboard.observer;

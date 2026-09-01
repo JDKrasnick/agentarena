@@ -575,6 +575,13 @@ dashboard` remains a compatibility alias for the desktop window. Closing the
 window cancels an active battle; after completion, **Finish session** closes the
 window and its local server.
 
+Each fight launches with a temporary isolated Chromium profile. Concurrent
+windows therefore retain independent renderer, session, and lifecycle state,
+and closing one cannot redirect, blank, or cancel another. The theme preference
+remains in a shared app-data file with atomic writes rather than depending on a
+shared Chromium profile. The command waits for a ready signal before reporting
+success; an early exit, spawn error, or launch timeout is an explicit display
+failure and is not classified as a battle failure or user cancellation.
 The loopback stream carries monotonically revisioned snapshots and bounded
 snapshot heartbeats. `Live` means a recent snapshot has passed through a React
 commit and browser paint boundary; an open stream alone is insufficient. The

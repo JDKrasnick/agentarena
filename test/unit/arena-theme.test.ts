@@ -66,6 +66,18 @@ describe("arena themes", () => {
     expect(await readdir(directory)).toEqual(["arena-theme.json"]);
   });
 
+  it("keeps concurrent app-wide preference writes valid", async () => {
+    const directory = await tempDirectory();
+    await Promise.all([
+      writeThemePreference(directory, "night-transit"),
+      writeThemePreference(directory, "test-lab"),
+    ]);
+    expect(["night-transit", "test-lab"]).toContain(
+      await readThemePreference(directory),
+    );
+    expect(await readdir(directory)).toEqual(["arena-theme.json"]);
+  });
+
   it("migrates retired visual theme preferences", async () => {
     const directory = await tempDirectory();
     await writeFile(

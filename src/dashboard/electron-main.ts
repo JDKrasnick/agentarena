@@ -23,6 +23,14 @@ function debug(message: string): void {
 
 debug("main process loaded");
 
+app.setName("Agent Arena");
+const sharedUserDataPath = app.getPath("userData");
+const isolatedProfilePath = process.env["AGENT_ARENA_PROFILE_PATH"];
+if (!isolatedProfilePath) {
+  throw new Error("Missing Agent Arena isolated profile path");
+}
+app.setPath("userData", isolatedProfilePath);
+
 const dashboardUrl = process.env["AGENT_ARENA_DASHBOARD_URL"];
 if (!dashboardUrl) throw new Error("Missing Agent Arena dashboard URL");
 
@@ -111,6 +119,7 @@ function createWindow(): void {
     debug(
       `window revealed (visible=${String(window.isVisible())}, focused=${String(window.isFocused())})`,
     );
+    process.send?.({ type: "agent-arena-window-ready" });
   });
   window.webContents.once("did-finish-load", () => {
     debug("React UI loaded");
@@ -278,7 +287,6 @@ function createWindow(): void {
   void window.loadURL(parsedDashboardUrl.toString());
 }
 
-app.setName("Agent Arena");
 app.on("window-all-closed", () => app.quit());
 app.on("activate", () => {
   if (!mainWindow) createWindow();
@@ -290,11 +298,11 @@ void app
     debug("Electron app ready");
     currentTheme = isArenaTheme(process.env["AGENT_ARENA_CAPTURE_THEME"])
       ? process.env["AGENT_ARENA_CAPTURE_THEME"]
-      : await readThemePreference(app.getPath("userData"));
+      : await readThemePreference(sharedUserDataPath);
     ipcMain.handle("arena-theme:set", async (_event, theme: unknown) => {
       if (!isArenaTheme(theme)) throw new Error("Unknown arena theme");
       currentTheme = theme;
-      await writeThemePreference(app.getPath("userData"), theme);
+      await writeThemePreference(sharedUserDataPath, theme);
     });
     ipcMain.on("arena-renderer:painted", (event, revision: unknown) => {
       if (

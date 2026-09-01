@@ -15,6 +15,7 @@ const desktopWindow = process.argv.includes("--window")
       onUserClose: () => void dashboard.close(),
     })
   : undefined;
+await desktopWindow?.waitUntilReady();
 const emit = async (event: ArenaEventInput, delay = 650) => {
   await dashboard.observer.publish(event);
   await pause(delay);

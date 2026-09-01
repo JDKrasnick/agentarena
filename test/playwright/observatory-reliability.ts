@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -16,17 +17,23 @@ const artifacts = path.join(root, ".context", "issue-95-playwright");
 const electronPath = createRequire(import.meta.url)("electron") as string;
 const mainScript = path.join(root, "dist", "dashboard", "electron-main.js");
 const soakMs = Number(process.env["AGENT_ARENA_PLAYWRIGHT_SOAK_MS"] ?? "3000");
+const profilePaths: string[] = [];
 
 async function launch(
   url: string,
   softwareRendering = false,
 ): Promise<ElectronApplication> {
+  const profilePath = await mkdtemp(
+    path.join(os.tmpdir(), "agent-arena-playwright-profile-"),
+  );
+  profilePaths.push(profilePath);
   return electron.launch({
     executablePath: electronPath,
     args: [mainScript],
     env: {
       ...process.env,
       AGENT_ARENA_DASHBOARD_URL: url,
+      AGENT_ARENA_PROFILE_PATH: profilePath,
       AGENT_ARENA_WINDOW_DEBUG: "1",
       ...(softwareRendering ? { AGENT_ARENA_SOFTWARE_RENDERING: "1" } : {}),
     },
@@ -264,4 +271,9 @@ try {
   await fallbackDesktop?.close().catch(() => undefined);
   await desktop?.close().catch(() => undefined);
   await dashboard.close();
+  await Promise.all(
+    profilePaths.map((profilePath) =>
+      rm(profilePath, { recursive: true, force: true }),
+    ),
+  );
 }
