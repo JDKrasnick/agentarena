@@ -49,6 +49,12 @@ try {
       },
     ],
   });
+  await emit({
+    type: "effort_resolved",
+    tier: "medium",
+    plannedRounds: 2,
+    maxRounds: 4,
+  });
   await emit({ type: "stage_changed", stage: "implement", round: 1 });
   await emit({
     type: "invocation_started",

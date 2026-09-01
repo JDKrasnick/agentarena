@@ -8,6 +8,7 @@ import {
   type RunState,
 } from "../core/types.js";
 import { unresolvedSharedDefects } from "../outcomes/evidence.js";
+import { contestantLabel } from "../core/labels.js";
 
 export interface RecommendationInput {
   contestants: RunState["contestants"];
@@ -16,6 +17,28 @@ export interface RecommendationInput {
   outcomeKind?: "winner" | "draw" | "non_discriminating";
   qualityVerdict?: PatchQualityVerdict;
   anonymizationMap?: { patch_a: ContestantId; patch_b: ContestantId };
+}
+
+function userFacingQualityRationale(
+  rationale: readonly string[],
+  contestants: RunState["contestants"],
+  anonymizationMap:
+    { patch_a: ContestantId; patch_b: ContestantId } | undefined,
+): string[] {
+  if (!anonymizationMap) return [...rationale];
+  const slots = Object.values(contestants).map(({ id, provider }) => ({
+    id,
+    provider,
+  }));
+  const labels = {
+    patch_a: contestantLabel(slots, anonymizationMap.patch_a),
+    patch_b: contestantLabel(slots, anonymizationMap.patch_b),
+  };
+  return rationale.map((entry) =>
+    entry.replace(/\bpatch(?:_|-|\s+)([ab])\b/gi, (_match, slot: string) =>
+      slot.toLowerCase() === "a" ? labels.patch_a : labels.patch_b,
+    ),
+  );
 }
 
 export function isCompetitiveQualityTie(
@@ -96,7 +119,11 @@ export function selectRecommendedPatch(
       reason: "implementation_quality",
       qualityVerdict: decisiveQualityVerdict,
       rationale: input.qualityVerdict?.rationale.length
-        ? input.qualityVerdict.rationale
+        ? userFacingQualityRationale(
+            input.qualityVerdict.rationale,
+            input.contestants,
+            input.anonymizationMap,
+          )
         : ["A decisive identity-blind quality verdict resolved the HP tie."],
       comparison,
     });
@@ -129,7 +156,11 @@ export function selectRecommendedPatch(
         reason: "implementation_quality",
         qualityVerdict: legacyVerdict,
         rationale: input.qualityVerdict?.rationale.length
-          ? input.qualityVerdict.rationale
+          ? userFacingQualityRationale(
+              input.qualityVerdict.rationale,
+              input.contestants,
+              input.anonymizationMap,
+            )
           : ["Legacy quality comparison preferred this patch."],
         comparison,
       });

@@ -601,6 +601,9 @@ round rail can select completed rounds and reconstruct their recorded fighter
 and evidence state. This replay is read-only: the MVP has no pause, arbitrary
 retry, or execution rewind control. Durable resume continues from a sealed
 boundary rather than rolling a completed round backward.
+The rail labels initially planned rounds separately from conditional extension
+rounds and omits anything beyond the resolved maximum. Terminal phase and check
+counts reconcile from the authoritative final live snapshot.
 
 The desktop window uses a larger live-battle size so each fighter card retains
 and exposes more output. Once a terminal result is projected, the window
@@ -608,6 +611,9 @@ contracts to a results-first layout showing the recommendation, final fighter
 health and checks, coverage, run integrity, completed rounds, landed defects,
 verified repairs, terminal outcome, evidence links, and controls to review the
 recorded battle or finish the session.
+The raw identity-blind judge artifact remains local with `patch_a` and
+`patch_b` labels. Final desktop and report rationale resolves those aliases to
+the corresponding provider or contestant identity.
 
 The window includes Classic Shell, Developer Dashboard, Night Transit, Test Lab,
 Live Arena Broadcast, and 16-Bit Tactics themes. Classic Shell is used until a valid local

@@ -476,6 +476,12 @@ main {
   color: var(--detail-page-faint);
   cursor: not-allowed;
 }
+.round-nav button.is-extension:not(.is-selected),
+.compact-rounds button.is-extension:not(.is-selected),
+.developer-timeline button.is-extension:not(.is-selected) {
+  border-style: dashed;
+  opacity: 0.78;
+}
 .round-nav button > i {
   width: 8px;
   height: 8px;
@@ -1666,6 +1672,32 @@ main {
   }
   .detail-output {
     max-height: 520px;
+  }
+  .arena {
+    padding: 24px 20px;
+  }
+  .fighters {
+    grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr);
+  }
+  .fighter-header {
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 10px;
+    padding: 14px;
+  }
+  .fighter-header .provider-mark {
+    width: 44px;
+    height: 44px;
+  }
+  .fighter-header .provider-mark img {
+    width: 30px;
+    height: 30px;
+  }
+  .fighter-actions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
   }
 }
 @media (max-width: 760px) {

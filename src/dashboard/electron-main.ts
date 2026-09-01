@@ -193,6 +193,14 @@ function createWindow(): void {
             scrollY: window.scrollY,
             documentScrollWidth: document.documentElement.scrollWidth,
             bodyScrollWidth: document.body.scrollWidth,
+            roundLabels: [...document.querySelectorAll('.round-nav button[aria-label], .compact-rounds button[aria-label], .developer-timeline button[aria-label]')].map((element) => element.getAttribute('aria-label')),
+            visibleRoundText: [...document.querySelectorAll('.round-nav button, .compact-rounds button, .developer-timeline nav button')].map((element) => element.textContent?.trim()).filter(Boolean),
+            clippedPrimaryControls: [...document.querySelectorAll('button, input, a')].filter((element) => {
+              const rect = element.getBoundingClientRect();
+              const style = getComputedStyle(element);
+              return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0 && (rect.left < 0 || rect.right > document.documentElement.clientWidth);
+            }).map((element) => ({ text: element.getAttribute('aria-label') ?? element.textContent?.trim() ?? element.tagName, rect: element.getBoundingClientRect().toJSON() })),
+            matchupRects: [...document.querySelectorAll('.fighter, .versus, .developer-agent, .transit-contestant, .lab-bench, .broadcast-fighter, .broadcast-vs, .tactics-status, .tactics-versus')].map((element) => ({ className: element.className, rect: element.getBoundingClientRect().toJSON() })),
             selectedCompactRound: document.querySelector('.compact-rounds [aria-current="page"]')?.textContent?.trim() ?? null,
             battleCall: document.querySelector('.battle-call strong')?.textContent?.trim() ?? null,
             evidenceCardTitle: document.querySelector('.attack-card h2')?.textContent?.trim() ?? null,

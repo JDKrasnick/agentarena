@@ -27,6 +27,33 @@ describe("recommended patch selection", () => {
     });
   });
 
+  it("translates blind aliases in final rationale without changing the saved verdict", () => {
+    const state = makeRunState();
+    const qualityVerdict = {
+      version: 1 as const,
+      verdict: "patch_b" as const,
+      criteria: [],
+      rationale: [
+        "patch_b has the safer boundary; Patch A has the smaller diff.",
+      ],
+    };
+
+    const recommendation = selectRecommendedPatch({
+      contestants: state.contestants,
+      outcomeKind: "non_discriminating",
+      qualityVerdict,
+      anonymizationMap: { patch_a: "b", patch_b: "a" },
+    });
+
+    expect(recommendation.rationale).toEqual([
+      "Codex has the safer boundary; Claude has the smaller diff.",
+    ]);
+    expect(qualityVerdict.rationale).toEqual([
+      "patch_b has the safer boundary; Patch A has the smaller diff.",
+    ]);
+    expect(recommendation.qualityVerdict).toBe("patch_b");
+  });
+
   it("prefers less active defect damage before quality", () => {
     const state = makeRunState({
       codexHealth: 85,
