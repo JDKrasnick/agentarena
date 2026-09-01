@@ -14,6 +14,7 @@ export interface DashboardContestant {
   status: string;
   activity: string;
   checks: Array<{ id: string; status: string; round?: RoundId }>;
+  authoritativeCheckCounts?: { passed: number; total: number };
   invocations: Array<{
     id: string;
     stage: string;
@@ -113,13 +114,13 @@ export interface DashboardState {
   }>;
   result?: {
     roundsCompleted?: number;
-    championId?: string;
+    championId?: ContestantId;
     outcomeKind?: "winner" | "draw" | "non_discriminating";
     decisionBasis?: string;
     competitiveLandingCount?: number;
     sharedDefectCount?: number;
     explicitEmptyLaneCount?: number;
-    recommendedId?: string;
+    recommendedId?: ContestantId;
     recommendationReason?: string;
     coverageConfidence?: string;
     terminalOutcome?: {
@@ -365,6 +366,7 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
       return;
     case "check_completed":
       if (event.contestantId) {
+        delete state.contestants[event.contestantId].authoritativeCheckCounts;
         appendBounded(state.contestants[event.contestantId].checks, {
           id: event.checkId,
           status: event.status,
@@ -467,6 +469,7 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
       return;
     case "battle_completed":
       state.status = event.status;
+      state.stage = "complete";
       state.result = {
         ...(event.roundsCompleted === undefined
           ? {}
@@ -505,6 +508,10 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
         const target = state.contestants[final.id];
         target.health = final.health;
         target.status = final.status;
+        target.authoritativeCheckCounts = {
+          passed: final.checksPassed,
+          total: final.checksTotal,
+        };
       }
       return;
     default:

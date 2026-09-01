@@ -151,6 +151,11 @@ describe("terminal dashboard", () => {
       ],
     });
     await update();
+    expect(observer.snapshot().stage).toBe("complete");
+    expect(observer.snapshot().contestants.a.authoritativeCheckCounts).toEqual({
+      passed: 4,
+      total: 4,
+    });
     expect(view.lastFrame()).toContain("★ BATTLE COMPLETE · PATCH HARDENED");
     expect(view.lastFrame()).toContain("1 verified defect caught");
     expect(view.lastFrame()).toContain("DEFECTS CAUGHT BEFORE SHIP");

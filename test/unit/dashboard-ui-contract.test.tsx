@@ -44,7 +44,7 @@ describe("dashboard UI contracts", () => {
     );
     expect(markup).toContain("Non-discriminating battle.");
     expect(markup).toContain("No champion");
-    expect(markup).toContain("Patch B");
+    expect(markup).toContain("Claude · Fighter B");
     expect(markup).toContain("0 competitive · 1 shared · 5 empty lanes");
     expect(markup).not.toContain("is-winner");
   });
@@ -149,6 +149,25 @@ describe("dashboard UI contracts", () => {
 
     expect(roundTwo).toContain('aria-current="page">R2</button>');
     expect(live).toContain('aria-current="page">Live</button>');
+  });
+
+  it("labels planned and conditional extension rounds accessibly", () => {
+    const state = initialDashboardState();
+    state.roundPlan = { planned: 2, maximum: 4 };
+    const markup = renderToStaticMarkup(
+      <CompactRoundNav
+        state={state}
+        rounds={[1, 2, 3, 4]}
+        selected="live"
+        onSelect={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("Round 2 — Planned round");
+    expect(markup).toContain(
+      "Round 3 — Conditional extension — runs only if qualified",
+    );
+    expect(markup).not.toContain("R5");
   });
 
   it("enables invocation-only historical rounds during a later live round", () => {

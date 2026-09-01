@@ -97,6 +97,26 @@ export function recordedRoundMoveCount(
   return attacks + invocations;
 }
 
+export function roundPlanStatus(
+  state: DashboardState,
+  round: NonNullable<DashboardState["round"]>,
+): "planned" | "conditional_extension" | undefined {
+  if (typeof round !== "number" || !state.roundPlan) return undefined;
+  return round <= state.roundPlan.planned ? "planned" : "conditional_extension";
+}
+
+export function roundPlanDescription(
+  state: DashboardState,
+  round: NonNullable<DashboardState["round"]>,
+): string | undefined {
+  const status = roundPlanStatus(state, round);
+  return status === "planned"
+    ? "Planned round"
+    : status === "conditional_extension"
+      ? "Conditional extension — runs only if qualified"
+      : undefined;
+}
+
 export function isRoundAvailable(
   state: DashboardState,
   round: NonNullable<DashboardState["round"]>,
@@ -189,6 +209,7 @@ function fighterAtRound(
     checks,
     healthChanges,
   };
+  delete historical.authoritativeCheckCounts;
   const lastHealthChange = healthChanges.at(-1);
   if (lastHealthChange) historical.lastHealthChange = lastHealthChange;
   else delete historical.lastHealthChange;
@@ -209,15 +230,26 @@ export function createArenaPresentation(
   selectedRound: RoundSelection,
   connected: boolean,
 ): ArenaPresentation {
-  const found = new Set<NonNullable<DashboardState["round"]>>([1, 2, 3, 4, 5]);
-  if (state.round) found.add(state.round);
-  for (const attack of state.attacks) if (attack.round) found.add(attack.round);
+  const configuredMaximum = state.roundPlan?.maximum ?? 5;
+  const found = new Set<NonNullable<DashboardState["round"]>>(
+    Array.from({ length: configuredMaximum }, (_, index) =>
+      Math.min(5, index + 1),
+    ) as Array<NonNullable<DashboardState["round"]>>,
+  );
+  const addRecordedRound = (
+    round: NonNullable<DashboardState["round"]> | undefined,
+  ) => {
+    if (round && (typeof round !== "number" || round <= configuredMaximum))
+      found.add(round);
+  };
+  addRecordedRound(state.round);
+  for (const attack of state.attacks) addRecordedRound(attack.round);
   for (const fighter of Object.values(state.contestants)) {
     for (const invocation of fighter.invocations) {
-      if (invocation.round) found.add(invocation.round);
+      addRecordedRound(invocation.round);
     }
     for (const change of fighter.healthChanges) {
-      if (change.round) found.add(change.round);
+      addRecordedRound(change.round);
     }
   }
   return {

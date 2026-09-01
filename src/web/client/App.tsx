@@ -37,6 +37,8 @@ import {
   projectAttackLifecycles,
   recordedRoundMoveCount,
   roundLabel,
+  roundPlanDescription,
+  roundPlanStatus,
   stageLabel,
   steeringUnavailableMessage,
   type ContestantId,
@@ -128,6 +130,16 @@ function title(provider: string) {
   return provider.charAt(0).toUpperCase() + provider.slice(1);
 }
 
+function checkCounts(fighter: DashboardContestant) {
+  return (
+    fighter.authoritativeCheckCounts ?? {
+      passed: fighter.checks.filter((check) => check.status === "passed")
+        .length,
+      total: fighter.checks.length,
+    }
+  );
+}
+
 function participantName(
   participant: string | undefined,
   contestants: { a: DashboardContestant; b: DashboardContestant },
@@ -176,9 +188,7 @@ function Fighter({
 }) {
   const [note, setNote] = useState("");
   const damage = fighter.lastHealthChange?.amount ?? 0;
-  const checksPassed = fighter.checks.filter(
-    (check) => check.status === "passed",
-  ).length;
+  const checks = checkCounts(fighter);
   const logo = providerLogo(fighter.provider);
   const provider = title(fighter.provider);
 
@@ -239,7 +249,7 @@ function Fighter({
         <div>
           <dt>Checks</dt>
           <dd>
-            {checksPassed}/{fighter.checks.length} passed
+            {checks.passed}/{checks.total} passed
           </dd>
         </div>
       </dl>
@@ -332,10 +342,14 @@ function RoundNavigator({
           const isCurrent = state.round === round && state.status === "running";
           const isAvailable = isRoundAvailable(state, round);
           const isComplete = isAvailable && !isCurrent;
+          const planDescription = roundPlanDescription(state, round);
+          const isExtension =
+            roundPlanStatus(state, round) === "conditional_extension";
           return (
             <button
-              className={selected === round ? "is-selected" : ""}
+              className={`${selected === round ? "is-selected" : ""}${roundPlanStatus(state, round) === "conditional_extension" ? " is-extension" : ""}`}
               type="button"
+              aria-label={`${roundLabel(round)}${planDescription ? ` — ${planDescription}` : ""}`}
               aria-current={selected === round ? "page" : undefined}
               disabled={!isAvailable}
               key={round}
@@ -346,10 +360,12 @@ function RoundNavigator({
                 <strong>{roundLabel(round)}</strong>
                 <small>
                   {isCurrent
-                    ? "In progress"
+                    ? isExtension
+                      ? "Extension in progress"
+                      : "In progress"
                     : isComplete
-                      ? `${String(recordedMoves)} recorded moves`
-                      : "Upcoming"}
+                      ? `${isExtension ? "Extension · " : ""}${String(recordedMoves)} recorded moves`
+                      : (planDescription ?? "Upcoming")}
                 </small>
               </span>
             </button>
@@ -393,9 +409,7 @@ function FighterDetail({
   const relevantAttacks = attacks.filter(
     (attack) => attack.attacker === id || attack.target === id,
   );
-  const checksPassed = fighter.checks.filter(
-    (check) => check.status === "passed",
-  ).length;
+  const checks = checkCounts(fighter);
 
   return (
     <section className="fighter-detail" aria-labelledby="fighter-detail-title">
@@ -513,7 +527,7 @@ function FighterDetail({
           <section>
             <h2>Checks</h2>
             <p className="ledger-summary">
-              {checksPassed} of {fighter.checks.length} passed
+              {checks.passed} of {checks.total} passed
             </p>
             {fighter.checks.length ? (
               <ul>
@@ -641,7 +655,7 @@ export function ResultScreen({
     : championId
       ? `Fighter ${championId.toUpperCase()} won the arena.`
       : recommendedId
-        ? `Patch ${recommendedId.toUpperCase()} is recommended for review.`
+        ? `${title(state.contestants[recommendedId].provider)} (Fighter ${recommendedId.toUpperCase()}) is recommended for review.`
         : "No competitive winner was published.";
 
   return (
@@ -680,7 +694,7 @@ export function ResultScreen({
           <dt>Recommendation</dt>
           <dd>
             {recommendedId
-              ? `Patch ${recommendedId.toUpperCase()}`
+              ? `${title(state.contestants[recommendedId].provider)} · Fighter ${recommendedId.toUpperCase()}`
               : "Withheld"}
           </dd>
         </div>
@@ -942,10 +956,13 @@ export function CompactRoundNav({
         .filter((round) => typeof round === "number")
         .map((round) => {
           const available = isRoundAvailable(state, round);
+          const planDescription = roundPlanDescription(state, round);
           return (
             <button
               type="button"
-              className={selected === round ? "is-selected" : ""}
+              className={`${selected === round ? "is-selected" : ""}${roundPlanStatus(state, round) === "conditional_extension" ? " is-extension" : ""}`}
+              aria-label={`${roundLabel(round)}${planDescription ? ` — ${planDescription}` : ""}`}
+              title={planDescription}
               aria-current={selected === round ? "page" : undefined}
               disabled={!available}
               key={round}
@@ -997,9 +1014,7 @@ function DeveloperAgentPanel({
 }) {
   const [note, setNote] = useState("");
   const provider = title(fighter.provider);
-  const checksPassed = fighter.checks.filter(
-    (check) => check.status === "passed",
-  ).length;
+  const checks = checkCounts(fighter);
   const summaries = fighter.summaries.slice(-4).reverse();
 
   return (
@@ -1026,7 +1041,7 @@ function DeveloperAgentPanel({
         <div>
           <dt>Checks</dt>
           <dd>
-            {checksPassed}/{fighter.checks.length}
+            {checks.passed}/{checks.total}
           </dd>
         </div>
         <div>
@@ -1041,7 +1056,7 @@ function DeveloperAgentPanel({
       <section className="developer-checks">
         <header>
           <strong>Check results</strong>
-          <span>{checksPassed} passing</span>
+          <span>{checks.passed} passing</span>
         </header>
         {fighter.checks.length ? (
           <table>
@@ -1162,10 +1177,14 @@ export function DeveloperDashboardArena({
           {rounds.map((round) => {
             const available = isRoundAvailable(state, round);
             const current = state.round === round && state.status === "running";
+            const planDescription = roundPlanDescription(state, round);
+            const isExtension =
+              roundPlanStatus(state, round) === "conditional_extension";
             return (
               <button
                 type="button"
-                className={selectedRound === round ? "is-selected" : ""}
+                className={`${selectedRound === round ? "is-selected" : ""}${roundPlanStatus(state, round) === "conditional_extension" ? " is-extension" : ""}`}
+                aria-label={`${roundLabel(round)}${planDescription ? ` — ${planDescription}` : ""}`}
                 aria-current={selectedRound === round ? "page" : undefined}
                 disabled={!available}
                 key={round}
@@ -1176,10 +1195,12 @@ export function DeveloperDashboardArena({
                   <strong>{roundLabel(round)}</strong>
                   <small>
                     {current
-                      ? "In progress"
+                      ? isExtension
+                        ? "Extension in progress"
+                        : "In progress"
                       : available
-                        ? `${String(recordedRoundMoveCount(state, round))} recorded moves`
-                        : "Upcoming"}
+                        ? `${isExtension ? "Extension · " : ""}${String(recordedRoundMoveCount(state, round))} recorded moves`
+                        : (planDescription ?? "Upcoming")}
                   </small>
                 </span>
               </button>
@@ -1361,9 +1382,7 @@ function NightTransitStatus({
   browserSessions: DashboardBrowserSession[];
   onFighter: (id: ContestantId) => void;
 }) {
-  const passed = fighter.checks.filter(
-    (check) => check.status === "passed",
-  ).length;
+  const checks = checkCounts(fighter);
   return (
     <article className={`transit-contestant transit-contestant-${id}`}>
       <ProviderDisc fighter={fighter} id={id} />
@@ -1383,7 +1402,7 @@ function NightTransitStatus({
         <div>
           <dt>Checks</dt>
           <dd>
-            {passed}/{fighter.checks.length}
+            {checks.passed}/{checks.total}
           </dd>
         </div>
         <div>
@@ -1508,8 +1527,8 @@ export function NightTransitArena({
                 <strong>{roundLabel(round)}</strong>
                 <small>
                   {isRoundAvailable(state, round)
-                    ? `${recordedRoundMoveCount(state, round)} recorded moves`
-                    : "Upcoming"}
+                    ? `${roundPlanStatus(state, round) === "conditional_extension" ? "Extension · " : ""}${recordedRoundMoveCount(state, round)} recorded moves`
+                    : (roundPlanDescription(state, round) ?? "Upcoming")}
                 </small>
               </span>
             </li>
@@ -1765,6 +1784,7 @@ function LabBench({
   steeringUnavailable: string;
 }) {
   const recent = fighter.invocations.at(-1);
+  const checks = checkCounts(fighter);
   return (
     <article className={`lab-bench lab-bench-${id}`}>
       <header>
@@ -1791,6 +1811,12 @@ function LabBench({
         <div>
           <dt>Current work</dt>
           <dd>{providerActivityLabel(fighter)}</dd>
+        </div>
+        <div>
+          <dt>Checks</dt>
+          <dd>
+            {checks.passed}/{checks.total} passed
+          </dd>
         </div>
       </dl>
       <section>
@@ -2071,8 +2097,7 @@ export function BroadcastArena({
 }: AlternateArenaProps) {
   const latest = attacks.at(-1);
   const landed = attacks.filter((attack) => attack.phase === "landed");
-  const checks = (id: ContestantId) =>
-    contestants[id].checks.filter((check) => check.status === "passed").length;
+  const checks = (id: ContestantId) => checkCounts(contestants[id]);
   return (
     <main className="broadcast-layout">
       <section className="broadcast-feed">
@@ -2130,14 +2155,14 @@ export function BroadcastArena({
               <b>
                 {title(contestants.a.provider)} · {contestants.a.health}
               </b>
-              <span>{checks("a")} checks passing</span>
+              <span>{checks("a").passed} checks passing</span>
             </div>
             <strong>{latest?.damage ? `−${latest.damage} HP` : stage}</strong>
             <div>
               <b>
                 {title(contestants.b.provider)} · {contestants.b.health}
               </b>
-              <span>{checks("b")} checks passing</span>
+              <span>{checks("b").passed} checks passing</span>
             </div>
           </div>
         </div>
@@ -2194,8 +2219,7 @@ export function RetroTacticsArena({
   onFighter,
 }: AlternateArenaProps) {
   const latest = attacks.at(-1);
-  const checks = (id: ContestantId) =>
-    contestants[id].checks.filter((check) => check.status === "passed").length;
+  const checks = (id: ContestantId) => checkCounts(contestants[id]);
   const activeRound = state.round ?? rounds.at(-1) ?? 1;
   const repairs = (["a", "b"] as const).flatMap((id) =>
     contestants[id].healthChanges
@@ -2210,7 +2234,7 @@ export function RetroTacticsArena({
   const hasVerification =
     attacks.some((attack) =>
       ["landed", "revised", "resolved"].includes(attack.phase),
-    ) || checks("a") + checks("b") > 0;
+    ) || checks("a").passed + checks("b").passed > 0;
   const workNodes = (id: ContestantId) => {
     const recent = contestants[id].invocations.slice(-2);
     const entries = recent.length
@@ -2300,7 +2324,7 @@ export function RetroTacticsArena({
             </span>
             <span className="tactics-checks">
               <b>
-                {checks(id)}/{contestants[id].checks.length}
+                {checks(id).passed}/{checks(id).total}
               </b>
               <small>checks</small>
             </span>

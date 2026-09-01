@@ -58,6 +58,21 @@ describe("dashboard presentation model", () => {
     expect(replay.rounds).toEqual([1, 2, 3, 4, 5]);
   });
 
+  it("shows only possible rounds and separates planned work from extensions", () => {
+    const state = initialDashboardState();
+    state.roundPlan = { planned: 2, maximum: 4 };
+    state.attacks.push({
+      id: "impossible-round",
+      round: 5,
+      phase: "mounting",
+      status: "mounting",
+    });
+
+    const presentation = createArenaPresentation(state, "live", true);
+    expect(presentation.rounds).toEqual([1, 2, 3, 4]);
+    expect(presentation.rounds).not.toContain(5);
+  });
+
   it("never permits steering without a live running connection", () => {
     const state = initialDashboardState();
     expect(createArenaPresentation(state, "live", false).canSteer).toBe(false);

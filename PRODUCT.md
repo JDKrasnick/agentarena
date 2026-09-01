@@ -95,11 +95,17 @@ active view is selected. The round rail provides read-only replay of recorded
 round state and a direct return to the live arena. It does not claim to rewind,
 rerun, pause, or mutate live execution; durable resume remains the recovery
 mechanism for sealed runs.
+The rail distinguishes initially planned rounds from conditional extension
+rounds and never renders a round beyond the resolved maximum. Completion
+reconciles phase and check totals from the authoritative final live snapshot.
 Completion automatically opens an evidence-backed success screen with both
 final fighter states, the arena outcome and any independent recommendation, landed defects,
 verified health-restoring improvements, and the next human-review command. Its
 product-value statement is derived from recorded attack and repair evidence,
 not unverified agent narration.
+Identity-blind judge artifacts retain their local `patch_a` and `patch_b`
+labels, while every final user-facing rationale translates those aliases back
+to the corresponding provider or contestant identity.
 The desktop window opens in a spacious live-battle layout with taller retained
 fighter output. When a terminal result arrives, it automatically contracts into
 a focused results view; users can still inspect either fighter or return to the
