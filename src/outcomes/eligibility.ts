@@ -1,8 +1,22 @@
 import type {
   ContestantResult,
+  RequiredValidationEvidence,
   RunState,
   TerminalContestantDisposition,
 } from "../core/types.js";
+
+/** Harness-owned command failures cannot award the peer a forfeit. */
+export function requiredValidationHasHarnessFailure(
+  validation: RequiredValidationEvidence | undefined,
+): boolean {
+  return (
+    validation?.attempts.some(
+      (attempt) =>
+        attempt.failureClass === "arena_infrastructure" ||
+        attempt.termination?.cause === "spawn_error",
+    ) ?? false
+  );
+}
 
 function artifactPaths(contestant: ContestantResult): string[] {
   return [

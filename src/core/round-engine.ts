@@ -182,7 +182,10 @@ import {
   rankContestants,
   resolveRound,
 } from "./scoring.js";
-import { projectImplementationEligibility } from "../outcomes/eligibility.js";
+import {
+  projectImplementationEligibility,
+  requiredValidationHasHarnessFailure,
+} from "../outcomes/eligibility.js";
 import { assertTransition } from "./state-machine.js";
 import {
   AdjudicationRecordSchema,
@@ -516,13 +519,13 @@ function getAdapter(
 }
 
 function validationRunnerFailure(command: CommandResult): string | undefined {
+  if (command.failureClass === "arena_infrastructure")
+    return "arena_infrastructure";
   if (command.timedOut || command.termination?.cause === "timeout")
     return "timeout";
   if (command.termination?.cause === "spawn_error") return "spawn_error";
   if (command.termination?.cause === "cancelled") return "cancelled";
   if (command.signal !== null) return `signal:${command.signal}`;
-  if (command.failureClass === "arena_infrastructure")
-    return "arena_infrastructure";
   if (command.exitCode === null) return "missing_exit";
   return undefined;
 }
@@ -2316,8 +2319,9 @@ export class RoundEngine {
           contestantReason(contestant) === "harness_infrastructure_failure" ||
           contestant.checks.some(
             (check) =>
-              check.status === "infrastructure_error" &&
-              check.validation?.outcome !== "unstable",
+              (check.status === "infrastructure_error" &&
+                check.validation?.outcome !== "unstable") ||
+              requiredValidationHasHarnessFailure(check.validation),
           ),
       )
       .map((contestant) => contestant.id);
@@ -4885,7 +4889,10 @@ export class RoundEngine {
               attempt,
               startedAt,
               finishedAt,
-              status: runnerFailure ? "failed" : "succeeded",
+              status:
+                !runnerFailure && command.exitCode === 0
+                  ? "succeeded"
+                  : "failed",
               diagnosticArtifactRefs,
               contestantId: agent,
               existing: validationFailure,
