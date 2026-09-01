@@ -32,6 +32,20 @@ const SECRET_NAME =
 const CREDENTIAL_CANDIDATE =
   /\b(?:ghp|github_pat|sk|xox[baprs])[-_A-Za-z0-9]*/g;
 
+export const PROVIDER_ABSOLUTE_TIMEOUT_MULTIPLIER = 3;
+
+function resolvedAbsoluteTimeoutMs(
+  softTimeoutMs: number,
+  providerStream: ProviderStreamKind | undefined,
+  override: number | undefined,
+): number {
+  if (!providerStream) return softTimeoutMs;
+  return Math.max(
+    softTimeoutMs,
+    override ?? softTimeoutMs * PROVIDER_ABSOLUTE_TIMEOUT_MULTIPLIER,
+  );
+}
+
 export interface ProcessRequest {
   executable: string;
   args?: string[];
@@ -39,6 +53,7 @@ export interface ProcessRequest {
   displayCommand?: string;
   cwd: string;
   timeoutMs: number;
+  absoluteTimeoutMs?: number;
   logPrefix: string;
   env?: Record<string, string>;
   signal?: AbortSignal;
@@ -229,6 +244,7 @@ interface SupervisedOptions {
   cwd: string;
   env: Record<string, string>;
   timeoutMs: number;
+  absoluteTimeoutMs?: number;
   signal?: AbortSignal;
   secrets?: readonly string[];
   onOutput?: ProcessRequest["onOutput"];
@@ -244,17 +260,24 @@ interface SupervisedResult {
   timedOut: boolean;
   spawnError?: unknown;
   deadline?: NonNullable<CommandResult["deadline"]>;
+  timeoutPolicy?: NonNullable<CommandResult["timeoutPolicy"]>;
   providerEvents?: readonly ProviderActivity[];
   providerDiagnostics?: ProviderStreamDiagnostics;
   providerRawOutput?: string;
 }
 
 function deadlineResult(
+  kind: NonNullable<CommandResult["deadline"]>["kind"],
   expiredAt: string,
+  elapsedMs: number,
+  lastProgressAt: string | undefined,
   cleanup: ProcessCleanupResult,
 ): NonNullable<CommandResult["deadline"]> {
   return {
+    kind,
     expiredAt,
+    elapsedMs,
+    ...(lastProgressAt ? { lastProgressAt } : {}),
     graceMs: cleanup.graceMs,
     cleanupDurationMs: cleanup.durationMs,
     cleanupComplete: cleanup.cleanupComplete,
@@ -266,6 +289,7 @@ function deadlineResult(
 async function supervise(
   options: SupervisedOptions,
 ): Promise<SupervisedResult> {
+  const startedAtMs = Date.now();
   const owner = randomUUID();
   let subprocess;
   try {
@@ -305,6 +329,7 @@ async function supervise(
   const decoder = options.providerStream
     ? new ProviderStreamDecoder(options.providerStream)
     : undefined;
+  let recordProviderProgress = (): void => undefined;
   const publish = (stream: "stdout" | "stderr", text: string): void => {
     if (!text) return;
     if (stream === "stdout") stdout += text;
@@ -321,6 +346,9 @@ async function supervise(
   const publishProviderUpdate = (
     update: ReturnType<ProviderStreamDecoder["push"]>,
   ): void => {
+    for (let index = 0; index < update.deadlineProgressCount; index += 1) {
+      recordProviderProgress();
+    }
     for (const activity of update.activities) {
       outputQueue = outputQueue.then(async () => {
         await options.onActivity?.(activity);
@@ -351,6 +379,17 @@ async function supervise(
   supervisor?.startTracking();
   let cleanup: Promise<ProcessCleanupResult> | undefined;
   let expiredAt: string | undefined;
+  let expiredElapsedMs: number | undefined;
+  let timeoutKind: NonNullable<CommandResult["deadline"]>["kind"] | undefined;
+  let lastProgressAt: string | undefined;
+  let progressExtensions = 0;
+  let softDeadlineAt = startedAtMs + options.timeoutMs;
+  const absoluteTimeoutMs = resolvedAbsoluteTimeoutMs(
+    options.timeoutMs,
+    options.providerStream,
+    options.absoluteTimeoutMs,
+  );
+  const absoluteDeadlineAt = startedAtMs + absoluteTimeoutMs;
   const beginCleanup = (): void => {
     if (cleanup !== undefined) return;
     subprocess.stdin?.destroy();
@@ -372,10 +411,65 @@ async function supervise(
           remainingDescendants: [],
         });
   };
-  const deadlineTimer = setTimeout(() => {
+  const expire = (
+    kind: NonNullable<CommandResult["deadline"]>["kind"],
+  ): void => {
+    if (expiredAt !== undefined || cleanup !== undefined) return;
+    timeoutKind = kind;
     expiredAt = new Date().toISOString();
+    expiredElapsedMs = Date.now() - startedAtMs;
     beginCleanup();
-  }, options.timeoutMs);
+  };
+  let softDeadlineTimer: NodeJS.Timeout | undefined;
+  const scheduleSoftDeadline = (): void => {
+    if (softDeadlineTimer) clearTimeout(softDeadlineTimer);
+    softDeadlineTimer = setTimeout(
+      () => {
+        if (Date.now() < softDeadlineAt) {
+          scheduleSoftDeadline();
+          return;
+        }
+        if (decoder && Date.now() >= absoluteDeadlineAt) {
+          expire("absolute");
+          return;
+        }
+        expire(decoder ? "idle" : "fixed");
+      },
+      Math.max(1, softDeadlineAt - Date.now()),
+    );
+  };
+  recordProviderProgress = (): void => {
+    if (!decoder || expiredAt !== undefined || cleanup !== undefined) return;
+    const progressedAtMs = Date.now();
+    lastProgressAt = new Date(progressedAtMs).toISOString();
+    const extendedDeadline = Math.min(
+      progressedAtMs + options.timeoutMs,
+      absoluteDeadlineAt,
+    );
+    if (extendedDeadline > softDeadlineAt) {
+      softDeadlineAt = extendedDeadline;
+      progressExtensions += 1;
+      scheduleSoftDeadline();
+    }
+  };
+  scheduleSoftDeadline();
+  const absoluteDeadlineTimer = decoder
+    ? setTimeout(
+        () => expire("absolute"),
+        Math.max(1, absoluteDeadlineAt - Date.now()),
+      )
+    : undefined;
+  const timeoutPolicy: NonNullable<CommandResult["timeoutPolicy"]> = {
+    mode: decoder ? "progress_extended" : "fixed",
+    softTimeoutMs: options.timeoutMs,
+    absoluteTimeoutMs,
+    startedAt: new Date(startedAtMs).toISOString(),
+    initialSoftDeadlineAt: new Date(
+      startedAtMs + options.timeoutMs,
+    ).toISOString(),
+    absoluteDeadlineAt: new Date(absoluteDeadlineAt).toISOString(),
+    progressExtensions,
+  };
   const abortListener = (): void => beginCleanup();
   if (options.signal?.aborted) beginCleanup();
   else options.signal?.addEventListener("abort", abortListener, { once: true });
@@ -391,8 +485,21 @@ async function supervise(
       exitCode: result.exitCode ?? null,
       signal: result.signal ?? null,
       timedOut: expiredAt !== undefined,
+      timeoutPolicy: {
+        ...timeoutPolicy,
+        ...(lastProgressAt ? { lastProgressAt } : {}),
+        progressExtensions,
+      },
       ...(expiredAt !== undefined && cleanupResult !== undefined
-        ? { deadline: deadlineResult(expiredAt, cleanupResult) }
+        ? {
+            deadline: deadlineResult(
+              timeoutKind!,
+              expiredAt,
+              expiredElapsedMs!,
+              lastProgressAt,
+              cleanupResult,
+            ),
+          }
         : {}),
       ...(decoder
         ? {
@@ -413,8 +520,21 @@ async function supervise(
       signal: null,
       timedOut: expiredAt !== undefined,
       spawnError,
+      timeoutPolicy: {
+        ...timeoutPolicy,
+        ...(lastProgressAt ? { lastProgressAt } : {}),
+        progressExtensions,
+      },
       ...(expiredAt !== undefined && cleanupResult !== undefined
-        ? { deadline: deadlineResult(expiredAt, cleanupResult) }
+        ? {
+            deadline: deadlineResult(
+              timeoutKind!,
+              expiredAt,
+              expiredElapsedMs!,
+              lastProgressAt,
+              cleanupResult,
+            ),
+          }
         : {}),
       ...(decoder
         ? {
@@ -425,7 +545,8 @@ async function supervise(
         : {}),
     };
   } finally {
-    clearTimeout(deadlineTimer);
+    if (softDeadlineTimer) clearTimeout(softDeadlineTimer);
+    if (absoluteDeadlineTimer) clearTimeout(absoluteDeadlineTimer);
     options.signal?.removeEventListener("abort", abortListener);
     supervisor?.stopTracking();
   }
@@ -448,6 +569,9 @@ async function run(
     cwd: request.cwd,
     env: minimalEnvironment(request.env),
     timeoutMs: request.timeoutMs,
+    ...(request.absoluteTimeoutMs === undefined
+      ? {}
+      : { absoluteTimeoutMs: request.absoluteTimeoutMs }),
     ...(request.input === undefined ? {} : { input: request.input }),
     ...(request.signal === undefined ? {} : { signal: request.signal }),
     ...(request.secrets === undefined ? {} : { secrets: request.secrets }),
@@ -508,6 +632,28 @@ async function run(
     durationMs: Date.now() - started,
     stdoutPath,
     stderrPath,
+    timeoutPolicy: result.timeoutPolicy ?? {
+      mode: request.providerStream ? "progress_extended" : "fixed",
+      softTimeoutMs: request.timeoutMs,
+      absoluteTimeoutMs: resolvedAbsoluteTimeoutMs(
+        request.timeoutMs,
+        request.providerStream,
+        request.absoluteTimeoutMs,
+      ),
+      startedAt: new Date(started).toISOString(),
+      initialSoftDeadlineAt: new Date(
+        started + request.timeoutMs,
+      ).toISOString(),
+      absoluteDeadlineAt: new Date(
+        started +
+          resolvedAbsoluteTimeoutMs(
+            request.timeoutMs,
+            request.providerStream,
+            request.absoluteTimeoutMs,
+          ),
+      ).toISOString(),
+      progressExtensions: 0,
+    },
     ...(result.deadline ? { deadline: result.deadline } : {}),
     ...(transportFailures.length > 0 ? { transportFailures } : {}),
     ...(result.providerDiagnostics

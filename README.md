@@ -111,7 +111,9 @@ delivery:
 
 `review_minutes` defaults to `10`, accepts positive lower values, and rejects
 values above `10`. Provider progress is decoded into safe activity events and
-diagnostic artifacts; silence never ends a call before its configured deadline.
+diagnostic artifacts. Recognized activity extends the configured idle deadline;
+a separate three-times-budget absolute cap prevents noisy or stuck calls from
+running forever.
 
 `effort` defaults to `auto`; the judge selects an ultra-low through ultra-high
 profile from task complexity and risk, and the harness stops on convergence or

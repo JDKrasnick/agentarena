@@ -16,6 +16,7 @@ export interface ProviderStreamUpdate {
   activities: ProviderActivity[];
   assistantText: string[];
   assistantDeltas: string[];
+  deadlineProgressCount: number;
 }
 
 export interface ProviderStreamDiagnostics {
@@ -102,7 +103,12 @@ export class ProviderStreamDecoder {
     this.pending = "";
     return tail.trim()
       ? this.decodeLines([tail])
-      : { activities: [], assistantText: [], assistantDeltas: [] };
+      : {
+          activities: [],
+          assistantText: [],
+          assistantDeltas: [],
+          deadlineProgressCount: 0,
+        };
   }
 
   diagnostics(): ProviderStreamDiagnostics {
@@ -141,6 +147,7 @@ export class ProviderStreamDecoder {
       activities: [],
       assistantText: [],
       assistantDeltas: [],
+      deadlineProgressCount: 0,
     };
     for (const line of lines) {
       if (!line.trim()) continue;
@@ -253,12 +260,35 @@ export class ProviderStreamDecoder {
       }
     }
 
-    if (type === "system" || type === "init" || type.endsWith(".started")) {
-      this.activity(update, "progress", "Provider activity");
+    if (type === "system" || type === "init") {
+      // Initialization and system-status records are useful telemetry, but they
+      // are not evidence that the provider is making task progress. In
+      // particular, keepalive-shaped system records must not extend execution.
+      this.activity(
+        update,
+        "progress",
+        "Provider activity",
+        undefined,
+        undefined,
+        false,
+      );
       return;
     }
-    // Providers add record variants frequently. Unknown records are ignored by
-    // design so telemetry can never fail an otherwise usable invocation.
+    if (type.endsWith(".started")) {
+      // Keep forward-compatible start records in telemetry without allowing an
+      // unknown or keepalive-shaped record to extend provider execution.
+      this.activity(
+        update,
+        "progress",
+        "Provider activity",
+        undefined,
+        undefined,
+        false,
+      );
+      return;
+    }
+    // Providers add record variants frequently. Other unknown records are
+    // ignored so telemetry can never fail an otherwise usable invocation.
   }
 
   private captureModel(
@@ -495,6 +525,7 @@ export class ProviderStreamDecoder {
     label: string,
     toolName?: string,
     toolId?: string,
+    extendsDeadline = true,
   ) {
     const activity: ProviderActivity = {
       kind,
@@ -506,6 +537,7 @@ export class ProviderStreamDecoder {
     };
     this.events.push(activity);
     update.activities.push(activity);
+    if (extendsDeadline) update.deadlineProgressCount += 1;
   }
 
   private assistantText(update: ProviderStreamUpdate, text: string) {

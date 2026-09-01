@@ -193,6 +193,62 @@ describe("run specification", () => {
     });
   });
 
+  it("does not promote an Arena judge deadline with transport noise to provider recovery", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-judge-timeout-"));
+    const fightConfig = config(
+      root,
+      ["Normalize whitespace"],
+      [],
+      "Normalize whitespace",
+    );
+    const runSpec = await buildRunSpec({
+      runId: "run-judge-timeout",
+      baseCommit: "b".repeat(40),
+      config: fightConfig,
+      permissions,
+      repositoryRoot: root,
+      sourceDirectory: path.join(root, "snapshots"),
+    });
+    const attackPath = path.join(root, "attack.diff");
+    const scriptPath = path.join(root, "judge-timeout.mjs");
+    await writeFile(attackPath, "attack evidence\n");
+    await writeFile(
+      scriptPath,
+      'console.error("transport connection lost"); setInterval(() => undefined, 1000);\n',
+    );
+    const verifier = new CommandAttackVerifier("codex", {
+      executable: process.execPath,
+      args: [scriptPath],
+      providerStream: "codex",
+    });
+
+    await expect(
+      verifier.assess({
+        attack: {
+          claim: "Whitespace is mishandled",
+          impact: "Unstable output",
+          oracle: {
+            expectedBehavior: "Normalize whitespace",
+            rationale: "The task requires it",
+          },
+          assertionFingerprint: "whitespace",
+          patchPath: attackPath,
+        },
+        runSpec,
+        authorPassed: true,
+        targetFailed: true,
+        worktree: root,
+        promptPath: path.join(root, "verifier.prompt.md"),
+        transcriptPrefix: path.join(root, "verifier-attempt-2"),
+        timeoutMs: 120,
+        signal: new AbortController().signal,
+        retryReason: "Verifier timed out",
+      }),
+    ).rejects.toThrow(/Verifier output was invalid/);
+
+    expect(verifier.consumeProviderFailure()).toBeUndefined();
+  });
+
   it("snapshots exact task sources without extracting checklist criteria", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-contract-"));
     await writeFile(path.join(root, "AGENTS.md"), "Keep changes focused.\n");
