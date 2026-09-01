@@ -1211,6 +1211,64 @@ main {
 .result-fighter-open {
   display: none;
 }
+.result-validation {
+  border-top: 1px solid var(--result-border);
+  padding-top: 16px;
+}
+.result-validation > header,
+.result-validation article h3 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+.result-validation > header h2,
+.result-validation article h3,
+.result-validation article p {
+  margin: 0;
+}
+.result-validation > header span,
+.result-validation article p,
+.result-validation article small {
+  color: var(--result-card-muted);
+}
+.result-validation > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+.result-validation article {
+  min-width: 0;
+  border: 1px solid var(--result-border);
+  border-radius: 10px;
+  padding: 14px;
+  background: var(--result-card-surface);
+}
+.result-validation article > strong {
+  display: block;
+  margin-top: 12px;
+  text-transform: capitalize;
+}
+.result-validation ol {
+  margin: 10px 0 0;
+  padding-left: 22px;
+}
+.result-validation li + li {
+  margin-top: 10px;
+}
+.result-validation li span,
+.result-validation li small {
+  display: block;
+}
+.result-validation details {
+  margin-top: 8px;
+}
+.result-validation pre {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
 .result-evidence {
   display: grid;
   grid-template-columns: 1fr 1fr;

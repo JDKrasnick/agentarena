@@ -3,8 +3,10 @@ import path from "node:path";
 import { z } from "zod";
 import {
   ContestantIdSchema,
+  RequiredValidationEvidenceSchema,
   RoundIdSchema,
   StageSchema,
+  TerminalContestantDispositionSchema,
   type ContestantId,
   type RoundId,
   type Stage,
@@ -231,6 +233,10 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
     coverageConfidence: z
       .enum(["full_confidence", "reduced_confidence", "provisional"])
       .optional(),
+    implementationEligibility: z
+      .array(TerminalContestantDispositionSchema)
+      .max(2)
+      .optional(),
     terminalOutcome: z
       .object({
         kind: z.enum(["forfeit", "inconclusive", "cancelled"]),
@@ -239,6 +245,17 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
         eligibleContestantIds: z.array(ContestantIdSchema),
         reason: z.string().min(1),
         artifactPaths: z.array(z.string()),
+        contestants: z
+          .array(
+            z.object({
+              contestantId: ContestantIdSchema,
+              eligible: z.boolean(),
+              reasonCode: z.string().min(1).optional(),
+              artifactPaths: z.array(z.string()),
+              validation: RequiredValidationEvidenceSchema.optional(),
+            }),
+          )
+          .optional(),
       })
       .optional(),
     contestants: z

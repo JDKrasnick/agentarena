@@ -8,8 +8,10 @@ import {
   reportOutcome,
   reportOutcomeTotals,
   reportRounds,
+  requiredValidationAttemptSummary,
   truncateReportText,
 } from "./presentation.js";
+import { projectImplementationEligibility } from "../outcomes/eligibility.js";
 
 function escapeXml(value: string): string {
   return value.replace(
@@ -40,29 +42,67 @@ export function renderBattleVisual(state: RunState): string {
             terminal.eligibleContestantIds[0],
           )
         : "none";
+    const evidenceLines =
+      terminal.version === 2
+        ? terminal.contestants.flatMap((entry) => {
+            const label = contestantLabel(
+              state.config.contestants,
+              entry.contestantId,
+            );
+            return [
+              `${label}: ${entry.eligible ? "eligible" : "ineligible"} · ${entry.reasonCode ?? "eligible_patch"}${entry.validation ? ` · ${entry.validation.outcome.replaceAll("_", " ")}` : ""}`,
+              ...(entry.validation
+                ? requiredValidationAttemptSummary(entry.validation).map(
+                    (attempt) => `  ${attempt}`,
+                  )
+                : []),
+            ];
+          })
+        : terminal.affectedContestantIds.map(
+            (id) =>
+              `${contestantLabel(state.config.contestants, id)}: ineligible · ${terminal.reasonCode} · legacy record`,
+          );
+    const evidence = evidenceLines
+      .map(
+        (line, index) =>
+          `<text x="84" y="${String(342 + index * 30)}" class="${line.startsWith("  ") ? "muted" : "body"}">${escapeXml(truncateReportText(line, 122))}</text>`,
+      )
+      .join("\n");
+    const footerY = 380 + evidenceLines.length * 30;
+    const height = footerY + 54;
     return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="520" viewBox="0 0 1240 520" role="img" aria-label="Agent Arena pre-review terminal result">
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="${String(height)}" viewBox="0 0 1240 ${String(height)}" role="img" aria-label="Agent Arena pre-review terminal result">
 <style>.title{font:700 30px ui-monospace,Menlo,monospace;fill:#f5f7fa}.label{font:700 20px ui-monospace,Menlo,monospace;fill:#9ac0ff}.body{font:17px ui-monospace,Menlo,monospace;fill:#d7e0ea}.muted{font:15px ui-monospace,Menlo,monospace;fill:#b4c1cd}</style>
-<rect width="1240" height="520" fill="#070c12"/><text x="54" y="78" class="title">AGENT ARENA — PRE-REVIEW RESULT</text>
-<rect x="54" y="122" width="1132" height="300" rx="16" fill="#121b26" stroke="#294056"/>
+<rect width="1240" height="${String(height)}" fill="#070c12"/><text x="54" y="78" class="title">AGENT ARENA — PRE-REVIEW RESULT</text>
+<rect x="54" y="122" width="1132" height="${String(height - 140)}" rx="16" fill="#121b26" stroke="#294056"/>
 <text x="84" y="176" class="label">${escapeXml(terminal.kind.toUpperCase())} · ${escapeXml(terminal.reasonCode)}</text>
 <text x="84" y="226" class="body">Eligible production patch: ${escapeXml(recommended)}</text>
 <text x="84" y="274" class="body">${escapeXml(truncateReportText(terminal.reason, 108))}</text>
-<text x="84" y="330" class="muted">Review, attack, repair, quality comparison, and coverage stages were not run.</text>
-<text x="84" y="382" class="muted">Generated from result.json · See BATTLE.md for diagnostic artifacts.</text>
+<text x="84" y="312" class="label">CONTESTANT ELIGIBILITY AND VALIDATION</text>
+${evidence}
+<text x="84" y="${String(footerY)}" class="muted">Review, attack, repair, quality comparison, and coverage stages were not run.</text>
+<text x="84" y="${String(footerY + 30)}" class="muted">Generated from result.json · See BATTLE.md for diagnostic artifacts.</text>
 </svg>`;
   }
   const contestants = reportContestants(state);
+  const implementationEligibility = projectImplementationEligibility(state);
   const blocks = contestants
     .map((contestant, index) => {
       const outcome = state.arenaOutcome?.contestants[contestant.id];
+      const eligibility = implementationEligibility.find(
+        (entry) => entry.contestantId === contestant.id,
+      );
       const x = 54 + index * 570;
-      return `<rect x="${x}" y="158" width="520" height="180" rx="16" fill="#121b26" stroke="#294056"/>
+      const attempt = eligibility?.validation
+        ? requiredValidationAttemptSummary(eligibility.validation)[0]
+        : undefined;
+      return `<rect x="${x}" y="158" width="520" height="195" rx="16" fill="#121b26" stroke="#294056"/>
       <text x="${x + 28}" y="202" class="label">${escapeXml(contestantLabel(state.config.contestants, contestant.id).toUpperCase())}</text>
       <text x="${x + 28}" y="256" class="hp">${String(contestant.finalHealth)} HP</text>
       <text x="${x + 28}" y="292" class="body">Required suite: <tspan class="${latestRequired(contestant) === "PASS" ? "pass" : latestRequired(contestant) === "FAIL" ? "fail" : "warn"}">${latestRequired(contestant)}</tspan></text>
       <text x="${x + 28}" y="316" class="body">Recoil: ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil)} HP</text>
-      <text x="${x + 250}" y="316" class="body">Active damage: ${String(outcome?.activeDefectDamage ?? 0)} HP</text>`;
+      <text x="${x + 250}" y="316" class="body">Active damage: ${String(outcome?.activeDefectDamage ?? 0)} HP</text>
+      <text x="${x + 28}" y="340" class="tiny">Eligibility: ${escapeXml(eligibility ? (eligibility.eligible ? "eligible" : "ineligible") : "not recorded")}${eligibility?.validation ? ` · ${escapeXml(eligibility.validation.outcome)} · ${escapeXml(truncateReportText(attempt ?? "", 48))}` : ""}</text>`;
     })
     .join("\n");
   const defects = reportDefects(state);

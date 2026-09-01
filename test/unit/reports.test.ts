@@ -49,6 +49,52 @@ function attack(state: RunState, overrides: Partial<Attack> = {}): Attack {
 }
 
 describe("battle reports", () => {
+  it("renders successful implementation eligibility evidence in every report", () => {
+    const state = makeRunState();
+    for (const contestant of Object.values(state.contestants)) {
+      contestant.checks.push({
+        id: "initial-required",
+        kind: "required",
+        status: "passed",
+        validation: {
+          outcome: "passed",
+          attempts: [
+            {
+              command: "npm test",
+              cwd: `/tmp/${contestant.id}`,
+              exitCode: 0,
+              signal: null,
+              timedOut: false,
+              attempts: 1,
+              durationMs: 420,
+              stdoutPath: `/tmp/${contestant.id}.out`,
+              stderrPath: `/tmp/${contestant.id}.err`,
+              termination: {
+                cause: "exit",
+                timeoutType: null,
+                startedAt: "2026-08-30T19:18:18.000Z",
+                finishedAt: "2026-08-30T19:18:18.420Z",
+                lastOutputAt: "2026-08-30T19:18:18.300Z",
+                escalation: [],
+              },
+            },
+          ],
+        },
+      });
+    }
+
+    expect(renderConsoleSummary(state)).toContain(
+      "Implementation eligibility and required-validation attempts",
+    );
+    expect(renderBattleReport(state)).toContain(
+      "Implementation eligibility and required-validation attempts",
+    );
+    expect(renderBattleHtml(state)).toContain(
+      "Implementation eligibility and required-validation attempts",
+    );
+    expect(renderBattleVisual(state)).toContain("Eligibility: eligible");
+  });
+
   it("labels provider-call limits as sealed-round pressure thresholds", () => {
     const state = makeRunState();
 
@@ -213,6 +259,99 @@ describe("battle reports", () => {
     expect(visual).toContain("<svg");
     expect(visual).toContain("EVIDENCE-LINKED BATTLE REPLAY");
     expect(visual).toContain("ROUND DIGEST");
+  });
+
+  it("renders contestant-scoped terminal validation evidence in the SVG", () => {
+    const state = makeRunState();
+    state.status = "inconclusive";
+    state.terminalOutcome = {
+      version: 2,
+      phase: "pre_review",
+      kind: "inconclusive",
+      status: "inconclusive",
+      reasonCode: "initial_validation_unstable",
+      affectedContestantIds: ["a", "b"],
+      eligibleContestantIds: [],
+      artifactPaths: [],
+      contestants: [
+        {
+          contestantId: "a",
+          eligible: false,
+          reasonCode: "initial_validation_unstable",
+          artifactPaths: [],
+          validation: {
+            outcome: "unstable",
+            attempts: [
+              {
+                command: "npm test",
+                cwd: "/tmp/a",
+                exitCode: null,
+                signal: "SIGTERM",
+                timedOut: true,
+                attempts: 1,
+                durationMs: 30_000,
+                stdoutPath: "/tmp/a.out",
+                stderrPath: "/tmp/a.err",
+                termination: {
+                  cause: "timeout",
+                  timeoutType: "wall_clock",
+                  startedAt: "2026-08-30T19:18:18.000Z",
+                  finishedAt: "2026-08-30T19:18:48.000Z",
+                  lastOutputAt: "2026-08-30T19:18:47.000Z",
+                  escalation: [],
+                },
+              },
+              {
+                command: "npm test",
+                cwd: "/tmp/a-retry",
+                exitCode: 0,
+                signal: null,
+                timedOut: false,
+                attempts: 1,
+                durationMs: 42_000,
+                stdoutPath: "/tmp/a-retry.out",
+                stderrPath: "/tmp/a-retry.err",
+              },
+            ],
+          },
+        },
+        {
+          contestantId: "b",
+          eligible: false,
+          reasonCode: "initial_validation_failed",
+          artifactPaths: [],
+          validation: {
+            outcome: "deterministic_failure",
+            attempts: [
+              {
+                command: "npm test",
+                cwd: "/tmp/b",
+                exitCode: 2,
+                signal: null,
+                timedOut: false,
+                attempts: 1,
+                durationMs: 1_200,
+                stdoutPath: "/tmp/b.out",
+                stderrPath: "/tmp/b.err",
+              },
+            ],
+          },
+        },
+      ],
+      reason: "Required validation attempts disagreed.",
+    };
+
+    const visual = renderBattleVisual(state);
+
+    expect(visual).toContain("CONTESTANT ELIGIBILITY AND VALIDATION");
+    expect(visual).toContain(
+      "Codex: ineligible · initial_validation_unstable · unstable",
+    );
+    expect(visual).toContain("attempt 1: timeout");
+    expect(visual).toContain("attempt 2: exit");
+    expect(visual).toContain(
+      "Claude: ineligible · initial_validation_failed · deterministic failure",
+    );
   });
 
   it("reports configured budgets, consumption, and the exact adaptive decision", () => {

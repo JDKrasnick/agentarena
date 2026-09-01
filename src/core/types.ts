@@ -178,6 +178,29 @@ export const CommandResultSchema = z.object({
   durationMs: z.number().int().nonnegative(),
   stdoutPath: z.string(),
   stderrPath: z.string(),
+  failureExcerpt: z.string().min(1).optional(),
+  termination: z
+    .object({
+      cause: z.enum(["exit", "signal", "timeout", "cancelled", "spawn_error"]),
+      timeoutType: z.literal("wall_clock").nullable(),
+      startedAt: z.string().datetime(),
+      finishedAt: z.string().datetime(),
+      lastOutputAt: z.string().datetime().nullable(),
+      escalation: z.array(
+        z.object({
+          pid: z.number().int().positive(),
+          identity: z.string().min(1),
+          signal: z.enum(["SIGTERM", "SIGKILL"]),
+          outcome: z.enum([
+            "sent",
+            "already_exited",
+            "identity_changed",
+            "error",
+          ]),
+        }),
+      ),
+    })
+    .optional(),
   timeoutPolicy: z
     .object({
       mode: z.enum(["fixed", "progress_extended"]),
@@ -261,6 +284,20 @@ export const CommandResultSchema = z.object({
 });
 export type CommandResult = z.infer<typeof CommandResultSchema>;
 
+export const RequiredValidationEvidenceSchema = z.object({
+  outcome: z.enum([
+    "passed",
+    "deterministic_failure",
+    "confirmed_timeout",
+    "confirmed_runner_failure",
+    "unstable",
+  ]),
+  attempts: z.array(CommandResultSchema).min(1).max(2),
+});
+export type RequiredValidationEvidence = z.infer<
+  typeof RequiredValidationEvidenceSchema
+>;
+
 export const CheckResultSchema = z.object({
   id: z.string(),
   kind: z.enum([
@@ -274,6 +311,7 @@ export const CheckResultSchema = z.object({
   ]),
   status: z.enum(["passed", "failed", "infrastructure_error", "skipped"]),
   command: CommandResultSchema.optional(),
+  validation: RequiredValidationEvidenceSchema.optional(),
   reason: z.string().optional(),
 });
 export type CheckResult = z.infer<typeof CheckResultSchema>;
@@ -1559,6 +1597,9 @@ const PreReviewReasonCodeSchema = z.enum([
   "implementation_empty_patch",
   "implementation_unapplicable_patch",
   "initial_validation_failed",
+  "initial_validation_timeout",
+  "initial_validation_runner_failure",
+  "initial_validation_unstable",
   "frozen_incumbent_invalid",
   "provider_transport_failure",
   "harness_infrastructure_failure",
@@ -1588,7 +1629,11 @@ export const TerminalContestantDispositionSchema = z.object({
     ])
     .optional(),
   artifactPaths: z.array(z.string().min(1)),
+  validation: RequiredValidationEvidenceSchema.optional(),
 });
+export type TerminalContestantDisposition = z.infer<
+  typeof TerminalContestantDispositionSchema
+>;
 
 /** A disposition reached before attack/review work is eligible to begin. */
 export const TerminalOutcomeV2Schema = z.object({
@@ -1960,19 +2005,32 @@ export const RunStateV2Schema = LegacyRunStateCommonSchema.extend({
 });
 export type RunStateV2 = z.infer<typeof RunStateV2Schema>;
 
-export const AnyRunStateSchema = z.discriminatedUnion("schemaVersion", [
-  RunStateV1Schema,
-  RunStateV2Schema,
-  RunStateV3Schema,
-  RunStateV4Schema,
-  RunStateV5Schema,
-  RunStateV6Schema,
-  RunStateV7Schema,
-  RunStateV8Schema,
-  RunStateV9Schema,
-  RunStateV10Schema,
-]);
-export type AnyRunState = z.infer<typeof AnyRunStateSchema>;
+export type AnyRunState =
+  | z.infer<typeof RunStateV1Schema>
+  | z.infer<typeof RunStateV2Schema>
+  | z.infer<typeof RunStateV3Schema>
+  | z.infer<typeof RunStateV4Schema>
+  | z.infer<typeof RunStateV5Schema>
+  | z.infer<typeof RunStateV6Schema>
+  | z.infer<typeof RunStateV7Schema>
+  | z.infer<typeof RunStateV8Schema>
+  | z.infer<typeof RunStateV9Schema>
+  | z.infer<typeof RunStateV10Schema>;
+export const AnyRunStateSchema: z.ZodType<AnyRunState> = z.discriminatedUnion(
+  "schemaVersion",
+  [
+    RunStateV1Schema,
+    RunStateV2Schema,
+    RunStateV3Schema,
+    RunStateV4Schema,
+    RunStateV5Schema,
+    RunStateV6Schema,
+    RunStateV7Schema,
+    RunStateV8Schema,
+    RunStateV9Schema,
+    RunStateV10Schema,
+  ],
+);
 
 const AttackSubmissionEntryBaseSchema = z.object({
   rank: z.union([z.literal(1), z.literal(2), z.literal(3)]),

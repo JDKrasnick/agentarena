@@ -112,11 +112,12 @@ describe("process runner supervision", () => {
 
   it("applies the same deadline contract to shell commands", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-shell-timeout-"));
+    const timeoutMs = 750;
     const result = await runShellCommand(
-      `${JSON.stringify(process.execPath)} -e ${JSON.stringify("setInterval(() => undefined, 1000)")}`,
+      `${JSON.stringify(process.execPath)} -e ${JSON.stringify('console.log("partial suite output"); setInterval(() => undefined, 1000)')}`,
       {
         cwd: root,
-        timeoutMs: 50,
+        timeoutMs,
         logPrefix: path.join(root, "logs", "shell"),
       },
     );
@@ -125,12 +126,77 @@ describe("process runner supervision", () => {
     expect(result.deadline).toMatchObject({ kind: "fixed" });
     expect(result.timeoutPolicy).toMatchObject({
       mode: "fixed",
-      softTimeoutMs: 50,
-      absoluteTimeoutMs: 50,
+      softTimeoutMs: timeoutMs,
+      absoluteTimeoutMs: timeoutMs,
       progressExtensions: 0,
     });
     expect(result.failureClass).toBeUndefined();
+    expect(result.termination).toMatchObject({
+      cause: "timeout",
+      timeoutType: "wall_clock",
+    });
+    expect(result.termination?.lastOutputAt).toMatch(/^\d{4}-/u);
+    expect(
+      Date.parse(result.termination!.lastOutputAt!) -
+        Date.parse(result.termination!.startedAt),
+    ).toBeLessThan(timeoutMs - 50);
+    expect(result.termination?.escalation).toEqual(expect.any(Array));
+    expect(result.failureExcerpt).toContain("partial suite output");
   });
+
+  it("preserves an early failure diagnostic alongside a bounded output tail", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-shell-excerpt-"));
+    const program = [
+      'console.log("0 failed during discovery")',
+      'for (let index = 0; index < 70; index += 1) console.log("setup line " + String(index))',
+      'console.log("src/runner.ts(42,3): error TS7030: Not all code paths return a value.")',
+      'for (let index = 0; index < 70; index += 1) console.log("teardown line " + String(index) + " " + "é".repeat(50))',
+      "process.exit(1)",
+    ].join(";");
+    const result = await runShellCommand(
+      `${JSON.stringify(process.execPath)} -e ${JSON.stringify(program)}`,
+      {
+        cwd: root,
+        timeoutMs: 2_000,
+        logPrefix: path.join(root, "logs", "excerpt"),
+      },
+    );
+
+    expect(result.failureExcerpt).toContain("TS7030");
+    expect(result.failureExcerpt).toContain("teardown line 69");
+    expect(
+      Buffer.byteLength(result.failureExcerpt ?? "", "utf8"),
+    ).toBeLessThanOrEqual(6_000);
+  });
+
+  it.skipIf(!["darwin", "linux"].includes(process.platform))(
+    "records cleanup escalation when a command is cancelled",
+    async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), "arena-cancel-"));
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 100);
+
+      const result = await runProcess({
+        executable: process.execPath,
+        args: [
+          "-e",
+          'console.log("ready"); setInterval(() => undefined, 1000)',
+        ],
+        cwd: root,
+        timeoutMs: 5_000,
+        logPrefix: path.join(root, "logs", "cancelled"),
+        signal: controller.signal,
+      });
+
+      expect(result.termination?.cause).toBe("cancelled");
+      expect(result.deadline).toBeUndefined();
+      expect(
+        result.termination?.escalation.some(
+          (event) => event.signal === "SIGTERM",
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("extends a provider soft deadline when meaningful activity continues", async () => {
     const root = await mkdtemp(

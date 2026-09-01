@@ -514,6 +514,29 @@ describe("arena observability", () => {
       competitiveLandingCount: 0,
       sharedDefectCount: 1,
       explicitEmptyLaneCount: 5,
+      implementationEligibility: [
+        {
+          contestantId: "a",
+          eligible: true,
+          artifactPaths: [],
+          validation: {
+            outcome: "passed",
+            attempts: [
+              {
+                command: "npm test",
+                cwd: "/tmp/a",
+                exitCode: 0,
+                signal: null,
+                timedOut: false,
+                attempts: 1,
+                durationMs: 100,
+                stdoutPath: "/tmp/a.out",
+                stderrPath: "/tmp/a.err",
+              },
+            ],
+          },
+        },
+      ],
     });
 
     expect(state.result).toMatchObject({
@@ -523,6 +546,13 @@ describe("arena observability", () => {
       sharedDefectCount: 1,
       explicitEmptyLaneCount: 5,
     });
+    expect(state.result?.implementationEligibility?.[0]?.contestantId).toBe(
+      "a",
+    );
+    expect(state.result?.implementationEligibility?.[0]?.eligible).toBe(true);
+    expect(
+      state.result?.implementationEligibility?.[0]?.validation?.outcome,
+    ).toBe("passed");
     expect(state.result).not.toHaveProperty("championId");
   });
 });

@@ -49,6 +49,125 @@ describe("dashboard UI contracts", () => {
     expect(markup).not.toContain("is-winner");
   });
 
+  it("renders per-contestant termination evidence for unstable pre-review validation", () => {
+    const state = initialDashboardState();
+    state.status = "inconclusive";
+    state.result = {
+      terminalOutcome: {
+        kind: "inconclusive",
+        reasonCode: "initial_validation_unstable",
+        reason: "Required validation attempts disagreed.",
+        contestants: [
+          {
+            contestantId: "a",
+            eligible: false,
+            reasonCode: "initial_validation_unstable",
+            validation: {
+              outcome: "unstable",
+              attempts: [
+                {
+                  command: "npm test",
+                  cwd: "/tmp/a",
+                  exitCode: null,
+                  signal: "SIGTERM",
+                  timedOut: true,
+                  attempts: 1,
+                  durationMs: 30_000,
+                  stdoutPath: "/tmp/a.stdout.log",
+                  stderrPath: "/tmp/a.stderr.log",
+                  failureExcerpt: "168 tests passed; waiting for teardown",
+                  termination: {
+                    cause: "timeout",
+                    timeoutType: "wall_clock",
+                    startedAt: "2026-08-30T19:18:18.000Z",
+                    finishedAt: "2026-08-30T19:18:48.000Z",
+                    lastOutputAt: "2026-08-30T19:18:47.000Z",
+                    escalation: [],
+                  },
+                },
+                {
+                  command: "npm test",
+                  cwd: "/tmp/a",
+                  exitCode: 0,
+                  signal: null,
+                  timedOut: false,
+                  attempts: 1,
+                  durationMs: 42_000,
+                  stdoutPath: "/tmp/a-retry.stdout.log",
+                  stderrPath: "/tmp/a-retry.stderr.log",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <ResultScreen
+        state={state}
+        onReview={() => undefined}
+        onOpenFighter={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("Eligibility and validation evidence");
+    expect(markup).toContain("initial_validation_unstable");
+    expect(markup).toContain("Attempt 1 · timeout");
+    expect(markup).toContain("168 tests passed; waiting for teardown");
+    expect(markup).toContain("Attempt 2 · exit");
+  });
+
+  it("renders eligibility evidence after a successful completed validation", () => {
+    const state = initialDashboardState();
+    state.status = "complete";
+    state.result = {
+      implementationEligibility: [
+        {
+          contestantId: "a",
+          eligible: true,
+          artifactPaths: [],
+          validation: {
+            outcome: "passed",
+            attempts: [
+              {
+                command: "npm test",
+                cwd: "/tmp/a",
+                exitCode: 0,
+                signal: null,
+                timedOut: false,
+                attempts: 1,
+                durationMs: 420,
+                stdoutPath: "/tmp/a.stdout.log",
+                stderrPath: "/tmp/a.stderr.log",
+                termination: {
+                  cause: "exit",
+                  timeoutType: null,
+                  startedAt: "2026-08-30T19:18:18.000Z",
+                  finishedAt: "2026-08-30T19:18:18.420Z",
+                  lastOutputAt: "2026-08-30T19:18:18.300Z",
+                  escalation: [],
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const markup = renderToStaticMarkup(
+      <ResultScreen
+        state={state}
+        onReview={() => undefined}
+        onOpenFighter={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("Eligibility and validation evidence");
+    expect(markup).toContain("Fighter A · eligible");
+    expect(markup).toContain("Attempt 1 · exit");
+  });
+
   it("renders an operator-triggered browser link only for an active session", () => {
     expect(
       renderToStaticMarkup(

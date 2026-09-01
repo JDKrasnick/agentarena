@@ -5,6 +5,7 @@ import type {
   CheckResult,
   ContestantId,
   ContestantResult,
+  RequiredValidationEvidence,
   RoundId,
   RunState,
 } from "../core/types.js";
@@ -41,6 +42,33 @@ export interface ReportOutcomeTotals {
   competitiveLandings: number;
   sharedDefects: number;
   schemaRejectedFindings: number;
+}
+
+export function requiredValidationAttemptSummary(
+  validation: RequiredValidationEvidence,
+): string[] {
+  return validation.attempts.map((attempt, index) => {
+    const cause =
+      attempt.termination?.cause ??
+      (attempt.timedOut
+        ? "timeout"
+        : attempt.signal
+          ? "signal"
+          : attempt.exitCode === null
+            ? "runner failure"
+            : "exit");
+    const escalation = attempt.termination?.escalation
+      .map((entry) => `${entry.signal}:${entry.outcome}`)
+      .join(", ");
+    return [
+      `attempt ${String(index + 1)}: ${cause}`,
+      `exit ${attempt.exitCode === null ? "none" : String(attempt.exitCode)}`,
+      `signal ${attempt.signal ?? "none"}`,
+      `${String(attempt.durationMs)}ms`,
+      `last output ${attempt.termination?.lastOutputAt ?? "none"}`,
+      `escalation ${escalation || "none"}`,
+    ].join(" · ");
+  });
 }
 
 function invocationPaths(invocation: AgentInvocation | undefined): string[] {

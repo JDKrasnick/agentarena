@@ -748,6 +748,65 @@ export function ResultScreen({
         })}
       </div>
 
+      {(
+        state.result.implementationEligibility ??
+        state.result.terminalOutcome?.contestants
+      )?.length ? (
+        <section className="result-validation" aria-label="Validation evidence">
+          <header>
+            <h2>Eligibility and validation evidence</h2>
+            <span>Required checks</span>
+          </header>
+          <div>
+            {(
+              state.result.implementationEligibility ??
+              state.result.terminalOutcome?.contestants ??
+              []
+            ).map((entry) => (
+              <article key={entry.contestantId}>
+                <h3>
+                  Fighter {entry.contestantId.toUpperCase()} ·{" "}
+                  {entry.eligible ? "eligible" : "ineligible"}
+                </h3>
+                <p>{entry.reasonCode ?? "eligible_patch"}</p>
+                {entry.validation ? (
+                  <>
+                    <strong>
+                      {entry.validation.outcome.replaceAll("_", " ")}
+                    </strong>
+                    <ol>
+                      {entry.validation.attempts.map((attempt, index) => (
+                        <li key={attempt.stdoutPath}>
+                          <span>
+                            Attempt {String(index + 1)} ·{" "}
+                            {attempt.termination?.cause ??
+                              (attempt.timedOut ? "timeout" : "exit")}
+                          </span>
+                          <small>
+                            exit {attempt.exitCode ?? "none"} · signal{" "}
+                            {attempt.signal ?? "none"} · {attempt.durationMs}ms
+                            · last output{" "}
+                            {attempt.termination?.lastOutputAt ?? "none"}
+                          </small>
+                          {attempt.failureExcerpt ? (
+                            <details>
+                              <summary>Failure excerpt</summary>
+                              <pre>{attempt.failureExcerpt}</pre>
+                            </details>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ol>
+                  </>
+                ) : (
+                  <small>No required-validation command evidence.</small>
+                )}
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <div className="result-evidence">
         <section>
           <header>

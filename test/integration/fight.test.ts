@@ -50,6 +50,9 @@ import type { PatchQualityVerifierInput } from "../../src/quality/verifier.js";
 const fixtureAgent = fileURLToPath(
   new URL("../fixtures/fake-agent.mjs", import.meta.url),
 );
+const requiredValidationOutcomes = fileURLToPath(
+  new URL("../fixtures/required-validation-outcomes.mjs", import.meta.url),
+);
 
 function duelConfig(repositoryRoot: string) {
   return FightConfigSchema.parse({
@@ -540,6 +543,68 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(
       provisioning.filter((record) => record.commandResult).length,
     ).toBeLessThan(provisioning.length);
+    const summary = JSON.parse(
+      await readFile(outcome.state.artifacts.result!, "utf8"),
+    ) as {
+      implementationEligibility?: Array<{
+        contestantId: string;
+        eligible: boolean;
+        validation?: { outcome: string; attempts: unknown[] };
+      }>;
+    };
+    expect(summary.implementationEligibility).toHaveLength(2);
+    expect(
+      summary.implementationEligibility?.map((entry) => ({
+        contestantId: entry.contestantId,
+        eligible: entry.eligible,
+        outcome: entry.validation?.outcome,
+        attemptCount: entry.validation?.attempts.length,
+      })),
+    ).toEqual([
+      {
+        contestantId: "a",
+        eligible: true,
+        outcome: "passed",
+        attemptCount: 1,
+      },
+      {
+        contestantId: "b",
+        eligible: true,
+        outcome: "passed",
+        attemptCount: 1,
+      },
+    ]);
+    const completedEvent = (
+      await readFile(
+        path.join(
+          repositoryRoot,
+          ".agent-arena",
+          "runs",
+          outcome.state.runId,
+          "events.ndjson",
+        ),
+        "utf8",
+      )
+    )
+      .trim()
+      .split("\n")
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            type: string;
+            implementationEligibility?: unknown;
+          },
+      )
+      .findLast((event) => event.type === "battle_completed");
+    expect(completedEvent?.implementationEligibility).toEqual(
+      summary.implementationEligibility,
+    );
+    expect(await readFile(outcome.state.artifacts.battle!, "utf8")).toContain(
+      "Implementation eligibility and required-validation attempts",
+    );
+    expect(
+      await readFile(outcome.state.artifacts.battleHtml!, "utf8"),
+    ).toContain("Implementation eligibility and required-validation attempts");
   }, 60_000);
 
   it("provisions runtime and test dependencies for final focused checks", async () => {
@@ -1727,6 +1792,143 @@ describe("fake-adapter fight on a mocked real issue", () => {
       eligibleContestantIds: ["b"],
     });
   });
+
+  it("retries runner-shaped validation once and persists unstable and deterministic evidence", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const statePath = path.join(repositoryRoot, "validation-invocations.txt");
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      testCommand: `${JSON.stringify(process.execPath)} ${JSON.stringify(requiredValidationOutcomes)} ${JSON.stringify(statePath)}`,
+    });
+    config.limits.attackMs = 150;
+    config.phaseOverrides.attack = true;
+
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+
+    expect(outcome.state.status).toBe("inconclusive");
+    expect(outcome.state.terminalOutcome).toMatchObject({
+      version: 2,
+      kind: "inconclusive",
+      reasonCode: "initial_validation_unstable",
+    });
+    const terminal = outcome.state.terminalOutcome;
+    if (!terminal || terminal.version !== 2)
+      throw new Error("Expected a v2 terminal outcome");
+    const unstable = terminal.contestants[0]?.validation;
+    const deterministic = terminal.contestants[1]?.validation;
+    expect(terminal.contestants[0]).toMatchObject({
+      contestantId: "a",
+      eligible: false,
+      reasonCode: "initial_validation_unstable",
+    });
+    expect(terminal.contestants[1]).toMatchObject({
+      contestantId: "b",
+      eligible: false,
+      reasonCode: "initial_validation_failed",
+    });
+    expect(unstable?.outcome).toBe("unstable");
+    expect(deterministic?.outcome).toBe("deterministic_failure");
+    expect(unstable?.attempts[0]).toMatchObject({
+      timedOut: true,
+      termination: { cause: "timeout", timeoutType: "wall_clock" },
+    });
+    expect(unstable?.attempts[1]).toMatchObject({
+      exitCode: 0,
+      timedOut: false,
+    });
+    expect(unstable?.attempts[0]?.cwd).not.toBe(unstable?.attempts[1]?.cwd);
+    expect(deterministic?.attempts).toHaveLength(1);
+    expect(deterministic?.attempts[0]?.exitCode).toBe(2);
+    expect(deterministic?.attempts[0]?.failureExcerpt).toContain("TS7030");
+    expect(outcome.state.failureRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "required_validation",
+          terminalDisposition: "validation_unstable",
+          attempts: [
+            expect.objectContaining({ attempt: 1, status: "failed" }),
+            expect.objectContaining({ attempt: 2, status: "succeeded" }),
+          ],
+        }),
+      ]),
+    );
+    const summary = JSON.parse(
+      await readFile(outcome.state.artifacts.result!, "utf8"),
+    ) as { terminalOutcome: unknown };
+    expect(summary.terminalOutcome).toEqual(outcome.state.terminalOutcome);
+    expect(await readFile(outcome.state.artifacts.battle!, "utf8")).toContain(
+      "required validation — unstable",
+    );
+    expect(
+      await readFile(outcome.state.artifacts.battleHtml!, "utf8"),
+    ).toContain("Validation evidence");
+  }, 60_000);
+
+  it("records a deterministic nonzero validation retry as failed", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const statePath = path.join(repositoryRoot, "validation-invocations.txt");
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      testCommand: `${JSON.stringify(process.execPath)} ${JSON.stringify(requiredValidationOutcomes)} ${JSON.stringify(statePath)} timeout-then-deterministic`,
+    });
+    config.limits.attackMs = 150;
+    config.phaseOverrides.attack = true;
+
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+
+    expect(outcome.state.status).toBe("inconclusive");
+    expect(outcome.state.terminalOutcome).toMatchObject({
+      version: 2,
+      kind: "inconclusive",
+      reasonCode: "initial_validation_unstable",
+    });
+    expect(outcome.state.failureRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "required_validation",
+          terminalDisposition: "validation_unstable",
+          attempts: [
+            expect.objectContaining({ attempt: 1, status: "failed" }),
+            expect.objectContaining({ attempt: 2, status: "failed" }),
+          ],
+        }),
+      ]),
+    );
+    const terminal = outcome.state.terminalOutcome;
+    if (!terminal || terminal.version !== 2)
+      throw new Error("Expected a v2 terminal outcome");
+    const deterministicRetry = terminal.contestants[0]?.validation?.attempts[1];
+    expect(deterministicRetry?.exitCode).toBe(2);
+    expect(deterministicRetry?.failureExcerpt).toContain("TS7030");
+  }, 60_000);
 
   it("seals cancellation as a pre-review terminal outcome", async () => {
     const repositoryRoot = await createSlugRepository();

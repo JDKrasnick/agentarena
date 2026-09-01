@@ -258,6 +258,9 @@ interface SupervisedResult {
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
+  cancelled: boolean;
+  lastOutputAt: string | null;
+  cleanup?: ProcessCleanupResult;
   spawnError?: unknown;
   deadline?: NonNullable<CommandResult["deadline"]>;
   timeoutPolicy?: NonNullable<CommandResult["timeoutPolicy"]>;
@@ -299,7 +302,6 @@ async function supervise(
       reject: false as const,
       all: false as const,
       ...(options.input === undefined ? {} : { input: options.input }),
-      ...(options.signal === undefined ? {} : { cancelSignal: options.signal }),
     };
     subprocess = options.shell
       ? execaCommand(options.executable, {
@@ -314,6 +316,8 @@ async function supervise(
       exitCode: null,
       signal: null,
       timedOut: false,
+      cancelled: false,
+      lastOutputAt: null,
       spawnError,
     };
   }
@@ -321,6 +325,7 @@ async function supervise(
   let stdout = "";
   let stderr = "";
   let providerRawOutput = "";
+  let lastOutputAt: string | null = null;
   let outputQueue: Promise<void> = Promise.resolve();
   const redactors = {
     stdout: new StreamingRedactor(options.secrets),
@@ -362,15 +367,17 @@ async function supervise(
     }
   };
   subprocess.stdout?.on("data", (chunk: Buffer) => {
+    lastOutputAt = new Date().toISOString();
     const text = chunk.toString("utf8");
     if (decoder) {
       providerRawOutput += text;
       publishProviderUpdate(decoder.push(text));
     } else publish("stdout", redactors.stdout.push(text));
   });
-  subprocess.stderr?.on("data", (chunk: Buffer) =>
-    publish("stderr", redactors.stderr.push(chunk.toString("utf8"))),
-  );
+  subprocess.stderr?.on("data", (chunk: Buffer) => {
+    lastOutputAt = new Date().toISOString();
+    publish("stderr", redactors.stderr.push(chunk.toString("utf8")));
+  });
 
   const supervisor =
     subprocess.pid === undefined
@@ -379,6 +386,7 @@ async function supervise(
   supervisor?.startTracking();
   let cleanup: Promise<ProcessCleanupResult> | undefined;
   let expiredAt: string | undefined;
+  let cancelled = false;
   let expiredElapsedMs: number | undefined;
   let timeoutKind: NonNullable<CommandResult["deadline"]>["kind"] | undefined;
   let lastProgressAt: string | undefined;
@@ -470,8 +478,11 @@ async function supervise(
     absoluteDeadlineAt: new Date(absoluteDeadlineAt).toISOString(),
     progressExtensions,
   };
-  const abortListener = (): void => beginCleanup();
-  if (options.signal?.aborted) beginCleanup();
+  const abortListener = (): void => {
+    cancelled = true;
+    beginCleanup();
+  };
+  if (options.signal?.aborted) abortListener();
   else options.signal?.addEventListener("abort", abortListener, { once: true });
 
   try {
@@ -485,6 +496,9 @@ async function supervise(
       exitCode: result.exitCode ?? null,
       signal: result.signal ?? null,
       timedOut: expiredAt !== undefined,
+      cancelled,
+      lastOutputAt,
+      ...(cleanupResult ? { cleanup: cleanupResult } : {}),
       timeoutPolicy: {
         ...timeoutPolicy,
         ...(lastProgressAt ? { lastProgressAt } : {}),
@@ -519,7 +533,10 @@ async function supervise(
       exitCode: null,
       signal: null,
       timedOut: expiredAt !== undefined,
+      cancelled,
+      lastOutputAt,
       spawnError,
+      ...(cleanupResult ? { cleanup: cleanupResult } : {}),
       timeoutPolicy: {
         ...timeoutPolicy,
         ...(lastProgressAt ? { lastProgressAt } : {}),
@@ -552,6 +569,76 @@ async function supervise(
   }
 }
 
+function failureExcerpt(
+  stdout: string,
+  stderr: string,
+  options: { failed: boolean },
+): string | undefined {
+  if (!options.failed) return undefined;
+  const output = [stdout, stderr].filter(Boolean).join("\n").trim();
+  if (!output) return undefined;
+  const lines = output.split(/\r?\n/u);
+  const tailStart = Math.max(0, lines.length - 60);
+  const diagnosticScore = (line: string): number => {
+    if (/TS\d{4}|assertion(?:error| failed)|not ok/iu.test(line)) return 4;
+    if (/\berror\b|exception|fatal|[×✖]/iu.test(line)) return 3;
+    if (/expected|received/iu.test(line)) return 2;
+    if (/fail/iu.test(line)) return 1;
+    return 0;
+  };
+  const selectedDiagnostic = lines.reduce(
+    (best, line, index) => {
+      const score = diagnosticScore(line);
+      return score >= best.score && score > 0 ? { index, score } : best;
+    },
+    { index: -1, score: 0 },
+  );
+  const diagnosticIndex = selectedDiagnostic.index;
+  const diagnostic =
+    diagnosticIndex >= 0 && diagnosticIndex < tailStart
+      ? lines
+          .slice(
+            Math.max(0, diagnosticIndex - 2),
+            Math.min(lines.length, diagnosticIndex + 8),
+          )
+          .join("\n")
+      : undefined;
+  const tail = lines.slice(tailStart).join("\n");
+  return boundedFailureExcerpt(
+    diagnostic ? `${diagnostic}\n… output tail …\n${tail}` : tail,
+  );
+}
+
+const FAILURE_EXCERPT_MAX_BYTES = 6_000;
+
+function utf8Prefix(value: string, maxBytes: number): string {
+  const bytes = Buffer.from(value, "utf8");
+  let end = Math.min(maxBytes, bytes.length);
+  while (end > 0 && end < bytes.length && (bytes[end]! & 0xc0) === 0x80)
+    end -= 1;
+  return bytes.subarray(0, end).toString("utf8");
+}
+
+function utf8Suffix(value: string, maxBytes: number): string {
+  const bytes = Buffer.from(value, "utf8");
+  let start = Math.max(0, bytes.length - maxBytes);
+  while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start += 1;
+  return bytes.subarray(start).toString("utf8");
+}
+
+function boundedFailureExcerpt(value: string): string {
+  if (Buffer.byteLength(value, "utf8") <= FAILURE_EXCERPT_MAX_BYTES)
+    return value;
+  const marker = "\n… excerpt truncated …\n";
+  const available =
+    FAILURE_EXCERPT_MAX_BYTES - Buffer.byteLength(marker, "utf8");
+  const headBytes = Math.floor(available / 2);
+  return `${utf8Prefix(value, headBytes)}${marker}${utf8Suffix(
+    value,
+    available - headBytes,
+  )}`;
+}
+
 async function run(
   request: ProcessRequest,
   executable: string,
@@ -562,6 +649,7 @@ async function run(
 ): Promise<CommandResult> {
   await mkdir(path.dirname(request.logPrefix), { recursive: true });
   const started = Date.now();
+  const startedAt = new Date(started).toISOString();
   const result = await supervise({
     executable,
     args,
@@ -594,6 +682,8 @@ async function run(
     result.stderr = redact(describeError(result.spawnError), request.secrets);
     await request.onOutput?.("stderr", result.stderr);
   }
+  const finished = Date.now();
+  const finishedAt = new Date(finished).toISOString();
   const stdoutPath = `${request.logPrefix}.stdout.log`;
   const stderrPath = `${request.logPrefix}.stderr.log`;
   const eventLogPath = `${request.logPrefix}.events.jsonl`;
@@ -622,6 +712,14 @@ async function run(
         ),
       ) === true,
   );
+  const excerpt = failureExcerpt(result.stdout, result.stderr, {
+    failed:
+      result.spawnError !== undefined ||
+      result.timedOut ||
+      result.cancelled ||
+      result.signal !== null ||
+      result.exitCode !== 0,
+  });
   const base = {
     command: redact(command, request.secrets),
     cwd: request.cwd,
@@ -629,9 +727,26 @@ async function run(
     signal: result.signal,
     timedOut: result.timedOut,
     attempts: request.attempts ?? 1,
-    durationMs: Date.now() - started,
+    durationMs: finished - started,
     stdoutPath,
     stderrPath,
+    ...(excerpt ? { failureExcerpt: excerpt } : {}),
+    termination: {
+      cause: result.spawnError
+        ? ("spawn_error" as const)
+        : result.timedOut
+          ? ("timeout" as const)
+          : result.cancelled
+            ? ("cancelled" as const)
+            : result.signal
+              ? ("signal" as const)
+              : ("exit" as const),
+      timeoutType: result.timedOut ? ("wall_clock" as const) : null,
+      startedAt,
+      finishedAt,
+      lastOutputAt: result.lastOutputAt,
+      escalation: result.cleanup?.signalEscalation ?? [],
+    },
     timeoutPolicy: result.timeoutPolicy ?? {
       mode: request.providerStream ? "progress_extended" : "fixed",
       softTimeoutMs: request.timeoutMs,

@@ -115,6 +115,12 @@ then patch applicability and required validation. Transport evidence supersedes
 a nonzero exit only when no usable implementation result was produced; it does
 not reclassify an Arena-enforced timeout. Aggregate provider initialization
 metadata is ignored for transport classification.
+Every required-validation attempt persists its exit code, signal, wall-clock
+timeout state, elapsed and last-output times, termination escalation, logs, and
+an exact bounded failure excerpt. Deterministic assertion, typecheck, lint, and
+build exits are not retried. A timeout or runner-shaped termination receives one
+clean retry against the same patch; disagreement makes validation unstable and
+the run inconclusive instead of producing an ordinary failed-patch forfeit.
 Optional MCP startup warnings remain in diagnostic logs but do not escalate
 when the provider exits successfully or continues useful work. An
 invocation-level transport failure stops the peer implementation with a

@@ -272,16 +272,16 @@ export class ProcessTreeSupervisor {
   ): Promise<ProcessCleanupResult> {
     const started = Date.now();
     const deadlineAt = started + PROCESS_CLEANUP_GRACE_MS;
-    killRoot("SIGTERM");
     const signalEscalation = await this.signalOwned("SIGTERM", deadlineAt);
+    killRoot("SIGTERM");
     await new Promise((resolve) =>
       setTimeout(
         resolve,
         Math.max(0, Math.min(TERM_SIGNAL_GRACE_MS, deadlineAt - Date.now())),
       ),
     );
-    killRoot("SIGKILL");
     signalEscalation.push(...(await this.signalOwned("SIGKILL", deadlineAt)));
+    killRoot("SIGKILL");
     await new Promise((resolve) =>
       setTimeout(
         resolve,

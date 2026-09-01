@@ -18,6 +18,7 @@ import {
   type RunUsageSummary,
 } from "../telemetry/usage.js";
 import { applyCompletedRound } from "../core/round-state-delta.js";
+import { projectImplementationEligibility } from "../outcomes/eligibility.js";
 import {
   RunStateV4Schema,
   RunStateV5Schema,
@@ -1030,6 +1031,8 @@ export async function buildRunSummary(options: {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
+  const implementationEligibility =
+    schemaVersion === 11 ? projectImplementationEligibility(options.state) : [];
   const summary = {
     schemaVersion,
     runId: options.state.runId,
@@ -1057,6 +1060,7 @@ export async function buildRunSummary(options: {
     ...(options.state.terminalOutcome
       ? { terminalOutcome: options.state.terminalOutcome }
       : {}),
+    ...(implementationEligibility.length ? { implementationEligibility } : {}),
     ...(options.state.patchRecommendation
       ? { recommendation: options.state.patchRecommendation }
       : {}),
