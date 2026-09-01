@@ -85,6 +85,42 @@ describe("usage telemetry", () => {
     });
   });
 
+  it("does not promote missing cache components to complete telemetry", () => {
+    expect(
+      countersFromCommand({
+        command: "custom-agent",
+        cwd: "/work",
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        attempts: 1,
+        durationMs: 1,
+        stdoutPath: "/out",
+        stderrPath: "/err",
+        providerDiagnostics: {
+          eventCount: 1,
+          toolStartedCount: 0,
+          toolFinishedCount: 0,
+          decodingWarnings: [],
+          eventLogPath: "/events",
+          usageCompleteness: "complete",
+          usageAccountingVersion: 1,
+          tokenUsage: {
+            uncachedInputTokens: 700_000,
+            outputTokens: 100_000,
+          },
+        },
+      }),
+    ).toMatchObject({
+      uncachedInputTokens: 700_000,
+      cacheCreationTokens: null,
+      cacheReadTokens: null,
+      outputTokens: 100_000,
+      processedTokens: 800_000,
+      completeness: "partial",
+    });
+  });
+
   it("rolls up dimensions and keeps mixed cost coverage null", () => {
     const records = [
       invocation({}),

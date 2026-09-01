@@ -177,13 +177,20 @@ export function countersFromCommand(result: CommandResult): UsageCounters {
   const available = [uncached, cacheCreation, cacheRead, output].filter(
     (value) => value !== null,
   );
+  const allComponentsAvailable =
+    uncached !== null &&
+    cacheCreation !== null &&
+    cacheRead !== null &&
+    output !== null;
+  const reportedCompleteness = diagnostics?.usageCompleteness;
   const completeness =
-    diagnostics?.usageCompleteness ??
-    (available.length === 0
+    available.length === 0
       ? "unavailable"
-      : uncached !== null && output !== null
+      : allComponentsAvailable &&
+          reportedCompleteness !== "partial" &&
+          reportedCompleteness !== "unavailable"
         ? "complete"
-        : "partial");
+        : "partial";
   return UsageCountersSchema.parse({
     uncachedInputTokens: uncached,
     cacheCreationTokens: cacheCreation,

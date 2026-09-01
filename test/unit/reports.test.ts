@@ -422,6 +422,31 @@ describe("battle reports", () => {
     const visual = renderBattleVisual(state);
     expect(visual).toContain("EFFORT AND DECISION LEDGER");
     expect(visual).toContain("stop: adaptive_convergence");
+    const height = Number(
+      visual.match(/<svg[^>]+height="(\d+)"/u)?.[1] ?? Number.NaN,
+    );
+    const effortLines = [
+      ...visual.matchAll(
+        /<text[^>]+y="(\d+)"[^>]+data-effort-line="[^"]+"[^>]*>([^<]*)<\/text>/gu,
+      ),
+    ];
+    const decisionLines = [
+      ...visual.matchAll(
+        /<text[^>]+y="(\d+)"[^>]+data-decision-round="[^"]+"[^>]*>([^<]*)<\/text>/gu,
+      ),
+    ];
+    expect(effortLines.length).toBeGreaterThan(1);
+    expect(decisionLines.length).toBeGreaterThan(1);
+    expect(effortLines.every((match) => match[2]!.length <= 108)).toBe(true);
+    expect(decisionLines.every((match) => match[2]!.length <= 120)).toBe(true);
+    expect(
+      [...effortLines, ...decisionLines].every(
+        (match) => Number(match[1]) < height,
+      ),
+    ).toBe(true);
+    expect(decisionLines.map((match) => match[2]).join(" ")).toContain(
+      "cache reads 200 × 0.1 = 20; no pressure",
+    );
   });
 
   it("renders a clickable HTML dossier with scoring, checks, and attack evidence", () => {

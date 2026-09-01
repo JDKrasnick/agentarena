@@ -35,7 +35,10 @@ import {
   createPromptManifest,
 } from "../agents/prompts.js";
 import { ArtifactStore } from "../artifacts/store.js";
-import { readInvocationUsages } from "../telemetry/usage.js";
+import {
+  readInvocationUsages,
+  type InvocationUsage,
+} from "../telemetry/usage.js";
 import {
   browserProbeEvidencePatch,
   materializeAttack,
@@ -143,6 +146,7 @@ import {
   nextLowSignalCount,
   scoreEffort,
   TaskEffortAssessmentV1Schema,
+  TokenTelemetrySchema,
   unavailableTokenTelemetry,
   type EffortProfile,
   type AdaptiveRoundDecision,
@@ -602,6 +606,49 @@ function latestRequiredPass(contestant: ContestantResult): boolean {
     [...contestant.checks].reverse().find((check) => check.kind === "required")
       ?.status === "passed"
   );
+}
+
+export function aggregateInvocationTokenTelemetry(
+  invocations: readonly Pick<InvocationUsage, "usage">[],
+): TokenTelemetry {
+  const available = invocations.filter(
+    (invocation) => invocation.usage.completeness !== "unavailable",
+  );
+  if (available.length === 0) return unavailableTokenTelemetry();
+  const complete =
+    invocations.length > 0 &&
+    invocations.every(
+      (invocation) =>
+        invocation.usage.completeness === "complete" &&
+        invocation.usage.uncachedInputTokens !== null &&
+        invocation.usage.cacheReadTokens !== null &&
+        invocation.usage.cacheCreationTokens !== null &&
+        invocation.usage.outputTokens !== null &&
+        invocation.usage.processedTokens !== null,
+    );
+  return TokenTelemetrySchema.parse({
+    state: complete ? "complete" : "partial",
+    uncachedInputTokens: available.reduce(
+      (sum, invocation) => sum + (invocation.usage.uncachedInputTokens ?? 0),
+      0,
+    ),
+    cacheReadTokens: available.reduce(
+      (sum, invocation) => sum + (invocation.usage.cacheReadTokens ?? 0),
+      0,
+    ),
+    cacheWriteTokens: available.reduce(
+      (sum, invocation) => sum + (invocation.usage.cacheCreationTokens ?? 0),
+      0,
+    ),
+    outputTokens: available.reduce(
+      (sum, invocation) => sum + (invocation.usage.outputTokens ?? 0),
+      0,
+    ),
+    totalTokens: available.reduce(
+      (sum, invocation) => sum + (invocation.usage.processedTokens ?? 0),
+      0,
+    ),
+  });
 }
 
 function preReviewArtifactPaths(contestant: ContestantResult): string[] {
@@ -2546,56 +2593,10 @@ export class RoundEngine {
       (sum, invocation) => sum + invocation.durationMs,
       0,
     );
-    const ledgerAvailable = ledgerInvocations.filter(
-      (invocation) => invocation.usage.completeness !== "unavailable",
-    );
-    const ledgerComplete =
-      ledgerInvocations.length > 0 &&
-      ledgerInvocations.every(
-        (invocation) => invocation.usage.completeness === "complete",
-      );
-    const ledgerProcessedTokens = ledgerAvailable.reduce(
-      (sum, invocation) => sum + (invocation.usage.processedTokens ?? 0),
-      0,
-    );
     const tokenTelemetry = ledgerInvocations.length
-      ? {
-          state:
-            ledgerAvailable.length === 0
-              ? ("unavailable" as const)
-              : ledgerComplete
-                ? ("complete" as const)
-                : ("partial" as const),
-          ...(ledgerAvailable.length
-            ? {
-                uncachedInputTokens: ledgerAvailable.reduce(
-                  (sum, invocation) =>
-                    sum + (invocation.usage.uncachedInputTokens ?? 0),
-                  0,
-                ),
-                cacheReadTokens: ledgerAvailable.reduce(
-                  (sum, invocation) =>
-                    sum + (invocation.usage.cacheReadTokens ?? 0),
-                  0,
-                ),
-                cacheWriteTokens: ledgerAvailable.reduce(
-                  (sum, invocation) =>
-                    sum + (invocation.usage.cacheCreationTokens ?? 0),
-                  0,
-                ),
-                outputTokens: ledgerAvailable.reduce(
-                  (sum, invocation) =>
-                    sum + (invocation.usage.outputTokens ?? 0),
-                  0,
-                ),
-                totalTokens: ledgerProcessedTokens,
-              }
-            : {}),
-        }
+      ? aggregateInvocationTokenTelemetry(ledgerInvocations)
       : legacyTokenTelemetry;
-    const completeTelemetry = ledgerInvocations.length
-      ? ledgerComplete
-      : legacyCompleteTelemetry;
+    const completeTelemetry = tokenTelemetry.state === "complete";
     const tokenPressureEvaluation = evaluateTokenPressureV1(
       tokenTelemetry,
       profile.maxTokensPerRound,
