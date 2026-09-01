@@ -67,6 +67,11 @@ and line-oriented output when redirected or running in CI. Explicit
 `dashboard` value aliases `window` without opening a browser. Both rich displays
 support cancellation and one-time queued contestant steering, but not pause,
 stage skipping, or arbitrary retries.
+Every fight window uses a temporary isolated Chromium profile so independent
+fights can remain open concurrently without sharing renderer or session state.
+The theme preference remains an atomically written app-wide file outside those
+profiles, and Electron launch failures are reported as display failures rather
+than battle failures or user cancellation.
 
 Attack telemetry distinguishes mounting, landed, and evidence-revision events.
 The observatory shows their live counts and timeline, and uses a brief red

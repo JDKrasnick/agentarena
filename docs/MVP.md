@@ -565,6 +565,14 @@ dashboard` remains a compatibility alias for the desktop window. Closing the
 window cancels an active battle; after completion, **Finish session** closes the
 window and its local server.
 
+Each fight launches with a temporary isolated Chromium profile. Concurrent
+windows therefore retain independent renderer, session, and lifecycle state,
+and closing one cannot redirect, blank, or cancel another. The theme preference
+remains in a shared app-data file with atomic writes rather than depending on a
+shared Chromium profile. The command waits for a ready signal before reporting
+success; an early exit, spawn error, or launch timeout is an explicit display
+failure and is not classified as a battle failure or user cancellation.
+
 Fighter cards open a full-page drill-down within the desktop window. The detail
 view exposes recorded invocations, output, checks, health changes, attack
 involvement, and live steering, with a persistent route back to the arena. The
