@@ -139,11 +139,14 @@ jobs:
       - name: Install dependencies without browser downloads
         run: npm ci
 
-      - name: Exercise the complete built-in browser lifecycle
+      - name: Build the production observatory
+        run: npm run build:web
+
+      - name: Exercise the browser lifecycle and terminal validation evidence
         env:
           ARENA_REAL_BROWSER: "1"
           CHROME_BIN: /usr/bin/google-chrome
-        run: npm run test:integration -- test/integration/browser-runtime.test.ts
+        run: npx vitest run test/integration/browser-runtime.test.ts test/integration/observatory-validation-playwright.test.ts --reporter=verbose
 
   process-timeout-reproduction:
     name: Process timeout reproduction (${{ matrix.os }})

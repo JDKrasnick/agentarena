@@ -133,6 +133,31 @@ describe("process runner supervision", () => {
     expect(result.failureExcerpt).toContain("partial suite output");
   });
 
+  it("preserves an early failure diagnostic alongside a bounded output tail", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-shell-excerpt-"));
+    const program = [
+      'console.log("AssertionError: expected 1, received 2")',
+      'for (let index = 0; index < 100; index += 1) console.log("teardown line " + String(index) + " " + "é".repeat(50))',
+      "process.exit(1)",
+    ].join(";");
+    const result = await runShellCommand(
+      `${JSON.stringify(process.execPath)} -e ${JSON.stringify(program)}`,
+      {
+        cwd: root,
+        timeoutMs: 2_000,
+        logPrefix: path.join(root, "logs", "excerpt"),
+      },
+    );
+
+    expect(result.failureExcerpt).toContain(
+      "AssertionError: expected 1, received 2",
+    );
+    expect(result.failureExcerpt).toContain("teardown line 99");
+    expect(
+      Buffer.byteLength(result.failureExcerpt ?? "", "utf8"),
+    ).toBeLessThanOrEqual(6_000);
+  });
+
   it.skipIf(!["darwin", "linux"].includes(process.platform))(
     "never signals an unrelated process",
     async () => {

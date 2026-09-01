@@ -454,8 +454,55 @@ function failureExcerpt(
   const output = [stdout, stderr].filter(Boolean).join("\n").trim();
   if (!output) return undefined;
   const lines = output.split(/\r?\n/u);
-  const excerpt = lines.slice(-60).join("\n");
-  return excerpt.length > 6_000 ? excerpt.slice(-6_000) : excerpt;
+  const tailStart = Math.max(0, lines.length - 60);
+  const firstDiagnostic = lines.findIndex((line) =>
+    /assert|error|fail|expected|received|exception|fatal|TS\d{4}|not ok|[×✖]/iu.test(
+      line,
+    ),
+  );
+  const diagnostic =
+    firstDiagnostic >= 0 && firstDiagnostic < tailStart
+      ? lines
+          .slice(
+            Math.max(0, firstDiagnostic - 2),
+            Math.min(lines.length, firstDiagnostic + 8),
+          )
+          .join("\n")
+      : undefined;
+  const tail = lines.slice(tailStart).join("\n");
+  return boundedFailureExcerpt(
+    diagnostic ? `${diagnostic}\n… output tail …\n${tail}` : tail,
+  );
+}
+
+const FAILURE_EXCERPT_MAX_BYTES = 6_000;
+
+function utf8Prefix(value: string, maxBytes: number): string {
+  const bytes = Buffer.from(value, "utf8");
+  let end = Math.min(maxBytes, bytes.length);
+  while (end > 0 && end < bytes.length && (bytes[end]! & 0xc0) === 0x80)
+    end -= 1;
+  return bytes.subarray(0, end).toString("utf8");
+}
+
+function utf8Suffix(value: string, maxBytes: number): string {
+  const bytes = Buffer.from(value, "utf8");
+  let start = Math.max(0, bytes.length - maxBytes);
+  while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start += 1;
+  return bytes.subarray(start).toString("utf8");
+}
+
+function boundedFailureExcerpt(value: string): string {
+  if (Buffer.byteLength(value, "utf8") <= FAILURE_EXCERPT_MAX_BYTES)
+    return value;
+  const marker = "\n… excerpt truncated …\n";
+  const available =
+    FAILURE_EXCERPT_MAX_BYTES - Buffer.byteLength(marker, "utf8");
+  const headBytes = Math.floor(available / 2);
+  return `${utf8Prefix(value, headBytes)}${marker}${utf8Suffix(
+    value,
+    available - headBytes,
+  )}`;
 }
 
 async function run(
