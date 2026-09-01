@@ -424,6 +424,13 @@ input:focus-visible {
   background: var(--green);
   box-shadow: 0 0 0 3px var(--app-success-halo);
 }
+.connection.is-stale {
+  color: var(--amber);
+}
+.connection.is-stale i {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent);
+}
 .connection.is-complete i {
   background: var(--green);
 }

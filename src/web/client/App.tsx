@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import openAiLogo from "@lobehub/icons-static-png/dark/openai.png";
 import claudeLogo from "@lobehub/icons-static-png/dark/claude-color.png";
 import geminiLogo from "@lobehub/icons-static-png/dark/gemini-color.png";
@@ -49,6 +49,9 @@ declare global {
       getTheme(): ArenaTheme;
       setTheme(theme: ArenaTheme): Promise<void>;
     };
+    arenaDesktop?: {
+      reportPaint(revision: number): void;
+    };
   }
 }
 
@@ -97,6 +100,14 @@ const fallbackState: DashboardState = {
   failures: [],
   links: [],
 };
+
+const SNAPSHOT_STALE_AFTER_MS = 8_000;
+type ConnectionState = "reconnecting" | "live" | "stale";
+interface SnapshotEnvelope {
+  revision: number;
+  generatedAt: string;
+  snapshot: DashboardState;
+}
 
 function providerLogo(provider: string) {
   const id = provider.toLowerCase();
@@ -2714,7 +2725,13 @@ export function App() {
   );
   const [themeWarning, setThemeWarning] = useState<string>();
   const [state, setState] = useState<DashboardState>(fallbackState);
-  const [connected, setConnected] = useState(false);
+  const [connection, setConnection] = useState<ConnectionState>("reconnecting");
+  const [paintTicket, setPaintTicket] = useState({ revision: -1, nonce: 0 });
+  const latestRevision = useRef(-1);
+  const latestTicket = useRef(0);
+  const lastSnapshotAt = useRef(0);
+  const lastPaintAt = useRef(0);
+  const streamOpen = useRef(false);
   const [selectedRound, setSelectedRound] = useState<RoundSelection>("live");
   const [selectedFighter, setSelectedFighter] = useState<ContestantId | null>(
     null,
@@ -2722,18 +2739,96 @@ export function App() {
   const [reviewingResults, setReviewingResults] = useState(false);
   const [, setClock] = useState(0);
   const designContract = DESIGN_CONTRACTS[theme];
+  const connected = connection === "live";
 
   useEffect(() => {
-    void fetch("/api/state").then(async (response) =>
-      setState((await response.json()) as DashboardState),
-    );
+    let disposed = false;
+    const acceptSnapshot = (envelope: SnapshotEnvelope) => {
+      if (
+        disposed ||
+        !Number.isInteger(envelope.revision) ||
+        envelope.revision < latestRevision.current
+      )
+        return;
+      latestRevision.current = envelope.revision;
+      lastSnapshotAt.current = Date.now();
+      latestTicket.current += 1;
+      setConnection("reconnecting");
+      setState(envelope.snapshot);
+      setPaintTicket({
+        revision: envelope.revision,
+        nonce: latestTicket.current,
+      });
+    };
+    void fetch("/api/state", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Unable to load dashboard state");
+        const revision = Number(
+          response.headers.get("X-Agent-Arena-Snapshot-Revision") ?? "0",
+        );
+        acceptSnapshot({
+          revision: Number.isInteger(revision) ? revision : 0,
+          generatedAt:
+            response.headers.get("X-Agent-Arena-Snapshot-Generated-At") ??
+            new Date().toISOString(),
+          snapshot: (await response.json()) as DashboardState,
+        });
+      })
+      .catch(() => setConnection("reconnecting"));
     const events = new EventSource("/events");
-    events.onopen = () => setConnected(true);
-    events.onerror = () => setConnected(false);
-    events.onmessage = (event) =>
-      setState(JSON.parse(event.data as string) as DashboardState);
-    return () => events.close();
+    events.onopen = () => {
+      streamOpen.current = true;
+      setConnection(
+        Date.now() - lastPaintAt.current < SNAPSHOT_STALE_AFTER_MS
+          ? "live"
+          : "reconnecting",
+      );
+    };
+    events.onerror = () => {
+      streamOpen.current = false;
+      setConnection("reconnecting");
+    };
+    events.onmessage = (event) => {
+      try {
+        acceptSnapshot(JSON.parse(event.data as string) as SnapshotEnvelope);
+      } catch {
+        setConnection("reconnecting");
+      }
+    };
+    const watchdog = window.setInterval(() => {
+      const snapshotAge = Date.now() - lastSnapshotAt.current;
+      const paintAge = Date.now() - lastPaintAt.current;
+      if (!streamOpen.current) setConnection("reconnecting");
+      else if (
+        snapshotAge >= SNAPSHOT_STALE_AFTER_MS ||
+        paintAge >= SNAPSHOT_STALE_AFTER_MS
+      )
+        setConnection("stale");
+    }, 1_000);
+    return () => {
+      disposed = true;
+      streamOpen.current = false;
+      window.clearInterval(watchdog);
+      events.close();
+    };
   }, []);
+  useLayoutEffect(() => {
+    if (paintTicket.revision < 0) return;
+    let firstFrame = 0;
+    let paintedFrame = 0;
+    firstFrame = window.requestAnimationFrame(() => {
+      paintedFrame = window.requestAnimationFrame(() => {
+        if (paintTicket.nonce !== latestTicket.current) return;
+        lastPaintAt.current = Date.now();
+        window.arenaDesktop?.reportPaint(paintTicket.revision);
+        if (streamOpen.current) setConnection("live");
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(paintedFrame);
+    };
+  }, [paintTicket]);
   useEffect(() => {
     if (state.status !== "running") return;
     const timer = window.setInterval(
@@ -2845,6 +2940,9 @@ export function App() {
       data-design-first-viewport={designContract.firstViewport}
       data-design-form={designContract.form}
       data-design-seed={designContract.seed}
+      data-connection-state={connection}
+      data-snapshot-revision={String(paintTicket.revision)}
+      data-live-stage={state.stage}
     >
       <header className="topbar">
         <button
@@ -2862,15 +2960,29 @@ export function App() {
         <div className="task">
           <span>
             {state.task} · {showResults ? "Results" : roundLabel(selectedRound)}
+            {!showResults ? (
+              <>
+                {" "}
+                · <strong>{stageLabel(state.stage)}</strong>
+              </>
+            ) : null}
           </span>
         </div>
         <div className="top-actions">
           <ThemePicker theme={theme} onChange={selectTheme} />
           <span
-            className={`connection${hasResult ? " is-complete" : connected ? " is-live" : ""}`}
+            className={`connection${hasResult ? " is-complete" : connected ? " is-live" : connection === "stale" ? " is-stale" : ""}`}
+            role="status"
+            aria-live="polite"
           >
             <i />
-            {hasResult ? "Complete" : connected ? "Live" : "Reconnecting"}
+            {hasResult
+              ? "Complete"
+              : connected
+                ? "Live"
+                : connection === "stale"
+                  ? "Stale"
+                  : "Reconnecting"}
           </span>
           {state.links.map((link) => (
             <a href={link.url} target="_blank" rel="noreferrer" key={link.url}>

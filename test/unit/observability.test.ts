@@ -301,6 +301,21 @@ describe("arena observability", () => {
     const state = initialDashboardState();
     state.runId = "parent";
     state.status = "inconclusive";
+    state.round = 2;
+    state.roundPlan = { planned: 3, maximum: 5 };
+    state.result = {
+      roundsCompleted: 1,
+      championId: "a",
+      contestants: [
+        {
+          id: "a",
+          health: 100,
+          status: "complete",
+          checksPassed: 1,
+          checksTotal: 1,
+        },
+      ],
+    };
     state.warnings.push("parent warning");
     state.contestants.a.output.push({
       stream: "stdout",
@@ -328,6 +343,9 @@ describe("arena observability", () => {
       stage: "preflight",
       warnings: [],
     });
+    expect(state).not.toHaveProperty("round");
+    expect(state).not.toHaveProperty("roundPlan");
+    expect(state).not.toHaveProperty("result");
     expect(state.contestants.a.output).toEqual([]);
   });
 
