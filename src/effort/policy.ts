@@ -67,6 +67,155 @@ export const TokenTelemetrySchema = z
   });
 export type TokenTelemetry = z.infer<typeof TokenTelemetrySchema>;
 
+export const TOKEN_PRESSURE_POLICY_V1 = {
+  version: 1 as const,
+  cacheReadWeightNumerator: 1,
+  cacheReadWeightDenominator: 10,
+} as const;
+
+const TokenPressureTriggerSchema = z.enum([
+  "none",
+  "new_input_output",
+  "cache_creation",
+  "cache_reads",
+  "combined",
+]);
+type TokenPressureTrigger = z.infer<typeof TokenPressureTriggerSchema>;
+
+function tokenPressureTrigger(
+  pressure: boolean,
+  thresholdTokens: number,
+  contributions: ReadonlyArray<
+    readonly [Exclude<TokenPressureTrigger, "none" | "combined">, number]
+  >,
+): TokenPressureTrigger {
+  if (!pressure) return "none";
+  const individuallyExhausted = contributions.filter(
+    ([, tokens]) => tokens >= thresholdTokens,
+  );
+  return individuallyExhausted.length === 1
+    ? individuallyExhausted[0]![0]
+    : "combined";
+}
+
+export const TokenPressureEvaluationV1Schema = z
+  .discriminatedUnion("state", [
+    z
+      .object({
+        version: z.literal(1),
+        state: z.literal("unavailable"),
+        thresholdTokens: z.number().int().positive(),
+        reason: z.literal("incomplete_token_telemetry"),
+      })
+      .strict(),
+    z
+      .object({
+        version: z.literal(1),
+        state: z.literal("complete"),
+        thresholdTokens: z.number().int().positive(),
+        newInputOutputTokens: z.number().int().nonnegative(),
+        cacheCreationTokens: z.number().int().nonnegative(),
+        cacheReadTokens: z.number().int().nonnegative(),
+        weightedCacheReadTokens: z.number().int().nonnegative(),
+        weightedTokens: z.number().int().nonnegative(),
+        cacheReadWeightNumerator: z.literal(1),
+        cacheReadWeightDenominator: z.literal(10),
+        pressure: z.boolean(),
+        trigger: TokenPressureTriggerSchema,
+      })
+      .strict(),
+  ])
+  .superRefine((evaluation, context) => {
+    if (evaluation.state !== "complete") return;
+    const expectedWeightedCacheReads = Math.ceil(
+      evaluation.cacheReadTokens /
+        TOKEN_PRESSURE_POLICY_V1.cacheReadWeightDenominator,
+    );
+    const expectedWeightedTokens =
+      evaluation.newInputOutputTokens +
+      evaluation.cacheCreationTokens +
+      expectedWeightedCacheReads;
+    const expectedPressure =
+      expectedWeightedTokens >= evaluation.thresholdTokens;
+    const expectedTrigger = tokenPressureTrigger(
+      expectedPressure,
+      evaluation.thresholdTokens,
+      [
+        ["new_input_output", evaluation.newInputOutputTokens],
+        ["cache_creation", evaluation.cacheCreationTokens],
+        ["cache_reads", expectedWeightedCacheReads],
+      ],
+    );
+    if (
+      evaluation.weightedCacheReadTokens !== expectedWeightedCacheReads ||
+      evaluation.weightedTokens !== expectedWeightedTokens ||
+      evaluation.pressure !== expectedPressure ||
+      evaluation.trigger !== expectedTrigger
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Token pressure evaluation does not match policy v1",
+      });
+  });
+export type TokenPressureEvaluationV1 = z.infer<
+  typeof TokenPressureEvaluationV1Schema
+>;
+
+export function evaluateTokenPressureV1(
+  telemetry: TokenTelemetry,
+  thresholdTokens: number,
+): TokenPressureEvaluationV1 {
+  if (telemetry.state !== "complete")
+    return {
+      version: 1,
+      state: "unavailable",
+      thresholdTokens,
+      reason: "incomplete_token_telemetry",
+    };
+  const newInputOutputTokens =
+    (telemetry.uncachedInputTokens ?? 0) + (telemetry.outputTokens ?? 0);
+  const cacheCreationTokens = telemetry.cacheWriteTokens ?? 0;
+  const cacheReadTokens = telemetry.cacheReadTokens ?? 0;
+  const weightedCacheReadTokens = Math.ceil(
+    (cacheReadTokens * TOKEN_PRESSURE_POLICY_V1.cacheReadWeightNumerator) /
+      TOKEN_PRESSURE_POLICY_V1.cacheReadWeightDenominator,
+  );
+  const weightedTokens =
+    newInputOutputTokens + cacheCreationTokens + weightedCacheReadTokens;
+  const pressure = weightedTokens >= thresholdTokens;
+  const trigger = tokenPressureTrigger(pressure, thresholdTokens, [
+    ["new_input_output", newInputOutputTokens],
+    ["cache_creation", cacheCreationTokens],
+    ["cache_reads", weightedCacheReadTokens],
+  ]);
+  return {
+    version: 1,
+    state: "complete",
+    thresholdTokens,
+    newInputOutputTokens,
+    cacheCreationTokens,
+    cacheReadTokens,
+    weightedCacheReadTokens,
+    weightedTokens,
+    cacheReadWeightNumerator: TOKEN_PRESSURE_POLICY_V1.cacheReadWeightNumerator,
+    cacheReadWeightDenominator:
+      TOKEN_PRESSURE_POLICY_V1.cacheReadWeightDenominator,
+    pressure,
+    trigger,
+  };
+}
+
+export function describeTokenPressureV1(
+  evaluation: TokenPressureEvaluationV1,
+): string {
+  if (evaluation.state === "unavailable")
+    return `weighted pressure unavailable/${String(evaluation.thresholdTokens)} (incomplete telemetry)`;
+  const trigger = evaluation.pressure
+    ? `pressure: ${evaluation.trigger.replaceAll("_", " ")}`
+    : "no pressure";
+  return `weighted ${String(evaluation.weightedTokens)}/${String(evaluation.thresholdTokens)} (new I/O ${String(evaluation.newInputOutputTokens)} + cache creation ${String(evaluation.cacheCreationTokens)} + cache reads ${String(evaluation.cacheReadTokens)} × 0.1 = ${String(evaluation.weightedCacheReadTokens)}; ${trigger})`;
+}
+
 const DimensionSchema = z.number().int().min(0).max(2);
 export const TaskEffortDimensionsSchema = z
   .object({
@@ -292,6 +441,34 @@ export const RoundConsumptionSchema = z
   })
   .strict();
 
+export const RoundConsumptionV3Schema = RoundConsumptionSchema.extend({
+  tokenPressureEvaluation: TokenPressureEvaluationV1Schema,
+}).superRefine((consumption, context) => {
+  const expected = evaluateTokenPressureV1(
+    consumption.tokenTelemetry,
+    consumption.tokenPressureEvaluation.thresholdTokens,
+  );
+  const recorded = consumption.tokenPressureEvaluation;
+  const matchesTelemetry =
+    expected.state === recorded.state &&
+    (expected.state === "unavailable" ||
+      (recorded.state === "complete" &&
+        expected.newInputOutputTokens === recorded.newInputOutputTokens &&
+        expected.cacheCreationTokens === recorded.cacheCreationTokens &&
+        expected.cacheReadTokens === recorded.cacheReadTokens &&
+        expected.weightedCacheReadTokens === recorded.weightedCacheReadTokens &&
+        expected.weightedTokens === recorded.weightedTokens &&
+        expected.pressure === recorded.pressure &&
+        expected.trigger === recorded.trigger));
+  const expectedPressure =
+    expected.state === "complete" ? expected.pressure : false;
+  if (!matchesTelemetry || consumption.tokenPressure !== expectedPressure)
+    context.addIssue({
+      code: "custom",
+      message: "Round token pressure does not match complete token telemetry",
+    });
+});
+
 export const AdaptiveRoundDecisionReasonSchema = z.enum([
   "fixed_rounds_remaining",
   "fixed_rounds_complete",
@@ -338,9 +515,16 @@ export const AdaptiveRoundDecisionV2Schema = AdaptiveRoundDecisionV1Schema.omit(
   version: z.literal(2),
   signal: LowSignalTelemetrySchema,
 });
+export const AdaptiveRoundDecisionV3Schema = AdaptiveRoundDecisionV2Schema.omit(
+  { version: true, consumption: true },
+).extend({
+  version: z.literal(3),
+  consumption: RoundConsumptionV3Schema,
+});
 export const AdaptiveRoundDecisionSchema = z.union([
   AdaptiveRoundDecisionV1Schema,
   AdaptiveRoundDecisionV2Schema,
+  AdaptiveRoundDecisionV3Schema,
 ]);
 export type AdaptiveRoundDecision = z.infer<typeof AdaptiveRoundDecisionSchema>;
 
@@ -349,7 +533,9 @@ export function nextLowSignalCount(
   previousDecision?: AdaptiveRoundDecision,
 ): number {
   if (!lowSignal) return 0;
-  return previousDecision?.version === 2 && previousDecision.signal.lowSignal
+  return previousDecision &&
+    "signal" in previousDecision &&
+    previousDecision.signal.lowSignal
     ? previousDecision.signal.consecutiveLowSignalCount + 1
     : 1;
 }

@@ -138,6 +138,7 @@ import type { RunSpec } from "../contracts/round.js";
 import {
   resolveEffortProfile,
   decideAdaptiveRound,
+  evaluateTokenPressureV1,
   hasProviderCallPressure,
   nextLowSignalCount,
   scoreEffort,
@@ -2595,9 +2596,10 @@ export class RoundEngine {
     const completeTelemetry = ledgerInvocations.length
       ? ledgerComplete
       : legacyCompleteTelemetry;
-    const budgetTokens = ledgerInvocations.length
-      ? ledgerProcessedTokens
-      : totalTokens;
+    const tokenPressureEvaluation = evaluateTokenPressureV1(
+      tokenTelemetry,
+      profile.maxTokensPerRound,
+    );
     const roundAttacks = context.state.attacks.filter(
       (attack) => attack.round === round,
     );
@@ -2798,7 +2800,10 @@ export class RoundEngine {
       wallTimePressure: wallTimeMs >= profile.roundEnvelopeMs,
       invocationPressure: hasProviderCallPressure(profile, providerCalls),
       tokenPressure:
-        completeTelemetry && budgetTokens >= profile.maxTokensPerRound,
+        completeTelemetry &&
+        tokenPressureEvaluation.state === "complete" &&
+        tokenPressureEvaluation.pressure,
+      tokenPressureEvaluation,
       overrunMs: Math.max(0, wallTimeMs - profile.roundEnvelopeMs),
     };
     const pressureReason = consumption.wallTimePressure
@@ -2834,7 +2839,7 @@ export class RoundEngine {
     const skippedBriefs =
       action === "stop" ? briefs.slice(round, profile.maxRounds) : [];
     const decision: AdaptiveRoundDecision = {
-      version: 2,
+      version: 3,
       round,
       consumption,
       convergence,

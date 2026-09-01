@@ -317,7 +317,13 @@ two failures produce a recorded medium fallback.
 
 The five profiles plan 1/1/2/3/3 rounds with sealed-round pressure thresholds
 of 15/20/25/45/60 minutes, 6/8/10/14/18 provider calls, and
-500k/750k/1.5m/4m/7m tokens. They are not hard preemptive caps: mandatory
+500k/750k/1.5m/4m/7m weighted token units. Token-pressure policy v1 computes
+those units as `uncached input + output + cache creation + ceil(cache reads /
+10)` and evaluates pressure only from complete component telemetry. Raw
+processed-token totals remain unchanged for auditability. The persisted
+decision and reports show every raw component, the weighted total and
+threshold, the cache-read weight, the triggering component or combination,
+and any skipped briefs. The thresholds are not hard preemptive caps: mandatory
 verifier and repair work completes transactionally before the harness records
 pressure at the adaptive boundary. Pressure can stop unqualified continuation;
 strong accepted evidence can still qualify a bounded next round. Convergence is

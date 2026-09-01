@@ -122,6 +122,11 @@ runs at most two independently qualified extensions through round 5. Use
 instead requests an exact fixed count with medium timings and cannot be combined
 with `--effort auto`.
 
+Adaptive token pressure uses versioned weighted units: uncached input, output,
+and cache creation count at parity, while cache reads count at 0.1×. Reports
+retain the unchanged processed-token audit total and show the weighted
+component breakdown, pressure trigger, and any skipped briefs.
+
 `models`/`--models` is optional and follows contestant order. If omitted, each
 provider CLI chooses its configured default. This also permits model-vs-model
 mirror matches, for example `--agents codex,codex --models model-a,model-b`.

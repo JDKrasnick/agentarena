@@ -12,6 +12,7 @@ import {
   truncateReportText,
 } from "./presentation.js";
 import { projectImplementationEligibility } from "../outcomes/eligibility.js";
+import { describeTokenPressureV1 } from "../effort/policy.js";
 
 function escapeXml(value: string): string {
   return value.replace(
@@ -135,9 +136,9 @@ ${evidence}
     ? state.adaptiveDecisions
         .map((decision, index) => {
           const telemetry = decision.consumption.tokenTelemetry;
-          const tokens = `${telemetry.state}${telemetry.totalTokens === undefined ? "" : ` ${String(telemetry.totalTokens)}`}`;
+          const tokens = `${telemetry.state}${telemetry.totalTokens === undefined ? "" : ` ${String(telemetry.totalTokens)} processed`}${decision.version === 3 ? ` · ${describeTokenPressureV1(decision.consumption.tokenPressureEvaluation)}` : ""}`;
           const signal =
-            decision.version === 2
+            "signal" in decision
               ? ` · ${String(decision.signal.competitiveLandings)} competitive/${String(decision.signal.sharedDefects)} shared/${String(decision.signal.explicitEmptyLanes)} empty · streak ${String(decision.signal.consecutiveLowSignalCount)}`
               : "";
           return `<text x="76" y="${890 + index * 25}" class="tiny">R${String(decision.round)} · ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s · ${String(decision.consumption.providerCalls)} calls · tokens ${escapeXml(tokens)}${escapeXml(signal)} · ${escapeXml(decision.action)}: ${escapeXml(decision.reason)}</text>`;
@@ -146,7 +147,7 @@ ${evidence}
     : `<text x="76" y="890" class="tiny">No adaptive decisions recorded.</text>`;
   const profile = state.config.resolvedEffortProfile;
   const budgetLine = profile
-    ? `${profile.tier} · ${String(profile.plannedRounds)} planned / ${String(profile.maxRounds)} max · sealed-round pressure at ${String(profile.roundEnvelopeMs / 60_000)}m / ${String(profile.maxProviderCallsPerRound)} calls / ${String(profile.maxTokensPerRound)} tokens`
+    ? `${profile.tier} · ${String(profile.plannedRounds)} planned / ${String(profile.maxRounds)} max · sealed-round pressure at ${String(profile.roundEnvelopeMs / 60_000)}m / ${String(profile.maxProviderCallsPerRound)} calls / ${String(profile.maxTokensPerRound)} weighted token units (v1; cache reads ×0.1)`
     : `${state.config.effortMode} · legacy budget unavailable`;
   const outcome = reportOutcome(state);
   const verdict =

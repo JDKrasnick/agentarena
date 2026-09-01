@@ -20,6 +20,7 @@ import {
 } from "./presentation.js";
 import { qualityCategoryRows } from "../quality/presentation.js";
 import { projectImplementationEligibility } from "../outcomes/eligibility.js";
+import { describeTokenPressureV1 } from "../effort/policy.js";
 
 function escapeHtml(value: string): string {
   return value.replace(
@@ -211,21 +212,25 @@ export function renderBattleHtml(state: RunState): string {
   );
   const effortProfile = state.config.resolvedEffortProfile;
   const effortBudget = effortProfile
-    ? `Sealed-round pressure thresholds: ${String(effortProfile.roundEnvelopeMs / 60_000)} minutes · ${String(effortProfile.maxProviderCallsPerRound)} provider calls · ${String(effortProfile.maxTokensPerRound)} tokens; implementation/review/attack/judge/repair ${String(effortProfile.implementationMs / 60_000)}/${String(effortProfile.reviewMs / 60_000)}/${String(effortProfile.attackMs / 60_000)}/${String(effortProfile.judgeMs / 60_000)}/${String(effortProfile.repairMs / 60_000)} minutes`
+    ? `Sealed-round pressure thresholds: ${String(effortProfile.roundEnvelopeMs / 60_000)} minutes · ${String(effortProfile.maxProviderCallsPerRound)} provider calls · ${String(effortProfile.maxTokensPerRound)} weighted token units (v1; cache reads ×0.1); implementation/review/attack/judge/repair ${String(effortProfile.implementationMs / 60_000)}/${String(effortProfile.reviewMs / 60_000)}/${String(effortProfile.attackMs / 60_000)}/${String(effortProfile.judgeMs / 60_000)}/${String(effortProfile.repairMs / 60_000)} minutes`
     : "Legacy budget unavailable";
   const adaptiveRows = state.adaptiveDecisions.length
     ? state.adaptiveDecisions
         .map((decision) => {
           const telemetry = decision.consumption.tokenTelemetry;
           const signal =
-            decision.version === 2
+            "signal" in decision
               ? `${decision.signal.lowSignal ? "low" : "present"} · ${String(decision.signal.competitiveLandings)} competitive · ${String(decision.signal.sharedDefects)} shared · ${String(decision.signal.explicitEmptyLanes)} empty`
               : "legacy / unknown";
           const streak =
-            decision.version === 2
+            "signal" in decision
               ? String(decision.signal.consecutiveLowSignalCount)
               : "—";
-          return `<tr><th>Round ${String(decision.round)}</th><td>${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s</td><td>${String(decision.consumption.providerCalls)}</td><td>${escapeHtml(telemetry.state)}${telemetry.totalTokens === undefined ? "" : ` (${String(telemetry.totalTokens)})`}</td><td>${decision.convergence.passed ? "yes" : "no"}</td><td>${escapeHtml(signal)}</td><td>${escapeHtml(streak)}</td><td>${escapeHtml(decision.extensionTriggerDefectIds.join(", ") || "none")}</td><td>${escapeHtml(`${decision.action}: ${decision.reason}`)}</td></tr>`;
+          const pressure =
+            decision.version === 3
+              ? `<br>${escapeHtml(describeTokenPressureV1(decision.consumption.tokenPressureEvaluation))}`
+              : "";
+          return `<tr><th>Round ${String(decision.round)}</th><td>${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s</td><td>${String(decision.consumption.providerCalls)}</td><td>${escapeHtml(telemetry.state)}${telemetry.totalTokens === undefined ? "" : ` (${String(telemetry.totalTokens)} processed)`}${pressure}</td><td>${decision.convergence.passed ? "yes" : "no"}</td><td>${escapeHtml(signal)}</td><td>${escapeHtml(streak)}</td><td>${escapeHtml(decision.extensionTriggerDefectIds.join(", ") || "none")}</td><td>${escapeHtml(`${decision.action}: ${decision.reason}`)}</td></tr>`;
         })
         .join("")
     : `<tr><td colspan="9">No adaptive decisions were recorded.</td></tr>`;

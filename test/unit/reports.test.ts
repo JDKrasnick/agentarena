@@ -357,7 +357,7 @@ describe("battle reports", () => {
   it("reports configured budgets, consumption, and the exact adaptive decision", () => {
     const state = makeRunState();
     state.adaptiveDecisions.push({
-      version: 1,
+      version: 3,
       round: 1,
       consumption: {
         wallTimeMs: 12_300,
@@ -373,6 +373,20 @@ describe("battle reports", () => {
         wallTimePressure: false,
         invocationPressure: false,
         tokenPressure: false,
+        tokenPressureEvaluation: {
+          version: 1,
+          state: "complete",
+          thresholdTokens: 1_500_000,
+          newInputOutputTokens: 500,
+          cacheCreationTokens: 300,
+          cacheReadTokens: 200,
+          weightedCacheReadTokens: 20,
+          weightedTokens: 820,
+          cacheReadWeightNumerator: 1,
+          cacheReadWeightDenominator: 10,
+          pressure: false,
+          trigger: "none",
+        },
         overrunMs: 0,
       },
       convergence: {
@@ -389,13 +403,21 @@ describe("battle reports", () => {
       extensionTriggerDefectIds: [],
       action: "stop",
       reason: "adaptive_convergence",
+      signal: {
+        competitiveLandings: 0,
+        sharedDefects: 0,
+        explicitEmptyLanes: 2,
+        lowSignal: true,
+        consecutiveLowSignalCount: 1,
+      },
       skippedBriefs: ["systematic exploration"],
       decidedAt: "2026-08-28T00:00:00.000Z",
     });
 
     expect(renderConsoleSummary(state)).toContain(
-      "Round 1 decision: 12.3s · 6 calls · tokens complete (1000) · stop (adaptive_convergence)",
+      "Round 1 decision: 12.3s · 6 calls · tokens complete (1000 processed) · weighted 820/1500000 (new I/O 500 + cache creation 300 + cache reads 200 × 0.1 = 20; no pressure)",
     );
+    expect(renderBattleHtml(state)).toContain("cache reads 200 × 0.1 = 20");
     expect(renderBattleHtml(state)).toContain("stop: adaptive_convergence");
     const visual = renderBattleVisual(state);
     expect(visual).toContain("EFFORT AND DECISION LEDGER");
