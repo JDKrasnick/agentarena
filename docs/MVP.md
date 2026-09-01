@@ -565,6 +565,18 @@ dashboard` remains a compatibility alias for the desktop window. Closing the
 window cancels an active battle; after completion, **Finish session** closes the
 window and its local server.
 
+The loopback stream carries monotonically revisioned snapshots and bounded
+snapshot heartbeats. `Live` means a recent snapshot has passed through a React
+commit and browser paint boundary; an open stream alone is insufficient. The
+badge changes to `Stale` after the freshness bound and to `Reconnecting` when
+the stream disconnects. Initial load, reload, and renderer recovery fetch the
+current `/api/state` revision, reject older racing responses, and never affect
+the battle lifecycle. Each Electron run uses an isolated in-memory profile with
+background throttling disabled and explicitly invalidates the compositor after
+paint acknowledgement. Hardware acceleration is the supported default;
+`AGENT_ARENA_SOFTWARE_RENDERING=1` provides a diagnostic software-rendering
+fallback for affected macOS hosts.
+
 Fighter cards open a full-page drill-down within the desktop window. The detail
 view exposes recorded invocations, output, checks, health changes, attack
 involvement, and live steering, with a persistent route back to the arena. The

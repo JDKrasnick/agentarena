@@ -67,6 +67,16 @@ and line-oriented output when redirected or running in CI. Explicit
 `dashboard` value aliases `window` without opening a browser. Both rich displays
 support cancellation and one-time queued contestant steering, but not pause,
 stage skipping, or arbitrary retries.
+The desktop connection badge is snapshot- and paint-aware. The loopback server
+sends revisioned snapshots plus bounded heartbeats; `Live` appears only after a
+recent revision has committed through the renderer's paint cycle. Quiet or
+disconnected streams become `Stale` or `Reconnecting`, and reconnects and
+reloads rehydrate from the current `/api/state` revision without mutating the
+fight. Electron uses a per-run isolated profile, disables background throttling,
+requests a compositor repaint after each committed revision, and reloads its
+loopback URL after a renderer failure. Normal GPU composition remains the
+default; `AGENT_ARENA_SOFTWARE_RENDERING=1` is the documented diagnostic
+fallback.
 
 Attack telemetry distinguishes mounting, landed, and evidence-revision events.
 The observatory shows their live counts and timeline, and uses a brief red

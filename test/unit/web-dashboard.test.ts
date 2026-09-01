@@ -8,6 +8,18 @@ import {
 } from "../../src/dashboard/web-server.js";
 import { ArenaBattleControl } from "../../src/observability/control.js";
 
+async function readServerEvent(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<string> {
+  let message = "";
+  while (!message.includes("\n\n")) {
+    const chunk = await reader.read();
+    if (chunk.done) throw new Error("Event stream closed before a message");
+    message += new TextDecoder().decode(chunk.value);
+  }
+  return message;
+}
+
 describe("web dashboard", () => {
   it("serves live state and accepts steering", async () => {
     const controller = new AbortController();
@@ -29,8 +41,34 @@ describe("web dashboard", () => {
         contestants: { b: { provider: string } };
       };
       expect(stateResponse.status).toBe(200);
+      expect(stateResponse.headers.get("x-agent-arena-snapshot-revision")).toBe(
+        "1",
+      );
+      expect(
+        stateResponse.headers.get("x-agent-arena-snapshot-generated-at"),
+      ).toBeTruthy();
       expect(state.task).toBe("Ship a dashboard");
       expect(state.contestants.b.provider).toBe("claude");
+
+      const streamController = new AbortController();
+      const stream = await fetch(`${dashboard.url}/events`, {
+        signal: streamController.signal,
+      });
+      const reader = stream.body!.getReader();
+      const initialEvent = await readServerEvent(reader);
+      expect(initialEvent).toContain("id: 1");
+      expect(initialEvent).toContain('"revision":1');
+      expect(initialEvent).toContain('"task":"Ship a dashboard"');
+      await dashboard.observer.publish({
+        type: "stage_changed",
+        stage: "initial_validate",
+        round: 1,
+      });
+      const updatedEvent = await readServerEvent(reader);
+      expect(updatedEvent).toContain("id: 2");
+      expect(updatedEvent).toContain('"revision":2');
+      expect(updatedEvent).toContain('"stage":"initial_validate"');
+      streamController.abort();
 
       const steerResponse = await fetch(`${dashboard.url}/api/steer`, {
         method: "POST",

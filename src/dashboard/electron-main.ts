@@ -30,6 +30,11 @@ const dashboardOrigin = parsedDashboardUrl.origin;
 let mainWindow: BrowserWindow | null = null;
 let currentTheme: ArenaTheme = "classic-shell";
 
+if (process.env["AGENT_ARENA_SOFTWARE_RENDERING"] === "1") {
+  app.disableHardwareAcceleration();
+  debug("software rendering fallback enabled");
+}
+
 async function openExternalTarget(target: string): Promise<void> {
   const parsed = new URL(target);
   if (parsed.protocol === "https:" || parsed.protocol === "http:") {
@@ -60,6 +65,8 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      backgroundThrottling: false,
+      partition: `agent-arena-${String(process.pid)}-${String(Date.now())}`,
     },
   });
   mainWindow = window;
@@ -181,14 +188,53 @@ function createWindow(): void {
       });
     }, captureDelay).unref();
   });
+  let recoveryTimer: NodeJS.Timeout | undefined;
+  const recoverRenderer = (
+    reason: string,
+    delay = 500,
+    replaceWindow = false,
+  ) => {
+    if (window.isDestroyed() || recoveryTimer) return;
+    debug(`renderer recovery scheduled: ${reason}`);
+    recoveryTimer = setTimeout(() => {
+      recoveryTimer = undefined;
+      if (window.isDestroyed()) return;
+      if (replaceWindow) {
+        createWindow();
+        window.destroy();
+        return;
+      }
+      void window
+        .loadURL(parsedDashboardUrl.toString())
+        .catch((error: unknown) => {
+          process.stderr.write(
+            `Agent Arena renderer recovery failed: ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+        });
+    }, delay);
+    recoveryTimer.unref();
+  };
   window.webContents.on(
     "did-fail-load",
-    (_event, errorCode, errorDescription) => {
+    (_event, errorCode, errorDescription, _validatedUrl, isMainFrame) => {
       process.stderr.write(
         `Agent Arena window failed to load (${String(errorCode)}): ${errorDescription}\n`,
       );
+      if (isMainFrame && errorCode !== -3) {
+        recoverRenderer(`load failure ${String(errorCode)}`);
+      }
     },
   );
+  window.webContents.on("render-process-gone", (_event, details) => {
+    recoverRenderer(`renderer ${details.reason}`, 500, true);
+  });
+  window.on("unresponsive", () => recoverRenderer("unresponsive", 2_000));
+  window.on("responsive", () => {
+    if (!recoveryTimer) return;
+    clearTimeout(recoveryTimer);
+    recoveryTimer = undefined;
+    debug("renderer recovered before reload");
+  });
   window.webContents.on("console-message", (_event, level, message) => {
     if (level >= 2) {
       process.stderr.write(`[Agent Arena renderer] ${message}\n`);
@@ -201,7 +247,8 @@ function createWindow(): void {
     if (title === "Agent Arena · Live battle") applyWindowMode("battle");
   });
   window.once("closed", () => {
-    mainWindow = null;
+    if (recoveryTimer) clearTimeout(recoveryTimer);
+    if (mainWindow === window) mainWindow = null;
   });
   window.webContents.on("will-navigate", (event, target) => {
     if (new URL(target).origin !== dashboardOrigin) {
@@ -233,6 +280,17 @@ void app
       if (!isArenaTheme(theme)) throw new Error("Unknown arena theme");
       currentTheme = theme;
       await writeThemePreference(app.getPath("userData"), theme);
+    });
+    ipcMain.on("arena-renderer:painted", (event, revision: unknown) => {
+      if (
+        !mainWindow ||
+        mainWindow.isDestroyed() ||
+        event.sender !== mainWindow.webContents ||
+        !Number.isInteger(revision)
+      )
+        return;
+      mainWindow.webContents.invalidate();
+      debug(`renderer painted snapshot ${String(revision)}`);
     });
     if (process.platform === "darwin") app.setActivationPolicy("regular");
     session.defaultSession.setPermissionRequestHandler(

@@ -41,3 +41,11 @@ contextBridge.exposeInMainWorld("arenaTheme", {
     await ipcRenderer.invoke("arena-theme:set", currentTheme);
   },
 });
+
+contextBridge.exposeInMainWorld("arenaDesktop", {
+  reportPaint(revision: number): void {
+    if (Number.isInteger(revision) && revision >= 0) {
+      ipcRenderer.send("arena-renderer:painted", revision);
+    }
+  },
+});
