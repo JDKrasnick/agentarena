@@ -261,7 +261,17 @@ export class ProviderStreamDecoder {
     }
 
     if (type === "system" || type === "init") {
-      this.activity(update, "progress", "Provider activity");
+      // Initialization and system-status records are useful telemetry, but they
+      // are not evidence that the provider is making task progress. In
+      // particular, keepalive-shaped system records must not extend execution.
+      this.activity(
+        update,
+        "progress",
+        "Provider activity",
+        undefined,
+        undefined,
+        false,
+      );
       return;
     }
     if (type.endsWith(".started")) {

@@ -112,6 +112,25 @@ describe("provider stream decoding", () => {
     ]);
   });
 
+  it("keeps initialization and system chatter from extending deadlines", () => {
+    const decoder = new ProviderStreamDecoder("claude");
+    const update = decoder.push(
+      [
+        JSON.stringify({ type: "system", subtype: "init" }),
+        JSON.stringify({ type: "system", subtype: "keepalive" }),
+        JSON.stringify({ type: "init" }),
+        "",
+      ].join("\n"),
+    );
+
+    expect(update.activities.map((event) => event.kind)).toEqual([
+      "progress",
+      "progress",
+      "progress",
+    ]);
+    expect(update.deadlineProgressCount).toBe(0);
+  });
+
   it("uses the latest cumulative Codex usage without double counting reasoning", () => {
     const decoder = new ProviderStreamDecoder("codex");
     decoder.push(

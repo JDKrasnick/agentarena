@@ -1130,9 +1130,8 @@ export class CommandAttackVerifier implements AttackVerifier {
   private isProviderInfrastructureFailure(result: CommandResult): boolean {
     return Boolean(
       result.transportFailures?.length &&
-      (result.timedOut ||
-        result.exitCode !== 0 ||
-        result.failureClass === "arena_infrastructure"),
+      !result.timedOut &&
+      (result.exitCode !== 0 || result.failureClass === "arena_infrastructure"),
     );
   }
 
