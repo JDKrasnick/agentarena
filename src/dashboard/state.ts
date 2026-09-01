@@ -5,7 +5,12 @@ import type {
   ArenaEventSink,
   ArenaObserver,
 } from "../observability/events.js";
-import type { ContestantId, RoundId, Stage } from "../core/types.js";
+import type {
+  ContestantId,
+  RequiredValidationEvidence,
+  RoundId,
+  Stage,
+} from "../core/types.js";
 
 export interface DashboardContestant {
   provider: string;
@@ -126,6 +131,12 @@ export interface DashboardState {
       kind: string;
       reasonCode: string;
       reason: string;
+      contestants?: Array<{
+        contestantId: ContestantId;
+        eligible: boolean;
+        reasonCode?: string;
+        validation?: RequiredValidationEvidence;
+      }>;
     };
     contestants?: Array<{
       id: "a" | "b";
@@ -496,6 +507,22 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
                 kind: event.terminalOutcome.kind,
                 reasonCode: event.terminalOutcome.reasonCode,
                 reason: event.terminalOutcome.reason,
+                ...(event.terminalOutcome.contestants
+                  ? {
+                      contestants: event.terminalOutcome.contestants.map(
+                        (entry) => ({
+                          contestantId: entry.contestantId,
+                          eligible: entry.eligible,
+                          ...(entry.reasonCode
+                            ? { reasonCode: entry.reasonCode }
+                            : {}),
+                          ...(entry.validation
+                            ? { validation: entry.validation }
+                            : {}),
+                        }),
+                      ),
+                    }
+                  : {}),
               },
             }
           : {}),

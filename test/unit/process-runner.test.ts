@@ -113,10 +113,10 @@ describe("process runner supervision", () => {
   it("applies the same deadline contract to shell commands", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-shell-timeout-"));
     const result = await runShellCommand(
-      `${JSON.stringify(process.execPath)} -e ${JSON.stringify("setInterval(() => undefined, 1000)")}`,
+      `${JSON.stringify(process.execPath)} -e ${JSON.stringify('console.log("partial suite output"); setInterval(() => undefined, 1000)')}`,
       {
         cwd: root,
-        timeoutMs: 50,
+        timeoutMs: 250,
         logPrefix: path.join(root, "logs", "shell"),
       },
     );
@@ -124,6 +124,13 @@ describe("process runner supervision", () => {
     expect(result.timedOut).toBe(true);
     expect(result.deadline).toBeDefined();
     expect(result.failureClass).toBeUndefined();
+    expect(result.termination).toMatchObject({
+      cause: "timeout",
+      timeoutType: "wall_clock",
+    });
+    expect(result.termination?.lastOutputAt).toMatch(/^\d{4}-/u);
+    expect(result.termination?.escalation).toEqual(expect.any(Array));
+    expect(result.failureExcerpt).toContain("partial suite output");
   });
 
   it.skipIf(!["darwin", "linux"].includes(process.platform))(

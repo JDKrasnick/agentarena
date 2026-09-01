@@ -15,6 +15,7 @@ import {
   reportOutcome,
   reportOutcomeTotals,
   reportRounds,
+  requiredValidationAttemptSummary,
   resolveArtifactHref,
 } from "./presentation.js";
 import { qualityCategoryRows } from "../quality/presentation.js";
@@ -136,18 +137,30 @@ export function renderBattleHtml(state: RunState): string {
     const rows =
       terminal.version === 2
         ? terminal.contestants
-            .map(
-              (entry) =>
-                `<tr><td>${escapeHtml(contestantLabel(state.config.contestants, entry.contestantId))}</td><td>${entry.eligible ? "eligible" : "ineligible"}</td><td>${escapeHtml(entry.reasonCode ?? "eligible_patch")}</td></tr>`,
-            )
+            .map((entry) => {
+              const evidence = entry.validation
+                ? `<strong>${escapeHtml(entry.validation.outcome.replaceAll("_", " "))}</strong>${requiredValidationAttemptSummary(
+                    entry.validation,
+                  )
+                    .map((attempt) => `<div>${escapeHtml(attempt)}</div>`)
+                    .join("")}${entry.validation.attempts
+                    .map((attempt, index) =>
+                      attempt.failureExcerpt
+                        ? `<details><summary>Attempt ${String(index + 1)} failure excerpt</summary><pre>${escapeHtml(attempt.failureExcerpt)}</pre></details>`
+                        : "",
+                    )
+                    .join("")}`
+                : "none";
+              return `<tr><td>${escapeHtml(contestantLabel(state.config.contestants, entry.contestantId))}</td><td>${entry.eligible ? "eligible" : "ineligible"}</td><td>${escapeHtml(entry.reasonCode ?? "eligible_patch")}</td><td>${evidence}</td></tr>`;
+            })
             .join("")
         : terminal.affectedContestantIds
             .map(
               (id) =>
-                `<tr><td>${escapeHtml(contestantLabel(state.config.contestants, id))}</td><td>ineligible</td><td>${escapeHtml(terminal.reasonCode)}</td></tr>`,
+                `<tr><td>${escapeHtml(contestantLabel(state.config.contestants, id))}</td><td>ineligible</td><td>${escapeHtml(terminal.reasonCode)}</td><td>legacy record</td></tr>`,
             )
             .join("");
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Arena — pre-review result</title><style>:root{color-scheme:dark}body{margin:0;background:#0b1017;color:#edf3f8;font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}main{max-width:980px;margin:auto;padding:48px}.panel{background:#121b26;border:1px solid #36526b;border-radius:14px;padding:24px;margin-top:24px}h1{margin:0}p{color:#d7e0ea}table{border-collapse:collapse;width:100%;margin-top:20px}th,td{text-align:left;padding:12px;border-bottom:1px solid #36526b}</style></head><body><main><h1>Agent Arena — pre-review result</h1><div class="panel"><strong>${escapeHtml(terminal.kind.toUpperCase())} · ${escapeHtml(terminal.reasonCode)}</strong><p>${escapeHtml(terminal.reason)}</p><p>Recommended production patch: ${escapeHtml(recommended)}.</p><p>No review, attack, repair, quality comparison, or coverage stage ran.</p><p>Provider usage: ${escapeHtml(conciseUsage(usageSummary))}</p><table><thead><tr><th>Contestant</th><th>Eligibility</th><th>Cause</th></tr></thead><tbody>${rows}</tbody></table></div></main></body></html>`;
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Arena — pre-review result</title><style>:root{color-scheme:dark}body{margin:0;background:#0b1017;color:#edf3f8;font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}main{max-width:1180px;margin:auto;padding:48px}.panel{background:#121b26;border:1px solid #36526b;border-radius:14px;padding:24px;margin-top:24px}h1{margin:0}p{color:#d7e0ea}table{border-collapse:collapse;width:100%;margin-top:20px}th,td{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid #36526b}td div{margin-top:6px;color:#d7e0ea;font-size:13px}pre{max-width:560px;overflow:auto;white-space:pre-wrap}</style></head><body><main><h1>Agent Arena — pre-review result</h1><div class="panel"><strong>${escapeHtml(terminal.kind.toUpperCase())} · ${escapeHtml(terminal.reasonCode)}</strong><p>${escapeHtml(terminal.reason)}</p><p>Recommended production patch: ${escapeHtml(recommended)}.</p><p>No review, attack, repair, quality comparison, or coverage stage ran.</p><p>Provider usage: ${escapeHtml(conciseUsage(usageSummary))}</p><table><thead><tr><th>Contestant</th><th>Eligibility</th><th>Cause</th><th>Validation evidence</th></tr></thead><tbody>${rows}</tbody></table></div></main></body></html>`;
   }
   const contestants = reportContestants(state);
   const outcome = reportOutcome(state);

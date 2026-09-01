@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import {
   ContestantIdSchema,
+  RequiredValidationEvidenceSchema,
   RoundIdSchema,
   StageSchema,
   type ContestantId,
@@ -239,6 +240,17 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
         eligibleContestantIds: z.array(ContestantIdSchema),
         reason: z.string().min(1),
         artifactPaths: z.array(z.string()),
+        contestants: z
+          .array(
+            z.object({
+              contestantId: ContestantIdSchema,
+              eligible: z.boolean(),
+              reasonCode: z.string().min(1).optional(),
+              artifactPaths: z.array(z.string()),
+              validation: RequiredValidationEvidenceSchema.optional(),
+            }),
+          )
+          .optional(),
       })
       .optional(),
     contestants: z

@@ -82,6 +82,18 @@ const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
     z.record(z.string(), JsonValueSchema),
   ]),
 );
+const RequiredValidationEvidenceContractSchema = z
+  .object({
+    outcome: z.enum([
+      "passed",
+      "deterministic_failure",
+      "confirmed_timeout",
+      "confirmed_runner_failure",
+      "unstable",
+    ]),
+    attempts: z.array(JsonValueSchema).min(1).max(2),
+  })
+  .strict();
 
 const ContestantIdSchema = z.enum(["a", "b"]);
 const RoundIdSchema = z.union([
@@ -654,6 +666,9 @@ const RoundResultBaseSchema = z
               "implementation_empty_patch",
               "implementation_unapplicable_patch",
               "initial_validation_failed",
+              "initial_validation_timeout",
+              "initial_validation_runner_failure",
+              "initial_validation_unstable",
               "frozen_incumbent_invalid",
               "provider_transport_failure",
               "harness_infrastructure_failure",
@@ -677,6 +692,9 @@ const RoundResultBaseSchema = z
               "implementation_empty_patch",
               "implementation_unapplicable_patch",
               "initial_validation_failed",
+              "initial_validation_timeout",
+              "initial_validation_runner_failure",
+              "initial_validation_unstable",
               "frozen_incumbent_invalid",
               "provider_transport_failure",
               "harness_infrastructure_failure",
@@ -696,6 +714,9 @@ const RoundResultBaseSchema = z
                     "implementation_empty_patch",
                     "implementation_unapplicable_patch",
                     "initial_validation_failed",
+                    "initial_validation_timeout",
+                    "initial_validation_runner_failure",
+                    "initial_validation_unstable",
                     "frozen_incumbent_invalid",
                     "provider_transport_failure",
                     "harness_infrastructure_failure",
@@ -705,6 +726,7 @@ const RoundResultBaseSchema = z
                   ])
                   .optional(),
                 artifactPaths: z.array(z.string().min(1)),
+                validation: RequiredValidationEvidenceContractSchema.optional(),
               }),
             ),
             reason: z.string().min(1),

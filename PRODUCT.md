@@ -252,6 +252,12 @@ The same evidence and health system supports three topologies:
 Before any review or attack work, implementation eligibility is sealed as
 versioned terminal metadata with one eligibility disposition and diagnostic
 trail per contestant. Legacy v1 records remain readable; new runs write v2.
+Every required-validation attempt records its exit code, signal, wall-clock
+timeout state, elapsed and last-output times, termination escalation, logs, and
+an exact bounded failure excerpt. Deterministic assertion, typecheck, lint, and
+build exits fail immediately; timeouts and runner-shaped terminations receive
+one clean retry against the same patch. Disagreeing attempts make eligibility
+unstable and the run inconclusive instead of eliminating a contestant.
 In a duel, exactly one production patch that
 applies and passes required validation wins by forfeit and is the only
 reviewable recommendation; no eligible patch is inconclusive. Provider,

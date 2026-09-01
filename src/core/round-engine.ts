@@ -195,6 +195,7 @@ import {
   type AttackSubmission,
   type CaseSubmission,
   type CheckResult,
+  type CommandResult,
   type ContestantResult,
   type ContestantConfig,
   type ContestantId,
@@ -204,6 +205,7 @@ import {
   type PermissionPolicy,
   type PullRequestFixture,
   type ReconciliationCandidate,
+  type RequiredValidationEvidence,
   type RoundId,
   type RunState,
   type Stage,
@@ -512,20 +514,81 @@ function getAdapter(
   return adapter;
 }
 
+function validationRunnerFailure(command: CommandResult): string | undefined {
+  if (command.timedOut || command.termination?.cause === "timeout")
+    return "timeout";
+  if (command.termination?.cause === "spawn_error") return "spawn_error";
+  if (command.termination?.cause === "cancelled") return "cancelled";
+  if (command.signal !== null) return `signal:${command.signal}`;
+  if (command.failureClass === "arena_infrastructure")
+    return "arena_infrastructure";
+  if (command.exitCode === null) return "missing_exit";
+  return undefined;
+}
+
+function requiredValidationEvidence(
+  attempts: CommandResult[],
+): RequiredValidationEvidence {
+  const first = attempts[0];
+  if (!first) throw new Error("Required validation did not execute");
+  const firstRunnerFailure = validationRunnerFailure(first);
+  if (!firstRunnerFailure) {
+    return {
+      outcome: first.exitCode === 0 ? "passed" : "deterministic_failure",
+      attempts,
+    };
+  }
+  const second = attempts[1];
+  if (!second) {
+    return {
+      outcome:
+        firstRunnerFailure === "timeout"
+          ? "confirmed_timeout"
+          : "confirmed_runner_failure",
+      attempts,
+    };
+  }
+  const secondRunnerFailure = validationRunnerFailure(second);
+  if (firstRunnerFailure !== secondRunnerFailure) {
+    return { outcome: "unstable", attempts };
+  }
+  return {
+    outcome:
+      firstRunnerFailure === "timeout"
+        ? "confirmed_timeout"
+        : "confirmed_runner_failure",
+    attempts,
+  };
+}
+
 function requiredCheck(
   id: string,
-  command: Awaited<ReturnType<typeof runShellCommand>>,
+  commandOrAttempts: CommandResult | CommandResult[],
 ): CheckResult {
+  const attempts = Array.isArray(commandOrAttempts)
+    ? commandOrAttempts
+    : [commandOrAttempts];
+  const validation = requiredValidationEvidence(attempts);
+  const command = attempts.at(-1)!;
+  const reason = {
+    passed: undefined,
+    deterministic_failure: "Required validation exited nonzero",
+    confirmed_timeout: "Required validation timed out twice",
+    confirmed_runner_failure: "Required validation runner failed twice",
+    unstable: "Required validation retry disagreed with the first attempt",
+  }[validation.outcome];
   return {
     id,
     kind: "required",
     status:
-      command.failureClass === "arena_infrastructure"
+      validation.outcome === "unstable"
         ? "infrastructure_error"
-        : command.exitCode === 0
+        : validation.outcome === "passed"
           ? "passed"
           : "failed",
     command,
+    validation,
+    ...(reason ? { reason } : {}),
   };
 }
 
@@ -538,14 +601,22 @@ function latestRequiredPass(contestant: ContestantResult): boolean {
 
 function preReviewArtifactPaths(contestant: ContestantResult): string[] {
   return [
-    contestant.implementation?.promptPath,
-    contestant.implementation?.transcriptPath,
-    contestant.implementation?.submissionPath,
-    ...contestant.checks.flatMap((check) => [
-      check.command?.stdoutPath,
-      check.command?.stderrPath,
-    ]),
-  ].filter((path): path is string => Boolean(path));
+    ...new Set(
+      [
+        contestant.implementation?.promptPath,
+        contestant.implementation?.transcriptPath,
+        contestant.implementation?.submissionPath,
+        ...contestant.checks.flatMap((check) => [
+          check.command?.stdoutPath,
+          check.command?.stderrPath,
+          ...(check.validation?.attempts.flatMap((attempt) => [
+            attempt.stdoutPath,
+            attempt.stderrPath,
+          ]) ?? []),
+        ]),
+      ].filter((path): path is string => Boolean(path)),
+    ),
+  ];
 }
 
 function opponentOf(
@@ -2166,6 +2237,15 @@ export class RoundEngine {
         return "implementation_unapplicable_patch";
       if (!contestant.currentPatchPath || contestant.patchSize === 0)
         return "implementation_empty_patch";
+      const initialValidation = contestant.checks.find(
+        (check) => check.id === "initial-required",
+      )?.validation;
+      if (initialValidation?.outcome === "unstable")
+        return "initial_validation_unstable";
+      if (initialValidation?.outcome === "confirmed_timeout")
+        return "initial_validation_timeout";
+      if (initialValidation?.outcome === "confirmed_runner_failure")
+        return "initial_validation_runner_failure";
       if (
         contestant.checks.some(
           (check) => check.kind === "required" && check.status === "failed",
@@ -2187,11 +2267,15 @@ export class RoundEngine {
           artifactPaths: preReviewArtifactPaths(contestant),
         };
       const reasonCode = contestantReason(contestant);
+      const validation = contestant.checks.find(
+        (check) => check.id === "initial-required",
+      )?.validation;
       return {
         contestantId: id,
         eligible: eligible.includes(id),
         ...(reasonCode ? { reasonCode } : {}),
         artifactPaths: preReviewArtifactPaths(contestant),
+        ...(validation ? { validation } : {}),
       };
     });
     const makeOutcome = (options: {
@@ -2230,7 +2314,9 @@ export class RoundEngine {
         (contestant) =>
           contestantReason(contestant) === "harness_infrastructure_failure" ||
           contestant.checks.some(
-            (check) => check.status === "infrastructure_error",
+            (check) =>
+              check.status === "infrastructure_error" &&
+              check.validation?.outcome !== "unstable",
           ),
       )
       .map((contestant) => contestant.id);
@@ -2280,15 +2366,21 @@ export class RoundEngine {
       });
     }
     if (eligible.length === production.length) return undefined;
-    const failed = contestants.find(
-      (contestant) => !eligible.includes(contestant.id),
-    );
+    const failed =
+      contestants.find(
+        (contestant) =>
+          !eligible.includes(contestant.id) &&
+          contestantReason(contestant) === "initial_validation_unstable",
+      ) ?? contestants.find((contestant) => !eligible.includes(contestant.id));
     const failedReason = failed ? contestantReason(failed) : undefined;
     const reasonCode =
       failedReason === "peer_cancelled_due_to_transport"
         ? "provider_transport_failure"
         : (failedReason ?? "implementation_failed");
-    const isForfeit = eligible.length === 1 && context.config.mode === "duel";
+    const isForfeit =
+      eligible.length === 1 &&
+      context.config.mode === "duel" &&
+      failedReason !== "initial_validation_unstable";
     return makeOutcome({
       kind: isForfeit ? "forfeit" : "inconclusive",
       reasonCode,
@@ -2297,7 +2389,9 @@ export class RoundEngine {
         .map((contestant) => contestant.id),
       reason: isForfeit
         ? "Exactly one production patch passed initial validation; it wins by forfeit before review."
-        : "No eligible production patch is available for a pre-review comparison.",
+        : failedReason === "initial_validation_unstable"
+          ? "Required validation attempts disagreed, so eligibility is inconclusive."
+          : "No eligible production patch is available for a pre-review comparison.",
     });
   }
 
@@ -3230,6 +3324,7 @@ export class RoundEngine {
         | "recovered"
         | "coverage_lost"
         | "run_level_coverage_lost"
+        | "validation_unstable"
         | "judge_unable";
     },
   ): Promise<FailureRecord> {
@@ -4731,6 +4826,8 @@ export class RoundEngine {
         runLevel: true,
         provision: false,
       });
+      const validationWorktrees = [worktree];
+      let activeWorktree = worktree;
       try {
         try {
           await context.worktrees.applyPatch(
@@ -4752,74 +4849,93 @@ export class RoundEngine {
           worktree,
           `initial-validation-worktree:${agent}`,
         );
-        let command!: Awaited<ReturnType<typeof runShellCommand>>;
+        const commands: CommandResult[] = [];
         let validationFailure: FailureRecord | undefined;
         for (const attempt of [1, 2] as const) {
           const startedAt = this.now().toISOString();
           const logPrefix = context.store.resolve(
             `logs/initial-validation-${agent}-attempt-${String(attempt)}`,
           );
-          command = await runShellCommand(context.config.testCommand, {
-            cwd: worktree,
+          const command = await runShellCommand(context.config.testCommand, {
+            cwd: activeWorktree,
             timeoutMs: context.config.limits.attackMs,
             logPrefix,
             signal: context.controller.signal,
           });
+          commands.push(command);
           const finishedAt = this.now().toISOString();
           const diagnosticArtifactRefs = [
             command.stdoutPath,
             command.stderrPath,
           ];
-          if (command.failureClass !== "arena_infrastructure") {
-            if (validationFailure) {
-              validationFailure = await this.recordFailureAttempt(context, {
-                stage: "required_validation",
-                subject: `initial-required:${agent}`,
-                category: validationFailure.category,
-                attempt: 2,
-                startedAt,
-                finishedAt,
-                status: "succeeded",
-                diagnosticArtifactRefs,
-                contestantId: agent,
-                existing: validationFailure,
-                reusedArtifactRefs: [contestant.currentPatchPath],
-                terminalDisposition: "recovered",
-              });
-            }
+          const runnerFailure = validationRunnerFailure(command);
+          if (attempt === 2 && validationFailure) {
+            const validation = requiredValidationEvidence(commands);
+            validationFailure = await this.recordFailureAttempt(context, {
+              stage: "required_validation",
+              subject: `initial-required:${agent}`,
+              category: validationFailure.category,
+              attempt,
+              startedAt,
+              finishedAt,
+              status: runnerFailure ? "failed" : "succeeded",
+              diagnosticArtifactRefs,
+              contestantId: agent,
+              existing: validationFailure,
+              reusedArtifactRefs: [contestant.currentPatchPath],
+              terminalDisposition:
+                validation.outcome === "unstable"
+                  ? "validation_unstable"
+                  : "run_level_coverage_lost",
+            });
             break;
           }
-          validationFailure = await this.recordFailureAttempt(context, {
-            stage: "required_validation",
-            subject: `initial-required:${agent}`,
-            category: "command_execution",
-            attempt,
-            startedAt,
-            finishedAt,
-            status: "failed",
-            diagnosticArtifactRefs,
-            contestantId: agent,
-            ...(validationFailure ? { existing: validationFailure } : {}),
-            reusedArtifactRefs: [contestant.currentPatchPath],
-            ...(attempt === 2
-              ? { terminalDisposition: "run_level_coverage_lost" as const }
-              : {}),
-          });
-          if (attempt === 2) break;
+          if (!runnerFailure || context.controller.signal.aborted) break;
+          if (attempt === 1) {
+            validationFailure = await this.recordFailureAttempt(context, {
+              stage: "required_validation",
+              subject: `initial-required:${agent}`,
+              category:
+                runnerFailure === "timeout" ? "timeout" : "command_execution",
+              attempt,
+              startedAt,
+              finishedAt,
+              status: "failed",
+              diagnosticArtifactRefs,
+              contestantId: agent,
+              reusedArtifactRefs: [contestant.currentPatchPath],
+            });
+            activeWorktree = await this.prepareWorktree(context, {
+              name: `initial-validate-${agent}-retry`,
+              subject: `initial-validation-retry-worktree:${agent}`,
+              contestantId: agent,
+              runLevel: true,
+              provision: false,
+            });
+            validationWorktrees.push(activeWorktree);
+            await context.worktrees.applyPatch(
+              activeWorktree,
+              contestant.currentPatchPath,
+            );
+            await this.provisionWorktree(
+              context,
+              activeWorktree,
+              `initial-validation-retry-worktree:${agent}`,
+            );
+            continue;
+          }
         }
-        contestant.checks.push(requiredCheck("initial-required", command));
-        if (command.failureClass === "arena_infrastructure")
-          throw new Error(
-            `Initial required validation infrastructure failed for ${agent}`,
-          );
+        const check = requiredCheck("initial-required", commands);
+        contestant.checks.push(check);
         await this.validateBrowserForContestant(
           context,
           contestant,
-          worktree,
+          activeWorktree,
           "initial",
         );
       } finally {
-        await context.worktrees.remove(worktree);
+        for (const validationWorktree of validationWorktrees.reverse())
+          await context.worktrees.remove(validationWorktree);
       }
     }
     await this.persist(context);

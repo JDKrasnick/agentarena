@@ -43,6 +43,7 @@ export const FailureDispositionSchema = z.enum([
   "advisory_unavailable",
   "coverage_lost",
   "run_level_coverage_lost",
+  "validation_unstable",
 ]);
 export type FailureDisposition = z.infer<typeof FailureDispositionSchema>;
 

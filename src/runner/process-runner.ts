@@ -242,6 +242,8 @@ interface SupervisedResult {
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
+  cancelled: boolean;
+  lastOutputAt: string | null;
   spawnError?: unknown;
   deadline?: NonNullable<CommandResult["deadline"]>;
   providerEvents?: readonly ProviderActivity[];
@@ -290,6 +292,8 @@ async function supervise(
       exitCode: null,
       signal: null,
       timedOut: false,
+      cancelled: false,
+      lastOutputAt: null,
       spawnError,
     };
   }
@@ -297,6 +301,7 @@ async function supervise(
   let stdout = "";
   let stderr = "";
   let providerRawOutput = "";
+  let lastOutputAt: string | null = null;
   let outputQueue: Promise<void> = Promise.resolve();
   const redactors = {
     stdout: new StreamingRedactor(options.secrets),
@@ -307,6 +312,7 @@ async function supervise(
     : undefined;
   const publish = (stream: "stdout" | "stderr", text: string): void => {
     if (!text) return;
+    lastOutputAt = new Date().toISOString();
     if (stream === "stdout") stdout += text;
     else stderr += text;
     outputQueue = outputQueue.then(async () => {
@@ -351,6 +357,7 @@ async function supervise(
   supervisor?.startTracking();
   let cleanup: Promise<ProcessCleanupResult> | undefined;
   let expiredAt: string | undefined;
+  let cancelled = false;
   const beginCleanup = (): void => {
     if (cleanup !== undefined) return;
     subprocess.stdin?.destroy();
@@ -376,8 +383,11 @@ async function supervise(
     expiredAt = new Date().toISOString();
     beginCleanup();
   }, options.timeoutMs);
-  const abortListener = (): void => beginCleanup();
-  if (options.signal?.aborted) beginCleanup();
+  const abortListener = (): void => {
+    cancelled = true;
+    beginCleanup();
+  };
+  if (options.signal?.aborted) abortListener();
   else options.signal?.addEventListener("abort", abortListener, { once: true });
 
   try {
@@ -391,6 +401,8 @@ async function supervise(
       exitCode: result.exitCode ?? null,
       signal: result.signal ?? null,
       timedOut: expiredAt !== undefined,
+      cancelled,
+      lastOutputAt,
       ...(expiredAt !== undefined && cleanupResult !== undefined
         ? { deadline: deadlineResult(expiredAt, cleanupResult) }
         : {}),
@@ -412,6 +424,8 @@ async function supervise(
       exitCode: null,
       signal: null,
       timedOut: expiredAt !== undefined,
+      cancelled,
+      lastOutputAt,
       spawnError,
       ...(expiredAt !== undefined && cleanupResult !== undefined
         ? { deadline: deadlineResult(expiredAt, cleanupResult) }
@@ -431,6 +445,19 @@ async function supervise(
   }
 }
 
+function failureExcerpt(
+  stdout: string,
+  stderr: string,
+  options: { failed: boolean },
+): string | undefined {
+  if (!options.failed) return undefined;
+  const output = [stdout, stderr].filter(Boolean).join("\n").trim();
+  if (!output) return undefined;
+  const lines = output.split(/\r?\n/u);
+  const excerpt = lines.slice(-60).join("\n");
+  return excerpt.length > 6_000 ? excerpt.slice(-6_000) : excerpt;
+}
+
 async function run(
   request: ProcessRequest,
   executable: string,
@@ -441,6 +468,7 @@ async function run(
 ): Promise<CommandResult> {
   await mkdir(path.dirname(request.logPrefix), { recursive: true });
   const started = Date.now();
+  const startedAt = new Date(started).toISOString();
   const result = await supervise({
     executable,
     args,
@@ -470,6 +498,8 @@ async function run(
     result.stderr = redact(describeError(result.spawnError), request.secrets);
     await request.onOutput?.("stderr", result.stderr);
   }
+  const finished = Date.now();
+  const finishedAt = new Date(finished).toISOString();
   const stdoutPath = `${request.logPrefix}.stdout.log`;
   const stderrPath = `${request.logPrefix}.stderr.log`;
   const eventLogPath = `${request.logPrefix}.events.jsonl`;
@@ -498,6 +528,14 @@ async function run(
         ),
       ) === true,
   );
+  const excerpt = failureExcerpt(result.stdout, result.stderr, {
+    failed:
+      result.spawnError !== undefined ||
+      result.timedOut ||
+      result.cancelled ||
+      result.signal !== null ||
+      result.exitCode !== 0,
+  });
   const base = {
     command: redact(command, request.secrets),
     cwd: request.cwd,
@@ -505,9 +543,26 @@ async function run(
     signal: result.signal,
     timedOut: result.timedOut,
     attempts: request.attempts ?? 1,
-    durationMs: Date.now() - started,
+    durationMs: finished - started,
     stdoutPath,
     stderrPath,
+    ...(excerpt ? { failureExcerpt: excerpt } : {}),
+    termination: {
+      cause: result.spawnError
+        ? ("spawn_error" as const)
+        : result.timedOut
+          ? ("timeout" as const)
+          : result.cancelled
+            ? ("cancelled" as const)
+            : result.signal
+              ? ("signal" as const)
+              : ("exit" as const),
+      timeoutType: result.timedOut ? ("wall_clock" as const) : null,
+      startedAt,
+      finishedAt,
+      lastOutputAt: result.lastOutputAt,
+      escalation: result.deadline?.signalEscalation ?? [],
+    },
     ...(result.deadline ? { deadline: result.deadline } : {}),
     ...(transportFailures.length > 0 ? { transportFailures } : {}),
     ...(result.providerDiagnostics
