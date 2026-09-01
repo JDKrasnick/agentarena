@@ -218,6 +218,73 @@ describe("fault-isolated provider submissions", () => {
     );
   });
 
+  it("never rewrites commands, paths, or identifiers at the provider boundary", () => {
+    const strictCommand = " npm test -- test/example.test.ts\r\n";
+    const strictPath = " ./test/e\u0301xample.test.ts ";
+    const strictCapability = " shell ";
+    const parsed = parseFaultIsolatedSubmission(
+      "attack",
+      JSON.stringify({
+        version: 2,
+        sharedSupportPaths: [],
+        attacks: [
+          {
+            ...attack(1),
+            reproduction: undefined,
+            focusedCommand: strictCommand,
+            paths: [strictPath],
+            requiredCapabilities: [strictCapability],
+            challengeAdjudicationId: " challenge-1 ",
+          },
+        ],
+      }),
+    );
+
+    expect(parsed.outcome).toBe("valid");
+    expect(parsed.value.attacks[0]).toMatchObject({
+      focusedCommand: strictCommand,
+      paths: [strictPath],
+      requiredCapabilities: [strictCapability],
+      challengeAdjudicationId: " challenge-1 ",
+    });
+    expect(
+      parsed.normalizations.filter((entry) =>
+        /focusedCommand|paths|requiredCapabilities|challengeAdjudicationId/u.test(
+          entry.path,
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects non-canonical review commands, paths, symbols, and identifiers without rewriting them", () => {
+    const finding = reviewFinding();
+    finding.code_locations[0]!.path = " ./src/file.ts ";
+    finding.code_locations[0]!.symbol = " work ";
+    (finding as { required_capability_ids: string[] }).required_capability_ids =
+      [" shell "];
+    finding.regression_test_plan.focused_command = " npm test ";
+
+    const parsed = parseFaultIsolatedSubmission(
+      "review",
+      JSON.stringify({ version: 2, findings: [finding] }),
+    );
+
+    expect(parsed.outcome).toBe("invalid");
+    expect(parsed.rejections.map((entry) => entry.path)).toEqual(
+      expect.arrayContaining([
+        "$.findings[0].code_locations[0].path",
+        "$.findings[0].code_locations[0].symbol",
+        "$.findings[0].required_capability_ids[0]",
+        "$.findings[0].regression_test_plan.focused_command",
+      ]),
+    );
+    expect(
+      parsed.normalizations.filter((entry) =>
+        /code_locations|capability|focused_command/u.test(entry.path),
+      ),
+    ).toEqual([]);
+  });
+
   it("records explicit empty evidence separately from an invalid envelope", () => {
     expect(
       parseFaultIsolatedSubmission(
