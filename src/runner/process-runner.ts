@@ -346,8 +346,10 @@ async function supervise(
   const publishProviderUpdate = (
     update: ReturnType<ProviderStreamDecoder["push"]>,
   ): void => {
-    for (const activity of update.activities) {
+    for (let index = 0; index < update.deadlineProgressCount; index += 1) {
       recordProviderProgress();
+    }
+    for (const activity of update.activities) {
       outputQueue = outputQueue.then(async () => {
         await options.onActivity?.(activity);
       });

@@ -14,6 +14,8 @@ describe("provider stream decoding", () => {
     expect(
       [...first.activities, ...second.activities].map((event) => event.kind),
     ).toEqual(["progress", "tool_started", "tool_finished", "message"]);
+    expect(first.deadlineProgressCount).toBe(1);
+    expect(second.deadlineProgressCount).toBe(2);
     expect(second.assistantText).toEqual(["done"]);
     expect(JSON.stringify(decoder.eventLog())).not.toContain("secret args");
     expect(decoder.diagnostics()).toMatchObject({
@@ -100,9 +102,11 @@ describe("provider stream decoding", () => {
 
   it("warns on malformed records and ignores unknown variants", () => {
     const decoder = new ProviderStreamDecoder("codex");
-    expect(() =>
-      decoder.push('{bad}\n{"type":"future.variant","payload":1}\n'),
-    ).not.toThrow();
+    const update = decoder.push(
+      '{bad}\n{"type":"future.variant","payload":1}\n{"type":"future.keepalive.started"}\n',
+    );
+    expect(update.activities.map((event) => event.kind)).toEqual(["progress"]);
+    expect(update.deadlineProgressCount).toBe(0);
     expect(decoder.diagnostics().decodingWarnings).toEqual([
       "Malformed provider JSONL record",
     ]);

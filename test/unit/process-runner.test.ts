@@ -192,6 +192,34 @@ describe("process runner supervision", () => {
     });
   });
 
+  it("does not let unknown provider records refresh the idle deadline", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "arena-provider-unknown-idle-"),
+    );
+    const keepalive = JSON.stringify({ type: "vendor.keepalive.started" });
+    const program = `setInterval(() => console.log(${JSON.stringify(keepalive)}), 30)`;
+
+    const result = await runProcess({
+      executable: process.execPath,
+      args: ["-e", program],
+      cwd: root,
+      timeoutMs: 160,
+      logPrefix: path.join(root, "logs", "unknown-idle"),
+      providerStream: "codex",
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.deadline).toMatchObject({ kind: "idle" });
+    expect(result.deadline?.elapsedMs).toBeLessThan(400);
+    expect(result.deadline?.lastProgressAt).toBeUndefined();
+    expect(result.timeoutPolicy).toMatchObject({
+      softTimeoutMs: 160,
+      absoluteTimeoutMs: 480,
+      progressExtensions: 0,
+    });
+    expect(result.providerDiagnostics?.eventCount).toBeGreaterThan(0);
+  });
+
   it("enforces an absolute cap despite continuing provider activity", async () => {
     const root = await mkdtemp(
       path.join(os.tmpdir(), "arena-provider-absolute-"),
