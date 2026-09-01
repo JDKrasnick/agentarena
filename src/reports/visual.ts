@@ -11,6 +11,7 @@ import {
   requiredValidationAttemptSummary,
   truncateReportText,
 } from "./presentation.js";
+import { projectImplementationEligibility } from "../outcomes/eligibility.js";
 
 function escapeXml(value: string): string {
   return value.replace(
@@ -84,16 +85,24 @@ ${evidence}
 </svg>`;
   }
   const contestants = reportContestants(state);
+  const implementationEligibility = projectImplementationEligibility(state);
   const blocks = contestants
     .map((contestant, index) => {
       const outcome = state.arenaOutcome?.contestants[contestant.id];
+      const eligibility = implementationEligibility.find(
+        (entry) => entry.contestantId === contestant.id,
+      );
       const x = 54 + index * 570;
-      return `<rect x="${x}" y="158" width="520" height="180" rx="16" fill="#121b26" stroke="#294056"/>
+      const attempt = eligibility?.validation
+        ? requiredValidationAttemptSummary(eligibility.validation)[0]
+        : undefined;
+      return `<rect x="${x}" y="158" width="520" height="195" rx="16" fill="#121b26" stroke="#294056"/>
       <text x="${x + 28}" y="202" class="label">${escapeXml(contestantLabel(state.config.contestants, contestant.id).toUpperCase())}</text>
       <text x="${x + 28}" y="256" class="hp">${String(contestant.finalHealth)} HP</text>
       <text x="${x + 28}" y="292" class="body">Required suite: <tspan class="${latestRequired(contestant) === "PASS" ? "pass" : latestRequired(contestant) === "FAIL" ? "fail" : "warn"}">${latestRequired(contestant)}</tspan></text>
       <text x="${x + 28}" y="316" class="body">Recoil: ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil)} HP</text>
-      <text x="${x + 250}" y="316" class="body">Active damage: ${String(outcome?.activeDefectDamage ?? 0)} HP</text>`;
+      <text x="${x + 250}" y="316" class="body">Active damage: ${String(outcome?.activeDefectDamage ?? 0)} HP</text>
+      <text x="${x + 28}" y="340" class="tiny">Eligibility: ${escapeXml(eligibility ? (eligibility.eligible ? "eligible" : "ineligible") : "not recorded")}${eligibility?.validation ? ` · ${escapeXml(eligibility.validation.outcome)} · ${escapeXml(truncateReportText(attempt ?? "", 48))}` : ""}</text>`;
     })
     .join("\n");
   const defects = reportDefects(state);

@@ -118,6 +118,56 @@ describe("dashboard UI contracts", () => {
     expect(markup).toContain("Attempt 2 · exit");
   });
 
+  it("renders eligibility evidence after a successful completed validation", () => {
+    const state = initialDashboardState();
+    state.status = "complete";
+    state.result = {
+      implementationEligibility: [
+        {
+          contestantId: "a",
+          eligible: true,
+          artifactPaths: [],
+          validation: {
+            outcome: "passed",
+            attempts: [
+              {
+                command: "npm test",
+                cwd: "/tmp/a",
+                exitCode: 0,
+                signal: null,
+                timedOut: false,
+                attempts: 1,
+                durationMs: 420,
+                stdoutPath: "/tmp/a.stdout.log",
+                stderrPath: "/tmp/a.stderr.log",
+                termination: {
+                  cause: "exit",
+                  timeoutType: null,
+                  startedAt: "2026-08-30T19:18:18.000Z",
+                  finishedAt: "2026-08-30T19:18:18.420Z",
+                  lastOutputAt: "2026-08-30T19:18:18.300Z",
+                  escalation: [],
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const markup = renderToStaticMarkup(
+      <ResultScreen
+        state={state}
+        onReview={() => undefined}
+        onOpenFighter={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("Eligibility and validation evidence");
+    expect(markup).toContain("Fighter A · eligible");
+    expect(markup).toContain("Attempt 1 · exit");
+  });
+
   it("renders an operator-triggered browser link only for an active session", () => {
     expect(
       renderToStaticMarkup(

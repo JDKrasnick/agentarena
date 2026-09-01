@@ -182,6 +182,7 @@ import {
   rankContestants,
   resolveRound,
 } from "./scoring.js";
+import { projectImplementationEligibility } from "../outcomes/eligibility.js";
 import { assertTransition } from "./state-machine.js";
 import {
   AdjudicationRecordSchema,
@@ -4261,6 +4262,9 @@ export class RoundEngine {
     context: ArenaContext,
     status: "complete" | "inconclusive" | "failed" | "cancelled",
   ): Promise<void> {
+    const implementationEligibility = projectImplementationEligibility(
+      context.state,
+    );
     await this.emit(context, {
       type: "battle_completed",
       status,
@@ -4297,6 +4301,9 @@ export class RoundEngine {
         : {}),
       ...(context.state.coverageAssessment
         ? { coverageConfidence: context.state.coverageAssessment.confidence }
+        : {}),
+      ...(implementationEligibility.length
+        ? { implementationEligibility }
         : {}),
       ...(context.state.terminalOutcome
         ? { terminalOutcome: context.state.terminalOutcome }

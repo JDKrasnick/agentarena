@@ -112,11 +112,12 @@ describe("process runner supervision", () => {
 
   it("applies the same deadline contract to shell commands", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-shell-timeout-"));
+    const timeoutMs = 750;
     const result = await runShellCommand(
       `${JSON.stringify(process.execPath)} -e ${JSON.stringify('console.log("partial suite output"); setInterval(() => undefined, 1000)')}`,
       {
         cwd: root,
-        timeoutMs: 250,
+        timeoutMs,
         logPrefix: path.join(root, "logs", "shell"),
       },
     );
@@ -129,6 +130,10 @@ describe("process runner supervision", () => {
       timeoutType: "wall_clock",
     });
     expect(result.termination?.lastOutputAt).toMatch(/^\d{4}-/u);
+    expect(
+      Date.parse(result.termination!.lastOutputAt!) -
+        Date.parse(result.termination!.startedAt),
+    ).toBeLessThan(timeoutMs - 50);
     expect(result.termination?.escalation).toEqual(expect.any(Array));
     expect(result.failureExcerpt).toContain("partial suite output");
   });

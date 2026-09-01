@@ -151,5 +151,85 @@ describe.runIf(process.env.ARENA_REAL_BROWSER === "1")(
           .count(),
       ).toBe(1);
     });
+
+    it("shows eligibility evidence when validation passes and the fight completes", async () => {
+      dashboard = await startWebDashboard(
+        new ArenaBattleControl(new AbortController()),
+      );
+      await dashboard.observer.publish({
+        type: "battle_started",
+        runId: "successful-validation-evidence-fixture",
+        task: "Preserve successful required validation evidence",
+        contestants: [
+          { id: "a", provider: "codex" },
+          { id: "b", provider: "claude" },
+        ],
+        links: [],
+      });
+      await dashboard.observer.publish({
+        type: "battle_completed",
+        status: "complete",
+        implementationEligibility: [
+          {
+            contestantId: "a",
+            eligible: true,
+            artifactPaths: [],
+            validation: {
+              outcome: "passed",
+              attempts: [
+                {
+                  command: "npm test",
+                  cwd: "/tmp/a",
+                  exitCode: 0,
+                  signal: null,
+                  timedOut: false,
+                  attempts: 1,
+                  durationMs: 420,
+                  stdoutPath: "/tmp/a.stdout.log",
+                  stderrPath: "/tmp/a.stderr.log",
+                  termination: {
+                    cause: "exit",
+                    timeoutType: null,
+                    startedAt: "2026-08-30T19:18:18.000Z",
+                    finishedAt: "2026-08-30T19:18:18.420Z",
+                    lastOutputAt: "2026-08-30T19:18:18.300Z",
+                    escalation: [],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+        contestants: [
+          {
+            id: "a",
+            health: 100,
+            status: "survived",
+            checksPassed: 1,
+            checksTotal: 1,
+          },
+          {
+            id: "b",
+            health: 100,
+            status: "survived",
+            checksPassed: 1,
+            checksTotal: 1,
+          },
+        ],
+      });
+
+      browser = await chromium.launch({
+        executablePath: await chromiumExecutable(),
+        headless: true,
+      });
+      const page = await browser.newPage();
+      await page.goto(dashboard.url);
+
+      await expect
+        .poll(() => page.getByText("Fighter A · eligible").count())
+        .toBe(1);
+      expect(await page.getByText("Attempt 1 · exit").count()).toBe(1);
+      expect(await page.getByText("passed", { exact: true }).count()).toBe(1);
+    });
   },
 );

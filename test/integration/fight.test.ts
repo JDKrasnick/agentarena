@@ -543,6 +543,68 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(
       provisioning.filter((record) => record.commandResult).length,
     ).toBeLessThan(provisioning.length);
+    const summary = JSON.parse(
+      await readFile(outcome.state.artifacts.result!, "utf8"),
+    ) as {
+      implementationEligibility?: Array<{
+        contestantId: string;
+        eligible: boolean;
+        validation?: { outcome: string; attempts: unknown[] };
+      }>;
+    };
+    expect(summary.implementationEligibility).toHaveLength(2);
+    expect(
+      summary.implementationEligibility?.map((entry) => ({
+        contestantId: entry.contestantId,
+        eligible: entry.eligible,
+        outcome: entry.validation?.outcome,
+        attemptCount: entry.validation?.attempts.length,
+      })),
+    ).toEqual([
+      {
+        contestantId: "a",
+        eligible: true,
+        outcome: "passed",
+        attemptCount: 1,
+      },
+      {
+        contestantId: "b",
+        eligible: true,
+        outcome: "passed",
+        attemptCount: 1,
+      },
+    ]);
+    const completedEvent = (
+      await readFile(
+        path.join(
+          repositoryRoot,
+          ".agent-arena",
+          "runs",
+          outcome.state.runId,
+          "events.ndjson",
+        ),
+        "utf8",
+      )
+    )
+      .trim()
+      .split("\n")
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            type: string;
+            implementationEligibility?: unknown;
+          },
+      )
+      .findLast((event) => event.type === "battle_completed");
+    expect(completedEvent?.implementationEligibility).toEqual(
+      summary.implementationEligibility,
+    );
+    expect(await readFile(outcome.state.artifacts.battle!, "utf8")).toContain(
+      "Implementation eligibility and required-validation attempts",
+    );
+    expect(
+      await readFile(outcome.state.artifacts.battleHtml!, "utf8"),
+    ).toContain("Implementation eligibility and required-validation attempts");
   }, 60_000);
 
   it("provisions runtime and test dependencies for final focused checks", async () => {

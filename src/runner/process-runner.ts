@@ -312,7 +312,6 @@ async function supervise(
     : undefined;
   const publish = (stream: "stdout" | "stderr", text: string): void => {
     if (!text) return;
-    lastOutputAt = new Date().toISOString();
     if (stream === "stdout") stdout += text;
     else stderr += text;
     outputQueue = outputQueue.then(async () => {
@@ -340,15 +339,17 @@ async function supervise(
     }
   };
   subprocess.stdout?.on("data", (chunk: Buffer) => {
+    lastOutputAt = new Date().toISOString();
     const text = chunk.toString("utf8");
     if (decoder) {
       providerRawOutput += text;
       publishProviderUpdate(decoder.push(text));
     } else publish("stdout", redactors.stdout.push(text));
   });
-  subprocess.stderr?.on("data", (chunk: Buffer) =>
-    publish("stderr", redactors.stderr.push(chunk.toString("utf8"))),
-  );
+  subprocess.stderr?.on("data", (chunk: Buffer) => {
+    lastOutputAt = new Date().toISOString();
+    publish("stderr", redactors.stderr.push(chunk.toString("utf8")));
+  });
 
   const supervisor =
     subprocess.pid === undefined

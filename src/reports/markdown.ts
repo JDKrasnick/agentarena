@@ -18,6 +18,7 @@ import {
   resolveArtifactHref,
 } from "./presentation.js";
 import { qualityCategoryRows } from "../quality/presentation.js";
+import { projectImplementationEligibility } from "../outcomes/eligibility.js";
 
 function attackOwner(attack: Attack): string {
   return attack.origin.kind === "house" ? "House" : attack.origin.contestant;
@@ -175,6 +176,7 @@ function implementationReplay(
   state: RunState,
   contestants: ContestantResult[],
 ): string[] {
+  const eligibility = projectImplementationEligibility(state);
   return [
     "## Implementation and baseline",
     "",
@@ -187,6 +189,27 @@ function implementationReplay(
       return `| ${contestantLabel(state.config.contestants, contestant.id)} | ${invocationEvidence(state, contestant.implementation)} | ${artifactLink(state, "initial patch", contestant.initialPatchPath)} | ${checks.length ? checks.map((check) => checkCell(state, check)).join("<br>") : "NOT RUN"} |`;
     }),
     "",
+    ...(eligibility.length
+      ? [
+          "### Implementation eligibility and required-validation attempts",
+          "",
+          ...eligibility.flatMap((entry) => {
+            const label = contestantLabel(
+              state.config.contestants,
+              entry.contestantId,
+            );
+            return [
+              `- **${label}: ${entry.eligible ? "eligible" : "ineligible"}** (${entry.reasonCode ?? "eligible_patch"})${entry.validation ? ` — ${entry.validation.outcome.replaceAll("_", " ")}` : ""}`,
+              ...(entry.validation
+                ? requiredValidationAttemptSummary(entry.validation).map(
+                    (attempt) => `  - ${attempt}`,
+                  )
+                : []),
+            ];
+          }),
+          "",
+        ]
+      : []),
   ];
 }
 

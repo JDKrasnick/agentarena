@@ -10,6 +10,7 @@ import type {
   RequiredValidationEvidence,
   RoundId,
   Stage,
+  TerminalContestantDisposition,
 } from "../core/types.js";
 
 export interface DashboardContestant {
@@ -127,6 +128,7 @@ export interface DashboardState {
     recommendedId?: string;
     recommendationReason?: string;
     coverageConfidence?: string;
+    implementationEligibility?: TerminalContestantDisposition[];
     terminalOutcome?: {
       kind: string;
       reasonCode: string;
@@ -500,6 +502,13 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
           : {}),
         ...(event.coverageConfidence
           ? { coverageConfidence: event.coverageConfidence }
+          : {}),
+        ...(event.implementationEligibility
+          ? {
+              implementationEligibility: structuredClone(
+                event.implementationEligibility,
+              ),
+            }
           : {}),
         ...(event.terminalOutcome
           ? {

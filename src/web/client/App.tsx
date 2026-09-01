@@ -748,14 +748,21 @@ export function ResultScreen({
         })}
       </div>
 
-      {state.result.terminalOutcome?.contestants?.length ? (
+      {(
+        state.result.implementationEligibility ??
+        state.result.terminalOutcome?.contestants
+      )?.length ? (
         <section className="result-validation" aria-label="Validation evidence">
           <header>
             <h2>Eligibility and validation evidence</h2>
             <span>Required checks</span>
           </header>
           <div>
-            {state.result.terminalOutcome.contestants.map((entry) => (
+            {(
+              state.result.implementationEligibility ??
+              state.result.terminalOutcome?.contestants ??
+              []
+            ).map((entry) => (
               <article key={entry.contestantId}>
                 <h3>
                   Fighter {entry.contestantId.toUpperCase()} ·{" "}

@@ -49,6 +49,52 @@ function attack(state: RunState, overrides: Partial<Attack> = {}): Attack {
 }
 
 describe("battle reports", () => {
+  it("renders successful implementation eligibility evidence in every report", () => {
+    const state = makeRunState();
+    for (const contestant of Object.values(state.contestants)) {
+      contestant.checks.push({
+        id: "initial-required",
+        kind: "required",
+        status: "passed",
+        validation: {
+          outcome: "passed",
+          attempts: [
+            {
+              command: "npm test",
+              cwd: `/tmp/${contestant.id}`,
+              exitCode: 0,
+              signal: null,
+              timedOut: false,
+              attempts: 1,
+              durationMs: 420,
+              stdoutPath: `/tmp/${contestant.id}.out`,
+              stderrPath: `/tmp/${contestant.id}.err`,
+              termination: {
+                cause: "exit",
+                timeoutType: null,
+                startedAt: "2026-08-30T19:18:18.000Z",
+                finishedAt: "2026-08-30T19:18:18.420Z",
+                lastOutputAt: "2026-08-30T19:18:18.300Z",
+                escalation: [],
+              },
+            },
+          ],
+        },
+      });
+    }
+
+    expect(renderConsoleSummary(state)).toContain(
+      "Implementation eligibility and required-validation attempts",
+    );
+    expect(renderBattleReport(state)).toContain(
+      "Implementation eligibility and required-validation attempts",
+    );
+    expect(renderBattleHtml(state)).toContain(
+      "Implementation eligibility and required-validation attempts",
+    );
+    expect(renderBattleVisual(state)).toContain("Eligibility: eligible");
+  });
+
   it("labels provider-call limits as sealed-round pressure thresholds", () => {
     const state = makeRunState();
 

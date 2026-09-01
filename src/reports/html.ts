@@ -19,6 +19,7 @@ import {
   resolveArtifactHref,
 } from "./presentation.js";
 import { qualityCategoryRows } from "../quality/presentation.js";
+import { projectImplementationEligibility } from "../outcomes/eligibility.js";
 
 function escapeHtml(value: string): string {
   return value.replace(
@@ -163,6 +164,7 @@ export function renderBattleHtml(state: RunState): string {
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Arena — pre-review result</title><style>:root{color-scheme:dark}body{margin:0;background:#0b1017;color:#edf3f8;font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}main{max-width:1180px;margin:auto;padding:48px}.panel{background:#121b26;border:1px solid #36526b;border-radius:14px;padding:24px;margin-top:24px}h1{margin:0}p{color:#d7e0ea}table{border-collapse:collapse;width:100%;margin-top:20px}th,td{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid #36526b}td div{margin-top:6px;color:#d7e0ea;font-size:13px}pre{max-width:560px;overflow:auto;white-space:pre-wrap}</style></head><body><main><h1>Agent Arena — pre-review result</h1><div class="panel"><strong>${escapeHtml(terminal.kind.toUpperCase())} · ${escapeHtml(terminal.reasonCode)}</strong><p>${escapeHtml(terminal.reason)}</p><p>Recommended production patch: ${escapeHtml(recommended)}.</p><p>No review, attack, repair, quality comparison, or coverage stage ran.</p><p>Provider usage: ${escapeHtml(conciseUsage(usageSummary))}</p><table><thead><tr><th>Contestant</th><th>Eligibility</th><th>Cause</th><th>Validation evidence</th></tr></thead><tbody>${rows}</tbody></table></div></main></body></html>`;
   }
   const contestants = reportContestants(state);
+  const implementationEligibility = projectImplementationEligibility(state);
   const outcome = reportOutcome(state);
   const winnerId = outcome.kind === "winner" ? outcome.winner : undefined;
   const winner = winnerId
@@ -241,6 +243,24 @@ export function renderBattleHtml(state: RunState): string {
     </article>`;
     })
     .join("\n");
+  const eligibilityRows = implementationEligibility.length
+    ? implementationEligibility
+        .map((entry) => {
+          const validation = entry.validation;
+          return `<tr><td>${escapeHtml(contestantLabel(state.config.contestants, entry.contestantId))}</td><td>${entry.eligible ? chip("eligible", "pass") : chip("ineligible", "fail")}</td><td>${escapeHtml(entry.reasonCode ?? "eligible_patch")}</td><td>${
+            validation
+              ? `<strong>${escapeHtml(validation.outcome.replaceAll("_", " "))}</strong>${requiredValidationAttemptSummary(
+                  validation,
+                )
+                  .map((attempt) => `<div>${escapeHtml(attempt)}</div>`)
+                  .join(
+                    "",
+                  )}${validation.attempts.map((attempt, index) => (attempt.failureExcerpt ? `<details><summary>Attempt ${String(index + 1)} failure excerpt</summary><pre>${escapeHtml(attempt.failureExcerpt)}</pre></details>` : "")).join("")}`
+              : "not recorded"
+          }</td></tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="4">Implementation eligibility was not recorded for this legacy or incomplete run.</td></tr>`;
   const qualityRows = contestants
     .flatMap((contestant) => {
       const facts = state.patchQualityFacts[contestant.id];
@@ -444,6 +464,7 @@ export function renderBattleHtml(state: RunState): string {
 </style></head><body><main>
 <header class="masthead"><div><p class="eyebrow">AGENT ARENA · EVIDENCE-LINKED BATTLE DOSSIER</p><h1>${escapeHtml(outcomeHeading)}</h1><p class="summary">${escapeHtml(state.ranking?.reason ?? "This run did not reach a final ranking.")} This dossier separates proven defects, unsuccessful attacks, verified checks, and the recommendation so the score is explainable.</p></div><nav class="artifacts" aria-label="Battle artifacts">${link(state, "Full report", state.artifacts.battle)} · ${link(state, "Raw result", state.artifacts.result)} · ${link(state, "Share image", state.artifacts.battleVisual)}</nav></header>
 <section class="section"><h2>Final decision</h2><div class="contestants">${contestantCards}</div></section>
+<section class="section"><h2>Implementation eligibility and required-validation attempts</h2><div class="table-wrap" tabindex="0"><table><thead><tr><th>Contestant</th><th>Eligibility</th><th>Cause</th><th>Validation evidence</th></tr></thead><tbody>${eligibilityRows}</tbody></table></div></section>
 <section class="section"><h2>Provider usage</h2><p class="note">${escapeHtml(conciseUsage(usageSummary))}</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Dimension</th><th>Value</th><th>Invocations</th><th>Provider time</th><th>Processed tokens</th><th>Cost</th></tr></thead><tbody>${usageRows}</tbody></table></div></section>
 <section class="section"><h2>Effort and adaptive coverage</h2><p class="note"><strong>${escapeHtml(state.config.resolvedEffortProfile?.tier ?? state.config.effortMode)}</strong> · ${state.config.fixedRounds ? `${String(state.config.rounds)} exact rounds` : `${String(state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds)} planned, up to ${String(state.config.resolvedEffortProfile?.maxRounds ?? state.config.rounds)}`} · ${escapeHtml(state.adaptiveCompletion?.reason ?? "run in progress or fixed-round completion")}. Skipped briefs: ${escapeHtml(state.adaptiveCompletion?.skippedBriefs.join(", ") || "none")}.</p><p class="note">Configured budget: ${escapeHtml(effortBudget)}.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Boundary</th><th>Wall time</th><th>Calls</th><th>Tokens</th><th>Converged</th><th>Signal</th><th>Low-signal streak</th><th>Extension triggers</th><th>Exact decision</th></tr></thead><tbody>${adaptiveRows}</tbody></table></div></section>
 ${laneCoverage}

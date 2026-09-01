@@ -12,6 +12,7 @@ import {
   truncateReportText,
 } from "./presentation.js";
 import { conciseUsage, readRunUsageSummarySync } from "../telemetry/usage.js";
+import { projectImplementationEligibility } from "../outcomes/eligibility.js";
 
 export interface ConsoleRenderOptions {
   color?: boolean;
@@ -85,6 +86,7 @@ export function renderConsoleSummary(
     ].join("\n");
   }
   const contestants = reportContestants(state);
+  const implementationEligibility = projectImplementationEligibility(state);
   const defects = reportDefects(state);
   const outcomeTotals = reportOutcomeTotals(state);
   const unresolved = defects.filter((defect) => defect.active);
@@ -209,6 +211,20 @@ export function renderConsoleSummary(
       );
       return `${contestantLabel(state.config.contestants, contestant.id).padEnd(12)} ${requiredDisplay.padEnd(14 + (color ? ANSI.green.length + ANSI.reset.length : 0))} ${String(contestant.finalHealth).padStart(3)} HP  ${String(outcome?.activeDefectDamage ?? 0).padStart(3)} HP  ${String(outcome?.permanentRecoil ?? contestant.healthLedger.permanentRecoil).padStart(3)} HP`;
     }),
+    ...(implementationEligibility.length
+      ? [
+          "",
+          "Implementation eligibility and required-validation attempts",
+          ...implementationEligibility.flatMap((entry) => [
+            `${contestantLabel(state.config.contestants, entry.contestantId)}: ${entry.eligible ? "eligible" : "ineligible"} (${entry.reasonCode ?? "eligible_patch"})${entry.validation ? ` · ${entry.validation.outcome}` : ""}`,
+            ...(entry.validation
+              ? requiredValidationAttemptSummary(entry.validation).map(
+                  (attempt) => `  ${attempt}`,
+                )
+              : []),
+          ]),
+        ]
+      : []),
     "",
     style(
       state.integrity === "assisted"

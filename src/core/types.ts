@@ -1616,6 +1616,9 @@ export const TerminalContestantDispositionSchema = z.object({
   artifactPaths: z.array(z.string().min(1)),
   validation: RequiredValidationEvidenceSchema.optional(),
 });
+export type TerminalContestantDisposition = z.infer<
+  typeof TerminalContestantDispositionSchema
+>;
 
 /** A disposition reached before attack/review work is eligible to begin. */
 export const TerminalOutcomeV2Schema = z.object({

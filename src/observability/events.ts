@@ -6,6 +6,7 @@ import {
   RequiredValidationEvidenceSchema,
   RoundIdSchema,
   StageSchema,
+  TerminalContestantDispositionSchema,
   type ContestantId,
   type RoundId,
   type Stage,
@@ -231,6 +232,10 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
     recommendationReason: z.string().optional(),
     coverageConfidence: z
       .enum(["full_confidence", "reduced_confidence", "provisional"])
+      .optional(),
+    implementationEligibility: z
+      .array(TerminalContestantDispositionSchema)
+      .max(2)
       .optional(),
     terminalOutcome: z
       .object({
