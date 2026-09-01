@@ -136,8 +136,10 @@ describe("process runner supervision", () => {
   it("preserves an early failure diagnostic alongside a bounded output tail", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-shell-excerpt-"));
     const program = [
-      'console.log("AssertionError: expected 1, received 2")',
-      'for (let index = 0; index < 100; index += 1) console.log("teardown line " + String(index) + " " + "é".repeat(50))',
+      'console.log("0 failed during discovery")',
+      'for (let index = 0; index < 70; index += 1) console.log("setup line " + String(index))',
+      'console.log("src/runner.ts(42,3): error TS7030: Not all code paths return a value.")',
+      'for (let index = 0; index < 70; index += 1) console.log("teardown line " + String(index) + " " + "é".repeat(50))',
       "process.exit(1)",
     ].join(";");
     const result = await runShellCommand(
@@ -149,14 +151,41 @@ describe("process runner supervision", () => {
       },
     );
 
-    expect(result.failureExcerpt).toContain(
-      "AssertionError: expected 1, received 2",
-    );
-    expect(result.failureExcerpt).toContain("teardown line 99");
+    expect(result.failureExcerpt).toContain("TS7030");
+    expect(result.failureExcerpt).toContain("teardown line 69");
     expect(
       Buffer.byteLength(result.failureExcerpt ?? "", "utf8"),
     ).toBeLessThanOrEqual(6_000);
   });
+
+  it.skipIf(!["darwin", "linux"].includes(process.platform))(
+    "records cleanup escalation when a command is cancelled",
+    async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), "arena-cancel-"));
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 100);
+
+      const result = await runProcess({
+        executable: process.execPath,
+        args: [
+          "-e",
+          'console.log("ready"); setInterval(() => undefined, 1000)',
+        ],
+        cwd: root,
+        timeoutMs: 5_000,
+        logPrefix: path.join(root, "logs", "cancelled"),
+        signal: controller.signal,
+      });
+
+      expect(result.termination?.cause).toBe("cancelled");
+      expect(result.deadline).toBeUndefined();
+      expect(
+        result.termination?.escalation.some(
+          (event) => event.signal === "SIGTERM",
+        ),
+      ).toBe(true);
+    },
+  );
 
   it.skipIf(!["darwin", "linux"].includes(process.platform))(
     "never signals an unrelated process",

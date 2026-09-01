@@ -244,6 +244,7 @@ interface SupervisedResult {
   timedOut: boolean;
   cancelled: boolean;
   lastOutputAt: string | null;
+  cleanup?: ProcessCleanupResult;
   spawnError?: unknown;
   deadline?: NonNullable<CommandResult["deadline"]>;
   providerEvents?: readonly ProviderActivity[];
@@ -277,7 +278,6 @@ async function supervise(
       reject: false as const,
       all: false as const,
       ...(options.input === undefined ? {} : { input: options.input }),
-      ...(options.signal === undefined ? {} : { cancelSignal: options.signal }),
     };
     subprocess = options.shell
       ? execaCommand(options.executable, {
@@ -403,6 +403,7 @@ async function supervise(
       timedOut: expiredAt !== undefined,
       cancelled,
       lastOutputAt,
+      ...(cleanupResult ? { cleanup: cleanupResult } : {}),
       ...(expiredAt !== undefined && cleanupResult !== undefined
         ? { deadline: deadlineResult(expiredAt, cleanupResult) }
         : {}),
@@ -427,6 +428,7 @@ async function supervise(
       cancelled,
       lastOutputAt,
       spawnError,
+      ...(cleanupResult ? { cleanup: cleanupResult } : {}),
       ...(expiredAt !== undefined && cleanupResult !== undefined
         ? { deadline: deadlineResult(expiredAt, cleanupResult) }
         : {}),
@@ -455,17 +457,27 @@ function failureExcerpt(
   if (!output) return undefined;
   const lines = output.split(/\r?\n/u);
   const tailStart = Math.max(0, lines.length - 60);
-  const firstDiagnostic = lines.findIndex((line) =>
-    /assert|error|fail|expected|received|exception|fatal|TS\d{4}|not ok|[×✖]/iu.test(
-      line,
-    ),
+  const diagnosticScore = (line: string): number => {
+    if (/TS\d{4}|assertion(?:error| failed)|not ok/iu.test(line)) return 4;
+    if (/\berror\b|exception|fatal|[×✖]/iu.test(line)) return 3;
+    if (/expected|received/iu.test(line)) return 2;
+    if (/fail/iu.test(line)) return 1;
+    return 0;
+  };
+  const selectedDiagnostic = lines.reduce(
+    (best, line, index) => {
+      const score = diagnosticScore(line);
+      return score >= best.score && score > 0 ? { index, score } : best;
+    },
+    { index: -1, score: 0 },
   );
+  const diagnosticIndex = selectedDiagnostic.index;
   const diagnostic =
-    firstDiagnostic >= 0 && firstDiagnostic < tailStart
+    diagnosticIndex >= 0 && diagnosticIndex < tailStart
       ? lines
           .slice(
-            Math.max(0, firstDiagnostic - 2),
-            Math.min(lines.length, firstDiagnostic + 8),
+            Math.max(0, diagnosticIndex - 2),
+            Math.min(lines.length, diagnosticIndex + 8),
           )
           .join("\n")
       : undefined;
@@ -608,7 +620,7 @@ async function run(
       startedAt,
       finishedAt,
       lastOutputAt: result.lastOutputAt,
-      escalation: result.deadline?.signalEscalation ?? [],
+      escalation: result.cleanup?.signalEscalation ?? [],
     },
     ...(result.deadline ? { deadline: result.deadline } : {}),
     ...(transportFailures.length > 0 ? { transportFailures } : {}),
