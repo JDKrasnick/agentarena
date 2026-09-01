@@ -280,11 +280,43 @@ function reviewDescriptiveTextLimit(
   if (key === "statement" || key === "invariant") return 1_000;
   if (key === "expected_behavior" || key === "task_source_rationale")
     return 1_500;
-  if (key === "symbol") return 300;
   if (key === "summary" && parent === "regression_test_plan") return 1_500;
   if (/^\d+$/u.test(key) && parent === "trigger_sequence") return 500;
   if (/^\d+$/u.test(key) && parent === "references") return 300;
   return undefined;
+}
+
+function isStrictBoundaryString(path: readonly PropertyKey[]): boolean {
+  const key = String(path.at(-1) ?? "");
+  const parent = String(path.at(-2) ?? "");
+  return (
+    [
+      "focusedCommand",
+      "focused_command",
+      "reproduction",
+      "path",
+      "symbol",
+      "selector",
+      "target",
+      "trust",
+      "kind",
+      "family",
+      "profile",
+      "id",
+      "challengeAdjudicationId",
+    ].includes(key) ||
+    (path.includes("browserProbe") && key !== "expectedBehavior") ||
+    /(?:Id|Ids|_id|_ids)$/u.test(key) ||
+    [
+      "paths",
+      "sharedSupportPaths",
+      "suggested_paths",
+      "references",
+      "task_source_ids",
+      "required_capability_ids",
+      "requiredCapabilities",
+    ].includes(parent)
+  );
 }
 
 function normalizeEntry(
@@ -425,7 +457,18 @@ function normalizeEntry(
         );
         return "test_run";
       }
+      if (current === "execution") {
+        record(
+          path,
+          current,
+          "tool_summary",
+          "v1.review.provenance.execution_alias",
+        );
+        return "tool_summary";
+      }
+      return current;
     }
+    if (isStrictBoundaryString(path)) return current;
     let text = current;
     const normalizedText = text
       .replaceAll("\r\n", "\n")
@@ -449,15 +492,6 @@ function normalizeEntry(
         `v1.review.text.truncate_utf8_${String(descriptiveLimit)}`,
       );
       text = truncated;
-    }
-    if (isReviewProvenanceKind && text.toLowerCase() === "execution") {
-      record(
-        path,
-        text,
-        "tool_summary",
-        "v1.review.provenance.execution_alias",
-      );
-      return "tool_summary";
     }
     if (key === "proposedSeverity") {
       const normalized = text.toLowerCase();

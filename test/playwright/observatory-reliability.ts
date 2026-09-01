@@ -258,7 +258,7 @@ try {
   await fallbackPage.getByRole("button", { name: "Finish session" }).waitFor();
   assert.equal(
     await fallbackPage.locator(".app-shell").getAttribute("data-live-stage"),
-    "final_validate",
+    "complete",
   );
   await fallbackPage.screenshot({
     path: path.join(artifacts, "software-rendering.png"),
