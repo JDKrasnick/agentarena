@@ -841,14 +841,12 @@ export class CommandAgentAdapter implements AgentAdapter {
           ? "cancelled"
           : usableTerminalResult
             ? "succeeded"
-            : command.transportFailures?.length &&
-                (command.timedOut || command.exitCode !== 0) &&
-                !usableTerminalResult
+            : command.failureClass === "arena_infrastructure"
               ? "infrastructure_error"
-              : command.failureClass === "arena_infrastructure"
-                ? "infrastructure_error"
-                : command.timedOut
-                  ? "timed_out"
+              : command.timedOut
+                ? "timed_out"
+                : command.transportFailures?.length && command.exitCode !== 0
+                  ? "infrastructure_error"
                   : command.exitCode === 0
                     ? "succeeded"
                     : "failed",

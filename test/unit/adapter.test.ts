@@ -290,6 +290,17 @@ describe("implementation transport classification", () => {
     expect(invocation.command?.transportFailures?.[0]?.kind).toBe("mcp_auth");
     expect(invocation.status).toBe("succeeded");
   });
+
+  it("classifies a harness-enforced deadline as timed out despite transport noise", async () => {
+    const invocation = await invoke(
+      'console.error("transport connection lost"); setInterval(() => undefined, 1000)',
+      1_000,
+    );
+
+    expect(invocation.command?.timedOut).toBe(true);
+    expect(invocation.command?.transportFailures).toHaveLength(1);
+    expect(invocation.status).toBe("timed_out");
+  });
 });
 
 describe("provider connectivity probing", () => {
