@@ -128,12 +128,12 @@ export function invocationStatusSentence(id: string, status: string): string {
 const stageNames: Record<string, string> = {
   preflight: "Preflight",
   implement: "Implementation",
-  initial_validation: "Validation",
+  initial_validate: "Validation",
   review_attacks: "Scout weaknesses",
   collect_attacks: "Mount attacks",
   validate_attacks: "Verify attacks",
   repair: "Repair",
-  final_validation: "Final validation",
+  final_validate: "Final validation",
   complete: "Complete",
 };
 

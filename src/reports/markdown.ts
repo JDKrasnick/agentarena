@@ -14,9 +14,11 @@ import {
   reportOutcome,
   reportOutcomeTotals,
   reportRounds,
+  requiredValidationAttemptSummary,
   resolveArtifactHref,
 } from "./presentation.js";
 import { qualityCategoryRows } from "../quality/presentation.js";
+import { projectImplementationEligibility } from "../outcomes/eligibility.js";
 
 function attackOwner(attack: Attack): string {
   return attack.origin.kind === "house" ? "House" : attack.origin.contestant;
@@ -35,6 +37,13 @@ function attackEffect(attack: Attack): string {
 
 function tableCell(value: string): string {
   return value.replaceAll("|", "\\|").replaceAll(/\r?\n/gu, " ");
+}
+
+function markdownCode(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 function artifactLink(
@@ -167,6 +176,7 @@ function implementationReplay(
   state: RunState,
   contestants: ContestantResult[],
 ): string[] {
+  const eligibility = projectImplementationEligibility(state);
   return [
     "## Implementation and baseline",
     "",
@@ -179,6 +189,27 @@ function implementationReplay(
       return `| ${contestantLabel(state.config.contestants, contestant.id)} | ${invocationEvidence(state, contestant.implementation)} | ${artifactLink(state, "initial patch", contestant.initialPatchPath)} | ${checks.length ? checks.map((check) => checkCell(state, check)).join("<br>") : "NOT RUN"} |`;
     }),
     "",
+    ...(eligibility.length
+      ? [
+          "### Implementation eligibility and required-validation attempts",
+          "",
+          ...eligibility.flatMap((entry) => {
+            const label = contestantLabel(
+              state.config.contestants,
+              entry.contestantId,
+            );
+            return [
+              `- **${label}: ${entry.eligible ? "eligible" : "ineligible"}** (${entry.reasonCode ?? "eligible_patch"})${entry.validation ? ` — ${entry.validation.outcome.replaceAll("_", " ")}` : ""}`,
+              ...(entry.validation
+                ? requiredValidationAttemptSummary(entry.validation).map(
+                    (attempt) => `  - ${attempt}`,
+                  )
+                : []),
+            ];
+          }),
+          "",
+        ]
+      : []),
   ];
 }
 
@@ -387,6 +418,34 @@ export function renderBattleReport(state: RunState): string {
             (id) =>
               `| ${contestantLabel(state.config.contestants, id)} | ineligible | ${terminal.reasonCode} | ${terminal.artifactPaths.join("<br>") || "none"} |`,
           );
+    const validationEvidence =
+      terminal.version === 2
+        ? terminal.contestants.flatMap((entry) => {
+            if (!entry.validation) return [];
+            const label = contestantLabel(
+              state.config.contestants,
+              entry.contestantId,
+            );
+            return [
+              `### ${label} required validation — ${entry.validation.outcome.replaceAll("_", " ")}`,
+              "",
+              ...requiredValidationAttemptSummary(entry.validation).map(
+                (attempt) => `- ${attempt}`,
+              ),
+              "",
+              ...entry.validation.attempts.flatMap((attempt, index) =>
+                attempt.failureExcerpt
+                  ? [
+                      `Attempt ${String(index + 1)} failure excerpt:`,
+                      "",
+                      `<pre><code>${markdownCode(attempt.failureExcerpt)}</code></pre>`,
+                      "",
+                    ]
+                  : [],
+              ),
+            ];
+          })
+        : [];
     return [
       "# Agent Arena Pre-Review Result",
       "",
@@ -411,6 +470,7 @@ export function renderBattleReport(state: RunState): string {
       "| --- | --- | --- | --- |",
       ...dispositions,
       "",
+      ...validationEvidence,
       "Human review is required before applying any recommended patch.",
       "",
     ].join("\n");

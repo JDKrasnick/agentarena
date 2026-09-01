@@ -109,11 +109,18 @@ status reporting.
 New runs write the v2 pre-review contract with an overall terminal status and a
 separate eligibility, cause code, and diagnostic-artifact list for each
 contestant; completed v1 records remain readable. Classification precedence is
-external cancellation, harness infrastructure, provider transport/MCP/auth or
-reconnect evidence, contestant timeout or failed invocation, then patch
-applicability and required validation. Transport evidence supersedes timeout or
-nonzero exit only when no usable implementation result was produced. Aggregate
-provider initialization metadata is ignored for transport classification.
+external cancellation, harness infrastructure, a clean harness-enforced
+timeout, provider transport/MCP/auth or reconnect evidence, contestant failure,
+then patch applicability and required validation. Transport evidence supersedes
+a nonzero exit only when no usable implementation result was produced; it does
+not reclassify an Arena-enforced timeout. Aggregate provider initialization
+metadata is ignored for transport classification.
+Every required-validation attempt persists its exit code, signal, wall-clock
+timeout state, elapsed and last-output times, termination escalation, logs, and
+an exact bounded failure excerpt. Deterministic assertion, typecheck, lint, and
+build exits are not retried. A timeout or runner-shaped termination receives one
+clean retry against the same patch; disagreement makes validation unstable and
+the run inconclusive instead of producing an ordinary failed-patch forfeit.
 Optional MCP startup warnings remain in diagnostic logs but do not escalate
 when the provider exits successfully or continues useful work. An
 invocation-level transport failure stops the peer implementation with a
@@ -339,9 +346,12 @@ Before focused failure analysis, each agent receives a separate
 `review_minutes` budget for read-only inspection of the opponent's frozen patch.
 The budget defaults to 10 minutes and has a 10-minute ceiling. Every provider
 and judge invocation records normalized message, tool lifecycle, progress, and
-result activity without tool arguments or private reasoning. A review deadline
-still terminates and cleans up the owned process tree. Only a complete
-schema-valid `valid`, `valid_empty`, or `partial` file with at least one
+result activity without tool arguments or private reasoning. The configured
+budget is an idle timeout: recognized activity moves the soft deadline forward,
+while a separate absolute cap at three times the budget terminates and cleans
+up the owned process tree even if activity continues. Malformed records,
+stderr chatter, and transport keepalives do not refresh the idle deadline. Only
+a complete schema-valid `valid`, `valid_empty`, or `partial` file with at least one
 accepted finding already present after cleanup is salvaged into the normal
 handoff path; the underlying invocation stays `timed_out`. Invalid, empty
 partial, and missing output follow the existing one-retry path.
@@ -572,6 +582,17 @@ remains in a shared app-data file with atomic writes rather than depending on a
 shared Chromium profile. The command waits for a ready signal before reporting
 success; an early exit, spawn error, or launch timeout is an explicit display
 failure and is not classified as a battle failure or user cancellation.
+The loopback stream carries monotonically revisioned snapshots and bounded
+snapshot heartbeats. `Live` means a recent snapshot has passed through a React
+commit and browser paint boundary; an open stream alone is insufficient. The
+badge changes to `Stale` after the freshness bound and to `Reconnecting` when
+the stream disconnects. Initial load, reload, and renderer recovery fetch the
+current `/api/state` revision, reject older racing responses, and never affect
+the battle lifecycle. Each Electron run uses an isolated in-memory profile with
+background throttling disabled and explicitly invalidates the compositor after
+paint acknowledgement. Hardware acceleration is the supported default;
+`AGENT_ARENA_SOFTWARE_RENDERING=1` provides a diagnostic software-rendering
+fallback for affected macOS hosts.
 
 Fighter cards open a full-page drill-down within the desktop window. The detail
 view exposes recorded invocations, output, checks, health changes, attack
@@ -1339,12 +1360,16 @@ Failures should be useful and recoverable:
 - A contestant that exceeds a declared implementation or repair budget in an
   otherwise healthy environment fails that stage; a process-launch, provider,
   authentication, or network failure is infrastructure and does not cost HP.
-- Provider and shell-validation deadlines return control within the configured
-  budget plus a 1.5-second cleanup grace. The harness closes its output pipes,
+- Provider invocations use the configured budget as an idle deadline, extended
+  by recognized meaningful activity, with a three-times-budget absolute cap.
+  Shell validation retains a fixed deadline. Either timeout returns control
+  within its applicable deadline plus a 1.5-second cleanup grace. The harness
+  closes its output pipes,
   terminates only identity-verified run-owned descendants even after session or
   process-group changes, reaps the direct child, and records signal escalation,
-  cleanup completion, duration, survivors, and transport or MCP failures
-  independently.
+  cleanup completion, timeout kind, last progress, elapsed duration, survivors,
+  and transport or MCP failures independently. A clean harness-enforced timeout
+  is `timed_out`, not a generic infrastructure error.
 - If both implementations still fail required validation after round 1's repair,
   there is no winner.
 - If an attack is invalid, flaky, blocked, or only self-defeating, it misses,

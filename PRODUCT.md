@@ -72,6 +72,16 @@ fights can remain open concurrently without sharing renderer or session state.
 The theme preference remains an atomically written app-wide file outside those
 profiles, and Electron launch failures are reported as display failures rather
 than battle failures or user cancellation.
+The desktop connection badge is snapshot- and paint-aware. The loopback server
+sends revisioned snapshots plus bounded heartbeats; `Live` appears only after a
+recent revision has committed through the renderer's paint cycle. Quiet or
+disconnected streams become `Stale` or `Reconnecting`, and reconnects and
+reloads rehydrate from the current `/api/state` revision without mutating the
+fight. Electron uses a per-run isolated profile, disables background throttling,
+requests a compositor repaint after each committed revision, and reloads its
+loopback URL after a renderer failure. Normal GPU composition remains the
+default; `AGENT_ARENA_SOFTWARE_RENDERING=1` is the documented diagnostic
+fallback.
 
 Attack telemetry distinguishes mounting, landed, and evidence-revision events.
 The observatory shows their live counts and timeline, and uses a brief red
@@ -257,6 +267,12 @@ The same evidence and health system supports three topologies:
 Before any review or attack work, implementation eligibility is sealed as
 versioned terminal metadata with one eligibility disposition and diagnostic
 trail per contestant. Legacy v1 records remain readable; new runs write v2.
+Every required-validation attempt records its exit code, signal, wall-clock
+timeout state, elapsed and last-output times, termination escalation, logs, and
+an exact bounded failure excerpt. Deterministic assertion, typecheck, lint, and
+build exits fail immediately; timeouts and runner-shaped terminations receive
+one clean retry against the same patch. Disagreeing attempts make eligibility
+unstable and the run inconclusive instead of eliminating a contestant.
 In a duel, exactly one production patch that
 applies and passes required validation wins by forfeit and is the only
 reviewable recommendation; no eligible patch is inconclusive. Provider,
@@ -265,17 +281,17 @@ not forfeits. A failed frozen incumbent in catch-up ends inconclusively before
 the challenger is invoked, and siege never recommends its test-only attacker.
 
 Pre-review classification is deterministic: external cancellation outranks
-harness infrastructure, which outranks provider transport/authentication/MCP
-evidence, which outranks contestant timeout or invocation failure, which
-outranks patch applicability and required validation. Transport evidence
-overrides a timeout or nonzero exit only when the invocation produced no usable
-result. Aggregate provider initialization metadata is ignored for transport
-classification. Optional MCP startup warnings remain in diagnostic logs but do
-not constitute invocation-level transport evidence when the provider exits
-successfully or continues useful work. A transport failure cancels the peer
-implementation through a phase-local controller. The peer's diagnostics are
-retained, and the peer is labeled as cancelled by the transport event rather
-than blamed for a failure.
+harness infrastructure, which outranks a clean harness-enforced timeout, which
+outranks provider transport/authentication/MCP evidence, contestant failure,
+patch applicability, and required validation. Transport evidence overrides a
+nonzero exit only when the invocation produced no usable result; it cannot
+reclassify a timeout enforced by Arena. Aggregate provider initialization
+metadata is ignored for transport classification. Optional MCP startup warnings
+remain in diagnostic logs but do not constitute invocation-level transport
+evidence when the provider exits successfully or continues useful work. A
+transport failure cancels the peer implementation through a phase-local
+controller. The peer's diagnostics are retained, and the peer is labeled as
+cancelled by the transport event rather than blamed for a failure.
 
 Every provider-backed stage has one bounded automatic recovery path after its
 normal targeted retry establishes a causal provider infrastructure failure and
@@ -572,9 +588,11 @@ In each round, the harness first freezes both current implementation patches.
 Each eligible reviewer then gets a dedicated read-only budget, configured by
 `review_minutes` separately from the focused test-generation budget. The budget
 defaults to 10 minutes, accepts smaller positive values, and cannot
-exceed 10 minutes. At the deadline the harness terminates the owned process
-tree, then accepts an already-written review only when fault-isolated parsing
-classifies the complete file as `valid`, `valid_empty`, or a `partial` with at
+exceed 10 minutes. That value is the provider's idle budget: recognized
+messages, tool lifecycle events, progress, and completion move the soft
+deadline forward, while a separate absolute cap at three times the budget
+always terminates the owned process tree. After either timeout, fault-isolated
+parsing classifies the complete file as `valid`, `valid_empty`, or a `partial` with at
 least one accepted finding. The review record is marked salvaged while its
 invocation remains `timed_out`; invalid, empty partial, and missing files
 receive the ordinary targeted retry and may lose coverage.
@@ -584,9 +602,10 @@ stdout: assistant messages, tool starts and finishes, progress, and completion.
 The harness retains redacted assistant text plus normalized event, stdout, and
 stderr artifacts, session ID when available, counts, timestamps, current open
 tool, decoding warnings, and deadline cleanup facts. Unknown provider event
-variants never fail an invocation. Activity and silence are observability only;
-neither can change judging, score, coverage, or timeout behavior. The review
-produces a v2 trusted evidence-handoff packet under
+variants never fail an invocation. Recognized activity extends only the
+provider idle deadline; malformed records, stderr chatter, and transport
+keepalives do not. Activity never changes judging, score, or coverage. The
+review produces a v2 trusted evidence-handoff packet under
 [`docs/TRUSTED_EVIDENCE_HANDOFF_RFC.md`](docs/TRUSTED_EVIDENCE_HANDOFF_RFC.md).
 The packet contains harness-attested target and permission fingerprints plus at
 most 12 ordered reviewer hypotheses naming the invariant, observations and
@@ -1001,11 +1020,14 @@ FINAL_VALIDATE
 
 Agents cannot skip required stages simply because they believe their work is complete.
 
-Every provider and validation command runs under the same hard deadline
-contract. The harness tracks run-owned descendants across process-group and
+Validation commands retain a fixed hard deadline. Provider invocations use the
+configured phase budget as an idle timeout, extend that soft deadline on
+recognized meaningful activity, and retain a three-times-budget absolute
+emergency cap. The harness tracks run-owned descendants across process-group and
 session changes, stops reading inherited output pipes at expiry, terminates and
 reaps the owned tree within a documented cleanup grace period, and verifies
-process identity before every signal. Reports record deadline expiry, signal
+process identity before every signal. Reports record the timeout kind, last
+progress timestamp, elapsed duration, deadline expiry, signal
 escalation, whether cleanup completed, cleanup duration, any surviving descendants, and detected
 transport, reconnect, or MCP authentication failures separately.
 

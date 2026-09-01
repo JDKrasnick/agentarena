@@ -111,7 +111,9 @@ delivery:
 
 `review_minutes` defaults to `10`, accepts positive lower values, and rejects
 values above `10`. Provider progress is decoded into safe activity events and
-diagnostic artifacts; silence never ends a call before its configured deadline.
+diagnostic artifacts. Recognized activity extends the configured idle deadline;
+a separate three-times-budget absolute cap prevents noisy or stuck calls from
+running forever.
 
 `effort` defaults to `auto`; the judge selects an ultra-low through ultra-high
 profile from task complexity and risk, and the harness stops on convergence or
@@ -133,6 +135,14 @@ by default. Pass `--no-window` to use the Ink observatory in an interactive TTY
 or stable line-oriented output when redirected or running in CI. The explicit
 `--display window|terminal|plain` modes remain available, and the legacy
 `dashboard` value aliases `window` without opening a browser.
+
+`Live` means the window recently received and painted a revisioned dashboard
+snapshot. If heartbeats stop, the badge changes to **Stale**; if the stream
+disconnects, it changes to **Reconnecting**. Reloading the window rehydrates the
+latest server snapshot and does not cancel the fight. Electron uses normal GPU
+composition by default. On a macOS host with a compositor-specific problem, run
+with `AGENT_ARENA_SOFTWARE_RENDERING=1` to use the diagnostic software-rendering
+fallback.
 
 Both rich displays show contestant output, rounds, evidence, checks, warnings,
 and PR/spec/artifact links. They support cancellation and one-time steering for

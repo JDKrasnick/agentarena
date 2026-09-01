@@ -301,6 +301,21 @@ describe("arena observability", () => {
     const state = initialDashboardState();
     state.runId = "parent";
     state.status = "inconclusive";
+    state.round = 2;
+    state.roundPlan = { planned: 3, maximum: 5 };
+    state.result = {
+      roundsCompleted: 1,
+      championId: "a",
+      contestants: [
+        {
+          id: "a",
+          health: 100,
+          status: "complete",
+          checksPassed: 1,
+          checksTotal: 1,
+        },
+      ],
+    };
     state.warnings.push("parent warning");
     state.contestants.a.output.push({
       stream: "stdout",
@@ -328,6 +343,9 @@ describe("arena observability", () => {
       stage: "preflight",
       warnings: [],
     });
+    expect(state).not.toHaveProperty("round");
+    expect(state).not.toHaveProperty("roundPlan");
+    expect(state).not.toHaveProperty("result");
     expect(state.contestants.a.output).toEqual([]);
   });
 
@@ -514,6 +532,29 @@ describe("arena observability", () => {
       competitiveLandingCount: 0,
       sharedDefectCount: 1,
       explicitEmptyLaneCount: 5,
+      implementationEligibility: [
+        {
+          contestantId: "a",
+          eligible: true,
+          artifactPaths: [],
+          validation: {
+            outcome: "passed",
+            attempts: [
+              {
+                command: "npm test",
+                cwd: "/tmp/a",
+                exitCode: 0,
+                signal: null,
+                timedOut: false,
+                attempts: 1,
+                durationMs: 100,
+                stdoutPath: "/tmp/a.out",
+                stderrPath: "/tmp/a.err",
+              },
+            ],
+          },
+        },
+      ],
     });
 
     expect(state.result).toMatchObject({
@@ -523,6 +564,13 @@ describe("arena observability", () => {
       sharedDefectCount: 1,
       explicitEmptyLaneCount: 5,
     });
+    expect(state.result?.implementationEligibility?.[0]?.contestantId).toBe(
+      "a",
+    );
+    expect(state.result?.implementationEligibility?.[0]?.eligible).toBe(true);
+    expect(
+      state.result?.implementationEligibility?.[0]?.validation?.outcome,
+    ).toBe("passed");
     expect(state.result).not.toHaveProperty("championId");
   });
 });

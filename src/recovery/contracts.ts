@@ -12,6 +12,7 @@ import {
   TaskEffortAssessmentV1Schema,
 } from "../effort/policy.js";
 import { UsageAggregateSchema } from "../telemetry/usage.js";
+import { TerminalContestantDispositionSchema } from "../core/types.js";
 
 const IdentifierSchema = z.string().trim().min(1);
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -446,6 +447,10 @@ export const RunSummaryV11Schema = RunSummaryV10Schema.omit({
         });
       }
     }),
+  implementationEligibility: z
+    .array(TerminalContestantDispositionSchema)
+    .max(2)
+    .optional(),
 });
 export type RunSummaryV11 = z.infer<typeof RunSummaryV11Schema>;
 export const AnyRunSummarySchema = z.discriminatedUnion("schemaVersion", [

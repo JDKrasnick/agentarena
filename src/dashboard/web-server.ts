@@ -10,6 +10,15 @@ import type { ArenaBattleControl } from "../observability/control.js";
 import type { ArenaObserver } from "../observability/events.js";
 import { DashboardObserver } from "./state.js";
 
+export const DASHBOARD_HEARTBEAT_INTERVAL_MS = 2_000;
+export const DASHBOARD_BROADCAST_INTERVAL_MS = 50;
+
+export interface DashboardSnapshotEnvelope {
+  revision: number;
+  generatedAt: string;
+  snapshot: ReturnType<DashboardObserver["snapshot"]>;
+}
+
 const contentTypes: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -35,10 +44,16 @@ async function requestBody(request: IncomingMessage) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
 }
 
-function sendJson(response: ServerResponse, status: number, body: unknown) {
+function sendJson(
+  response: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+) {
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
+    ...headers,
   });
   response.end(JSON.stringify(body));
 }
@@ -52,22 +67,73 @@ export interface WebDashboard {
 
 export async function startWebDashboard(
   control: ArenaBattleControl,
+  options: { heartbeatIntervalMs?: number } = {},
 ): Promise<WebDashboard> {
   const state = new DashboardObserver();
-  const clients = new Set<ServerResponse>();
+  const clients = new Map<
+    ServerResponse,
+    { blocked: boolean; pending: boolean }
+  >();
   const root = resolveWebRoot();
   let resolveClosed: () => void = () => {};
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve;
   });
   let closing = false;
+  let revision = 0;
+  let broadcastTimer: NodeJS.Timeout | undefined;
   let allowedOrigin = "";
   let closeDashboard: () => Promise<void> = async () => {};
-  const emitSnapshot = () => {
-    const message = `data: ${JSON.stringify(state.snapshot())}\n\n`;
-    for (const client of clients) client.write(message);
+  const snapshotEnvelope = (): DashboardSnapshotEnvelope => ({
+    revision,
+    generatedAt: new Date().toISOString(),
+    snapshot: state.snapshot(),
+  });
+  const writeSnapshot = (client: ServerResponse) => {
+    const delivery = clients.get(client);
+    if (!delivery) return;
+    if (delivery.blocked) {
+      delivery.pending = true;
+      return;
+    }
+    const envelope = snapshotEnvelope();
+    const writable = client.write(
+      `id: ${String(envelope.revision)}\ndata: ${JSON.stringify(envelope)}\n\n`,
+    );
+    if (writable) return;
+    delivery.blocked = true;
+    client.once("drain", () => {
+      const current = clients.get(client);
+      if (!current) return;
+      current.blocked = false;
+      if (!current.pending) return;
+      current.pending = false;
+      writeSnapshot(client);
+    });
   };
-  state.subscribe(emitSnapshot);
+  const broadcastSnapshot = () => {
+    broadcastTimer = undefined;
+    for (const client of clients.keys()) writeSnapshot(client);
+  };
+  const queueSnapshot = () => {
+    revision += 1;
+    if (broadcastTimer) return;
+    broadcastTimer = setTimeout(
+      broadcastSnapshot,
+      DASHBOARD_BROADCAST_INTERVAL_MS,
+    );
+    broadcastTimer.unref();
+  };
+  state.subscribe(queueSnapshot);
+  const heartbeatInterval =
+    options.heartbeatIntervalMs ?? DASHBOARD_HEARTBEAT_INTERVAL_MS;
+  const heartbeat =
+    heartbeatInterval > 0
+      ? setInterval(() => {
+          for (const client of clients.keys()) writeSnapshot(client);
+        }, heartbeatInterval)
+      : undefined;
+  heartbeat?.unref();
 
   const handleRequest = async (
     request: IncomingMessage,
@@ -80,7 +146,11 @@ export async function startWebDashboard(
       }
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (request.method === "GET" && url.pathname === "/api/state") {
-        sendJson(response, 200, state.snapshot());
+        const envelope = snapshotEnvelope();
+        sendJson(response, 200, envelope.snapshot, {
+          "X-Agent-Arena-Snapshot-Revision": String(envelope.revision),
+          "X-Agent-Arena-Snapshot-Generated-At": envelope.generatedAt,
+        });
         return;
       }
       if (request.method === "GET" && url.pathname === "/events") {
@@ -89,8 +159,8 @@ export async function startWebDashboard(
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
         });
-        clients.add(response);
-        response.write(`data: ${JSON.stringify(state.snapshot())}\n\n`);
+        clients.set(response, { blocked: false, pending: false });
+        writeSnapshot(response);
         request.on("close", () => clients.delete(response));
         return;
       }
@@ -192,7 +262,9 @@ export async function startWebDashboard(
       return;
     }
     closing = true;
-    for (const client of clients) client.end();
+    if (heartbeat) clearInterval(heartbeat);
+    if (broadcastTimer) clearTimeout(broadcastTimer);
+    for (const client of clients.keys()) client.end();
     clients.clear();
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));

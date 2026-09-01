@@ -5,7 +5,13 @@ import type {
   ArenaEventSink,
   ArenaObserver,
 } from "../observability/events.js";
-import type { ContestantId, RoundId, Stage } from "../core/types.js";
+import type {
+  ContestantId,
+  RequiredValidationEvidence,
+  RoundId,
+  Stage,
+  TerminalContestantDisposition,
+} from "../core/types.js";
 
 export interface DashboardContestant {
   provider: string;
@@ -122,10 +128,17 @@ export interface DashboardState {
     recommendedId?: string;
     recommendationReason?: string;
     coverageConfidence?: string;
+    implementationEligibility?: TerminalContestantDisposition[];
     terminalOutcome?: {
       kind: string;
       reasonCode: string;
       reason: string;
+      contestants?: Array<{
+        contestantId: ContestantId;
+        eligible: boolean;
+        reasonCode?: string;
+        validation?: RequiredValidationEvidence;
+      }>;
     };
     contestants?: Array<{
       id: "a" | "b";
@@ -180,6 +193,7 @@ function appendBounded<T>(items: T[], item: T, maximum = 2_000): void {
 export function projectEvent(state: DashboardState, event: ArenaEvent): void {
   switch (event.type) {
     case "battle_started":
+      for (const key of Object.keys(state)) Reflect.deleteProperty(state, key);
       Object.assign(state, initialDashboardState());
       state.runId = event.runId;
       state.task = event.task;
@@ -490,12 +504,35 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
         ...(event.coverageConfidence
           ? { coverageConfidence: event.coverageConfidence }
           : {}),
+        ...(event.implementationEligibility
+          ? {
+              implementationEligibility: structuredClone(
+                event.implementationEligibility,
+              ),
+            }
+          : {}),
         ...(event.terminalOutcome
           ? {
               terminalOutcome: {
                 kind: event.terminalOutcome.kind,
                 reasonCode: event.terminalOutcome.reasonCode,
                 reason: event.terminalOutcome.reason,
+                ...(event.terminalOutcome.contestants
+                  ? {
+                      contestants: event.terminalOutcome.contestants.map(
+                        (entry) => ({
+                          contestantId: entry.contestantId,
+                          eligible: entry.eligible,
+                          ...(entry.reasonCode
+                            ? { reasonCode: entry.reasonCode }
+                            : {}),
+                          ...(entry.validation
+                            ? { validation: entry.validation }
+                            : {}),
+                        }),
+                      ),
+                    }
+                  : {}),
               },
             }
           : {}),
