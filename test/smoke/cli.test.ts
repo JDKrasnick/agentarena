@@ -179,6 +179,98 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
     }
   }, 90_000);
 
+  it("does not lose SIGINT before the round engine subscribes", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const bin = await mkdtemp(
+      path.join(os.tmpdir(), "arena-early-cancel-bin-"),
+    );
+    const entered = path.join(bin, "git-identity-entered");
+    const release = path.join(bin, "git-identity-release");
+    const realGit = (
+      await execa("sh", ["-c", "command -v git"], { cwd: repositoryRoot })
+    ).stdout;
+    for (const executable of ["codex", "claude"]) {
+      const target = path.join(bin, executable);
+      await writeFile(
+        target,
+        `#!/bin/sh\nexec "${process.execPath}" "${fixtureAgent}" "$@"\n`,
+      );
+      await chmod(target, 0o755);
+    }
+    await writeFile(
+      path.join(bin, "git"),
+      `#!/bin/sh
+if [ "$1" = "rev-parse" ] && [ "$2" = "--path-format=absolute" ] && [ "$3" = "--git-common-dir" ] && [ ! -f "${entered}" ]; then
+  : > "${entered}"
+  while [ ! -f "${release}" ]; do sleep 0.02; done
+fi
+exec "${realGit}" "$@"
+`,
+    );
+    await chmod(path.join(bin, "git"), 0o755);
+    const env = {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+    };
+    const fight = execa(
+      process.execPath,
+      [
+        cli,
+        "fight",
+        "Collapse repeated whitespace in slugs.",
+        "--test",
+        "node --test",
+        "--agents",
+        "codex,claude",
+        "--rounds",
+        "1",
+        "--effort",
+        "ultra-low",
+        "--yes",
+        "--keep-worktrees",
+        "--display",
+        "plain",
+      ],
+      { cwd: repositoryRoot, env, reject: false, timeout: 60_000 },
+    );
+    for (let attempt = 0; attempt < 800; attempt += 1) {
+      try {
+        await readFile(entered);
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+    await expect(readFile(entered)).resolves.toBeDefined();
+    if (!fight.pid) throw new Error("Fight process did not start");
+
+    process.kill(fight.pid, "SIGINT");
+    await writeFile(release, "release\n");
+    const result = await fight;
+
+    expect(result.exitCode).toBe(130);
+    expect(result.signal).toBeUndefined();
+    const runsRoot = path.join(repositoryRoot, ".agent-arena", "runs");
+    const [runId] = await readdir(runsRoot);
+    const durableResult = JSON.parse(
+      await readFile(path.join(runsRoot, runId!, "result.json"), "utf8"),
+    ) as { status: string };
+    expect(durableResult.status).toBe("cancelled");
+    const manifest = JSON.parse(
+      await readFile(
+        path.join(runsRoot, runId!, "worktrees", "manifest.json"),
+        "utf8",
+      ),
+    ) as {
+      executions: Array<{ finalizedAt?: string }>;
+      worktrees: Array<{ state: string }>;
+    };
+    expect(manifest.executions.every((entry) => entry.finalizedAt)).toBe(true);
+    expect(
+      manifest.worktrees.every((entry) => entry.state === "retained"),
+    ).toBe(true);
+  }, 90_000);
+
   it("runs a fight, reviews, accepts, applies, and retests without network", async () => {
     const repositoryRoot = await createSlugRepository();
     const bin = await mkdtemp(path.join(os.tmpdir(), "arena-fake-bin-"));

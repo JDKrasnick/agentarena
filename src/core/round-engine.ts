@@ -1143,7 +1143,8 @@ export class RoundEngine {
     await worktrees.initialize();
     const controller = new AbortController();
     const abort = (): void => controller.abort(externalSignal?.reason);
-    externalSignal?.addEventListener("abort", abort, { once: true });
+    if (externalSignal?.aborted) abort();
+    else externalSignal?.addEventListener("abort", abort, { once: true });
     const journal = new EventJournal(store.resolve("events.ndjson"), this.now);
     const observer = new ArenaEventBus(
       journal,
@@ -1528,9 +1529,11 @@ export class RoundEngine {
     } catch (error) {
       if (context) {
         const cancelled = controller.signal.aborted;
+        const completedAt = this.now().toISOString();
         context.state.status = cancelled ? "cancelled" : "inconclusive";
         context.state.stage = cancelled ? "cancelled" : "inconclusive";
-        context.state.updatedAt = this.now().toISOString();
+        context.state.updatedAt = completedAt;
+        if (cancelled) context.state.completedAt = completedAt;
         context.state.warnings.push(
           error instanceof Error ? error.message : String(error),
         );
@@ -1556,6 +1559,15 @@ export class RoundEngine {
           context,
           cancelled ? "cancelled" : "inconclusive",
         ).catch(() => undefined);
+        if (cancelled) {
+          return {
+            state: context.state,
+            summary: renderConsoleSummary(
+              context.state,
+              this.dependencies.consoleOptions,
+            ),
+          };
+        }
         if (config.keepWorktrees) {
           const detail = [
             ...worktrees
@@ -1909,7 +1921,8 @@ export class RoundEngine {
     await store.writeState(state, ledger);
     const controller = new AbortController();
     const abort = (): void => controller.abort(externalSignal?.reason);
-    externalSignal?.addEventListener("abort", abort, { once: true });
+    if (externalSignal?.aborted) abort();
+    else externalSignal?.addEventListener("abort", abort, { once: true });
     const journal = new EventJournal(store.resolve("events.ndjson"), this.now);
     const observer = new ArenaEventBus(
       journal,
