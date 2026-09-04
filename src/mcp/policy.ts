@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { calculateCanonicalHash } from "../contracts/round.js";
 import {
   PermissionPolicySchema,
   type AgentId,
@@ -53,12 +54,24 @@ export const FrozenMcpServerSchema = z
   .strict();
 export type FrozenMcpServer = z.infer<typeof FrozenMcpServerSchema>;
 
+const McpRuntimeDefinitionHashSchema = z
+  .object({
+    provider: z.literal("codex"),
+    name: z.string().regex(/^[A-Za-z0-9_-]+$/),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
 export const FrozenMcpPolicySchema = z
   .object({
     version: z.literal(1),
     mode: z.enum(["keep_configured", "configure_selection", "leave_as_is"]),
     inventory: z.array(McpProviderInventorySchema),
     servers: z.array(FrozenMcpServerSchema),
+    // Optional only so completed and zero-exposure artifacts created before
+    // definition binding remain readable. New selected Codex exposures bind
+    // one digest per runtime definition before approval.
+    runtimeDefinitionHashes: z.array(McpRuntimeDefinitionHashSchema).optional(),
     coverageGaps: z.array(z.string()),
     frozenAt: z.string().datetime(),
     policyHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -79,6 +92,31 @@ export const FrozenMcpPolicySchema = z
   })
   .strict()
   .superRefine((policy, context) => {
+    if (policy.runtimeDefinitionHashes) {
+      const expectedNames = policy.servers
+        .filter(
+          (server) =>
+            server.provider === "codex" &&
+            server.decision === "included" &&
+            (server.role === "agent" || server.role === "both"),
+        )
+        .map((server) => server.name)
+        .sort((left, right) => left.localeCompare(right));
+      const actualNames = policy.runtimeDefinitionHashes.map(
+        (definition) => definition.name,
+      );
+      if (
+        new Set(actualNames).size !== actualNames.length ||
+        actualNames.some((name, index) => name !== expectedNames[index]) ||
+        actualNames.length !== expectedNames.length
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["runtimeDefinitionHashes"],
+          message:
+            "Runtime definition hashes must match the sorted agent-facing Codex allowlist",
+        });
+    }
     if (!policy.approval) return;
     if (policy.approval.policyHash !== policy.policyHash)
       context.addIssue({
@@ -173,6 +211,55 @@ export type CodexMcpDefinitionResolution =
 export interface ResumedMcpRuntime {
   policy?: FrozenMcpPolicy;
   runtimeDefinitions: McpRuntimeDefinitions;
+}
+
+export function bindMcpRuntimeDefinitions(
+  policy: FrozenMcpPolicy,
+  runtimeDefinitions: McpRuntimeDefinitions,
+): FrozenMcpPolicy {
+  const selectedNames = agentMcpNames(policy, "codex").sort((left, right) =>
+    left.localeCompare(right),
+  );
+  const definitions = selectedNames.map((name) => {
+    const matches = runtimeDefinitions.filter(
+      (definition) =>
+        definition.provider === "codex" && definition.name === name,
+    );
+    if (matches.length !== 1)
+      throw new Error(
+        `Codex MCP server ${JSON.stringify(name)} has no unique validated runtime definition to bind`,
+      );
+    return CodexMcpRuntimeDefinitionSchema.parse(matches[0]);
+  });
+  if (runtimeDefinitions.length !== definitions.length)
+    throw new Error(
+      "Runtime definitions include a server outside the agent-facing Codex allowlist",
+    );
+  const draft = {
+    ...policy,
+    runtimeDefinitionHashes: definitions.map((definition) => ({
+      provider: "codex" as const,
+      name: definition.name,
+      sha256: calculateCanonicalHash(definition),
+    })),
+  };
+  const {
+    policyHash: _policyHash,
+    approval: _approval,
+    ...withoutAuthority
+  } = draft;
+  void _policyHash;
+  void _approval;
+  const normalized = FrozenMcpPolicySchema.parse({
+    ...withoutAuthority,
+    policyHash: "0".repeat(64),
+  });
+  const { policyHash: _placeholderHash, ...normalizedAuthority } = normalized;
+  void _placeholderHash;
+  return FrozenMcpPolicySchema.parse({
+    ...normalizedAuthority,
+    policyHash: hashPolicy(normalizedAuthority),
+  });
 }
 
 type InventoryRunner = (
@@ -300,6 +387,14 @@ export async function reconstructMcpRuntimeForResume(options: {
 
   const runtimeDefinitions: CodexMcpRuntimeDefinition[] = [];
   for (const name of agentMcpNames(options.policy, "codex")) {
+    const expectedHash = options.policy.runtimeDefinitionHashes?.find(
+      (definition) =>
+        definition.provider === "codex" && definition.name === name,
+    )?.sha256;
+    if (!expectedHash)
+      throw new Error(
+        `Frozen Codex MCP server ${JSON.stringify(name)} has no approved runtime definition hash for resume`,
+      );
     const resolution = await (
       options.resolveDefinition ?? resolveCodexMcpRuntimeDefinition
     )({
@@ -311,6 +406,10 @@ export async function reconstructMcpRuntimeForResume(options: {
     if (resolution.status === "unavailable")
       throw new Error(
         `Frozen Codex MCP server ${JSON.stringify(name)} cannot be reconstructed safely for resume: ${resolution.reason}`,
+      );
+    if (calculateCanonicalHash(resolution.definition) !== expectedHash)
+      throw new Error(
+        `Frozen Codex MCP server ${JSON.stringify(name)} changed after approval; resume requires the original runtime definition`,
       );
     runtimeDefinitions.push(resolution.definition);
   }
@@ -436,7 +535,7 @@ export function approveMcpPolicy(
   mode: "interactive" | "automatic_ready",
   now = new Date(),
 ): FrozenMcpPolicy {
-  return FrozenMcpPolicySchema.parse({
+  const approved = FrozenMcpPolicySchema.parse({
     ...policy,
     approval: {
       policyHash: policy.policyHash,
@@ -444,6 +543,14 @@ export function approveMcpPolicy(
       acceptedAt: now.toISOString(),
     },
   });
+  if (
+    agentMcpNames(approved, "codex").length > 0 &&
+    !approved.runtimeDefinitionHashes
+  )
+    throw new Error(
+      "Selected Codex MCP servers require bound runtime definition hashes before approval",
+    );
+  return approved;
 }
 
 /** Remove selected MCP servers that the operator declines during manual review. */
@@ -475,6 +582,16 @@ export function excludeMcpServers(
         ),
       ]),
     ],
+    ...(policy.runtimeDefinitionHashes
+      ? {
+          runtimeDefinitionHashes: policy.runtimeDefinitionHashes.filter(
+            (definition) =>
+              !identities.has(
+                mcpServerIdentity(definition.provider, definition.name),
+              ),
+          ),
+        }
+      : {}),
     frozenAt: now.toISOString(),
   };
   const {
@@ -699,6 +816,14 @@ export function isolateMcpPolicyForReadiness(
             }
           : server,
     ),
+    ...(policy.runtimeDefinitionHashes
+      ? {
+          runtimeDefinitionHashes: policy.runtimeDefinitionHashes.filter(
+            (definition) =>
+              definition.provider === provider && definition.name === name,
+          ),
+        }
+      : {}),
     coverageGaps: [],
   };
   const { policyHash: _policyHash, ...withoutHash } = draft;

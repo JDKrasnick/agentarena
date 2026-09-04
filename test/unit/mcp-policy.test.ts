@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   approveMcpPolicy,
   applyMcpReadiness,
+  bindMcpRuntimeDefinitions,
   excludeMcpServers,
   FrozenMcpPolicySchema,
   freezeMcpPolicy,
@@ -100,6 +101,24 @@ describe("MCP preflight policy", () => {
     tool_timeout_sec: null,
   };
 
+  function runtimeDefinition(name: string, command = "selected-server") {
+    return {
+      provider: "codex" as const,
+      name,
+      transport: {
+        type: "stdio" as const,
+        command,
+        args: [],
+        env_vars: [],
+        cwd: null,
+      },
+      enabled_tools: null,
+      disabled_tools: null,
+      startup_timeout_sec: null,
+      tool_timeout_sec: null,
+    };
+  }
+
   it("reconstructs only the frozen Codex exposure for resume", async () => {
     const policy = freezeMcpPolicy({
       config: {
@@ -116,37 +135,26 @@ describe("MCP preflight policy", () => {
       inventory,
       reducedValidationAccepted: false,
     });
+    const boundPolicy = bindMcpRuntimeDefinitions(policy, [
+      runtimeDefinition("expo"),
+    ]);
     const requested: string[] = [];
     const runtime = await reconstructMcpRuntimeForResume({
-      policyHash: policy.policyHash,
-      policy,
+      policyHash: boundPolicy.policyHash,
+      policy: boundPolicy,
       repositoryRoot: "/repo",
       logRoot: "/logs",
       resolveDefinition: (options) => {
         requested.push(options.name);
         return Promise.resolve({
           status: "resolved",
-          definition: {
-            provider: "codex",
-            name: options.name,
-            transport: {
-              type: "stdio",
-              command: "selected-server",
-              args: [],
-              env_vars: [],
-              cwd: null,
-            },
-            enabled_tools: null,
-            disabled_tools: null,
-            startup_timeout_sec: null,
-            tool_timeout_sec: null,
-          },
+          definition: runtimeDefinition(options.name),
         });
       },
     });
 
     expect(requested).toEqual(["expo"]);
-    expect(runtime.policy).toBe(policy);
+    expect(runtime.policy).toBe(boundPolicy);
     expect(runtime.runtimeDefinitions.map((entry) => entry.name)).toEqual([
       "expo",
     ]);
@@ -183,10 +191,14 @@ describe("MCP preflight policy", () => {
       reducedValidationAccepted: false,
     });
 
+    const boundPolicy = bindMcpRuntimeDefinitions(policy, [
+      runtimeDefinition("expo"),
+    ]);
+
     await expect(
       reconstructMcpRuntimeForResume({
-        policyHash: policy.policyHash,
-        policy,
+        policyHash: boundPolicy.policyHash,
+        policy: boundPolicy,
         repositoryRoot: "/repo",
         logRoot: "/logs",
         resolveDefinition: () =>
@@ -196,6 +208,73 @@ describe("MCP preflight policy", () => {
           }),
       }),
     ).rejects.toThrow(/cannot be reconstructed safely for resume/);
+  });
+
+  it("rejects same-name runtime definition drift on resume", async () => {
+    const policy = freezeMcpPolicy({
+      config: {
+        policy: "configure_selection",
+        servers: [
+          {
+            provider: "codex",
+            name: "expo",
+            role: "agent",
+            requirement: "optional",
+          },
+        ],
+      },
+      inventory,
+      reducedValidationAccepted: false,
+    });
+    const boundPolicy = bindMcpRuntimeDefinitions(policy, [
+      runtimeDefinition("expo", "approved-command"),
+    ]);
+
+    await expect(
+      reconstructMcpRuntimeForResume({
+        policyHash: boundPolicy.policyHash,
+        policy: boundPolicy,
+        repositoryRoot: "/repo",
+        logRoot: "/logs",
+        resolveDefinition: () =>
+          Promise.resolve({
+            status: "resolved",
+            definition: runtimeDefinition("expo", "unapproved-replacement"),
+          }),
+      }),
+    ).rejects.toThrow(/changed after approval/);
+  });
+
+  it("fails closed when a selected legacy policy has no definition hash", async () => {
+    const policy = freezeMcpPolicy({
+      config: {
+        policy: "configure_selection",
+        servers: [
+          {
+            provider: "codex",
+            name: "expo",
+            role: "agent",
+            requirement: "optional",
+          },
+        ],
+      },
+      inventory,
+      reducedValidationAccepted: false,
+    });
+
+    await expect(
+      reconstructMcpRuntimeForResume({
+        policyHash: policy.policyHash,
+        policy,
+        repositoryRoot: "/repo",
+        logRoot: "/logs",
+        resolveDefinition: () =>
+          Promise.resolve({
+            status: "resolved",
+            definition: runtimeDefinition("expo"),
+          }),
+      }),
+    ).rejects.toThrow(/no approved runtime definition hash/);
   });
 
   it("fails resume when the durable MCP policy is missing or mismatched", async () => {
@@ -624,6 +703,36 @@ describe("MCP preflight policy", () => {
     );
   });
 
+  it("refuses to approve a selected Codex server before its definition is bound", () => {
+    const ready = freezeMcpPolicy({
+      config: {
+        policy: "keep_configured",
+        servers: [
+          {
+            provider: "codex",
+            name: "expo",
+            role: "agent",
+            requirement: "optional",
+          },
+        ],
+      },
+      inventory: [
+        {
+          ...inventory[0]!,
+          servers: inventory[0]!.servers.map((server) => ({
+            ...server,
+            readiness: "ready" as const,
+          })),
+        },
+      ],
+      reducedValidationAccepted: false,
+    });
+
+    expect(() => approveMcpPolicy(ready, "automatic_ready")).toThrow(
+      /bound runtime definition hashes/,
+    );
+  });
+
   it("adds only ready included MCP servers to the run permission manifest", () => {
     const initial = freezeMcpPolicy({
       config: {
@@ -645,13 +754,16 @@ describe("MCP preflight policy", () => {
       new Map([[mcpServerIdentity("codex", "expo"), "ready"]]),
       false,
     );
+    const bound = bindMcpRuntimeDefinitions(resolved, [
+      runtimeDefinition("expo"),
+    ]);
     const permissions = mergeMcpPermissionPolicy(
       {
         defaultMode: "confirm",
         reducedValidationAccepted: false,
         capabilities: [],
       },
-      approveMcpPolicy(resolved, "automatic_ready"),
+      approveMcpPolicy(bound, "automatic_ready"),
     );
 
     expect(permissions.capabilities).toHaveLength(1);

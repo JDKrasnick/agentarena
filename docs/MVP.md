@@ -851,7 +851,10 @@ refused because the current process boundary cannot expose those values to the
 MCP transport without also exposing them to the agent. No-auth servers and
 Codex-managed OAuth remain supported. Definitions remain in memory or the
 temporary preflight directory and never enter durable artifacts, prompts,
-transcripts, or reports. A failed inventory is recorded as `unknown`, not as an
+transcripts, or reports. A canonical hash of each credential-free selected
+definition is bound into the frozen policy so resume can reject same-name
+command, URL, argument, tool-filter, cwd, or timeout drift without persisting
+the definition itself. A failed inventory is recorded as `unknown`, not as an
 empty setup.
 
 The operator selects exactly one MCP policy for the run: `keep_configured`
@@ -906,7 +909,9 @@ names, and supported transient definitions without literal or
 environment-backed credential material. Every frozen-policy Codex child ignores
 ambient user configuration, disables Apps, and receives only those selected
 definitions. Optional reconstruction failures become coverage gaps, and
-required failures block launch unless reduced validation is accepted.
+required failures block launch unless reduced validation is accepted. Resume
+resolves selected definitions again and refuses to continue when a canonical
+definition hash differs from the preflight-approved value.
 
 If a required capability is denied or cannot be authenticated, the fight does
 not start unless the user explicitly accepts a reduced validation contract. The

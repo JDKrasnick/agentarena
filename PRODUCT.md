@@ -1105,9 +1105,12 @@ configuration. It rejects literal environment values, HTTP headers, and
 environment-variable references because the current process boundary cannot
 expose those values to the MCP transport without also exposing them to the
 agent. No-auth servers and Codex-managed OAuth remain supported. The definition
-remains in memory or the temporary preflight directory and is never
-written to run artifacts, prompts, transcripts, or reports. An inventory failure
-is `unknown`, never an empty inventory.
+stays in memory or the temporary preflight directory and is never written to
+run artifacts, prompts, transcripts, or reports. Arena binds a canonical hash
+of each credential-free selected definition into the frozen policy so resume
+can reject same-name command, URL, argument, tool-filter, cwd, or timeout drift
+without persisting the definition itself. An inventory failure is `unknown`,
+never an empty inventory.
 
 The operator chooses one run-scoped MCP policy:
 
@@ -1164,7 +1167,8 @@ environment-backed credential material. Every frozen-policy Codex child ignores
 the ambient user configuration, disables Apps, and receives only the validated
 selected definitions. Optional unreconstructable selections are excluded as
 coverage gaps, while required selections block launch unless reduced validation
-is accepted.
+is accepted. Resume resolves each selected definition again and fails closed if
+its canonical hash differs from the definition approved at preflight.
 
 An agent may declare extra capabilities for an integration attack. A newly
 denied optional request becomes `capability_denied` and causes no damage or

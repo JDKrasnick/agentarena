@@ -53,6 +53,7 @@ import { renderConsoleSummary } from "../reports/console.js";
 import {
   approveMcpPolicy,
   applyMcpReadiness,
+  bindMcpRuntimeDefinitions,
   excludeMcpServers,
   freezeMcpPolicy,
   inventoryProviderMcp,
@@ -397,11 +398,12 @@ async function checkSelectedMcpReadiness(options: {
       .filter((server) => server.decision === "included")
       .map((server) => mcpServerIdentity(server.provider, server.name)),
   );
+  const exposedRuntimeDefinitions = [...runtimeDefinitions]
+    .filter(([identity]) => exposed.has(identity))
+    .map(([, definition]) => definition);
   return {
-    policy,
-    runtimeDefinitions: [...runtimeDefinitions]
-      .filter(([identity]) => exposed.has(identity))
-      .map(([, definition]) => definition),
+    policy: bindMcpRuntimeDefinitions(policy, exposedRuntimeDefinitions),
+    runtimeDefinitions: exposedRuntimeDefinitions,
   };
 }
 

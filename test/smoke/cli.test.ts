@@ -456,6 +456,32 @@ exec "${process.execPath}" "${fixtureAgent}" "$@"
     const [runId] = await readdir(
       path.join(repositoryRoot, ".agent-arena", "runs"),
     );
+    const frozenMcpPolicy = JSON.parse(
+      await readFile(
+        path.join(
+          repositoryRoot,
+          ".agent-arena",
+          "runs",
+          runId!,
+          "mcp-policy.json",
+        ),
+        "utf8",
+      ),
+    ) as {
+      runtimeDefinitionHashes?: Array<{
+        provider: string;
+        name: string;
+        sha256: string;
+      }>;
+    };
+    expect(frozenMcpPolicy.runtimeDefinitionHashes).toHaveLength(1);
+    expect(frozenMcpPolicy.runtimeDefinitionHashes?.[0]).toMatchObject({
+      provider: "codex",
+      name: "selected",
+    });
+    expect(frozenMcpPolicy.runtimeDefinitionHashes?.[0]?.sha256).toMatch(
+      /^[a-f0-9]{64}$/,
+    );
     const invocationDirectory = path.join(
       repositoryRoot,
       ".agent-arena",
