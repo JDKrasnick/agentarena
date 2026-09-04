@@ -161,6 +161,57 @@ describe("Git patch capture integrity", () => {
     }
   });
 
+  it("ignores whitespace policy while verifying worktree and commit patches", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const whitespacePath = path.join(repositoryRoot, "whitespace.txt");
+    await writeFile(whitespacePath, "existing trailing whitespace   \n");
+    const baseCommit = await commitAll(
+      repositoryRoot,
+      "add whitespace fixture",
+    );
+    await execa("git", ["config", "apply.whitespace", "error"], {
+      cwd: repositoryRoot,
+    });
+    const temporaryRoot = await mkdtemp(
+      path.join(os.tmpdir(), "agent-arena-whitespace-policy-"),
+    );
+    const worktrees = new WorktreeManager(
+      repositoryRoot,
+      temporaryRoot,
+      baseCommit,
+    );
+    await worktrees.initialize();
+
+    try {
+      const sourceTree = await worktrees.create("source");
+      await writeFile(
+        path.join(sourceTree, "whitespace.txt"),
+        "existing trailing whitespace\n",
+      );
+      const worktreePatchPath = path.join(temporaryRoot, "worktree.diff");
+      const expectedWorktreePatch = await rawDiff(sourceTree);
+      await expect(
+        worktrees.capturePatch(sourceTree, worktreePatchPath),
+      ).resolves.toBe(expectedWorktreePatch.length);
+      expect(await readFile(worktreePatchPath)).toEqual(expectedWorktreePatch);
+
+      await writeFile(whitespacePath, "existing trailing whitespace\n");
+      const headCommit = await commitAll(repositoryRoot, "remove whitespace");
+      const expectedCommitPatch = await rawDiff(repositoryRoot, [
+        "diff",
+        "--binary",
+        "--full-index",
+        baseCommit,
+        headCommit,
+      ]);
+      await expect(
+        captureBinaryPatch(repositoryRoot, baseCommit, headCommit),
+      ).resolves.toEqual(expectedCommitPatch);
+    } finally {
+      await worktrees.cleanup();
+    }
+  });
+
   it("preserves a target-relative overlay against a frozen snapshot", async () => {
     const repositoryRoot = await createSlugRepository();
     const baseCommit = (

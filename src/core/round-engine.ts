@@ -126,6 +126,7 @@ import {
   persistHandoffValidationOutcome,
 } from "../review/evidence-handoff-store.js";
 import { runShellCommand } from "../runner/process-runner.js";
+import { attributePullRequest } from "../task/authorship.js";
 import { resolveBootstrapContract } from "../task/bootstrap.js";
 import { provisionIntegrationProfile } from "../runner/integration.js";
 import {
@@ -458,6 +459,7 @@ interface RoundExecutionRuntime {
   options: {
     initialize?: boolean;
     pullRequestFixture?: PullRequestFixture;
+    initializationError?: PatchCaptureIntegrityError;
   };
 }
 
@@ -798,6 +800,7 @@ export class RoundEngine {
     worktrees: WorktreeManager;
     controller: AbortController;
     observer: ArenaObserver;
+    forcedFallbackReason?: string;
   }): Promise<FightConfig> {
     const { config } = options;
     if (config.effortMode !== "auto") {
@@ -834,9 +837,11 @@ export class RoundEngine {
       | Awaited<ReturnType<NonNullable<AttackVerifier["assessEffort"]>>>
       | undefined;
     let fallbackReason: string | undefined;
-    const assessor = this.dependencies.verifier.assessEffort?.bind(
-      this.dependencies.verifier,
-    );
+    const assessor = options.forcedFallbackReason
+      ? undefined
+      : this.dependencies.verifier.assessEffort?.bind(
+          this.dependencies.verifier,
+        );
     await options.store.writeText("initialization/.keep", "");
     if (assessor) {
       let worktree = await options.worktrees.create("effort-assessment");
@@ -913,7 +918,9 @@ export class RoundEngine {
         await options.worktrees.remove(worktree);
       }
     } else {
-      fallbackReason = "Configured judge does not implement effort assessment";
+      fallbackReason =
+        options.forcedFallbackReason ??
+        "Configured judge does not implement effort assessment";
     }
 
     const dimensions = selected?.dimensions ?? {
@@ -1049,6 +1056,7 @@ export class RoundEngine {
     await assertCleanRepository(repositoryRoot);
     config = FightConfigSchema.parse({ ...config, repositoryRoot });
     let pullRequestFixture: PullRequestFixture | undefined;
+    let pullRequestCaptureError: PatchCaptureIntegrityError | undefined;
     let frozenBasePullRequest: ResolvedPullRequest | undefined;
     let frozenModePullRequest: ResolvedPullRequest | undefined;
     let baseCommit: string;
@@ -1077,17 +1085,20 @@ export class RoundEngine {
         throw new Error(
           `Approved reconnaissance is missing pull request ${reference}`,
         );
-      pullRequestFixture = await (
-        this.dependencies.freezePullRequest ?? freezePullRequest
-      )({
-        reference,
-        repositoryRoot,
-        artifactDirectory: store.resolve("pull-request"),
-        resolver: { resolve: () => Promise.resolve(frozenModePullRequest!) },
-        now: this.now,
+      if (!frozenModePullRequest.baseCommit)
+        throw new Error(
+          "Pull request metadata does not include a frozen base commit",
+        );
+      const attribution = attributePullRequest({
+        title: frozenModePullRequest.title,
+        headBranch: frozenModePullRequest.headBranch,
+        commits: frozenModePullRequest.commits ?? [],
+        ...(frozenModePullRequest.author
+          ? { author: frozenModePullRequest.author }
+          : {}),
       });
       const incumbentProvider =
-        config.incumbentProvider ?? pullRequestFixture.attribution.provider;
+        config.incumbentProvider ?? attribution.provider;
       if (config.mode === "catch_up" && !incumbentProvider) {
         throw new Error(
           "The frozen PR has unknown authorship; pass --incumbent <agent> to choose the provider that will attack and repair the incumbent patch",
@@ -1095,14 +1106,28 @@ export class RoundEngine {
       }
       config = FightConfigSchema.parse({
         ...config,
-        baseCommit: pullRequestFixture.base.commit,
+        baseCommit: frozenModePullRequest.baseCommit,
         contestants: config.contestants.map((contestant) =>
           contestant.role === "incumbent" && incumbentProvider
             ? { ...contestant, provider: incumbentProvider }
             : contestant,
         ),
       });
-      baseCommit = pullRequestFixture.base.commit;
+      baseCommit = frozenModePullRequest.baseCommit;
+      try {
+        pullRequestFixture = await (
+          this.dependencies.freezePullRequest ?? freezePullRequest
+        )({
+          reference,
+          repositoryRoot,
+          artifactDirectory: store.resolve("pull-request"),
+          resolver: { resolve: () => Promise.resolve(frozenModePullRequest!) },
+          now: this.now,
+        });
+      } catch (error) {
+        if (!(error instanceof PatchCaptureIntegrityError)) throw error;
+        pullRequestCaptureError = error;
+      }
     } else if (rawConfig.baseFromPullRequest) {
       frozenBasePullRequest =
         reconnaissance.resolvedPullRequests[rawConfig.baseFromPullRequest];
@@ -1178,6 +1203,9 @@ export class RoundEngine {
           worktrees,
           controller,
           observer,
+          ...(pullRequestCaptureError
+            ? { forcedFallbackReason: pullRequestCaptureError.message }
+            : {}),
         });
       }
       this.progress("Preflight: snapshotting run specification");
@@ -1420,7 +1448,7 @@ export class RoundEngine {
         });
       }
 
-      await this.preflight(context);
+      if (!pullRequestCaptureError) await this.preflight(context);
       if (
         replacement?.resumeAfterInitialization ||
         (replacement?.startRound ?? 1) > 1
@@ -1464,6 +1492,9 @@ export class RoundEngine {
           {
             initialize: round === 1 && !replacement?.resumeAfterInitialization,
             ...(pullRequestFixture ? { pullRequestFixture } : {}),
+            ...(round === 1 && pullRequestCaptureError
+              ? { initializationError: pullRequestCaptureError }
+              : {}),
           },
         );
         const { result } = transaction;
@@ -2079,6 +2110,7 @@ export class RoundEngine {
     options: {
       initialize?: boolean;
       pullRequestFixture?: PullRequestFixture;
+      initializationError?: PatchCaptureIntegrityError;
     },
   ): Promise<{ result: RoundResult; state: RunState }> {
     const transactionContext: ArenaContext = {
@@ -2103,6 +2135,7 @@ export class RoundEngine {
   ): Promise<RoundResult> {
     const { context, before, options } = runtime;
     try {
+      if (options.initializationError) throw options.initializationError;
       if (options.initialize) {
         if (options.pullRequestFixture) {
           await this.initializePullRequestContestant(
@@ -2319,7 +2352,11 @@ export class RoundEngine {
           reasonCode: "test_only_role" as const,
           artifactPaths: preReviewArtifactPaths(contestant),
         };
-      const reasonCode = contestantReason(contestant);
+      const reasonCode =
+        forcedReason === "harness_infrastructure_failure" &&
+        !eligible.includes(id)
+          ? forcedReason
+          : contestantReason(contestant);
       const validation = contestant.checks.find(
         (check) => check.id === "initial-required",
       )?.validation;

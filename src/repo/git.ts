@@ -52,7 +52,7 @@ async function verifyReversePatch(
 ): Promise<void> {
   await gitRaw(
     repositoryRoot,
-    ["apply", "--check", "--reverse", patchPath],
+    ["apply", "--check", "--reverse", "--whitespace=nowarn", patchPath],
     worktree,
   );
 }
@@ -112,13 +112,17 @@ export async function captureBinaryPatch(
         cwd: repositoryRoot,
         env: { GIT_INDEX_FILE: indexPath },
       });
-      await execa("git", ["apply", "--cached", "--check", "--reverse"], {
-        cwd: repositoryRoot,
-        env: { GIT_INDEX_FILE: indexPath },
-        input: patch,
-        encoding: "buffer",
-        stripFinalNewline: false,
-      });
+      await execa(
+        "git",
+        ["apply", "--cached", "--check", "--reverse", "--whitespace=nowarn"],
+        {
+          cwd: repositoryRoot,
+          env: { GIT_INDEX_FILE: indexPath },
+          input: patch,
+          encoding: "buffer",
+          stripFinalNewline: false,
+        },
+      );
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });
     }
