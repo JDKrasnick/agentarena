@@ -1665,77 +1665,106 @@ describe("fake-adapter fight on a mocked real issue", () => {
     );
   });
 
-  it("seals patch capture integrity failures before removing source worktrees", async () => {
-    const repositoryRoot = await createSlugRepository();
-    const events: string[] = [];
-    const capture = vi
-      .spyOn(WorktreeManager.prototype, "capturePatch")
-      .mockImplementation((worktree) => {
-        events.push(`verify:${path.basename(worktree)}`);
-        return Promise.reject(
-          new PatchCaptureIntegrityError("injected verification failure"),
+  it.each([false, true])(
+    "seals patch capture integrity failures before finalizing source worktrees (keepWorktrees=%s)",
+    async (keepWorktrees) => {
+      const repositoryRoot = await createSlugRepository();
+      const events: string[] = [];
+      const capture = vi
+        .spyOn(WorktreeManager.prototype, "capturePatch")
+        .mockImplementation((worktree) => {
+          events.push(`verify:${path.basename(worktree)}`);
+          return Promise.reject(
+            new PatchCaptureIntegrityError("injected verification failure"),
+          );
+        });
+      // Deliberately retain the prototype implementation before replacing it.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const originalRemove = WorktreeManager.prototype.remove;
+      const remove = vi
+        .spyOn(WorktreeManager.prototype, "remove")
+        .mockImplementation(function (this: WorktreeManager, worktree) {
+          if (path.basename(worktree).startsWith("implement-")) {
+            events.push(`remove:${path.basename(worktree)}`);
+          }
+          return originalRemove.call(this, worktree);
+        });
+
+      try {
+        const outcome = await new Arena({
+          adapters: {
+            codex: new CommandAgentAdapter({
+              id: "codex",
+              executable: process.execPath,
+              args: [fixtureAgent],
+            }),
+            claude: new CommandAgentAdapter({
+              id: "claude",
+              executable: process.execPath,
+              args: [fixtureAgent],
+            }),
+          },
+          verifier: new RuleBasedVerifier("claude"),
+        }).fight({ ...duelConfig(repositoryRoot), keepWorktrees });
+
+        expect(outcome.state.status).toBe("inconclusive");
+        expect(outcome.state.terminalOutcome).toMatchObject({
+          phase: "pre_review",
+          kind: "inconclusive",
+          reasonCode: "harness_infrastructure_failure",
+        });
+        expect(outcome.state.terminalOutcome?.kind).not.toBe("forfeit");
+        expect(
+          Object.values(outcome.state.contestants).flatMap(
+            (contestant) => contestant.checks,
+          ),
+        ).not.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ kind: "apply", status: "failed" }),
+          ]),
         );
-      });
-    // Deliberately retain the prototype implementation before replacing it.
-    // eslint-disable-next-line @typescript-eslint/unbound-method
-    const originalRemove = WorktreeManager.prototype.remove;
-    const remove = vi
-      .spyOn(WorktreeManager.prototype, "remove")
-      .mockImplementation(function (this: WorktreeManager, worktree) {
-        if (path.basename(worktree).startsWith("implement-")) {
-          events.push(`remove:${path.basename(worktree)}`);
+        const lastVerification = events.reduce(
+          (latest, event, index) =>
+            event.startsWith("verify:") ? index : latest,
+          -1,
+        );
+        const firstRemoval = events.findIndex((event) =>
+          event.startsWith("remove:"),
+        );
+        expect(lastVerification).toBeGreaterThanOrEqual(0);
+        expect(firstRemoval).toBeGreaterThan(lastVerification);
+        const manifest = await readWorktreeManifest(
+          outcome.state.artifacts.worktreeManifest!,
+        );
+        expect(manifest.executions.every((entry) => entry.finalizedAt)).toBe(
+          true,
+        );
+        expect(manifest.worktrees.length).toBeGreaterThanOrEqual(3);
+        for (const entry of manifest.worktrees) {
+          expect(entry.state).toBe(keepWorktrees ? "retained" : "removed");
+          if (keepWorktrees) {
+            await expect(readdir(entry.path)).resolves.toContain("src");
+            expect(outcome.summary).toContain(entry.path);
+          } else {
+            await expect(readdir(entry.path)).rejects.toMatchObject({
+              code: "ENOENT",
+            });
+          }
         }
-        return originalRemove.call(this, worktree);
-      });
-
-    try {
-      const outcome = await new Arena({
-        adapters: {
-          codex: new CommandAgentAdapter({
-            id: "codex",
-            executable: process.execPath,
-            args: [fixtureAgent],
-          }),
-          claude: new CommandAgentAdapter({
-            id: "claude",
-            executable: process.execPath,
-            args: [fixtureAgent],
-          }),
-        },
-        verifier: new RuleBasedVerifier("claude"),
-      }).fight(duelConfig(repositoryRoot));
-
-      expect(outcome.state.status).toBe("inconclusive");
-      expect(outcome.state.terminalOutcome).toMatchObject({
-        phase: "pre_review",
-        kind: "inconclusive",
-        reasonCode: "harness_infrastructure_failure",
-      });
-      expect(outcome.state.terminalOutcome?.kind).not.toBe("forfeit");
-      expect(
-        Object.values(outcome.state.contestants).flatMap(
-          (contestant) => contestant.checks,
-        ),
-      ).not.toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ kind: "apply", status: "failed" }),
-        ]),
-      );
-      const lastVerification = events.reduce(
-        (latest, event, index) =>
-          event.startsWith("verify:") ? index : latest,
-        -1,
-      );
-      const firstRemoval = events.findIndex((event) =>
-        event.startsWith("remove:"),
-      );
-      expect(lastVerification).toBeGreaterThanOrEqual(0);
-      expect(firstRemoval).toBeGreaterThan(lastVerification);
-    } finally {
-      capture.mockRestore();
-      remove.mockRestore();
-    }
-  });
+        if (keepWorktrees) {
+          const cleanup = await cleanupRunWorktrees({
+            runId: outcome.state.runId,
+            repositoryRoot,
+          });
+          expect(cleanup.failed).toEqual([]);
+          expect(cleanup.removed).toHaveLength(manifest.worktrees.length);
+        }
+      } finally {
+        capture.mockRestore();
+        remove.mockRestore();
+      }
+    },
+  );
 
   it("seals target-relative overlay integrity failures as inconclusive", async () => {
     const repositoryRoot = await createSlugRepository();
