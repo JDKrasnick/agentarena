@@ -189,4 +189,18 @@ describe("terminal dashboard", () => {
     ]);
     view.unmount();
   });
+
+  it("routes Ctrl-C through battle cancellation", async () => {
+    const observer = new DashboardObserver();
+    const controller = new AbortController();
+    const control = new ArenaBattleControl(controller);
+    const view = render(<Dashboard observer={observer} control={control} />);
+
+    view.stdin.write("\u0003");
+    await update();
+
+    expect(controller.signal.aborted).toBe(true);
+    expect(controller.signal.reason).toEqual(new Error("Interrupted"));
+    view.unmount();
+  });
 });

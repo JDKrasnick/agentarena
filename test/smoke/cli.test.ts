@@ -72,6 +72,113 @@ describe("built CLI smoke flow", () => {
     expect(again.stdout).toContain("Already removed:");
   }, 90_000);
 
+  it("finalizes retained worktrees when SIGINT cancels an active fight", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const bin = await mkdtemp(path.join(os.tmpdir(), "arena-cancel-bin-"));
+    for (const executable of ["codex", "claude"]) {
+      const target = path.join(bin, executable);
+      await writeFile(
+        target,
+        `#!/bin/sh
+if [ "$AGENT_ARENA_STAGE" = "implement" ]; then
+  sleep 30
+fi
+exec "${process.execPath}" "${fixtureAgent}" "$@"
+`,
+      );
+      await chmod(target, 0o755);
+    }
+    const env = {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+    };
+    const fight = execa(
+      process.execPath,
+      [
+        cli,
+        "fight",
+        "Collapse repeated whitespace in slugs.",
+        "--test",
+        "node --test",
+        "--agents",
+        "codex,claude",
+        "--rounds",
+        "1",
+        "--effort",
+        "ultra-low",
+        "--yes",
+        "--keep-worktrees",
+        "--display",
+        "plain",
+      ],
+      { cwd: repositoryRoot, env, reject: false, timeout: 60_000 },
+    );
+    const runsRoot = path.join(repositoryRoot, ".agent-arena", "runs");
+    let runId: string | undefined;
+    let activeManifest:
+      | {
+          executions: Array<{ finalizedAt?: string }>;
+          worktrees: Array<{ path: string; state: string }>;
+        }
+      | undefined;
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      try {
+        [runId] = await readdir(runsRoot);
+        if (runId) {
+          activeManifest = JSON.parse(
+            await readFile(
+              path.join(runsRoot, runId, "worktrees", "manifest.json"),
+              "utf8",
+            ),
+          ) as typeof activeManifest;
+          if ((activeManifest?.worktrees.length ?? 0) >= 3) break;
+        }
+      } catch {
+        // The run and manifest are created asynchronously by the CLI process.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(runId).toBeTruthy();
+    expect(activeManifest?.worktrees.length).toBeGreaterThanOrEqual(3);
+    if (!fight.pid) throw new Error("Fight process did not start");
+
+    process.kill(fight.pid, "SIGINT");
+    const result = await fight;
+
+    expect(result.exitCode).toBe(130);
+    expect(result.signal).toBeUndefined();
+    expect(result.stdout).toContain("Retained worktree:");
+    const durableResult = JSON.parse(
+      await readFile(path.join(runsRoot, runId!, "result.json"), "utf8"),
+    ) as { status: string };
+    expect(durableResult.status).toBe("cancelled");
+    const finalizedManifest = JSON.parse(
+      await readFile(
+        path.join(runsRoot, runId!, "worktrees", "manifest.json"),
+        "utf8",
+      ),
+    ) as {
+      executions: Array<{ finalizedAt?: string }>;
+      worktrees: Array<{ path: string; state: string }>;
+    };
+    expect(finalizedManifest.executions.length).toBeGreaterThan(0);
+    expect(
+      finalizedManifest.executions.every((entry) => entry.finalizedAt),
+    ).toBe(true);
+    expect(
+      finalizedManifest.worktrees.every((entry) => entry.state === "retained"),
+    ).toBe(true);
+
+    const cleanup = await execa(
+      process.execPath,
+      [cli, "cleanup-worktrees", runId!],
+      { cwd: repositoryRoot, env },
+    );
+    for (const worktree of finalizedManifest.worktrees) {
+      expect(cleanup.stdout).toContain(`Removed worktree: ${worktree.path}`);
+    }
+  }, 90_000);
+
   it("runs a fight, reviews, accepts, applies, and retests without network", async () => {
     const repositoryRoot = await createSlugRepository();
     const bin = await mkdtemp(path.join(os.tmpdir(), "arena-fake-bin-"));
