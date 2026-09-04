@@ -50,10 +50,13 @@ if (stage === "provider_health_probe") {
     );
     process.exit(0);
   }
-  const implementation =
+  let implementation =
     (contestant ?? agent) === "a"
       ? `export function slug(value) {\n  return value.trim().toLowerCase().replace(/\\s+/g, "-");\n}\n`
       : `export function slug(value) {\n  return value.trim().toLowerCase().replaceAll(" ", "-");\n}\n`;
+  if (process.env.AGENT_ARENA_TRAILING_BLANK_IMPLEMENTATION === "1") {
+    implementation += "\n";
+  }
   await writeFile(sourcePath, implementation);
   await writeFile(
     submission,

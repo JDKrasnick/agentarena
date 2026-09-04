@@ -74,6 +74,7 @@ import {
 import {
   assertCleanRepository,
   fetchRemoteCommit,
+  PatchCaptureIntegrityError,
   readTextAtCommit,
   resolveCommit,
   resolveGitHubRepositoryIdentity,
@@ -3938,6 +3939,7 @@ export class RoundEngine {
   }
 
   private isInfrastructureError(error: unknown): boolean {
+    if (error instanceof PatchCaptureIntegrityError) return true;
     const message = error instanceof Error ? error.message : String(error);
     return /infrastructure|could not start|inconclusive/i.test(message);
   }
