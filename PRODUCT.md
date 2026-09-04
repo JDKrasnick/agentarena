@@ -273,6 +273,13 @@ The same evidence and health system supports three topologies:
 Before any review or attack work, implementation eligibility is sealed as
 versioned terminal metadata with one eligibility disposition and diagnostic
 trail per contestant. Legacy v1 records remain readable; new runs write v2.
+Git patch capture preserves the exact bytes emitted by
+`git diff --binary --full-index`; the harness never decodes, trims, or
+reconstructs non-empty patches. Before removing the source worktree, Arena
+verifies every captured patch with a reverse apply check against that still-live
+tree. A capture or verification failure is a harness-integrity failure that
+ends pre-review as inconclusive; it never becomes a failed apply check or
+contestant forfeit.
 Every required-validation attempt records its exit code, signal, wall-clock
 timeout state, elapsed and last-output times, termination escalation, logs, and
 an exact bounded failure excerpt. Deterministic assertion, typecheck, lint, and

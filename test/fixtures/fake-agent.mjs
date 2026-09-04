@@ -50,10 +50,13 @@ if (stage === "provider_health_probe") {
     );
     process.exit(0);
   }
-  const implementation =
+  let implementation =
     (contestant ?? agent) === "a"
       ? `export function slug(value) {\n  return value.trim().toLowerCase().replace(/\\s+/g, "-");\n}\n`
       : `export function slug(value) {\n  return value.trim().toLowerCase().replaceAll(" ", "-");\n}\n`;
+  if (process.env.AGENT_ARENA_TRAILING_BLANK_IMPLEMENTATION === "1") {
+    implementation += "\n";
+  }
   await writeFile(sourcePath, implementation);
   await writeFile(
     submission,
@@ -603,6 +606,74 @@ if (stage === "provider_health_probe") {
                 { kind: "assert_text", text: "alpha-beta" },
               ],
             },
+          },
+        ],
+      }),
+    );
+  } else if (
+    process.env.AGENT_ARENA_FAKE_MISSING_ATTACK_PATH === "1" &&
+    round === "1"
+  ) {
+    const testPath = "test/arena-missing-attack.test.mjs";
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 2,
+        sharedSupportPaths: [],
+        attacks: [
+          {
+            rank: 1,
+            claim: "Uppercase input is not normalized",
+            impact: "Public slugs are inconsistent",
+            oracle: {
+              expectedBehavior: "Return a lowercase slug",
+              sourceId: "task-user",
+              sourceLocation: "command-line task",
+              rationale: "The task requires lowercase slugs",
+            },
+            proposedSeverity: "medium",
+            confidence: 70,
+            reproduction:
+              "Call slug with Alpha Beta; expect a lowercase alpha-beta slug.",
+            focusedCommand: `node --test ${testPath}`,
+            requiredCapabilities: [],
+            paths: [testPath],
+          },
+        ],
+      }),
+    );
+  } else if (
+    process.env.AGENT_ARENA_FAKE_DIRECT_ATTACK === "1" &&
+    round === "1"
+  ) {
+    const testPath = "test/arena-direct-attack.test.mjs";
+    await writeFile(
+      path.join(process.cwd(), testPath),
+      `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { slug } from "../src/slug.mjs";\ntest("normalizes case", () => assert.equal(slug("Alpha Beta"), "alpha-beta"));\n`,
+    );
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 2,
+        sharedSupportPaths: [],
+        attacks: [
+          {
+            rank: 1,
+            claim: "Uppercase input is not normalized",
+            impact: "Public slugs are inconsistent",
+            oracle: {
+              expectedBehavior: "Return a lowercase slug",
+              sourceId: "task-user",
+              sourceLocation: "command-line task",
+              rationale: "The task requires lowercase slugs",
+            },
+            proposedSeverity: "medium",
+            confidence: 70,
+            reproduction:
+              "Call slug with Alpha Beta; expect a lowercase alpha-beta slug.",
+            focusedCommand: "node --test test/arena-direct-attack.test.mjs",
+            requiredCapabilities: [],
+            paths: [testPath],
           },
         ],
       }),

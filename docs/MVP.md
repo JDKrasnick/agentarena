@@ -106,6 +106,15 @@ to review without producing review, attack, repair, quality, or coverage
 artifacts. The persisted pre-review terminal outcome controls resume and CLI
 status reporting.
 
+Implementation and target-relative overlay capture persists the exact bytes from
+`git diff --binary --full-index`, without text decoding, trimming, or
+newline reconstruction. Every non-empty patch must pass
+`git apply --check --reverse` against its still-live source worktree before that
+worktree is removed. Capture or verification failure is a typed
+harness-integrity failure: round one seals an inconclusive
+`harness_infrastructure_failure` result and does not record a contestant apply
+failure or forfeit.
+
 New runs write the v2 pre-review contract with an overall terminal status and a
 separate eligibility, cause code, and diagnostic-artifact list for each
 contestant; completed v1 records remain readable. Classification precedence is
@@ -209,7 +218,8 @@ Agent Arena then:
 4. Creates an isolated Git worktree for each contestant at the same commit.
 5. Gives both agents the same RunSpec, repository instructions, limits,
    and test command.
-6. Captures each implementation as a patch and runs the configured test command.
+6. Captures each implementation byte-for-byte, verifies it in reverse against
+   the live source worktree, and runs the configured test command.
 7. Runs one to five task-scaled attack–repair rounds with different investigation briefs:
    - Round 1 attacks specification compliance and local correctness.
    - Round 2 attacks boundaries, state, data, concurrency, and hidden test
