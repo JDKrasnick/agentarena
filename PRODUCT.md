@@ -1099,8 +1099,13 @@ does not turn acknowledgement into confinement.
 Before worktree creation or any provider session, Arena inventories MCP servers
 from every selected provider setup. The consolidated plan records only provider,
 server name, enabled state, authentication readiness, requested execution role,
-and requirement level; it never reads, copies, or displays credentials. An
-inventory failure is `unknown`, never an empty inventory.
+and requirement level. For a selected Codex server, Arena transiently reads its
+non-secret transport definition so it can construct a selected-only child
+configuration. It rejects literal environment values and HTTP headers; only
+environment-variable references and Codex-managed OAuth are supported. The
+definition remains in memory or the temporary preflight directory and is never
+written to run artifacts, prompts, transcripts, or reports. An inventory failure
+is `unknown`, never an empty inventory.
 
 The operator chooses one run-scoped MCP policy:
 
@@ -1151,10 +1156,12 @@ snapshot rather than future provider changes.
 If a provider CLI cannot construct a strict run-scoped configuration from the
 name-only frozen inventory, Arena fails closed instead of reusing ambient
 configuration. Claude named selections are unavailable without explicit server
-definitions. Codex additionally requires a known inventory and server names
-that its dotted configuration path can address safely. Optional Claude
-selections are excluded as coverage gaps, while required selections block
-launch unless reduced validation is accepted.
+definitions. Codex requires a known inventory, safely addressable selected
+names, and a supported credential-free transient definition. Every frozen-policy
+Codex child ignores the ambient user configuration, disables Apps, and receives
+only the validated selected definitions. Optional unreconstructable selections
+are excluded as coverage gaps, while required selections block launch unless
+reduced validation is accepted.
 
 An agent may declare extra capabilities for an integration attack. A newly
 denied optional request becomes `capability_denied` and causes no damage or
@@ -1351,7 +1358,10 @@ Each run should generate:
 * An immutable `run-spec.json` with frozen source snapshots and reproducibility metadata.
 * A redacted permission manifest with approvals, denials, leases, and omitted checks.
 * A credential-free frozen MCP inventory, readiness result, exact allowlist,
-  exclusions, coverage gaps, and hash-bound operator acceptance.
+  exclusions, coverage gaps, and hash-bound operator acceptance. Invocation
+  telemetry records only the policy hash, isolation mode, Apps-disabled state,
+  and sorted exposed server names; it never records definitions, arguments,
+  environment values, headers, or tokens.
 * A JSON result file.
 * Every eligible final patch and any independent recommendation.
 * A command to review and apply an exact accepted patch.

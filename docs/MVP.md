@@ -844,8 +844,13 @@ decision is available:
 Before worktree creation or any provider session, Arena inventories MCP servers
 from every selected provider setup. Inventory records only provider, server
 name, enabled state, authentication readiness, requested role, and requirement
-level; credentials are never read, copied, or displayed. A failed inventory is
-recorded as `unknown`, not as an empty setup.
+level. For each selected Codex server, Arena transiently reads the non-secret
+transport definition needed to construct an isolated child command. Literal
+environment values and HTTP headers are refused; environment-variable
+references and Codex-managed OAuth remain supported. Definitions remain in
+memory or the temporary preflight directory and never enter durable artifacts,
+prompts, transcripts, or reports. A failed inventory is recorded as `unknown`,
+not as an empty setup.
 
 The operator selects exactly one MCP policy for the run: `keep_configured`
 enables only servers named in Arena configuration; `configure_selection` uses
@@ -894,10 +899,12 @@ discovered snapshot rather than future setup changes.
 If a provider CLI cannot construct a strict run-scoped configuration from the
 name-only frozen inventory, Arena fails closed rather than falling back to
 ambient configuration. Claude named selections require explicit server
-definitions. Codex requires a known inventory and server names that its dotted
-configuration path can address safely. Optional Claude selections become
-coverage gaps, and required selections block launch unless reduced validation
-is accepted.
+definitions. Codex requires a known inventory, safely addressable selected
+names, and supported credential-free transient definitions. Every frozen-policy
+Codex child ignores ambient user configuration, disables Apps, and receives
+only those selected definitions. Optional reconstruction failures become
+coverage gaps, and required failures block launch unless reduced validation is
+accepted.
 
 If a required capability is denied or cannot be authenticated, the fight does
 not start unless the user explicitly accepts a reduced validation contract. The
@@ -1319,8 +1326,12 @@ containing:
   supplies post-round validation and recommendation details.
 - `telemetry/invocations/<invocation-id>.json`: immutable, prompt-free provider
   process metadata, normalized usage, duration, model identity, status, cost
-  provenance, and diagnostic artifact references. Failed, cancelled, timed-out,
-  retried, probe, contestant, and judge invocations remain visible.
+  provenance, diagnostic artifact references, and a credential-free MCP
+  exposure record containing the policy hash, isolation mode, Apps-disabled
+  state, and sorted exposed server names. Transport definitions, arguments,
+  environment values, headers, and tokens are excluded. Failed, cancelled,
+  timed-out, retried, probe, contestant, and judge invocations remain visible;
+  existing v1 records remain readable.
 - `telemetry/summary.json`: atomically replaceable whole-run totals and rollups
   by provider, resolved model (with an explicit `unknown` bucket), role, stage,
   and round. Reasoning is an output subset; partial or missing fields are never

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import {
@@ -105,9 +106,156 @@ export const FrozenMcpPolicySchema = z
   });
 export type FrozenMcpPolicy = z.infer<typeof FrozenMcpPolicySchema>;
 
+const OptionalStringListSchema = z.array(z.string()).nullable().optional();
+const OptionalTimeoutSchema = z.number().positive().nullable().optional();
+const CodexMcpDefinitionBaseSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    enabled: z.boolean(),
+    disabled_reason: z.string().nullable(),
+    enabled_tools: OptionalStringListSchema,
+    disabled_tools: OptionalStringListSchema,
+    startup_timeout_sec: OptionalTimeoutSchema,
+    tool_timeout_sec: OptionalTimeoutSchema,
+  })
+  .strict();
+
+const CodexStdioTransportSchema = z
+  .object({
+    type: z.literal("stdio"),
+    command: z.string().min(1),
+    args: z.array(z.string()),
+    env: z.record(z.string(), z.string()).nullable(),
+    env_vars: z.array(z.string()),
+    cwd: z.string().nullable(),
+  })
+  .strict();
+
+const CodexHttpTransportSchema = z
+  .object({
+    type: z.literal("streamable_http"),
+    url: z.url().refine((value) => /^https?:$/i.test(new URL(value).protocol), {
+      message: "Codex MCP HTTP URLs must use http or https",
+    }),
+    bearer_token_env_var: z.string().min(1).nullable(),
+    http_headers: z.record(z.string(), z.string()).nullable(),
+    env_http_headers: z.record(z.string(), z.string()).nullable(),
+  })
+  .strict();
+
+const CodexMcpGetSchema = CodexMcpDefinitionBaseSchema.extend({
+  transport: z.union([CodexStdioTransportSchema, CodexHttpTransportSchema]),
+}).strict();
+
+export const CodexMcpRuntimeDefinitionSchema = z
+  .object({
+    provider: z.literal("codex"),
+    name: z.string().regex(/^[A-Za-z0-9_-]+$/),
+    transport: z.discriminatedUnion("type", [
+      CodexStdioTransportSchema.omit({ env: true }).strict(),
+      CodexHttpTransportSchema.omit({ http_headers: true }).strict(),
+    ]),
+    enabled_tools: OptionalStringListSchema,
+    disabled_tools: OptionalStringListSchema,
+    startup_timeout_sec: OptionalTimeoutSchema,
+    tool_timeout_sec: OptionalTimeoutSchema,
+  })
+  .strict();
+export type CodexMcpRuntimeDefinition = z.infer<
+  typeof CodexMcpRuntimeDefinitionSchema
+>;
+export type McpRuntimeDefinitions = readonly CodexMcpRuntimeDefinition[];
+
+export type CodexMcpDefinitionResolution =
+  | { status: "resolved"; definition: CodexMcpRuntimeDefinition }
+  | { status: "unavailable"; reason: string };
+
 type InventoryRunner = (
   request: ProcessRequest,
 ) => ReturnType<typeof runProcess>;
+
+export async function resolveCodexMcpRuntimeDefinition(options: {
+  name: string;
+  repositoryRoot: string;
+  logRoot: string;
+  signal?: AbortSignal;
+  run?: InventoryRunner;
+}): Promise<CodexMcpDefinitionResolution> {
+  if (!/^[A-Za-z0-9_-]+$/.test(options.name))
+    return {
+      status: "unavailable",
+      reason:
+        "Selected Codex MCP server name is unsafe for isolated configuration",
+    };
+  const result = await (options.run ?? runProcess)({
+    executable: "codex",
+    args: ["mcp", "get", options.name, "--json"],
+    cwd: options.repositoryRoot,
+    timeoutMs: 15_000,
+    logPrefix: path.join(
+      options.logRoot,
+      `mcp-definition-codex-${options.name}`,
+    ),
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  if (result.exitCode !== 0 || result.timedOut || result.failureClass)
+    return {
+      status: "unavailable",
+      reason: "Selected Codex MCP server definition could not be resolved",
+    };
+  try {
+    const parsed = CodexMcpGetSchema.parse(
+      JSON.parse(await readFile(result.stdoutPath, "utf8")),
+    );
+    if (parsed.name !== options.name)
+      throw new Error("Codex returned a different MCP server name");
+    if (
+      parsed.transport.type === "stdio" &&
+      parsed.transport.env &&
+      Object.keys(parsed.transport.env).length
+    )
+      throw new Error("literal environment values are not supported");
+    if (
+      parsed.transport.type === "streamable_http" &&
+      parsed.transport.http_headers &&
+      Object.keys(parsed.transport.http_headers).length
+    )
+      throw new Error("literal HTTP headers are not supported");
+    const transport =
+      parsed.transport.type === "stdio"
+        ? {
+            type: "stdio" as const,
+            command: parsed.transport.command,
+            args: parsed.transport.args,
+            env_vars: parsed.transport.env_vars,
+            cwd: parsed.transport.cwd,
+          }
+        : {
+            type: "streamable_http" as const,
+            url: parsed.transport.url,
+            bearer_token_env_var: parsed.transport.bearer_token_env_var,
+            env_http_headers: parsed.transport.env_http_headers,
+          };
+    return {
+      status: "resolved",
+      definition: CodexMcpRuntimeDefinitionSchema.parse({
+        provider: "codex",
+        name: parsed.name,
+        transport,
+        enabled_tools: parsed.enabled_tools,
+        disabled_tools: parsed.disabled_tools,
+        startup_timeout_sec: parsed.startup_timeout_sec,
+        tool_timeout_sec: parsed.tool_timeout_sec,
+      }),
+    };
+  } catch {
+    return {
+      status: "unavailable",
+      reason:
+        "Selected Codex MCP server definition is unsupported or contains inline credential material",
+    };
+  }
+}
 
 function authFromLabel(label: string): McpInventoryServer["authentication"] {
   if (/needs authentication|not authenticated|login required/i.test(label))

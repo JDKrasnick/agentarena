@@ -59,7 +59,9 @@ import {
   isolateMcpPolicyForReadiness,
   mcpServerIdentity,
   mcpProviders,
+  resolveCodexMcpRuntimeDefinition,
   type FrozenMcpPolicy,
+  type McpRuntimeDefinitions,
 } from "../mcp/policy.js";
 
 export type DisplayMode =
@@ -175,6 +177,7 @@ function createArena(
     showProgressWithObserver?: boolean;
   },
   mcpPolicy?: FrozenMcpPolicy,
+  mcpRuntimeDefinitions: McpRuntimeDefinitions = [],
   recoveryRuntime?: {
     canRecover(provider: AgentId): boolean;
     recordUnrecovered(stage: "review" | "attack_construction"): boolean;
@@ -183,22 +186,38 @@ function createArena(
   const adapters = Object.fromEntries(
     config.contestants.map((contestant) => [
       contestant.provider,
-      createProviderAdapter(contestant.provider, contestant.model, mcpPolicy),
+      createProviderAdapter(
+        contestant.provider,
+        contestant.model,
+        mcpPolicy,
+        mcpRuntimeDefinitions,
+      ),
     ]),
   );
   const observer = observability?.observer;
   return new Arena({
     adapters,
     adapterFactory: (contestant) =>
-      createProviderAdapter(contestant.provider, contestant.model, mcpPolicy),
+      createProviderAdapter(
+        contestant.provider,
+        contestant.model,
+        mcpPolicy,
+        mcpRuntimeDefinitions,
+      ),
     verifier: new CommandAttackVerifier(
       config.judge,
-      providerCommand(config.judge, undefined, mcpPolicy),
+      providerCommand(
+        config.judge,
+        undefined,
+        mcpPolicy,
+        mcpRuntimeDefinitions,
+      ),
     ),
     qualityVerifier: new CommandPatchQualityVerifier(
       config.judge,
       undefined,
       mcpPolicy,
+      mcpRuntimeDefinitions,
     ),
     browserAdapters: createBuiltInBrowserAdapters(),
     ...(mcpPolicy ? { mcpPolicy } : {}),
@@ -259,11 +278,15 @@ async function checkSelectedMcpReadiness(options: {
   temporaryRoot: string;
   signal: AbortSignal;
   manualReview: boolean;
-}): Promise<FrozenMcpPolicy> {
+}): Promise<{
+  policy: FrozenMcpPolicy;
+  runtimeDefinitions: McpRuntimeDefinitions;
+}> {
   if (options.manualReview && (!stdin.isTTY || !stdout.isTTY))
     throw new Error("--review-mcp requires an interactive TTY");
   const readiness = new Map<string, "ready" | "unavailable">();
   const declined = new Set<string>();
+  const runtimeDefinitions = new Map<string, McpRuntimeDefinitions[number]>();
   const selected = options.policy.servers.filter(
     (server) => server.decision === "included",
   );
@@ -277,14 +300,43 @@ async function checkSelectedMcpReadiness(options: {
       const contestant = options.config.contestants.find(
         (entry) => entry.provider === provider,
       );
-      const adapter = createProviderAdapter(
-        provider,
-        contestant?.model,
-        isolateMcpPolicyForReadiness(options.policy, provider, server.name),
-      );
       let attempt = 0;
       while (true) {
         attempt += 1;
+        let scopedRuntimeDefinitions: McpRuntimeDefinitions = [];
+        if (provider === "codex") {
+          const resolution = await resolveCodexMcpRuntimeDefinition({
+            name: server.name,
+            repositoryRoot: options.config.repositoryRoot,
+            logRoot: options.temporaryRoot,
+            signal: options.signal,
+          });
+          if (resolution.status === "unavailable") {
+            if (!readline) {
+              readiness.set(identity, "unavailable");
+              break;
+            }
+            stdout.write(
+              `${provider}/${server.name} cannot be reconstructed safely for an isolated child process. ${resolution.reason}.\n`,
+            );
+            const answer = await readline.question(
+              "Repair the provider configuration and press Enter to retry, or type s to skip this server: ",
+            );
+            if (/^s(?:kip)?$/i.test(answer.trim())) {
+              readiness.set(identity, "unavailable");
+              break;
+            }
+            continue;
+          }
+          scopedRuntimeDefinitions = [resolution.definition];
+          runtimeDefinitions.set(identity, resolution.definition);
+        }
+        const adapter = createProviderAdapter(
+          provider,
+          contestant?.model,
+          isolateMcpPolicyForReadiness(options.policy, provider, server.name),
+          scopedRuntimeDefinitions,
+        );
         const result = await adapter.probeConnectivity({
           cwd: options.config.repositoryRoot,
           transcriptPrefix: path.join(
@@ -325,7 +377,30 @@ async function checkSelectedMcpReadiness(options: {
     readline?.close();
   }
   const resolved = applyMcpReadiness(options.policy, readiness, true);
-  return declined.size ? excludeMcpServers(resolved, declined) : resolved;
+  const policy = declined.size
+    ? excludeMcpServers(resolved, declined)
+    : resolved;
+  if (
+    !options.config.reducedValidationAccepted &&
+    policy.servers.some(
+      (server) =>
+        server.requirement === "required" && server.decision === "excluded",
+    )
+  )
+    throw new Error(
+      "A required MCP server is unavailable; explicitly accept reduced validation to continue",
+    );
+  const exposed = new Set(
+    policy.servers
+      .filter((server) => server.decision === "included")
+      .map((server) => mcpServerIdentity(server.provider, server.name)),
+  );
+  return {
+    policy,
+    runtimeDefinitions: [...runtimeDefinitions]
+      .filter(([identity]) => exposed.has(identity))
+      .map(([, definition]) => definition),
+  };
 }
 
 export interface RunCommandResult {
@@ -360,16 +435,20 @@ export async function runFight(
   const mcpPreflight = await prepareMcpPolicy(plannedConfig);
   let config: Awaited<ReturnType<typeof loadFightConfig>>;
   let mcpPolicy: FrozenMcpPolicy;
+  let mcpRuntimeDefinitions: McpRuntimeDefinitions;
   try {
     config = await approvePermissionPlan(plannedConfig, mcpPreflight.policy);
-    mcpPolicy = await checkSelectedMcpReadiness({
+    const readiness = await checkSelectedMcpReadiness({
       config,
       policy: mcpPreflight.policy,
       temporaryRoot: mcpPreflight.temporaryRoot,
       signal: new AbortController().signal,
       manualReview: overrides.reviewMcp ?? false,
     });
+    mcpPolicy = readiness.policy;
+    mcpRuntimeDefinitions = readiness.runtimeDefinitions;
     mcpPolicy = approveFinalMcpPolicy(mcpPolicy, overrides.reviewMcp ?? false);
+    await rm(mcpPreflight.temporaryRoot, { recursive: true, force: true });
   } catch (error) {
     await rm(mcpPreflight.temporaryRoot, { recursive: true, force: true });
     throw error;
@@ -442,6 +521,7 @@ export async function runFight(
       ...(usePlainProgress ? { showProgressWithObserver: true } : {}),
     },
     mcpPolicy,
+    mcpRuntimeDefinitions,
     recoveryRuntime,
   );
   const cancel = (): void => {
@@ -532,6 +612,7 @@ export async function runFight(
             providerFailure.provider,
             contestant?.model,
             mcpPolicy,
+            mcpRuntimeDefinitions,
           ),
         );
       } else {
@@ -545,6 +626,7 @@ export async function runFight(
               contestant.provider,
               contestant.model,
               mcpPolicy,
+              mcpRuntimeDefinitions,
             ),
           );
         }
@@ -637,6 +719,7 @@ export async function runFight(
           ...(usePlainProgress ? { showProgressWithObserver: true } : {}),
         },
         mcpPolicy,
+        mcpRuntimeDefinitions,
         recoveryRuntime,
       );
       outcome = await replacementArena.fightReplacement(

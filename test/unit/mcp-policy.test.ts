@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   approveMcpPolicy,
   applyMcpReadiness,
@@ -8,6 +11,7 @@ import {
   mergeMcpPermissionPolicy,
   mcpServerIdentity,
   parseMcpInventory,
+  resolveCodexMcpRuntimeDefinition,
 } from "../../src/mcp/policy.js";
 
 describe("MCP preflight policy", () => {
@@ -54,6 +58,144 @@ describe("MCP preflight policy", () => {
       },
     ]);
     expect(JSON.stringify(parsed)).not.toContain("TOKEN");
+  });
+
+  async function resolveDefinition(definition: unknown) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-mcp-definition-"));
+    await mkdir(path.join(root, "logs"));
+    const stdoutPath = path.join(root, "definition.stdout.log");
+    const stderrPath = path.join(root, "definition.stderr.log");
+    await Promise.all([
+      writeFile(stdoutPath, JSON.stringify(definition)),
+      writeFile(stderrPath, ""),
+    ]);
+    return resolveCodexMcpRuntimeDefinition({
+      name: "selected",
+      repositoryRoot: root,
+      logRoot: path.join(root, "logs"),
+      run: () =>
+        Promise.resolve({
+          command: "codex mcp get selected --json",
+          cwd: root,
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          attempts: 1,
+          durationMs: 1,
+          stdoutPath,
+          stderrPath,
+        }),
+    });
+  }
+
+  const definitionBase = {
+    name: "selected",
+    enabled: true,
+    disabled_reason: null,
+    enabled_tools: null,
+    disabled_tools: null,
+    startup_timeout_sec: null,
+    tool_timeout_sec: null,
+  };
+
+  it("resolves supported stdio definitions with environment references", async () => {
+    const result = await resolveDefinition({
+      ...definitionBase,
+      transport: {
+        type: "stdio",
+        command: "node",
+        args: ["server.mjs"],
+        env: null,
+        env_vars: ["MCP_TOKEN"],
+        cwd: null,
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "resolved",
+      definition: {
+        name: "selected",
+        transport: { type: "stdio", env_vars: ["MCP_TOKEN"] },
+      },
+    });
+  });
+
+  it("resolves supported HTTP definitions with environment-backed credentials", async () => {
+    const result = await resolveDefinition({
+      ...definitionBase,
+      transport: {
+        type: "streamable_http",
+        url: "https://mcp.example.test/api",
+        bearer_token_env_var: "MCP_TOKEN",
+        http_headers: null,
+        env_http_headers: { Authorization: "MCP_AUTH_HEADER" },
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "resolved",
+      definition: {
+        transport: {
+          type: "streamable_http",
+          bearer_token_env_var: "MCP_TOKEN",
+        },
+      },
+    });
+  });
+
+  it.each([
+    {
+      type: "stdio",
+      command: "node",
+      args: [],
+      env: { API_TOKEN: "literal-secret-sentinel" },
+      env_vars: [],
+      cwd: null,
+    },
+    {
+      type: "streamable_http",
+      url: "https://mcp.example.test/api",
+      bearer_token_env_var: null,
+      http_headers: { Authorization: "literal-secret-sentinel" },
+      env_http_headers: null,
+    },
+  ])(
+    "rejects inline credential-bearing transport fields",
+    async (transport) => {
+      const result = await resolveDefinition({ ...definitionBase, transport });
+
+      expect(result).toEqual({
+        status: "unavailable",
+        reason:
+          "Selected Codex MCP server definition is unsupported or contains inline credential material",
+      });
+      expect(JSON.stringify(result)).not.toContain("literal-secret-sentinel");
+    },
+  );
+
+  it("rejects unsupported selected transports", async () => {
+    const result = await resolveDefinition({
+      ...definitionBase,
+      transport: { type: "websocket", url: "wss://mcp.example.test" },
+    });
+
+    expect(result.status).toBe("unavailable");
+  });
+
+  it("rejects unsafe selected server names before invoking Codex", async () => {
+    let invoked = false;
+    const result = await resolveCodexMcpRuntimeDefinition({
+      name: "unsafe.name",
+      repositoryRoot: "/tmp",
+      logRoot: "/tmp",
+      run: () => {
+        invoked = true;
+        return Promise.reject(new Error("should not run"));
+      },
+    });
+
+    expect(result.status).toBe("unavailable");
+    expect(invoked).toBe(false);
   });
 
   it("freezes only explicitly configured servers and omits all others", () => {

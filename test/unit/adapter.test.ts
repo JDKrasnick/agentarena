@@ -4,6 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  codexMcpInlineTable,
   CommandAgentAdapter,
   parseModelSubmission,
   providerCommand,
@@ -86,14 +87,45 @@ describe("provider model selection", () => {
       frozenAt: "2026-08-25T00:00:00.000Z",
       policyHash: "0".repeat(64),
     };
-    const args = providerCommand("codex", undefined, policy).args;
+    const command = providerCommand("codex", undefined, policy, [
+      {
+        provider: "codex",
+        name: "selected",
+        transport: {
+          type: "stdio",
+          command: "selected-server",
+          args: ["--safe"],
+          env_vars: ["MCP_TOKEN"],
+          cwd: null,
+        },
+        enabled_tools: null,
+        disabled_tools: null,
+        startup_timeout_sec: null,
+        tool_timeout_sec: null,
+      },
+    ]);
+    const args = command.args;
 
-    expect(args).toEqual(expect.arrayContaining(["-c", "features.apps=false"]));
-    expect(args).not.toContain("mcp_servers.selected.enabled=true");
-    expect(args).toContain("mcp_servers.omitted.enabled=false");
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--ignore-user-config",
+        "-c",
+        "features.apps=false",
+      ]),
+    );
+    expect(args.join(" ")).toContain("mcp_servers.selected=");
+    expect(args.join(" ")).not.toContain("omitted");
+    expect(command.displayCommand).not.toContain("selected-server");
+    expect(command.mcpExposure).toEqual({
+      version: 1,
+      policyHash: "0".repeat(64),
+      isolationMode: "codex_ignore_user_config",
+      appsDisabled: true,
+      exposedServerNames: ["selected"],
+    });
   });
 
-  it("refuses Codex MCP names that its dotted configuration path cannot isolate", () => {
+  it("does not reference unsafe unselected Codex MCP names", () => {
     const policy = {
       version: 1 as const,
       mode: "keep_configured" as const,
@@ -118,9 +150,9 @@ describe("provider model selection", () => {
       policyHash: "0".repeat(64),
     };
 
-    expect(() => providerCommand("codex", undefined, policy)).toThrow(
-      /cannot be isolated safely/,
-    );
+    expect(
+      providerCommand("codex", undefined, policy).args.join(" "),
+    ).not.toContain("unsafe.name");
   });
 
   it("refuses to treat an unknown Codex inventory as an empty allowlist", () => {
@@ -235,13 +267,77 @@ describe("provider model selection", () => {
       servers: [{ provider: "gemini" as const, ...selection }],
     });
 
-    expect(codex.args).toContain("mcp_servers.secrets.enabled=false");
+    expect(codex.args).toContain("--ignore-user-config");
+    expect(codex.args.join(" ")).not.toContain("mcp_servers.secrets");
     expect(claude.args).toEqual(
       expect.arrayContaining(["--strict-mcp-config"]),
     );
     expect(gemini.args).toEqual(
       expect.arrayContaining(["--allowed-mcp-server-names", ""]),
     );
+  });
+
+  it("refuses a selected Codex server without a validated runtime definition", () => {
+    const policy = {
+      version: 1 as const,
+      mode: "configure_selection" as const,
+      inventory: [
+        {
+          provider: "codex" as const,
+          state: "known" as const,
+          servers: [
+            {
+              name: "selected",
+              enabled: true,
+              authentication: "ready" as const,
+              readiness: "ready" as const,
+            },
+          ],
+          diagnosticArtifactRefs: [],
+        },
+      ],
+      servers: [
+        {
+          provider: "codex" as const,
+          name: "selected",
+          enabledInSnapshot: true,
+          authentication: "ready" as const,
+          readiness: "ready" as const,
+          role: "agent" as const,
+          requirement: "required" as const,
+          decision: "included" as const,
+          reason: "selected",
+        },
+      ],
+      coverageGaps: [],
+      frozenAt: "2026-08-25T00:00:00.000Z",
+      policyHash: "0".repeat(64),
+    };
+
+    expect(() => providerCommand("codex", undefined, policy)).toThrow(
+      /no unique validated runtime definition/,
+    );
+  });
+
+  it("serializes supported HTTP credential references without literal headers", () => {
+    const table = codexMcpInlineTable({
+      provider: "codex",
+      name: "remote",
+      transport: {
+        type: "streamable_http",
+        url: "https://mcp.example.test/api",
+        bearer_token_env_var: "MCP_BEARER_TOKEN",
+        env_http_headers: { "X-Api-Key": "MCP_API_KEY" },
+      },
+      enabled_tools: ["resources/list"],
+      disabled_tools: null,
+      startup_timeout_sec: 5,
+      tool_timeout_sec: null,
+    });
+
+    expect(table).toContain('bearer_token_env_var="MCP_BEARER_TOKEN"');
+    expect(table).toContain('env_http_headers={"X-Api-Key"="MCP_API_KEY"}');
+    expect(table).not.toContain("Authorization: Bearer");
   });
 });
 
