@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
-import { captureBinaryPatch, WorktreeManager } from "../../src/repo/git.js";
+import {
+  captureBinaryPatch,
+  PatchCaptureIntegrityError,
+  WorktreeManager,
+} from "../../src/repo/git.js";
 import { createSlugRepository } from "../helpers/repository.js";
 
 async function commitAll(
@@ -29,6 +33,55 @@ async function rawDiff(
 }
 
 describe("Git patch capture integrity", () => {
+  it("keeps provider pathspec errors outside the integrity boundary with readable diagnostics", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const baseCommit = (
+      await execa("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot })
+    ).stdout;
+    const temporaryRoot = await mkdtemp(
+      path.join(os.tmpdir(), "agent-arena-invalid-patch-path-"),
+    );
+    const worktrees = new WorktreeManager(
+      repositoryRoot,
+      temporaryRoot,
+      baseCommit,
+    );
+    await worktrees.initialize();
+
+    try {
+      const sourceTree = await worktrees.create("source");
+      const snapshot = await worktrees.snapshot(sourceTree);
+      const missingPath = "test/does-not-exist.test.mjs";
+      const operations = [
+        () =>
+          worktrees.capturePatch(
+            sourceTree,
+            path.join(temporaryRoot, "scoped.diff"),
+            [missingPath],
+          ),
+        () =>
+          worktrees.capturePatchAgainstSnapshot(
+            sourceTree,
+            path.join(temporaryRoot, "snapshot.diff"),
+            snapshot,
+            [missingPath],
+          ),
+      ];
+
+      for (const operation of operations) {
+        const error = await operation().catch((cause: unknown) => cause);
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(PatchCaptureIntegrityError);
+        expect((error as Error).message).toContain(
+          `fatal: pathspec '${missingPath}' did not match any files`,
+        );
+        expect((error as Error).message).not.toMatch(/102,97,116,97,108/u);
+      }
+    } finally {
+      await worktrees.cleanup();
+    }
+  });
+
   it("preserves a final hunk ending in a blank context line byte-for-byte", async () => {
     const repositoryRoot = await createSlugRepository();
     const sourcePath = path.join(repositoryRoot, "src", "slug.mjs");

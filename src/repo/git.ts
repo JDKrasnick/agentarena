@@ -15,9 +15,9 @@ async function gitRaw(
     stripFinalNewline: false,
   });
   if (result.exitCode !== 0) {
-    throw new Error(
-      `git ${args.join(" ")} failed: ${result.stderr.toString() || result.stdout.toString()}`,
-    );
+    const stderr = Buffer.from(result.stderr).toString("utf8");
+    const stdout = Buffer.from(result.stdout).toString("utf8");
+    throw new Error(`git ${args.join(" ")} failed: ${stderr || stdout}`);
   }
   return Buffer.from(result.stdout);
 }
@@ -280,14 +280,18 @@ export class WorktreeManager {
     paths?: readonly string[],
     againstHead = false,
   ): Promise<number> {
+    if (paths && paths.length > 0) {
+      // Provider-declared paths are participant input. Keep a missing or
+      // otherwise invalid pathspec outside the harness-integrity boundary so
+      // the caller can isolate that entry without aborting the round.
+      await gitScalar(
+        this.repositoryRoot,
+        ["add", "-N", "--", ...paths],
+        worktree,
+      );
+    }
     try {
-      if (paths && paths.length > 0) {
-        await gitScalar(
-          this.repositoryRoot,
-          ["add", "-N", "--", ...paths],
-          worktree,
-        );
-      } else {
+      if (!paths || paths.length === 0) {
         await gitScalar(this.repositoryRoot, ["add", "-N", "."], worktree);
       }
       const args = ["diff", "--binary", "--full-index"];
@@ -317,12 +321,14 @@ export class WorktreeManager {
       throw new Error("A target-relative overlay requires at least one path");
     // Intent-to-add makes untracked test files visible to `git diff` without
     // replacing any content an agent may already have staged.
+    // This pathspec comes from the provider submission, so its validation must
+    // remain distinguishable from a failure to capture or verify valid bytes.
+    await gitScalar(
+      this.repositoryRoot,
+      ["add", "-N", "--", ...paths],
+      worktree,
+    );
     try {
-      await gitScalar(
-        this.repositoryRoot,
-        ["add", "-N", "--", ...paths],
-        worktree,
-      );
       const patch = await gitRaw(
         this.repositoryRoot,
         ["diff", "--binary", "--full-index", snapshot, "--", ...paths],

@@ -611,6 +611,38 @@ if (stage === "provider_health_probe") {
       }),
     );
   } else if (
+    process.env.AGENT_ARENA_FAKE_MISSING_ATTACK_PATH === "1" &&
+    round === "1"
+  ) {
+    const testPath = "test/arena-missing-attack.test.mjs";
+    await writeFile(
+      submission,
+      JSON.stringify({
+        version: 2,
+        sharedSupportPaths: [],
+        attacks: [
+          {
+            rank: 1,
+            claim: "Uppercase input is not normalized",
+            impact: "Public slugs are inconsistent",
+            oracle: {
+              expectedBehavior: "Return a lowercase slug",
+              sourceId: "task-user",
+              sourceLocation: "command-line task",
+              rationale: "The task requires lowercase slugs",
+            },
+            proposedSeverity: "medium",
+            confidence: 70,
+            reproduction:
+              "Call slug with Alpha Beta; expect a lowercase alpha-beta slug.",
+            focusedCommand: `node --test ${testPath}`,
+            requiredCapabilities: [],
+            paths: [testPath],
+          },
+        ],
+      }),
+    );
+  } else if (
     process.env.AGENT_ARENA_FAKE_DIRECT_ATTACK === "1" &&
     round === "1"
   ) {

@@ -1712,6 +1712,45 @@ describe("fake-adapter fight on a mocked real issue", () => {
     }
   });
 
+  it("isolates a provider-declared missing attack path without failing the fight", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_MISSING_ATTACK_PATH: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight({ ...duelConfig(repositoryRoot), rounds: 1 });
+
+    expect(outcome.state.status).toBe("complete");
+    expect(outcome.state.terminalOutcome).toBeUndefined();
+    expect(outcome.state.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "Attack rank 1 from a was rejected without suppressing siblings: git add -N -- test/arena-missing-attack.test.mjs failed: fatal: pathspec",
+        ),
+      ]),
+    );
+    expect(outcome.state.attackInvocations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          attacker: "a",
+          submissionStatus: "submitted",
+          attackCount: 0,
+        }),
+      ]),
+    );
+  });
+
   it("keeps valid siblings when a same-round correction remains malformed", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = FightConfigSchema.parse({
