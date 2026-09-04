@@ -361,32 +361,35 @@ describe("built CLI smoke flow", () => {
     );
   }, 90_000);
 
-  it("runs the built CLI with one selected Codex server and omits an incompatible ambient server", async () => {
-    const repositoryRoot = await createSlugRepository();
-    await writeFile(
-      path.join(repositoryRoot, "agent-arena.yaml"),
-      [
-        "test: node --test",
-        "mcp:",
-        "  policy: configure_selection",
-        "  servers:",
-        "    - provider: codex",
-        "      name: selected",
-        "      role: agent",
-        "      requirement: required",
-      ].join("\n"),
-    );
-    await execa("git", ["add", "agent-arena.yaml"], { cwd: repositoryRoot });
-    await execa("git", ["commit", "-m", "Configure MCP isolation fixture"], {
-      cwd: repositoryRoot,
-    });
-    const bin = await mkdtemp(
-      path.join(os.tmpdir(), "arena-mcp-isolation-bin-"),
-    );
-    const unexpectedGet = path.join(bin, "unexpected-incompatible-get");
-    await writeFile(
-      path.join(bin, "codex"),
-      `#!/bin/sh
+  it.each(["complete", "inconclusive"])(
+    "isolates selected MCP configuration and replays a %s terminal result without resolving it again",
+    async (terminalStatus) => {
+      const repositoryRoot = await createSlugRepository();
+      await writeFile(
+        path.join(repositoryRoot, "agent-arena.yaml"),
+        [
+          "test: node --test",
+          "mcp:",
+          "  policy: configure_selection",
+          "  servers:",
+          "    - provider: codex",
+          "      name: selected",
+          "      role: agent",
+          "      requirement: required",
+        ].join("\n"),
+      );
+      await execa("git", ["add", "agent-arena.yaml"], { cwd: repositoryRoot });
+      await execa("git", ["commit", "-m", "Configure MCP isolation fixture"], {
+        cwd: repositoryRoot,
+      });
+      const bin = await mkdtemp(
+        path.join(os.tmpdir(), "arena-mcp-isolation-bin-"),
+      );
+      const unexpectedGet = path.join(bin, "unexpected-incompatible-get");
+      const replayMarker = path.join(bin, "replaying-terminal-result");
+      await writeFile(
+        path.join(bin, "codex"),
+        `#!/bin/sh
 if [ "$1" = "--version" ]; then
   exec "${process.execPath}" "${fixtureAgent}" "$@"
 fi
@@ -395,6 +398,11 @@ if [ "$1" = "mcp" ] && [ "$2" = "list" ]; then
   exit 0
 fi
 if [ "$1" = "mcp" ] && [ "$2" = "get" ]; then
+  if [ -f "${replayMarker}" ]; then
+    : > "${unexpectedGet}"
+    echo 'selected definition is no longer available' >&2
+    exit 95
+  fi
   if [ "$3" = "incompatible" ]; then
     : > "${unexpectedGet}"
     exit 91
@@ -413,124 +421,153 @@ esac
 case " $* " in
   *incompatible*) echo 'excluded MCP server leaked into child arguments' >&2; exit 94 ;;
 esac
+if [ "${terminalStatus}" = "inconclusive" ] && [ "$AGENT_ARENA_STAGE" = "implement" ]; then
+  exit 1
+fi
 exec "${process.execPath}" "${fixtureAgent}" "$@"
 `,
-    );
-    await writeFile(
-      path.join(bin, "claude"),
-      `#!/bin/sh\nexec "${process.execPath}" "${fixtureAgent}" "$@"\n`,
-    );
-    await Promise.all([
-      chmod(path.join(bin, "codex"), 0o755),
-      chmod(path.join(bin, "claude"), 0o755),
-    ]);
-    const fight = await execa(
-      process.execPath,
-      [
-        cli,
-        "fight",
-        "Lowercase slugs and collapse whitespace.",
-        "--agents",
-        "codex,claude",
-        "--effort",
-        "medium",
-        "--rounds",
-        "1",
-        "--yes",
-        "--no-window",
-      ],
-      {
-        cwd: repositoryRoot,
-        env: {
-          ...process.env,
-          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+      );
+      await writeFile(
+        path.join(bin, "claude"),
+        `#!/bin/sh\n${terminalStatus === "inconclusive" ? "export AGENT_ARENA_EMPTY_IMPLEMENTATION=1\n" : ""}exec "${process.execPath}" "${fixtureAgent}" "$@"\n`,
+      );
+      await Promise.all([
+        chmod(path.join(bin, "codex"), 0o755),
+        chmod(path.join(bin, "claude"), 0o755),
+      ]);
+      const fight = await execa(
+        process.execPath,
+        [
+          cli,
+          "fight",
+          "Lowercase slugs and collapse whitespace.",
+          "--agents",
+          "codex,claude",
+          "--effort",
+          "medium",
+          "--rounds",
+          "1",
+          "--yes",
+          "--no-window",
+        ],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...process.env,
+            PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+          },
+          reject: false,
         },
-        reject: false,
-      },
-    );
+      );
 
-    expect(fight.exitCode, `${fight.stderr}\n${fight.stdout}`).toBe(0);
-    await expect(readFile(unexpectedGet, "utf8")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    const [runId] = await readdir(
-      path.join(repositoryRoot, ".agent-arena", "runs"),
-    );
-    const frozenMcpPolicy = JSON.parse(
-      await readFile(
-        path.join(
-          repositoryRoot,
-          ".agent-arena",
-          "runs",
-          runId!,
-          "mcp-policy.json",
+      expect(fight.exitCode, `${fight.stderr}\n${fight.stdout}`).toBe(
+        terminalStatus === "complete" ? 0 : 2,
+      );
+      await expect(readFile(unexpectedGet, "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const [runId] = await readdir(
+        path.join(repositoryRoot, ".agent-arena", "runs"),
+      );
+      const frozenMcpPolicy = JSON.parse(
+        await readFile(
+          path.join(
+            repositoryRoot,
+            ".agent-arena",
+            "runs",
+            runId!,
+            "mcp-policy.json",
+          ),
+          "utf8",
         ),
-        "utf8",
-      ),
-    ) as {
-      runtimeDefinitionHashes?: Array<{
+      ) as {
+        runtimeDefinitionHashes?: Array<{
+          provider: string;
+          name: string;
+          sha256: string;
+        }>;
+      };
+      expect(frozenMcpPolicy.runtimeDefinitionHashes).toHaveLength(1);
+      expect(frozenMcpPolicy.runtimeDefinitionHashes?.[0]).toMatchObject({
+        provider: "codex",
+        name: "selected",
+      });
+      expect(frozenMcpPolicy.runtimeDefinitionHashes?.[0]?.sha256).toMatch(
+        /^[a-f0-9]{64}$/,
+      );
+      const invocationDirectory = path.join(
+        repositoryRoot,
+        ".agent-arena",
+        "runs",
+        runId!,
+        "telemetry",
+        "invocations",
+      );
+      const invocationNames = await readdir(invocationDirectory);
+      type InvocationTelemetryFixture = {
+        version: number;
         provider: string;
-        name: string;
-        sha256: string;
-      }>;
-    };
-    expect(frozenMcpPolicy.runtimeDefinitionHashes).toHaveLength(1);
-    expect(frozenMcpPolicy.runtimeDefinitionHashes?.[0]).toMatchObject({
-      provider: "codex",
-      name: "selected",
-    });
-    expect(frozenMcpPolicy.runtimeDefinitionHashes?.[0]?.sha256).toMatch(
-      /^[a-f0-9]{64}$/,
-    );
-    const invocationDirectory = path.join(
-      repositoryRoot,
-      ".agent-arena",
-      "runs",
-      runId!,
-      "telemetry",
-      "invocations",
-    );
-    const invocationNames = await readdir(invocationDirectory);
-    type InvocationTelemetryFixture = {
-      version: number;
-      provider: string;
-      mcpExposure?: {
-        isolationMode: string;
-        appsDisabled: boolean;
-        exposedServerNames: string[];
-      } | null;
-    };
-    const records = await Promise.all(
-      invocationNames.map(
-        async (name) =>
-          JSON.parse(
-            await readFile(path.join(invocationDirectory, name), "utf8"),
-          ) as InvocationTelemetryFixture,
-      ),
-    );
-    const codexRecords = records.filter(
-      (record) => record.provider === "codex",
-    );
-    expect(codexRecords.length).toBeGreaterThan(0);
-    expect(
-      codexRecords.every(
-        (record) =>
-          record.version === 2 &&
-          record.mcpExposure?.isolationMode === "codex_ignore_user_config" &&
-          record.mcpExposure?.appsDisabled === true &&
-          JSON.stringify(record.mcpExposure?.exposedServerNames) ===
-            JSON.stringify(["selected"]),
-      ),
-    ).toBe(true);
-    const runRoot = path.join(repositoryRoot, ".agent-arena", "runs", runId!);
-    const durableNames = await readdir(runRoot, { recursive: true });
-    const durableBytes = await Promise.all(
-      durableNames
-        .filter((name) => /\.(?:json|md|html|svg|log)$/.test(name))
-        .map((name) => readFile(path.join(runRoot, name), "utf8")),
-    );
-    expect(durableBytes.join("\n")).not.toContain("private-mcp-server-command");
-  }, 90_000);
+        mcpExposure?: {
+          isolationMode: string;
+          appsDisabled: boolean;
+          exposedServerNames: string[];
+        } | null;
+      };
+      const records = await Promise.all(
+        invocationNames.map(
+          async (name) =>
+            JSON.parse(
+              await readFile(path.join(invocationDirectory, name), "utf8"),
+            ) as InvocationTelemetryFixture,
+        ),
+      );
+      const codexRecords = records.filter(
+        (record) => record.provider === "codex",
+      );
+      expect(codexRecords.length).toBeGreaterThan(0);
+      expect(
+        codexRecords.every(
+          (record) =>
+            record.version === 2 &&
+            record.mcpExposure?.isolationMode === "codex_ignore_user_config" &&
+            record.mcpExposure?.appsDisabled === true &&
+            JSON.stringify(record.mcpExposure?.exposedServerNames) ===
+              JSON.stringify(["selected"]),
+        ),
+      ).toBe(true);
+      const runRoot = path.join(repositoryRoot, ".agent-arena", "runs", runId!);
+      const durableNames = await readdir(runRoot, { recursive: true });
+      const durableBytes = await Promise.all(
+        durableNames
+          .filter((name) => /\.(?:json|md|html|svg|log)$/.test(name))
+          .map((name) => readFile(path.join(runRoot, name), "utf8")),
+      );
+      expect(durableBytes.join("\n")).not.toContain(
+        "private-mcp-server-command",
+      );
+      await writeFile(replayMarker, "provider configuration changed\n");
+      const resumed = await execa(
+        process.execPath,
+        [cli, "resume", runId!, "--display", "json"],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...process.env,
+            PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+          },
+          reject: false,
+        },
+      );
+      expect(resumed.exitCode, resumed.stderr).toBe(fight.exitCode);
+      expect(JSON.parse(resumed.stdout)).toMatchObject({
+        status: terminalStatus,
+      });
+      await expect(readFile(unexpectedGet, "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+    90_000,
+  );
 
   it("recovers provider transport with an exact frozen-input replacement", async () => {
     const repositoryRoot = await createSlugRepository();

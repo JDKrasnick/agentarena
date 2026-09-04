@@ -365,6 +365,29 @@ describe("provider model selection", () => {
     expect(table).toContain('env_http_headers={"X-Api-Key"="MCP_API_KEY"}');
     expect(table).not.toContain("Authorization: Bearer");
   });
+
+  it.each([null, [], ["arena_ping"]])(
+    "preserves the distinction between absent and empty MCP tool allowlists: %j",
+    (enabledTools) => {
+      const table = codexMcpInlineTable({
+        provider: "codex",
+        name: "selected",
+        transport: {
+          type: "stdio",
+          command: "node",
+          args: ["server.mjs"],
+          env_vars: [],
+          cwd: null,
+        },
+        enabled_tools: enabledTools,
+      });
+      if (enabledTools === null) expect(table).not.toContain("enabled_tools");
+      else
+        expect(table).toContain(
+          `enabled_tools=${JSON.stringify(enabledTools)}`,
+        );
+    },
+  );
 });
 
 describe("implementation transport classification", () => {

@@ -1165,15 +1165,18 @@ definitions. Codex requires a known inventory, safely addressable selected
 names, and a supported transient definition without literal or
 environment-backed credential material. Every frozen-policy Codex child ignores
 the ambient user configuration, disables Apps, and receives only the validated
-selected definitions. Because Codex MCP calls otherwise request interactive
+selected definitions, preserving an explicit empty tool allowlist as zero
+allowed tools. Because Codex MCP calls otherwise request interactive
 approval and fail closed in non-interactive `exec` sessions, a child with an
 approved selected server uses Codex's explicit approval-and-sandbox bypass. This
 does not widen the selected MCP allowlist and remains covered by the required
 high-risk native-execution capability disclosed before launch. Optional
 unreconstructable selections are excluded as coverage gaps, while required
-selections block launch unless reduced validation is accepted. Resume resolves
-each selected definition again and fails closed if its canonical hash differs
-from the definition approved at preflight.
+selections block launch unless reduced validation is accepted. An executing
+resume resolves each selected definition again and fails closed if its canonical
+hash differs from the definition approved at preflight. Replaying a completed
+or pre-review terminal result validates the durable policy without requiring
+current provider configuration.
 
 An agent may declare extra capabilities for an integration attack. A newly
 denied optional request becomes `capability_denied` and causes no damage or
