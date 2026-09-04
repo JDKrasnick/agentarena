@@ -1,5 +1,5 @@
 import { render } from "ink-testing-library";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Dashboard } from "../../src/dashboard/app.js";
 import { DashboardObserver } from "../../src/dashboard/state.js";
 import { ArenaBattleControl } from "../../src/observability/control.js";
@@ -105,7 +105,7 @@ describe("terminal dashboard", () => {
     );
     expect(view.lastFrame()).toContain("mounting 1 · landed 1 · revisions 1");
     expect(view.lastFrame()).toContain("A used retry-race! B took 30 HP.");
-    expect(view.lastFrame()).toMatch(/[╳◆✦] -30 HP/u);
+    await vi.waitFor(() => expect(view.lastFrame()).toMatch(/[╳◆✦] -30 HP/u));
 
     view.stdin.write("1");
     await update();

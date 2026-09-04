@@ -1,30 +1,71 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { execa } from "execa";
 
-async function git(
+async function gitRaw(
+  repositoryRoot: string,
+  args: string[],
+  cwd = repositoryRoot,
+): Promise<Buffer> {
+  const result = await execa("git", args, {
+    cwd,
+    reject: false,
+    encoding: "buffer",
+    stripFinalNewline: false,
+  });
+  if (result.exitCode !== 0) {
+    const stderr = Buffer.from(result.stderr).toString("utf8");
+    const stdout = Buffer.from(result.stdout).toString("utf8");
+    throw new Error(`git ${args.join(" ")} failed: ${stderr || stdout}`);
+  }
+  return Buffer.from(result.stdout);
+}
+
+async function gitScalar(
   repositoryRoot: string,
   args: string[],
   cwd = repositoryRoot,
 ): Promise<string> {
-  const result = await execa("git", args, { cwd, reject: false });
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `git ${args.join(" ")} failed: ${result.stderr || result.stdout}`,
-    );
+  return (await gitRaw(repositoryRoot, args, cwd)).toString("utf8").trim();
+}
+
+export class PatchCaptureIntegrityError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "PatchCaptureIntegrityError";
   }
-  return result.stdout.trim();
+}
+
+function patchCaptureIntegrityError(
+  message: string,
+  cause: unknown,
+): PatchCaptureIntegrityError {
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return new PatchCaptureIntegrityError(`${message}: ${detail}`, { cause });
+}
+
+async function verifyReversePatch(
+  repositoryRoot: string,
+  worktree: string,
+  patchPath: string,
+): Promise<void> {
+  await gitRaw(
+    repositoryRoot,
+    ["apply", "--check", "--reverse", "--whitespace=nowarn", patchPath],
+    worktree,
+  );
 }
 
 export async function resolveRepositoryRoot(cwd: string): Promise<string> {
-  return git(cwd, ["rev-parse", "--show-toplevel"]);
+  return gitScalar(cwd, ["rev-parse", "--show-toplevel"]);
 }
 
 export async function resolveCommit(
   repositoryRoot: string,
   ref = "HEAD",
 ): Promise<string> {
-  return git(repositoryRoot, ["rev-parse", `${ref}^{commit}`]);
+  return gitScalar(repositoryRoot, ["rev-parse", `${ref}^{commit}`]);
 }
 
 export async function fetchRemoteCommit(
@@ -32,7 +73,7 @@ export async function fetchRemoteCommit(
   repository: string,
   commit: string,
 ): Promise<string> {
-  await git(repositoryRoot, [
+  await gitScalar(repositoryRoot, [
     "fetch",
     "--no-tags",
     `https://github.com/${repository}.git`,
@@ -52,24 +93,46 @@ export async function captureBinaryPatch(
   baseCommit: string,
   headCommit: string,
 ): Promise<Buffer> {
-  const result = await execa(
-    "git",
-    ["diff", "--binary", "--full-index", baseCommit, headCommit],
-    {
-      cwd: repositoryRoot,
-      reject: false,
-      encoding: "buffer",
-      // Git patches require their terminating newline. Execa otherwise strips
-      // it, which turns a valid one-hunk frozen PR patch into a corrupt patch.
-      stripFinalNewline: false,
-    },
-  );
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `git diff --binary failed: ${result.stderr.toString() || result.stdout.toString()}`,
+  try {
+    const patch = await gitRaw(repositoryRoot, [
+      "diff",
+      "--binary",
+      "--full-index",
+      baseCommit,
+      headCommit,
+    ]);
+    if (patch.length === 0) return patch;
+
+    const temporaryRoot = await mkdtemp(
+      path.join(os.tmpdir(), "agent-arena-patch-check-"),
+    );
+    const indexPath = path.join(temporaryRoot, "index");
+    try {
+      await execa("git", ["read-tree", headCommit], {
+        cwd: repositoryRoot,
+        env: { GIT_INDEX_FILE: indexPath },
+      });
+      await execa(
+        "git",
+        ["apply", "--cached", "--check", "--reverse", "--whitespace=nowarn"],
+        {
+          cwd: repositoryRoot,
+          env: { GIT_INDEX_FILE: indexPath },
+          input: patch,
+          encoding: "buffer",
+          stripFinalNewline: false,
+        },
+      );
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+    return patch;
+  } catch (error) {
+    throw patchCaptureIntegrityError(
+      `Failed to capture or verify Git patch ${baseCommit}..${headCommit}`,
+      error,
     );
   }
-  return Buffer.from(result.stdout);
 }
 
 export async function resolveGitHubRepositoryIdentity(
@@ -77,7 +140,7 @@ export async function resolveGitHubRepositoryIdentity(
 ): Promise<{ repository: string; baseBranch?: string } | undefined> {
   let remote: string;
   try {
-    remote = await git(repositoryRoot, ["remote", "get-url", "origin"]);
+    remote = await gitScalar(repositoryRoot, ["remote", "get-url", "origin"]);
   } catch {
     return undefined;
   }
@@ -89,7 +152,7 @@ export async function resolveGitHubRepositoryIdentity(
   if (!repository) return undefined;
   let baseBranch: string | undefined;
   try {
-    const symbolic = await git(repositoryRoot, [
+    const symbolic = await gitScalar(repositoryRoot, [
       "symbolic-ref",
       "--short",
       "refs/remotes/origin/HEAD",
@@ -97,7 +160,10 @@ export async function resolveGitHubRepositoryIdentity(
     baseBranch = symbolic.replace(/^origin\//u, "");
   } catch {
     try {
-      baseBranch = await git(repositoryRoot, ["branch", "--show-current"]);
+      baseBranch = await gitScalar(repositoryRoot, [
+        "branch",
+        "--show-current",
+      ]);
     } catch {
       // A detached repository still has a stable repository identity.
     }
@@ -123,7 +189,7 @@ export async function readTextAtCommit(
 export async function assertCleanRepository(
   repositoryRoot: string,
 ): Promise<void> {
-  const status = await git(repositoryRoot, [
+  const status = await gitScalar(repositoryRoot, [
     "status",
     "--porcelain",
     "--untracked-files=all",
@@ -155,7 +221,7 @@ export class WorktreeManager {
   async create(name: string): Promise<string> {
     const target = path.join(this.temporaryRoot, name);
     await rm(target, { recursive: true, force: true });
-    await git(this.repositoryRoot, [
+    await gitScalar(this.repositoryRoot, [
       "worktree",
       "add",
       "--detach",
@@ -170,7 +236,7 @@ export class WorktreeManager {
     const content = await readFile(patchPath);
     if (content.length === 0)
       throw new Error(`Cannot apply empty patch: ${patchPath}`);
-    await git(
+    await gitScalar(
       this.repositoryRoot,
       ["apply", "--index", "--3way", patchPath],
       worktree,
@@ -183,20 +249,20 @@ export class WorktreeManager {
    * an agent stages files while building an attack.
    */
   async snapshot(worktree: string): Promise<string> {
-    await git(this.repositoryRoot, ["add", "-A"], worktree);
-    return git(this.repositoryRoot, ["write-tree"], worktree);
+    await gitScalar(this.repositoryRoot, ["add", "-A"], worktree);
+    return gitScalar(this.repositoryRoot, ["write-tree"], worktree);
   }
 
   async changedPathsSinceSnapshot(
     worktree: string,
     snapshot: string,
   ): Promise<string[]> {
-    const tracked = await git(
+    const tracked = await gitScalar(
       this.repositoryRoot,
       ["diff", "--name-only", snapshot, "--"],
       worktree,
     );
-    const untracked = await git(
+    const untracked = await gitScalar(
       this.repositoryRoot,
       ["ls-files", "--others", "--exclude-standard"],
       worktree,
@@ -215,17 +281,34 @@ export class WorktreeManager {
     againstHead = false,
   ): Promise<number> {
     if (paths && paths.length > 0) {
-      await git(this.repositoryRoot, ["add", "-N", "--", ...paths], worktree);
-    } else {
-      await git(this.repositoryRoot, ["add", "-N", "."], worktree);
+      // Provider-declared paths are participant input. Keep a missing or
+      // otherwise invalid pathspec outside the harness-integrity boundary so
+      // the caller can isolate that entry without aborting the round.
+      await gitScalar(
+        this.repositoryRoot,
+        ["add", "-N", "--", ...paths],
+        worktree,
+      );
     }
-    const args = ["diff", "--binary", "--full-index"];
-    if (againstHead) args.push("HEAD");
-    if (paths && paths.length > 0) args.push("--", ...paths);
-    const patch = await git(this.repositoryRoot, args, worktree);
-    await mkdir(path.dirname(targetPath), { recursive: true });
-    await writeFile(targetPath, patch.length === 0 ? "" : `${patch}\n`, "utf8");
-    return Buffer.byteLength(patch);
+    try {
+      if (!paths || paths.length === 0) {
+        await gitScalar(this.repositoryRoot, ["add", "-N", "."], worktree);
+      }
+      const args = ["diff", "--binary", "--full-index"];
+      if (againstHead) args.push("HEAD");
+      if (paths && paths.length > 0) args.push("--", ...paths);
+      const patch = await gitRaw(this.repositoryRoot, args, worktree);
+      await mkdir(path.dirname(targetPath), { recursive: true });
+      await writeFile(targetPath, patch);
+      if (patch.length > 0)
+        await verifyReversePatch(this.repositoryRoot, worktree, targetPath);
+      return patch.length;
+    } catch (error) {
+      throw patchCaptureIntegrityError(
+        `Failed to capture or verify Git patch from ${worktree}`,
+        error,
+      );
+    }
   }
 
   async capturePatchAgainstSnapshot(
@@ -238,20 +321,40 @@ export class WorktreeManager {
       throw new Error("A target-relative overlay requires at least one path");
     // Intent-to-add makes untracked test files visible to `git diff` without
     // replacing any content an agent may already have staged.
-    await git(this.repositoryRoot, ["add", "-N", "--", ...paths], worktree);
-    const patch = await git(
+    // This pathspec comes from the provider submission, so its validation must
+    // remain distinguishable from a failure to capture or verify valid bytes.
+    await gitScalar(
       this.repositoryRoot,
-      ["diff", "--binary", "--full-index", snapshot, "--", ...paths],
+      ["add", "-N", "--", ...paths],
       worktree,
     );
-    await mkdir(path.dirname(targetPath), { recursive: true });
-    await writeFile(targetPath, patch.length === 0 ? "" : `${patch}\n`, "utf8");
-    return Buffer.byteLength(patch);
+    try {
+      const patch = await gitRaw(
+        this.repositoryRoot,
+        ["diff", "--binary", "--full-index", snapshot, "--", ...paths],
+        worktree,
+      );
+      await mkdir(path.dirname(targetPath), { recursive: true });
+      await writeFile(targetPath, patch);
+      if (patch.length > 0)
+        await verifyReversePatch(this.repositoryRoot, worktree, targetPath);
+      return patch.length;
+    } catch (error) {
+      throw patchCaptureIntegrityError(
+        `Failed to capture or verify Git patch from snapshot ${snapshot}`,
+        error,
+      );
+    }
   }
 
   async remove(worktree: string): Promise<void> {
     if (!this.worktrees.has(worktree)) return;
-    await git(this.repositoryRoot, ["worktree", "remove", "--force", worktree]);
+    await gitScalar(this.repositoryRoot, [
+      "worktree",
+      "remove",
+      "--force",
+      worktree,
+    ]);
     this.worktrees.delete(worktree);
   }
 
@@ -259,7 +362,7 @@ export class WorktreeManager {
     for (const worktree of [...this.worktrees]) {
       await this.remove(worktree);
     }
-    await git(this.repositoryRoot, ["worktree", "prune"]);
+    await gitScalar(this.repositoryRoot, ["worktree", "prune"]);
     await rm(this.temporaryRoot, { recursive: true, force: true });
   }
 }

@@ -46,6 +46,10 @@ import {
 import { readHandoffLifecycle } from "../../src/review/evidence-handoff-store.js";
 import { resolvePermissionPolicy } from "../../src/permissions/policy.js";
 import type { PatchQualityVerifierInput } from "../../src/quality/verifier.js";
+import {
+  PatchCaptureIntegrityError,
+  WorktreeManager,
+} from "../../src/repo/git.js";
 
 const fixtureAgent = fileURLToPath(
   new URL("../fixtures/fake-agent.mjs", import.meta.url),
@@ -1547,6 +1551,204 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(resumed.state.contestants.a?.finalHealth).toBe(0);
     expect(resumed.state.patchQualityFacts.b?.patchSha256).toHaveLength(64);
     expect(resumed.state.reviewPrompt).toEqual(outcome.state.reviewPrompt);
+  });
+
+  it("keeps a trailing-blank-line implementation applicable and eligible", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const sourcePath = path.join(repositoryRoot, "src", "slug.mjs");
+    await writeFile(sourcePath, `${await readFile(sourcePath, "utf8")}\n`);
+    await execa("git", ["add", "src/slug.mjs"], { cwd: repositoryRoot });
+    await execa("git", ["commit", "-qm", "preserve trailing blank line"], {
+      cwd: repositoryRoot,
+    });
+
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: {
+            AGENT_ARENA_TRAILING_BLANK_IMPLEMENTATION: "1",
+          },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_EMPTY_IMPLEMENTATION: "1" },
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(duelConfig(repositoryRoot));
+
+    expect(outcome.state.status).toBe("complete");
+    expect(outcome.state.terminalOutcome).toMatchObject({
+      kind: "forfeit",
+      reasonCode: "implementation_empty_patch",
+      eligibleContestantIds: ["a"],
+    });
+    expect(outcome.state.contestants.a?.checks).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "apply", status: "failed" }),
+      ]),
+    );
+    const patchPath = outcome.state.contestants.a?.currentPatchPath;
+    expect(patchPath).toBeDefined();
+    expect((await readFile(patchPath!)).subarray(-2)).toEqual(
+      Buffer.from(" \n"),
+    );
+  });
+
+  it("seals patch capture integrity failures before removing source worktrees", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const events: string[] = [];
+    const capture = vi
+      .spyOn(WorktreeManager.prototype, "capturePatch")
+      .mockImplementation((worktree) => {
+        events.push(`verify:${path.basename(worktree)}`);
+        return Promise.reject(
+          new PatchCaptureIntegrityError("injected verification failure"),
+        );
+      });
+    // Deliberately retain the prototype implementation before replacing it.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const originalRemove = WorktreeManager.prototype.remove;
+    const remove = vi
+      .spyOn(WorktreeManager.prototype, "remove")
+      .mockImplementation(function (this: WorktreeManager, worktree) {
+        if (path.basename(worktree).startsWith("implement-")) {
+          events.push(`remove:${path.basename(worktree)}`);
+        }
+        return originalRemove.call(this, worktree);
+      });
+
+    try {
+      const outcome = await new Arena({
+        adapters: {
+          codex: new CommandAgentAdapter({
+            id: "codex",
+            executable: process.execPath,
+            args: [fixtureAgent],
+          }),
+          claude: new CommandAgentAdapter({
+            id: "claude",
+            executable: process.execPath,
+            args: [fixtureAgent],
+          }),
+        },
+        verifier: new RuleBasedVerifier("claude"),
+      }).fight(duelConfig(repositoryRoot));
+
+      expect(outcome.state.status).toBe("inconclusive");
+      expect(outcome.state.terminalOutcome).toMatchObject({
+        phase: "pre_review",
+        kind: "inconclusive",
+        reasonCode: "harness_infrastructure_failure",
+      });
+      expect(outcome.state.terminalOutcome?.kind).not.toBe("forfeit");
+      expect(
+        Object.values(outcome.state.contestants).flatMap(
+          (contestant) => contestant.checks,
+        ),
+      ).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "apply", status: "failed" }),
+        ]),
+      );
+      const lastVerification = events.reduce(
+        (latest, event, index) =>
+          event.startsWith("verify:") ? index : latest,
+        -1,
+      );
+      const firstRemoval = events.findIndex((event) =>
+        event.startsWith("remove:"),
+      );
+      expect(lastVerification).toBeGreaterThanOrEqual(0);
+      expect(firstRemoval).toBeGreaterThan(lastVerification);
+    } finally {
+      capture.mockRestore();
+      remove.mockRestore();
+    }
+  });
+
+  it("seals target-relative overlay integrity failures as inconclusive", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const capture = vi
+      .spyOn(WorktreeManager.prototype, "capturePatchAgainstSnapshot")
+      .mockRejectedValue(
+        new PatchCaptureIntegrityError("injected overlay verification failure"),
+      );
+
+    try {
+      const outcome = await new Arena({
+        adapters: {
+          codex: new CommandAgentAdapter({
+            id: "codex",
+            executable: process.execPath,
+            args: [fixtureAgent],
+            environment: { AGENT_ARENA_FAKE_DIRECT_ATTACK: "1" },
+          }),
+          claude: new CommandAgentAdapter({
+            id: "claude",
+            executable: process.execPath,
+            args: [fixtureAgent],
+            environment: { AGENT_ARENA_FAKE_DIRECT_ATTACK: "1" },
+          }),
+        },
+        verifier: new RuleBasedVerifier("claude"),
+      }).fight({ ...duelConfig(repositoryRoot), rounds: 1 });
+
+      expect(capture).toHaveBeenCalled();
+      expect(outcome.state.status).toBe("inconclusive");
+      expect(outcome.state.terminalOutcome).toMatchObject({
+        phase: "pre_review",
+        kind: "inconclusive",
+        reasonCode: "harness_infrastructure_failure",
+      });
+      expect(outcome.state.patchRecommendation).toBeUndefined();
+    } finally {
+      capture.mockRestore();
+    }
+  });
+
+  it("isolates a provider-declared missing attack path without failing the fight", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const outcome = await new Arena({
+      adapters: {
+        codex: new CommandAgentAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          environment: { AGENT_ARENA_FAKE_MISSING_ATTACK_PATH: "1" },
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight({ ...duelConfig(repositoryRoot), rounds: 1 });
+
+    expect(outcome.state.status).toBe("complete");
+    expect(outcome.state.terminalOutcome).toBeUndefined();
+    expect(outcome.state.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "Attack rank 1 from a was rejected without suppressing siblings: git add -N -- test/arena-missing-attack.test.mjs failed: fatal: pathspec",
+        ),
+      ]),
+    );
+    expect(outcome.state.attackInvocations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          attacker: "a",
+          submissionStatus: "submitted",
+          attackCount: 0,
+        }),
+      ]),
+    );
   });
 
   it("keeps valid siblings when a same-round correction remains malformed", async () => {

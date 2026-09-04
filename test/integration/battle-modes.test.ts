@@ -18,6 +18,7 @@ import type {
 import { FightConfigSchema, RunStateV10Schema } from "../../src/core/types.js";
 import type { ArenaEvent } from "../../src/observability/events.js";
 import { readBaseline } from "../../src/recovery/durable.js";
+import { PatchCaptureIntegrityError } from "../../src/repo/git.js";
 import { recordReviewDecision, reviewRun } from "../../src/review/service.js";
 import { freezePullRequest } from "../../src/task/pr-fixture.js";
 import type { PullRequestResolver } from "../../src/task/task-contract.js";
@@ -202,6 +203,66 @@ function config(repositoryRoot: string, mode: "catch_up" | "siege") {
 }
 
 describe("PR battle modes", () => {
+  it.each(["catch_up", "siege"] as const)(
+    "seals frozen PR capture integrity failures as inconclusive in %s mode",
+    async (mode) => {
+      const repositoryRoot = await createSlugRepository();
+      const pullRequestResolver = await fixturePullRequest(repositoryRoot);
+      const battleConfig = FightConfigSchema.parse({
+        ...config(repositoryRoot, mode),
+        effortMode: "auto",
+        fixedRounds: false,
+      });
+      const outcome = await new Arena({
+        adapters: adapters(),
+        verifier: new RuleBasedVerifier("codex"),
+        pullRequestResolver,
+        freezePullRequest: () =>
+          Promise.reject(
+            new PatchCaptureIntegrityError("injected frozen patch failure"),
+          ),
+      }).fight(battleConfig);
+
+      expect(outcome.state.status).toBe("inconclusive");
+      expect(outcome.state.terminalOutcome).toMatchObject({
+        phase: "pre_review",
+        kind: "inconclusive",
+        reasonCode: "harness_infrastructure_failure",
+        affectedContestantIds: mode === "catch_up" ? ["a", "b"] : ["b"],
+        contestants:
+          mode === "catch_up"
+            ? [
+                {
+                  contestantId: "a",
+                  reasonCode: "harness_infrastructure_failure",
+                },
+                {
+                  contestantId: "b",
+                  reasonCode: "harness_infrastructure_failure",
+                },
+              ]
+            : [
+                { contestantId: "a", reasonCode: "test_only_role" },
+                {
+                  contestantId: "b",
+                  reasonCode: "harness_infrastructure_failure",
+                },
+              ],
+      });
+      expect(outcome.state.contestants.a?.implementation).toBeUndefined();
+      expect(outcome.state.contestants.b?.implementation).toBeUndefined();
+      expect(outcome.state.patchRecommendation).toBeUndefined();
+      expect(outcome.state.config.effortAssessment).toMatchObject({
+        fallback: true,
+        attempts: [],
+        fallbackReason: "injected frozen patch failure",
+      });
+      expect(await readFile(outcome.state.artifacts.battle!, "utf8")).toContain(
+        "Harness infrastructure failed before review eligibility could be sealed.",
+      );
+    },
+  );
+
   it("keeps the frozen incumbent patch out of the challenger implementation phase", async () => {
     const repositoryRoot = await createSlugRepository();
     const pullRequestResolver = await fixturePullRequest(repositoryRoot);
