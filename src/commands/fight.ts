@@ -59,7 +59,9 @@ import {
   isolateMcpPolicyForReadiness,
   mcpServerIdentity,
   mcpProviders,
+  reconstructMcpRuntimeForResume,
   resolveCodexMcpRuntimeDefinition,
+  FrozenMcpPolicySchema,
   type FrozenMcpPolicy,
   type McpRuntimeDefinitions,
 } from "../mcp/policy.js";
@@ -787,12 +789,48 @@ export async function runResume(options: {
     repositoryRoot,
     artifactRoot: `${repositoryRoot}/.agent-arena/runs`,
   });
-  const arena = createArena(config);
   const controller = new AbortController();
   const cancel = (): void => controller.abort(new Error("Interrupted"));
   process.once("SIGINT", cancel);
   process.once("SIGTERM", cancel);
   try {
+    const runSpec = RunSpecSchema.parse(
+      JSON.parse(await readFile(store.resolve("run-spec.json"), "utf8")),
+    );
+    const mcpPolicy = await store.readOptionalJson(
+      "mcp-policy.json",
+      FrozenMcpPolicySchema,
+    );
+    // Completed resumes are read-only, so validate their durable policy without
+    // making the historical result depend on current provider configuration.
+    const reconstructDefinitions = state.status !== "complete";
+    const temporaryRoot = reconstructDefinitions
+      ? await mkdtemp(
+          path.join(os.tmpdir(), `arena-mcp-resume-${options.runId}-`),
+        )
+      : undefined;
+    let resumedMcpRuntime: Awaited<
+      ReturnType<typeof reconstructMcpRuntimeForResume>
+    >;
+    try {
+      resumedMcpRuntime = await reconstructMcpRuntimeForResume({
+        ...(runSpec.mcpPolicyHash ? { policyHash: runSpec.mcpPolicyHash } : {}),
+        ...(mcpPolicy ? { policy: mcpPolicy } : {}),
+        repositoryRoot,
+        logRoot: temporaryRoot ?? store.resolve("logs", "mcp-resume"),
+        signal: controller.signal,
+        reconstructDefinitions,
+      });
+    } finally {
+      if (temporaryRoot)
+        await rm(temporaryRoot, { recursive: true, force: true });
+    }
+    const arena = createArena(
+      config,
+      undefined,
+      reconstructDefinitions ? resumedMcpRuntime.policy : undefined,
+      reconstructDefinitions ? resumedMcpRuntime.runtimeDefinitions : [],
+    );
     const outcome = await arena.resume(
       {
         runId: options.runId,

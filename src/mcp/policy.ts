@@ -170,6 +170,11 @@ export type CodexMcpDefinitionResolution =
   | { status: "resolved"; definition: CodexMcpRuntimeDefinition }
   | { status: "unavailable"; reason: string };
 
+export interface ResumedMcpRuntime {
+  policy?: FrozenMcpPolicy;
+  runtimeDefinitions: McpRuntimeDefinitions;
+}
+
 type InventoryRunner = (
   request: ProcessRequest,
 ) => ReturnType<typeof runProcess>;
@@ -267,6 +272,49 @@ export async function resolveCodexMcpRuntimeDefinition(options: {
         "Selected Codex MCP server definition is unsupported or requires credential material that cannot be isolated from the agent",
     };
   }
+}
+
+export async function reconstructMcpRuntimeForResume(options: {
+  policyHash?: string;
+  policy?: FrozenMcpPolicy;
+  repositoryRoot: string;
+  logRoot: string;
+  signal?: AbortSignal;
+  reconstructDefinitions?: boolean;
+  resolveDefinition?: typeof resolveCodexMcpRuntimeDefinition;
+}): Promise<ResumedMcpRuntime> {
+  if (!options.policyHash) {
+    if (options.policy)
+      throw new Error("Resume MCP policy is not bound to the RunSpec");
+    return { runtimeDefinitions: [] };
+  }
+  if (!options.policy)
+    throw new Error("Resume is missing the frozen MCP policy");
+  if (options.policy.policyHash !== options.policyHash)
+    throw new Error("Frozen MCP policy does not match the RunSpec");
+  const { policyHash, ...policyBody } = options.policy;
+  if (hashPolicy(policyBody) !== policyHash)
+    throw new Error("Frozen MCP policy failed its integrity check");
+  if (options.reconstructDefinitions === false)
+    return { policy: options.policy, runtimeDefinitions: [] };
+
+  const runtimeDefinitions: CodexMcpRuntimeDefinition[] = [];
+  for (const name of agentMcpNames(options.policy, "codex")) {
+    const resolution = await (
+      options.resolveDefinition ?? resolveCodexMcpRuntimeDefinition
+    )({
+      name,
+      repositoryRoot: options.repositoryRoot,
+      logRoot: options.logRoot,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    if (resolution.status === "unavailable")
+      throw new Error(
+        `Frozen Codex MCP server ${JSON.stringify(name)} cannot be reconstructed safely for resume: ${resolution.reason}`,
+      );
+    runtimeDefinitions.push(resolution.definition);
+  }
+  return { policy: options.policy, runtimeDefinitions };
 }
 
 function authFromLabel(label: string): McpInventoryServer["authentication"] {

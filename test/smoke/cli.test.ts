@@ -129,6 +129,29 @@ describe("built CLI smoke flow", () => {
       runSpec.topology.contestants.map((contestant) => contestant.model),
     ).toEqual(["codex-test-model", "claude-test-model"]);
     expect(runSpec.bootstrap.command).toBe("npm ci");
+    const mcpPolicyPath = path.join(runsRoot, runId!, "mcp-policy.json");
+    await writeFile(
+      mcpPolicyPath,
+      JSON.stringify({
+        ...mcpPolicy,
+        policyHash: "f".repeat(64),
+        approval: {
+          ...mcpPolicy.approval,
+          policyHash: "f".repeat(64),
+        },
+      }),
+    );
+    const rejectedResume = await execa(
+      process.execPath,
+      [cli, "resume", runId!, "--display", "json"],
+      { cwd: repositoryRoot, env, reject: false },
+    );
+    expect(rejectedResume.exitCode).toBe(1);
+    expect(rejectedResume.stderr).toContain(
+      "Frozen MCP policy does not match the RunSpec",
+    );
+    await writeFile(mcpPolicyPath, JSON.stringify(mcpPolicy));
+
     const resumed = await execa(
       process.execPath,
       [cli, "resume", runId!, "--display", "json"],

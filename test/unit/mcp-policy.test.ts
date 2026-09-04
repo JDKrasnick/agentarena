@@ -12,7 +12,9 @@ import {
   mcpServerIdentity,
   parseMcpInventory,
   resolveCodexMcpRuntimeDefinition,
+  reconstructMcpRuntimeForResume,
 } from "../../src/mcp/policy.js";
+import { providerCommand } from "../../src/agents/adapter.js";
 
 describe("MCP preflight policy", () => {
   const inventory = [
@@ -97,6 +99,143 @@ describe("MCP preflight policy", () => {
     startup_timeout_sec: null,
     tool_timeout_sec: null,
   };
+
+  it("reconstructs only the frozen Codex exposure for resume", async () => {
+    const policy = freezeMcpPolicy({
+      config: {
+        policy: "configure_selection",
+        servers: [
+          {
+            provider: "codex",
+            name: "expo",
+            role: "agent",
+            requirement: "optional",
+          },
+        ],
+      },
+      inventory,
+      reducedValidationAccepted: false,
+    });
+    const requested: string[] = [];
+    const runtime = await reconstructMcpRuntimeForResume({
+      policyHash: policy.policyHash,
+      policy,
+      repositoryRoot: "/repo",
+      logRoot: "/logs",
+      resolveDefinition: (options) => {
+        requested.push(options.name);
+        return Promise.resolve({
+          status: "resolved",
+          definition: {
+            provider: "codex",
+            name: options.name,
+            transport: {
+              type: "stdio",
+              command: "selected-server",
+              args: [],
+              env_vars: [],
+              cwd: null,
+            },
+            enabled_tools: null,
+            disabled_tools: null,
+            startup_timeout_sec: null,
+            tool_timeout_sec: null,
+          },
+        });
+      },
+    });
+
+    expect(requested).toEqual(["expo"]);
+    expect(runtime.policy).toBe(policy);
+    expect(runtime.runtimeDefinitions.map((entry) => entry.name)).toEqual([
+      "expo",
+    ]);
+    const command = providerCommand(
+      "codex",
+      undefined,
+      runtime.policy,
+      runtime.runtimeDefinitions,
+    );
+    expect(command.args).toEqual(
+      expect.arrayContaining([
+        "--ignore-user-config",
+        "-c",
+        "features.apps=false",
+      ]),
+    );
+    expect(command.args.join(" ")).toContain("mcp_servers.expo=");
+  });
+
+  it("fails closed when a frozen Codex definition cannot be reconstructed", async () => {
+    const policy = freezeMcpPolicy({
+      config: {
+        policy: "configure_selection",
+        servers: [
+          {
+            provider: "codex",
+            name: "expo",
+            role: "agent",
+            requirement: "optional",
+          },
+        ],
+      },
+      inventory,
+      reducedValidationAccepted: false,
+    });
+
+    await expect(
+      reconstructMcpRuntimeForResume({
+        policyHash: policy.policyHash,
+        policy,
+        repositoryRoot: "/repo",
+        logRoot: "/logs",
+        resolveDefinition: () =>
+          Promise.resolve({
+            status: "unavailable",
+            reason: "definition changed",
+          }),
+      }),
+    ).rejects.toThrow(/cannot be reconstructed safely for resume/);
+  });
+
+  it("fails resume when the durable MCP policy is missing or mismatched", async () => {
+    await expect(
+      reconstructMcpRuntimeForResume({
+        policyHash: "0".repeat(64),
+        repositoryRoot: "/repo",
+        logRoot: "/logs",
+      }),
+    ).rejects.toThrow(/missing the frozen MCP policy/);
+    await expect(
+      reconstructMcpRuntimeForResume({
+        policyHash: "f".repeat(64),
+        policy: freezeMcpPolicy({
+          config: { policy: "configure_selection", servers: [] },
+          inventory,
+          reducedValidationAccepted: false,
+        }),
+        repositoryRoot: "/repo",
+        logRoot: "/logs",
+      }),
+    ).rejects.toThrow(/does not match the RunSpec/);
+  });
+
+  it("rejects a resume policy whose contents no longer match its hash", async () => {
+    const policy = freezeMcpPolicy({
+      config: { policy: "configure_selection", servers: [] },
+      inventory,
+      reducedValidationAccepted: false,
+    });
+
+    await expect(
+      reconstructMcpRuntimeForResume({
+        policyHash: policy.policyHash,
+        policy: { ...policy, coverageGaps: ["tampered"] },
+        repositoryRoot: "/repo",
+        logRoot: "/logs",
+      }),
+    ).rejects.toThrow(/failed its integrity check/);
+  });
 
   it("resolves supported stdio definitions without environment material", async () => {
     const result = await resolveDefinition({
