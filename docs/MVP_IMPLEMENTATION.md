@@ -687,8 +687,23 @@ Create temporary directories outside the target repository:
 ```
 
 Use detached worktrees created from the same `baseCommit`. Do not use branch
-names and do not let agents commit. Before removing a worktree, capture all
-patches and logs, then call `git worktree remove` and `git worktree prune`.
+names and do not let agents commit. `WorktreeManager` owns allocation,
+retention, removal, and the atomic `worktrees/manifest.json`; callers never
+assume that `remove()` physically deletes a tree. It allocates a distinct path
+whenever a logical name recurs, and records a successful creation only after
+Git confirms it. Before policy-aware removal, capture all patches and logs.
+Default removal calls `git worktree remove`; final cleanup calls `git worktree
+prune`. With `keepWorktrees`, successfully created worktrees transition to
+`retained` only after they are confirmed to remain registered. Invalid partial
+directories and every non-worktree runtime resource remain transient.
+
+An initial execution creates its run manifest, and resume appends a session to
+that same manifest. Provider recovery creates a replacement-run manifest linked
+to its parent by the digest-verified recovery artifact, allowing explicit
+cleanup from the returned replacement run ID to traverse the complete chain.
+Terminal success, failure, timeout, cancellation, and patch-capture errors
+finalize the session before report rendering. The manifest is registered in
+`state.artifacts` during initialization so every durable outcome exposes it.
 
 Subprocesses receive:
 
@@ -1282,8 +1297,19 @@ shared defects explicitly. Reveal every held-out case, its generation metadata,
 hash, result, and relationship to the visible root defect in the completed
 report bundle. Only mark the run complete after all artifact writes succeed.
 
-Cleanup temporary worktrees in a `finally` block. Preserve them and print their
-paths only when cleanup is unsafe or a developer debug flag is set.
+Finalize worktrees through `WorktreeManager` on every terminal path and again
+idempotently in `finally`. The default policy deletes them. `keepWorktrees`
+retains all successfully created fight worktrees and reports only confirmed,
+existing retained paths plus the manifest link.
+
+`agent-arena cleanup-worktrees <run-id>` follows digest-verified
+provider-recovery parent links, resolves each linked manifest inside the current
+repository's run artifact directory, validates the recorded repository root and
+Git common directory, verifies each path is contained by its recorded execution
+root, removes registered trees, prunes stale registrations, and atomically
+marks each confirmed removal. Missing trees reconcile to `removed`. Failures
+remain `cleanup_failure` and produce a nonzero command result. The operation is
+idempotent across original, resumed, and provider-recovery sessions.
 
 ## Applying a result
 

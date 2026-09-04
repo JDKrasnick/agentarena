@@ -430,7 +430,7 @@ if (stage === "provider_health_probe") {
   const retryMarker = path.join(process.cwd(), ".agent-arena-retry-once");
   const blockerMarker = path.join(
     tmpdir(),
-    `agent-arena-blocker-${createHash("sha256").update(process.cwd()).digest("hex")}`,
+    `agent-arena-blocker-${createHash("sha256").update(path.dirname(process.cwd())).digest("hex")}`,
   );
   let emitRetryFailure = false;
   let emitBlocker = false;

@@ -88,6 +88,12 @@ export async function validateSiblingCase(
     if (options.authorPatch) {
       const author = await options.worktrees.create(
         `case-${options.attack.id}-${stableId("author", options.candidate.patchPath)}`,
+        {
+          purpose: "attack-case-author-validation",
+          ...(options.attack.origin.kind === "contestant"
+            ? { contestantId: options.attack.origin.contestant }
+            : {}),
+        },
       );
       created.push(author);
       await options.worktrees.applyPatch(author, options.authorPatch);
@@ -120,6 +126,7 @@ export async function validateSiblingCase(
       if (!patch) continue;
       const tree = await options.worktrees.create(
         `case-${options.attack.id}-${target}-${sha256(options.candidate.patchPath).slice(0, 6)}`,
+        { purpose: "attack-case-target-validation", contestantId: target },
       );
       created.push(tree);
       await options.worktrees.applyPatch(tree, patch);

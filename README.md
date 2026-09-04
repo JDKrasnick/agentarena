@@ -328,6 +328,24 @@ agent-arena resume <run-id> --display console
 agent-arena resume <run-id> --approve-drift <report-sha256>
 ```
 
+Keep every successfully created fight worktree for debugging, then remove all
+worktrees from the original run and any resumed execution deterministically:
+
+```bash
+agent-arena fight "..." --keep-worktrees
+agent-arena cleanup-worktrees <run-id>
+```
+
+Retained paths and the run-owned `worktrees/manifest.json` are printed and
+linked from reports. Retention can consume substantial disk space and preserves
+the checked-out source plus any agent-created files with the permissions of the
+current OS account. Processes, services, credential leases, failed partial
+directories, and other non-worktree runtime resources are never retained.
+Cleanup follows validated provider-recovery parent links from the supplied run,
+validates repository identity and path containment for every linked manifest,
+is safe to repeat, and exits nonzero while preserving any cleanup-failure
+record it could not resolve.
+
 Non-interactive clients must provide the full displayed digest with
 `--confirm-sha256`. `agent-arena apply <run-id>` accepts no contestant override
 and verifies the review ledger, digest, repository, base commit, clean worktree,

@@ -541,6 +541,25 @@ Each contestant receives:
 * The same capability manifest.
 * A separate Git worktree and process environment.
 
+Every successfully created Git worktree is registered in the run-owned
+`worktrees/manifest.json` with its logical purpose, contestant when applicable,
+absolute path, execution session, and confirmed lifecycle state. Logical names
+may recur during retries, but physical paths never collide or overwrite an
+earlier entry. By default the harness removes worktrees after their patches and
+logs are captured. With `keepWorktrees: true`, every successfully created fight
+worktree is retained and reported; directories that never became valid Git
+worktrees, provider processes, services, credential leases, and other
+non-worktree runtime resources remain transient.
+
+Resume appends an execution session and new entries to the same manifest
+without deleting prior retained worktrees. A provider-recovery continuation
+uses its replacement run's manifest and links it to the parent through the
+digest-verified recovery chain. Explicit `agent-arena cleanup-worktrees
+<run-id>` cleanup follows those parent links, validates repository identity and
+path containment for every linked manifest, removes registered Git worktrees,
+prunes stale registrations, and atomically records confirmed removals or
+cleanup failures. It is idempotent and never reports an absent path as retained.
+
 Agents cannot inspect their opponents during this stage.
 
 Each agent must produce:

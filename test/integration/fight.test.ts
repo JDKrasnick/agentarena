@@ -22,6 +22,7 @@ import {
   RoundStateDeltaSchema,
 } from "../../src/contracts/round.js";
 import { applyAcceptedPatch } from "../../src/commands/apply.js";
+import { cleanupRunWorktrees } from "../../src/commands/cleanup-worktrees.js";
 import { resolveCoverage } from "../../src/commands/resolve-coverage.js";
 import {
   AgentInvocationSchema,
@@ -50,6 +51,7 @@ import {
   PatchCaptureIntegrityError,
   WorktreeManager,
 } from "../../src/repo/git.js";
+import { readWorktreeManifest } from "../../src/repo/worktree-manifest.js";
 
 const fixtureAgent = fileURLToPath(
   new URL("../fixtures/fake-agent.mjs", import.meta.url),
@@ -488,6 +490,69 @@ async function createDependencySlugRepository(): Promise<string> {
 }
 
 describe("fake-adapter fight on a mocked real issue", () => {
+  it("retains and reports every successfully created fight worktree", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = FightConfigSchema.parse({
+      ...duelConfig(repositoryRoot),
+      keepWorktrees: true,
+      effortMode: "ultra-low",
+      fixedRounds: true,
+      rounds: 1,
+      selectionEnabled: false,
+    });
+    const outcome = await new Arena({
+      adapters: {
+        codex: new ConvergedEmptyLaneAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new ConvergedEmptyLaneAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+    }).fight(config);
+
+    const manifestPath = outcome.state.artifacts.worktreeManifest!;
+    const manifest = await readWorktreeManifest(manifestPath);
+    expect(outcome.state.status).toBe("complete");
+    expect(manifest.retentionEnabled).toBe(true);
+    expect(manifest.worktrees.length).toBeGreaterThan(6);
+    expect(
+      manifest.worktrees.every((entry) => entry.state === "retained"),
+    ).toBe(true);
+    expect(manifest.worktrees.map((entry) => entry.purpose)).toEqual(
+      expect.arrayContaining([
+        "preflight-baseline-worktree",
+        "implementation-worktree:a",
+        "implementation-worktree:b",
+        "initial-validation-worktree:a",
+        "initial-validation-worktree:b",
+        "final-validation-worktree:a",
+        "final-validation-worktree:b",
+      ]),
+    );
+    expect(outcome.summary).toContain("Retained worktree:");
+    expect(outcome.summary).toContain("Worktree manifest:");
+    expect(await readFile(outcome.state.artifacts.battle!, "utf8")).toContain(
+      "## Retained worktrees",
+    );
+    expect(
+      await readFile(outcome.state.artifacts.battleHtml!, "utf8"),
+    ).toContain("Retained worktrees");
+
+    const cleanup = await cleanupRunWorktrees({
+      runId: outcome.state.runId,
+      repositoryRoot,
+      artifactRoot: config.artifactRoot,
+    });
+    expect(cleanup.failed).toEqual([]);
+    expect(cleanup.removed).toHaveLength(manifest.worktrees.length);
+  }, 60_000);
+
   it("provisions dependencies after applying each contestant patch", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = FightConfigSchema.parse({

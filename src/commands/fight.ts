@@ -529,11 +529,12 @@ export async function runFight(
     recoveryRuntime,
   );
   const cancel = (): void => {
+    if (controller.signal.aborted) return;
     control.cancel(new Error("Interrupted"));
     void webDashboard?.close();
   };
-  process.once("SIGINT", cancel);
-  process.once("SIGTERM", cancel);
+  process.on("SIGINT", cancel);
+  process.on("SIGTERM", cancel);
   try {
     let outcome = await arena.fight(config, controller.signal, reconnaissance);
     const runIds = [outcome.state.runId];
@@ -792,9 +793,12 @@ export async function runResume(options: {
     artifactRoot: `${repositoryRoot}/.agent-arena/runs`,
   });
   const controller = new AbortController();
-  const cancel = (): void => controller.abort(new Error("Interrupted"));
-  process.once("SIGINT", cancel);
-  process.once("SIGTERM", cancel);
+  const cancel = (): void => {
+    if (controller.signal.aborted) return;
+    controller.abort(new Error("Interrupted"));
+  };
+  process.on("SIGINT", cancel);
+  process.on("SIGTERM", cancel);
   try {
     const runSpec = RunSpecSchema.parse(
       JSON.parse(await readFile(store.resolve("run-spec.json"), "utf8")),

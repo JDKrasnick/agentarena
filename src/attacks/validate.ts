@@ -283,6 +283,12 @@ async function prepare(
     try {
       worktree = await worktrees.create(
         `${name}-prepare-attempt-${String(attempt)}`,
+        {
+          purpose: `attack-evidence-worktree:${failureOptions.attack.id}`,
+          ...(failureOptions.attack.targets.length === 1
+            ? { contestantId: failureOptions.attack.targets[0] }
+            : {}),
+        },
       );
       if (implementationPatch) {
         operation = "implementation_patch";
@@ -404,6 +410,12 @@ async function judgeFallback(
       try {
         fallbackWorktree = await options.worktrees.create(
           `${String(attack.round)}-${attack.id}-judge-fallback-attempt-${String(attempt)}`,
+          {
+            purpose: `judge-fallback-worktree:${attack.id}`,
+            ...(attack.targets.length === 1
+              ? { contestantId: attack.targets[0] }
+              : {}),
+          },
         );
         await options.provisionWorktree?.(fallbackWorktree, subject);
         if (preparationRecord) {
