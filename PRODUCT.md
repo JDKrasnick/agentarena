@@ -693,11 +693,36 @@ provider identity, credentials, and all private reasoning. Its observations are
 explicitly reviewer hypotheses, never harness facts or canonical defects. Raw
 findings are available only to the same contestant's focused
 failure-description phase, while implementation owners receive only
-verifier-confirmed regression tests during repair. Cited files, nearby tests,
-and direct dependencies remain inspectable. Broad rediscovery is allowed,
-warned about when visible, and recorded as `targeted`, `broad`, or `unknown`;
-telemetry never affects validity, retries, coverage, health, scoring, or
-selection. Only the zero to three committed attacks can land or recoil.
+verifier-confirmed regression tests during repair.
+
+For focused failure analysis, the trusted evidence scope consists of the files,
+symbols, and test or fixture paths cited by the packet; nearby tests; direct
+one-hop dependencies or importers of cited code; and repository instructions or
+build manifests needed to run the focused command. These locations remain
+inspectable without interruption. An observable read or search outside this set
+is bounded exploration rather than trusted evidence. In checkpoint evaluation
+mode, the harness pauses further tool use and presents a compact checkpoint containing
+the active hypothesis, trusted scope, evidence collected, and reason for the
+pause. The attacker must acknowledge the checkpoint and choose to return to the
+trusted scope, stop with no credible attack, or request a temporary exploration
+lease that names a concrete hypothesis, requested paths, and bounded tool-call
+allowance. Exploration resumes only after the harness records that decision and,
+when requested, grants the lease; an exhausted lease triggers another
+checkpoint.
+
+Evaluation inspection and checkpoint events are recorded as an ordered lifecycle. Missing
+or insufficient adapter visibility remains `unknown` and never causes a pause or
+penalty. The checkpoint controls investigation flow but never changes attack
+validity, retries, coverage, health, damage, recoil, scoring, or selection. Only
+the zero to three committed attacks can land or recoil.
+
+The pause and compact-restart policy is currently a developer-only evaluation,
+not a normal-fight behavior or operator control. Its schema-v2 protocol freezes
+twelve existing attack scenarios and compares silent telemetry with checkpoint
+restart for Claude and Codex; Claude also retains a diagnostic passive-warning
+arm. A four-scenario-per-model transport gate must pass before the full
+comparison can run. Normal fight execution and outcomes remain unchanged; the
+evaluator's redacted inspection artifacts are separate from battle artifacts.
 
 Normal attacker context contains only the current lane-safe summary and active
 v2 packet. Diagnostic drill-down is available only when that handoff is stale,

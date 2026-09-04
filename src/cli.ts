@@ -9,11 +9,56 @@ import { runInspectCommand, runReviewCommand } from "./commands/review.js";
 import { resolveCoverage } from "./commands/resolve-coverage.js";
 import { ContestantIdSchema } from "./core/types.js";
 import { DeliveryActionSchema } from "./delivery/types.js";
+import {
+  renderEvaluationArtifact,
+  runPauseReplanEvaluation,
+} from "./evaluation/pause-replan.js";
 
 const program = new Command()
   .name("agent-arena")
   .description("Make your coding agents fight for the merge.")
   .version("0.1.0");
+
+program
+  .command("eval:pause-replan")
+  .description("Run the developer-only schema-v2 pause–replan evaluation")
+  .requiredOption("--manifest <path>", "Frozen schema-v2 evaluation manifest")
+  .option(
+    "--transport-gate <path>",
+    "Passing evaluation.json from the transport gate (required for a full run)",
+  )
+  .action(async (options: { manifest: string; transportGate?: string }) => {
+    const evaluation = await runPauseReplanEvaluation(options.manifest, {
+      ...(options.transportGate
+        ? { gateArtifactPath: options.transportGate }
+        : {}),
+    });
+    const outcome =
+      evaluation.result.phase === "transport_gate"
+        ? evaluation.result.transport_gate.status
+        : evaluation.result.verdict?.verdict;
+    process.stdout.write(
+      `Pause–replan evaluation: ${outcome ?? "Inconclusive"}\nArtifacts: ${evaluation.outputPath}\n`,
+    );
+  });
+
+program
+  .command("eval:render")
+  .description("Render a schema-v1 or schema-v2 evaluation artifact read-only")
+  .requiredOption("--evaluation <path>", "Immutable evaluation.json artifact")
+  .requiredOption("--output <path>", "Destination HTML path")
+  .action(async (options: { evaluation: string; output: string }) => {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      options.output,
+      await renderEvaluationArtifact(options.evaluation),
+      {
+        encoding: "utf8",
+        flag: "wx",
+      },
+    );
+    process.stdout.write(`Rendered evaluation: ${options.output}\n`);
+  });
 
 program
   .command("resolve-coverage")
