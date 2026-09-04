@@ -215,12 +215,24 @@ export async function resolveCodexMcpRuntimeDefinition(options: {
       Object.keys(parsed.transport.env).length
     )
       throw new Error("literal environment values are not supported");
+    if (parsed.transport.type === "stdio" && parsed.transport.env_vars.length)
+      throw new Error(
+        "environment-backed stdio values cannot be isolated from the agent",
+      );
     if (
       parsed.transport.type === "streamable_http" &&
       parsed.transport.http_headers &&
       Object.keys(parsed.transport.http_headers).length
     )
       throw new Error("literal HTTP headers are not supported");
+    if (
+      parsed.transport.type === "streamable_http" &&
+      (parsed.transport.bearer_token_env_var ||
+        Object.keys(parsed.transport.env_http_headers ?? {}).length)
+    )
+      throw new Error(
+        "environment-backed HTTP credentials cannot be isolated from the agent",
+      );
     const transport =
       parsed.transport.type === "stdio"
         ? {
@@ -252,7 +264,7 @@ export async function resolveCodexMcpRuntimeDefinition(options: {
     return {
       status: "unavailable",
       reason:
-        "Selected Codex MCP server definition is unsupported or contains inline credential material",
+        "Selected Codex MCP server definition is unsupported or requires credential material that cannot be isolated from the agent",
     };
   }
 }

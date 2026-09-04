@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -34,7 +34,7 @@ describe("provider model selection", () => {
     expect(command.model).toBe("gpt-5.6-sol");
   });
 
-  it("applies the frozen MCP allowlist without changing global configuration", () => {
+  it("applies the frozen MCP allowlist without leaking its definition", async () => {
     const policy = {
       version: 1 as const,
       mode: "configure_selection" as const,
@@ -95,7 +95,7 @@ describe("provider model selection", () => {
           type: "stdio",
           command: "selected-server",
           args: ["--safe"],
-          env_vars: ["MCP_TOKEN"],
+          env_vars: [],
           cwd: null,
         },
         enabled_tools: null,
@@ -116,6 +116,9 @@ describe("provider model selection", () => {
     expect(args.join(" ")).toContain("mcp_servers.selected=");
     expect(args.join(" ")).not.toContain("omitted");
     expect(command.displayCommand).not.toContain("selected-server");
+    expect(command.secrets).toEqual(
+      expect.arrayContaining(["selected-server", "--safe"]),
+    );
     expect(command.mcpExposure).toEqual({
       version: 1,
       policyHash: "0".repeat(64),
@@ -123,6 +126,26 @@ describe("provider model selection", () => {
       appsDisabled: true,
       exposedServerNames: ["selected"],
     });
+
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-mcp-adapter-"));
+    const adapter = new CommandAgentAdapter({
+      id: "codex",
+      ...command,
+      executable: "definitely-missing-agent-arena-executable",
+    });
+    const probe = await adapter.probeConnectivity({
+      cwd: root,
+      transcriptPrefix: path.join(root, "probe"),
+      timeoutMs: 2_000,
+      signal: new AbortController().signal,
+    });
+    const diagnostics = [
+      probe.command.command,
+      probe.command.failureExcerpt ?? "",
+      await readFile(probe.command.stderrPath, "utf8"),
+    ].join("\n");
+    expect(diagnostics).not.toContain("selected-server");
+    expect(diagnostics).not.toContain("--safe");
   });
 
   it("does not reference unsafe unselected Codex MCP names", () => {

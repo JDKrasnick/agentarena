@@ -1101,9 +1101,11 @@ from every selected provider setup. The consolidated plan records only provider,
 server name, enabled state, authentication readiness, requested execution role,
 and requirement level. For a selected Codex server, Arena transiently reads its
 non-secret transport definition so it can construct a selected-only child
-configuration. It rejects literal environment values and HTTP headers; only
-environment-variable references and Codex-managed OAuth are supported. The
-definition remains in memory or the temporary preflight directory and is never
+configuration. It rejects literal environment values, HTTP headers, and
+environment-variable references because the current process boundary cannot
+expose those values to the MCP transport without also exposing them to the
+agent. No-auth servers and Codex-managed OAuth remain supported. The definition
+remains in memory or the temporary preflight directory and is never
 written to run artifacts, prompts, transcripts, or reports. An inventory failure
 is `unknown`, never an empty inventory.
 
@@ -1157,11 +1159,12 @@ If a provider CLI cannot construct a strict run-scoped configuration from the
 name-only frozen inventory, Arena fails closed instead of reusing ambient
 configuration. Claude named selections are unavailable without explicit server
 definitions. Codex requires a known inventory, safely addressable selected
-names, and a supported credential-free transient definition. Every frozen-policy
-Codex child ignores the ambient user configuration, disables Apps, and receives
-only the validated selected definitions. Optional unreconstructable selections
-are excluded as coverage gaps, while required selections block launch unless
-reduced validation is accepted.
+names, and a supported transient definition without literal or
+environment-backed credential material. Every frozen-policy Codex child ignores
+the ambient user configuration, disables Apps, and receives only the validated
+selected definitions. Optional unreconstructable selections are excluded as
+coverage gaps, while required selections block launch unless reduced validation
+is accepted.
 
 An agent may declare extra capabilities for an integration attack. A newly
 denied optional request becomes `capability_denied` and causes no damage or

@@ -846,11 +846,13 @@ from every selected provider setup. Inventory records only provider, server
 name, enabled state, authentication readiness, requested role, and requirement
 level. For each selected Codex server, Arena transiently reads the non-secret
 transport definition needed to construct an isolated child command. Literal
-environment values and HTTP headers are refused; environment-variable
-references and Codex-managed OAuth remain supported. Definitions remain in
-memory or the temporary preflight directory and never enter durable artifacts,
-prompts, transcripts, or reports. A failed inventory is recorded as `unknown`,
-not as an empty setup.
+environment values, HTTP headers, and environment-variable references are
+refused because the current process boundary cannot expose those values to the
+MCP transport without also exposing them to the agent. No-auth servers and
+Codex-managed OAuth remain supported. Definitions remain in memory or the
+temporary preflight directory and never enter durable artifacts, prompts,
+transcripts, or reports. A failed inventory is recorded as `unknown`, not as an
+empty setup.
 
 The operator selects exactly one MCP policy for the run: `keep_configured`
 enables only servers named in Arena configuration; `configure_selection` uses
@@ -900,11 +902,11 @@ If a provider CLI cannot construct a strict run-scoped configuration from the
 name-only frozen inventory, Arena fails closed rather than falling back to
 ambient configuration. Claude named selections require explicit server
 definitions. Codex requires a known inventory, safely addressable selected
-names, and supported credential-free transient definitions. Every frozen-policy
-Codex child ignores ambient user configuration, disables Apps, and receives
-only those selected definitions. Optional reconstruction failures become
-coverage gaps, and required failures block launch unless reduced validation is
-accepted.
+names, and supported transient definitions without literal or
+environment-backed credential material. Every frozen-policy Codex child ignores
+ambient user configuration, disables Apps, and receives only those selected
+definitions. Optional reconstruction failures become coverage gaps, and
+required failures block launch unless reduced validation is accepted.
 
 If a required capability is denied or cannot be authenticated, the fight does
 not start unless the user explicitly accepts a reduced validation contract. The

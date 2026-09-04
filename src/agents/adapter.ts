@@ -499,6 +499,7 @@ export interface CommandAdapterOptions {
   displayCommand?: string;
   model?: string;
   environment?: Record<string, string>;
+  secrets?: readonly string[];
   providerStream?: ProviderStreamKind;
   mcpExposure?: McpExposure;
 }
@@ -594,6 +595,34 @@ function codexMcpSelectedOnlyArgs(
     });
 }
 
+function codexMcpRedactionValues(definitions: McpRuntimeDefinitions): string[] {
+  return [
+    ...new Set(
+      definitions.flatMap((definition) => {
+        const transport = definition.transport;
+        return [
+          codexMcpInlineTable(definition),
+          ...(transport.type === "stdio"
+            ? [
+                transport.command,
+                ...transport.args,
+                ...transport.env_vars,
+                ...(transport.cwd ? [transport.cwd] : []),
+              ]
+            : [
+                transport.url,
+                ...(transport.bearer_token_env_var
+                  ? [transport.bearer_token_env_var]
+                  : []),
+                ...Object.keys(transport.env_http_headers ?? {}),
+                ...Object.values(transport.env_http_headers ?? {}),
+              ]),
+        ];
+      }),
+    ),
+  ];
+}
+
 export function providerCommand(
   id: AgentId,
   model?: string,
@@ -628,6 +657,9 @@ export function providerCommand(
         ),
       }
     : undefined;
+  const selectedCodexDefinitions = mcpRuntimeDefinitions.filter(
+    (definition) => selectedMcp?.includes(definition.name) ?? false,
+  );
   switch (id) {
     case "codex":
       return {
@@ -655,6 +687,11 @@ export function providerCommand(
         ],
         ...(resolvedModel ? { model: resolvedModel } : {}),
         ...(mcpExposure ? { mcpExposure } : {}),
+        ...(selectedCodexDefinitions.length
+          ? {
+              secrets: codexMcpRedactionValues(selectedCodexDefinitions),
+            }
+          : {}),
         ...(mcpPolicy
           ? {
               displayCommand:
@@ -761,6 +798,7 @@ export class CommandAgentAdapter implements AgentAdapter {
       ...(this.options.displayCommand
         ? { displayCommand: this.options.displayCommand }
         : {}),
+      ...(this.options.secrets ? { secrets: this.options.secrets } : {}),
       input: prompt,
       cwd: input.cwd,
       timeoutMs: input.timeoutMs,
@@ -880,6 +918,7 @@ export class CommandAgentAdapter implements AgentAdapter {
       ...(this.options.displayCommand
         ? { displayCommand: this.options.displayCommand }
         : {}),
+      ...(this.options.secrets ? { secrets: this.options.secrets } : {}),
       input: input.prompt,
       cwd: input.worktree,
       timeoutMs: input.timeoutMs,
@@ -1168,6 +1207,7 @@ export class CommandAttackVerifier implements AttackVerifier {
         ...(this.command.displayCommand
           ? { displayCommand: this.command.displayCommand }
           : {}),
+        ...(this.command.secrets ? { secrets: this.command.secrets } : {}),
         input: prompt,
         cwd: input.worktree,
         timeoutMs: input.timeoutMs,
@@ -1321,6 +1361,7 @@ export class CommandAttackVerifier implements AttackVerifier {
         ...(this.command.displayCommand
           ? { displayCommand: this.command.displayCommand }
           : {}),
+        ...(this.command.secrets ? { secrets: this.command.secrets } : {}),
         input: prompt,
         cwd: input.worktree,
         timeoutMs: input.timeoutMs,
@@ -1486,6 +1527,7 @@ export class CommandAttackVerifier implements AttackVerifier {
         ...(this.command.displayCommand
           ? { displayCommand: this.command.displayCommand }
           : {}),
+        ...(this.command.secrets ? { secrets: this.command.secrets } : {}),
         input: prompt,
         cwd: input.worktree,
         timeoutMs: input.timeoutMs,
@@ -1617,6 +1659,7 @@ export class CommandAttackVerifier implements AttackVerifier {
         ...(this.command.displayCommand
           ? { displayCommand: this.command.displayCommand }
           : {}),
+        ...(this.command.secrets ? { secrets: this.command.secrets } : {}),
         input: prompt,
         cwd: input.worktree,
         timeoutMs: input.timeoutMs,
@@ -1689,6 +1732,7 @@ async function invokeStructuredGenerator(
       ...(command.displayCommand
         ? { displayCommand: command.displayCommand }
         : {}),
+      ...(command.secrets ? { secrets: command.secrets } : {}),
       input: input.prompt,
       cwd: input.worktree,
       timeoutMs: input.timeoutMs,

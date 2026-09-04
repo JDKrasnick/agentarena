@@ -98,7 +98,7 @@ describe("MCP preflight policy", () => {
     tool_timeout_sec: null,
   };
 
-  it("resolves supported stdio definitions with environment references", async () => {
+  it("resolves supported stdio definitions without environment material", async () => {
     const result = await resolveDefinition({
       ...definitionBase,
       transport: {
@@ -106,7 +106,7 @@ describe("MCP preflight policy", () => {
         command: "node",
         args: ["server.mjs"],
         env: null,
-        env_vars: ["MCP_TOKEN"],
+        env_vars: [],
         cwd: null,
       },
     });
@@ -115,20 +115,20 @@ describe("MCP preflight policy", () => {
       status: "resolved",
       definition: {
         name: "selected",
-        transport: { type: "stdio", env_vars: ["MCP_TOKEN"] },
+        transport: { type: "stdio", env_vars: [] },
       },
     });
   });
 
-  it("resolves supported HTTP definitions with environment-backed credentials", async () => {
+  it("resolves supported HTTP definitions that use managed authentication", async () => {
     const result = await resolveDefinition({
       ...definitionBase,
       transport: {
         type: "streamable_http",
         url: "https://mcp.example.test/api",
-        bearer_token_env_var: "MCP_TOKEN",
+        bearer_token_env_var: null,
         http_headers: null,
-        env_http_headers: { Authorization: "MCP_AUTH_HEADER" },
+        env_http_headers: null,
       },
     });
 
@@ -137,7 +137,7 @@ describe("MCP preflight policy", () => {
       definition: {
         transport: {
           type: "streamable_http",
-          bearer_token_env_var: "MCP_TOKEN",
+          bearer_token_env_var: null,
         },
       },
     });
@@ -167,9 +167,45 @@ describe("MCP preflight policy", () => {
       expect(result).toEqual({
         status: "unavailable",
         reason:
-          "Selected Codex MCP server definition is unsupported or contains inline credential material",
+          "Selected Codex MCP server definition is unsupported or requires credential material that cannot be isolated from the agent",
       });
       expect(JSON.stringify(result)).not.toContain("literal-secret-sentinel");
+    },
+  );
+
+  it.each([
+    {
+      type: "stdio",
+      command: "node",
+      args: [],
+      env: null,
+      env_vars: ["MCP_TOKEN"],
+      cwd: null,
+    },
+    {
+      type: "streamable_http",
+      url: "https://mcp.example.test/api",
+      bearer_token_env_var: "MCP_TOKEN",
+      http_headers: null,
+      env_http_headers: null,
+    },
+    {
+      type: "streamable_http",
+      url: "https://mcp.example.test/api",
+      bearer_token_env_var: null,
+      http_headers: null,
+      env_http_headers: { Authorization: "MCP_AUTH_HEADER" },
+    },
+  ])(
+    "rejects environment-backed definitions that would expose credentials to the agent",
+    async (transport) => {
+      const result = await resolveDefinition({ ...definitionBase, transport });
+
+      expect(result).toEqual({
+        status: "unavailable",
+        reason:
+          "Selected Codex MCP server definition is unsupported or requires credential material that cannot be isolated from the agent",
+      });
     },
   );
 
