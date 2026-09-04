@@ -180,6 +180,13 @@ describe("usage telemetry", () => {
         contestantId: "a",
         stage: "implement",
         round: 1,
+        mcpExposure: {
+          version: 1,
+          policyHash: "a".repeat(64),
+          isolationMode: "codex_ignore_user_config",
+          appsDisabled: true,
+          exposedServerNames: ["alpha", "zeta"],
+        },
       },
       result: {
         command: "codex",
@@ -202,6 +209,7 @@ describe("usage telemetry", () => {
     expect(record).not.toHaveProperty("prompt");
     expect(record.usage.completeness).toBe("unavailable");
     expect(record).toMatchObject({
+      version: 2,
       requestedModel: "gpt-5.6-sol",
       resolvedModel: "gpt-5.6-sol",
       resolvedModelSource: "requested",
@@ -210,7 +218,14 @@ describe("usage telemetry", () => {
         source: "unavailable",
         unavailableReason: "subscription_cli_no_metered_cost",
       },
+      mcpExposure: {
+        policyHash: "a".repeat(64),
+        isolationMode: "codex_ignore_user_config",
+        appsDisabled: true,
+        exposedServerNames: ["alpha", "zeta"],
+      },
     });
+    expect(JSON.stringify(record)).not.toContain("mcp_servers");
     const summary = JSON.parse(
       await readFile(
         path.join(runDirectory, "telemetry", "summary.json"),

@@ -10,7 +10,7 @@ import type { RunSpec } from "../contracts/round.js";
 import { runProcess } from "../runner/process-runner.js";
 import type { ArenaObserver } from "../observability/events.js";
 import { providerCommand } from "../agents/adapter.js";
-import type { FrozenMcpPolicy } from "../mcp/policy.js";
+import type { FrozenMcpPolicy, McpRuntimeDefinitions } from "../mcp/policy.js";
 
 export interface PatchQualityVerifierInput {
   taskContract: RunSpec["task"];
@@ -168,9 +168,19 @@ export class CommandPatchQualityVerifier implements PatchQualityVerifier {
   readonly id: string;
   private readonly command;
 
-  constructor(provider: AgentId, model?: string, mcpPolicy?: FrozenMcpPolicy) {
+  constructor(
+    provider: AgentId,
+    model?: string,
+    mcpPolicy?: FrozenMcpPolicy,
+    mcpRuntimeDefinitions: McpRuntimeDefinitions = [],
+  ) {
     this.id = `quality-${provider}`;
-    this.command = providerCommand(provider, model, mcpPolicy);
+    this.command = providerCommand(
+      provider,
+      model,
+      mcpPolicy,
+      mcpRuntimeDefinitions,
+    );
   }
 
   async compare(
@@ -198,6 +208,7 @@ export class CommandPatchQualityVerifier implements PatchQualityVerifier {
         ...(command.model ? { requestedModel: command.model } : {}),
         role: "judge",
         stage: "quality-verifier",
+        ...(command.mcpExposure ? { mcpExposure: command.mcpExposure } : {}),
       },
       input: prompt,
       cwd: input.worktree,

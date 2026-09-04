@@ -80,7 +80,41 @@ const RoundSchema = z.union([
   z.null(),
 ]);
 
-export const InvocationUsageSchema = z
+export const McpExposureSchema = z
+  .object({
+    version: z.literal(1),
+    policyHash: z.string().regex(/^[a-f0-9]{64}$/),
+    isolationMode: z.enum([
+      "codex_ignore_user_config",
+      "claude_strict_config",
+      "gemini_server_allowlist",
+    ]),
+    appsDisabled: z.boolean(),
+    exposedServerNames: z.array(z.string().min(1)),
+  })
+  .strict()
+  .superRefine((exposure, context) => {
+    const sorted = [...exposure.exposedServerNames].sort((left, right) =>
+      left.localeCompare(right),
+    );
+    if (new Set(exposure.exposedServerNames).size !== sorted.length)
+      context.addIssue({
+        code: "custom",
+        path: ["exposedServerNames"],
+        message: "MCP exposure server names must be unique",
+      });
+    if (
+      sorted.some((name, index) => name !== exposure.exposedServerNames[index])
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["exposedServerNames"],
+        message: "MCP exposure server names must be sorted",
+      });
+  });
+export type McpExposure = z.infer<typeof McpExposureSchema>;
+
+const InvocationUsageV1Schema = z
   .object({
     version: z.literal(1),
     accountingVersion: z.literal(1),
@@ -123,6 +157,34 @@ export const InvocationUsageSchema = z
     }
   })
   .readonly();
+
+const InvocationUsageV2Schema = z
+  .object({
+    ...InvocationUsageV1Schema.unwrap().shape,
+    version: z.literal(2),
+    mcpExposure: McpExposureSchema.nullable(),
+  })
+  .strict()
+  .superRefine((invocation, context) => {
+    if (
+      (invocation.resolvedModel === null &&
+        invocation.resolvedModelSource !== "unavailable") ||
+      (invocation.resolvedModel !== null &&
+        invocation.resolvedModelSource === "unavailable")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["resolvedModelSource"],
+        message: "Resolved model identity and source must agree",
+      });
+    }
+  })
+  .readonly();
+
+export const InvocationUsageSchema = z.union([
+  InvocationUsageV1Schema,
+  InvocationUsageV2Schema,
+]);
 export type InvocationUsage = z.infer<typeof InvocationUsageSchema>;
 
 const RollupKeySchema = z
@@ -164,6 +226,7 @@ export interface ProviderInvocationMetadata {
   contestantId?: "a" | "b";
   stage: string;
   round?: 1 | 2 | 3 | 4 | 5 | "recovery" | "reconciliation";
+  mcpExposure?: McpExposure;
 }
 
 export function countersFromCommand(result: CommandResult): UsageCounters {
@@ -398,7 +461,7 @@ export async function sealInvocationUsage(options: {
     options.result.providerDiagnostics?.resolvedModel ?? null;
   const requestedModel = options.metadata.requestedModel ?? null;
   const record = InvocationUsageSchema.parse({
-    version: 1,
+    version: 2,
     accountingVersion: 1,
     invocationId,
     provider: options.metadata.provider,
@@ -435,6 +498,7 @@ export async function sealInvocationUsage(options: {
         ? [options.result.providerDiagnostics.eventLogPath]
         : []),
     ],
+    mcpExposure: options.metadata.mcpExposure ?? null,
   });
   const directory = path.join(runDirectory, "telemetry", "invocations");
   await mkdir(directory, { recursive: true });

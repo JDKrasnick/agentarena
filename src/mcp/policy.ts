@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { calculateCanonicalHash } from "../contracts/round.js";
 import {
   PermissionPolicySchema,
   type AgentId,
@@ -52,12 +54,24 @@ export const FrozenMcpServerSchema = z
   .strict();
 export type FrozenMcpServer = z.infer<typeof FrozenMcpServerSchema>;
 
+const McpRuntimeDefinitionHashSchema = z
+  .object({
+    provider: z.literal("codex"),
+    name: z.string().regex(/^[A-Za-z0-9_-]+$/),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
 export const FrozenMcpPolicySchema = z
   .object({
     version: z.literal(1),
     mode: z.enum(["keep_configured", "configure_selection", "leave_as_is"]),
     inventory: z.array(McpProviderInventorySchema),
     servers: z.array(FrozenMcpServerSchema),
+    // Optional only so completed and zero-exposure artifacts created before
+    // definition binding remain readable. New selected Codex exposures bind
+    // one digest per runtime definition before approval.
+    runtimeDefinitionHashes: z.array(McpRuntimeDefinitionHashSchema).optional(),
     coverageGaps: z.array(z.string()),
     frozenAt: z.string().datetime(),
     policyHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -78,6 +92,31 @@ export const FrozenMcpPolicySchema = z
   })
   .strict()
   .superRefine((policy, context) => {
+    if (policy.runtimeDefinitionHashes) {
+      const expectedNames = policy.servers
+        .filter(
+          (server) =>
+            server.provider === "codex" &&
+            server.decision === "included" &&
+            (server.role === "agent" || server.role === "both"),
+        )
+        .map((server) => server.name)
+        .sort((left, right) => left.localeCompare(right));
+      const actualNames = policy.runtimeDefinitionHashes.map(
+        (definition) => definition.name,
+      );
+      if (
+        new Set(actualNames).size !== actualNames.length ||
+        actualNames.some((name, index) => name !== expectedNames[index]) ||
+        actualNames.length !== expectedNames.length
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["runtimeDefinitionHashes"],
+          message:
+            "Runtime definition hashes must match the sorted agent-facing Codex allowlist",
+        });
+    }
     if (!policy.approval) return;
     if (policy.approval.policyHash !== policy.policyHash)
       context.addIssue({
@@ -105,9 +144,277 @@ export const FrozenMcpPolicySchema = z
   });
 export type FrozenMcpPolicy = z.infer<typeof FrozenMcpPolicySchema>;
 
+const OptionalStringListSchema = z.array(z.string()).nullable().optional();
+const OptionalTimeoutSchema = z.number().positive().nullable().optional();
+const CodexMcpDefinitionBaseSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    enabled: z.boolean(),
+    disabled_reason: z.string().nullable(),
+    enabled_tools: OptionalStringListSchema,
+    disabled_tools: OptionalStringListSchema,
+    startup_timeout_sec: OptionalTimeoutSchema,
+    tool_timeout_sec: OptionalTimeoutSchema,
+  })
+  .strict();
+
+const CodexStdioTransportSchema = z
+  .object({
+    type: z.literal("stdio"),
+    command: z.string().min(1),
+    args: z.array(z.string()),
+    env: z.record(z.string(), z.string()).nullable(),
+    env_vars: z.array(z.string()),
+    cwd: z.string().nullable(),
+  })
+  .strict();
+
+const CodexHttpTransportSchema = z
+  .object({
+    type: z.literal("streamable_http"),
+    url: z.url().refine((value) => /^https?:$/i.test(new URL(value).protocol), {
+      message: "Codex MCP HTTP URLs must use http or https",
+    }),
+    bearer_token_env_var: z.string().min(1).nullable(),
+    http_headers: z.record(z.string(), z.string()).nullable(),
+    env_http_headers: z.record(z.string(), z.string()).nullable(),
+  })
+  .strict();
+
+const CodexMcpGetSchema = CodexMcpDefinitionBaseSchema.extend({
+  transport: z.union([CodexStdioTransportSchema, CodexHttpTransportSchema]),
+}).strict();
+
+export const CodexMcpRuntimeDefinitionSchema = z
+  .object({
+    provider: z.literal("codex"),
+    name: z.string().regex(/^[A-Za-z0-9_-]+$/),
+    transport: z.discriminatedUnion("type", [
+      CodexStdioTransportSchema.omit({ env: true }).strict(),
+      CodexHttpTransportSchema.omit({ http_headers: true }).strict(),
+    ]),
+    enabled_tools: OptionalStringListSchema,
+    disabled_tools: OptionalStringListSchema,
+    startup_timeout_sec: OptionalTimeoutSchema,
+    tool_timeout_sec: OptionalTimeoutSchema,
+  })
+  .strict();
+export type CodexMcpRuntimeDefinition = z.infer<
+  typeof CodexMcpRuntimeDefinitionSchema
+>;
+export type McpRuntimeDefinitions = readonly CodexMcpRuntimeDefinition[];
+
+export type CodexMcpDefinitionResolution =
+  | { status: "resolved"; definition: CodexMcpRuntimeDefinition }
+  | { status: "unavailable"; reason: string };
+
+export interface ResumedMcpRuntime {
+  policy?: FrozenMcpPolicy;
+  runtimeDefinitions: McpRuntimeDefinitions;
+}
+
+export function bindMcpRuntimeDefinitions(
+  policy: FrozenMcpPolicy,
+  runtimeDefinitions: McpRuntimeDefinitions,
+): FrozenMcpPolicy {
+  const selectedNames = agentMcpNames(policy, "codex").sort((left, right) =>
+    left.localeCompare(right),
+  );
+  const definitions = selectedNames.map((name) => {
+    const matches = runtimeDefinitions.filter(
+      (definition) =>
+        definition.provider === "codex" && definition.name === name,
+    );
+    if (matches.length !== 1)
+      throw new Error(
+        `Codex MCP server ${JSON.stringify(name)} has no unique validated runtime definition to bind`,
+      );
+    return CodexMcpRuntimeDefinitionSchema.parse(matches[0]);
+  });
+  if (runtimeDefinitions.length !== definitions.length)
+    throw new Error(
+      "Runtime definitions include a server outside the agent-facing Codex allowlist",
+    );
+  const draft = {
+    ...policy,
+    runtimeDefinitionHashes: definitions.map((definition) => ({
+      provider: "codex" as const,
+      name: definition.name,
+      sha256: calculateCanonicalHash(definition),
+    })),
+  };
+  const {
+    policyHash: _policyHash,
+    approval: _approval,
+    ...withoutAuthority
+  } = draft;
+  void _policyHash;
+  void _approval;
+  const normalized = FrozenMcpPolicySchema.parse({
+    ...withoutAuthority,
+    policyHash: "0".repeat(64),
+  });
+  const { policyHash: _placeholderHash, ...normalizedAuthority } = normalized;
+  void _placeholderHash;
+  return FrozenMcpPolicySchema.parse({
+    ...normalizedAuthority,
+    policyHash: hashPolicy(normalizedAuthority),
+  });
+}
+
 type InventoryRunner = (
   request: ProcessRequest,
 ) => ReturnType<typeof runProcess>;
+
+export async function resolveCodexMcpRuntimeDefinition(options: {
+  name: string;
+  repositoryRoot: string;
+  logRoot: string;
+  signal?: AbortSignal;
+  run?: InventoryRunner;
+}): Promise<CodexMcpDefinitionResolution> {
+  if (!/^[A-Za-z0-9_-]+$/.test(options.name))
+    return {
+      status: "unavailable",
+      reason:
+        "Selected Codex MCP server name is unsafe for isolated configuration",
+    };
+  const result = await (options.run ?? runProcess)({
+    executable: "codex",
+    args: ["mcp", "get", options.name, "--json"],
+    cwd: options.repositoryRoot,
+    timeoutMs: 15_000,
+    logPrefix: path.join(
+      options.logRoot,
+      `mcp-definition-codex-${options.name}`,
+    ),
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  if (result.exitCode !== 0 || result.timedOut || result.failureClass)
+    return {
+      status: "unavailable",
+      reason: "Selected Codex MCP server definition could not be resolved",
+    };
+  try {
+    const parsed = CodexMcpGetSchema.parse(
+      JSON.parse(await readFile(result.stdoutPath, "utf8")),
+    );
+    if (parsed.name !== options.name)
+      throw new Error("Codex returned a different MCP server name");
+    if (
+      parsed.transport.type === "stdio" &&
+      parsed.transport.env &&
+      Object.keys(parsed.transport.env).length
+    )
+      throw new Error("literal environment values are not supported");
+    if (parsed.transport.type === "stdio" && parsed.transport.env_vars.length)
+      throw new Error(
+        "environment-backed stdio values cannot be isolated from the agent",
+      );
+    if (
+      parsed.transport.type === "streamable_http" &&
+      parsed.transport.http_headers &&
+      Object.keys(parsed.transport.http_headers).length
+    )
+      throw new Error("literal HTTP headers are not supported");
+    if (
+      parsed.transport.type === "streamable_http" &&
+      (parsed.transport.bearer_token_env_var ||
+        Object.keys(parsed.transport.env_http_headers ?? {}).length)
+    )
+      throw new Error(
+        "environment-backed HTTP credentials cannot be isolated from the agent",
+      );
+    const transport =
+      parsed.transport.type === "stdio"
+        ? {
+            type: "stdio" as const,
+            command: parsed.transport.command,
+            args: parsed.transport.args,
+            env_vars: parsed.transport.env_vars,
+            cwd: parsed.transport.cwd,
+          }
+        : {
+            type: "streamable_http" as const,
+            url: parsed.transport.url,
+            bearer_token_env_var: parsed.transport.bearer_token_env_var,
+            env_http_headers: parsed.transport.env_http_headers,
+          };
+    return {
+      status: "resolved",
+      definition: CodexMcpRuntimeDefinitionSchema.parse({
+        provider: "codex",
+        name: parsed.name,
+        transport,
+        enabled_tools: parsed.enabled_tools,
+        disabled_tools: parsed.disabled_tools,
+        startup_timeout_sec: parsed.startup_timeout_sec,
+        tool_timeout_sec: parsed.tool_timeout_sec,
+      }),
+    };
+  } catch {
+    return {
+      status: "unavailable",
+      reason:
+        "Selected Codex MCP server definition is unsupported or requires credential material that cannot be isolated from the agent",
+    };
+  }
+}
+
+export async function reconstructMcpRuntimeForResume(options: {
+  policyHash?: string;
+  policy?: FrozenMcpPolicy;
+  repositoryRoot: string;
+  logRoot: string;
+  signal?: AbortSignal;
+  reconstructDefinitions?: boolean;
+  resolveDefinition?: typeof resolveCodexMcpRuntimeDefinition;
+}): Promise<ResumedMcpRuntime> {
+  if (!options.policyHash) {
+    if (options.policy)
+      throw new Error("Resume MCP policy is not bound to the RunSpec");
+    return { runtimeDefinitions: [] };
+  }
+  if (!options.policy)
+    throw new Error("Resume is missing the frozen MCP policy");
+  if (options.policy.policyHash !== options.policyHash)
+    throw new Error("Frozen MCP policy does not match the RunSpec");
+  const { policyHash, ...policyBody } = options.policy;
+  if (hashPolicy(policyBody) !== policyHash)
+    throw new Error("Frozen MCP policy failed its integrity check");
+  if (options.reconstructDefinitions === false)
+    return { policy: options.policy, runtimeDefinitions: [] };
+
+  const runtimeDefinitions: CodexMcpRuntimeDefinition[] = [];
+  for (const name of agentMcpNames(options.policy, "codex")) {
+    const expectedHash = options.policy.runtimeDefinitionHashes?.find(
+      (definition) =>
+        definition.provider === "codex" && definition.name === name,
+    )?.sha256;
+    if (!expectedHash)
+      throw new Error(
+        `Frozen Codex MCP server ${JSON.stringify(name)} has no approved runtime definition hash for resume`,
+      );
+    const resolution = await (
+      options.resolveDefinition ?? resolveCodexMcpRuntimeDefinition
+    )({
+      name,
+      repositoryRoot: options.repositoryRoot,
+      logRoot: options.logRoot,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    if (resolution.status === "unavailable")
+      throw new Error(
+        `Frozen Codex MCP server ${JSON.stringify(name)} cannot be reconstructed safely for resume: ${resolution.reason}`,
+      );
+    if (calculateCanonicalHash(resolution.definition) !== expectedHash)
+      throw new Error(
+        `Frozen Codex MCP server ${JSON.stringify(name)} changed after approval; resume requires the original runtime definition`,
+      );
+    runtimeDefinitions.push(resolution.definition);
+  }
+  return { policy: options.policy, runtimeDefinitions };
+}
 
 function authFromLabel(label: string): McpInventoryServer["authentication"] {
   if (/needs authentication|not authenticated|login required/i.test(label))
@@ -228,7 +535,7 @@ export function approveMcpPolicy(
   mode: "interactive" | "automatic_ready",
   now = new Date(),
 ): FrozenMcpPolicy {
-  return FrozenMcpPolicySchema.parse({
+  const approved = FrozenMcpPolicySchema.parse({
     ...policy,
     approval: {
       policyHash: policy.policyHash,
@@ -236,6 +543,14 @@ export function approveMcpPolicy(
       acceptedAt: now.toISOString(),
     },
   });
+  if (
+    agentMcpNames(approved, "codex").length > 0 &&
+    !approved.runtimeDefinitionHashes
+  )
+    throw new Error(
+      "Selected Codex MCP servers require bound runtime definition hashes before approval",
+    );
+  return approved;
 }
 
 /** Remove selected MCP servers that the operator declines during manual review. */
@@ -267,6 +582,16 @@ export function excludeMcpServers(
         ),
       ]),
     ],
+    ...(policy.runtimeDefinitionHashes
+      ? {
+          runtimeDefinitionHashes: policy.runtimeDefinitionHashes.filter(
+            (definition) =>
+              !identities.has(
+                mcpServerIdentity(definition.provider, definition.name),
+              ),
+          ),
+        }
+      : {}),
     frozenAt: now.toISOString(),
   };
   const {
@@ -491,6 +816,14 @@ export function isolateMcpPolicyForReadiness(
             }
           : server,
     ),
+    ...(policy.runtimeDefinitionHashes
+      ? {
+          runtimeDefinitionHashes: policy.runtimeDefinitionHashes.filter(
+            (definition) =>
+              definition.provider === provider && definition.name === name,
+          ),
+        }
+      : {}),
     coverageGaps: [],
   };
   const { policyHash: _policyHash, ...withoutHash } = draft;
