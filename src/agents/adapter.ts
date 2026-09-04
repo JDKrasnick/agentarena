@@ -542,7 +542,10 @@ export function codexMcpInlineTable(
         `env_http_headers=${tomlStringMap(transport.env_http_headers)}`,
       );
   }
-  if (definition.enabled_tools?.length)
+  if (
+    definition.enabled_tools !== null &&
+    definition.enabled_tools !== undefined
+  )
     fields.push(`enabled_tools=${tomlStringArray(definition.enabled_tools)}`);
   if (definition.disabled_tools?.length)
     fields.push(`disabled_tools=${tomlStringArray(definition.disabled_tools)}`);

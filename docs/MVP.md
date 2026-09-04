@@ -921,15 +921,18 @@ definitions. Codex requires a known inventory, safely addressable selected
 names, and supported transient definitions without literal or
 environment-backed credential material. Every frozen-policy Codex child ignores
 ambient user configuration, disables Apps, and receives only those selected
-definitions. A Codex child with an approved selected server uses the CLI's
+definitions, including an explicit empty tool allowlist that exposes zero
+tools. A Codex child with an approved selected server uses the CLI's
 explicit approval-and-sandbox bypass because MCP calls otherwise require
 interactive approval and are cancelled by non-interactive `exec`. The selected
 allowlist remains exact, and this execution mode is covered by the required
 high-risk native-execution capability disclosed before launch. Optional
 reconstruction failures become coverage gaps, and required failures block
-launch unless reduced validation is accepted. Resume resolves selected
+launch unless reduced validation is accepted. An executing resume resolves selected
 definitions again and refuses to continue when a canonical definition hash
-differs from the preflight-approved value.
+differs from the preflight-approved value. Replaying a completed or pre-review
+terminal result validates the durable policy without resolving current provider
+definitions.
 
 If a required capability is denied or cannot be authenticated, the fight does
 not start unless the user explicitly accepts a reduced validation contract. The

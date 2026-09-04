@@ -807,9 +807,11 @@ export async function runResume(options: {
       "mcp-policy.json",
       FrozenMcpPolicySchema,
     );
-    // Completed resumes are read-only, so validate their durable policy without
-    // making the historical result depend on current provider configuration.
-    const reconstructDefinitions = state.status !== "complete";
+    // Non-applied terminal envelopes are projected onto the durable summary,
+    // not the rebuilt runtime state. Their replay needs no provider session.
+    const summary = await store.readSummary();
+    const reconstructDefinitions =
+      state.status !== "complete" && !summary?.terminalOutcome;
     const temporaryRoot = reconstructDefinitions
       ? await mkdtemp(
           path.join(os.tmpdir(), `arena-mcp-resume-${options.runId}-`),
