@@ -660,6 +660,9 @@ export function providerCommand(
   const selectedCodexDefinitions = mcpRuntimeDefinitions.filter(
     (definition) => selectedMcp?.includes(definition.name) ?? false,
   );
+  const codexExecutionArgs = selectedCodexDefinitions.length
+    ? ["--dangerously-bypass-approvals-and-sandbox"]
+    : ["--full-auto"];
   switch (id) {
     case "codex":
       return {
@@ -681,7 +684,7 @@ export function providerCommand(
               ]
             : []),
           ...modelArgs,
-          "--full-auto",
+          ...codexExecutionArgs,
           "--skip-git-repo-check",
           "-",
         ],
@@ -694,8 +697,7 @@ export function providerCommand(
           : {}),
         ...(mcpPolicy
           ? {
-              displayCommand:
-                "codex exec --json --ignore-user-config -c features.apps=false [validated MCP definitions omitted]",
+              displayCommand: `codex exec --json --ignore-user-config -c features.apps=false [validated MCP definitions omitted] ${codexExecutionArgs.join(" ")}`,
             }
           : {}),
       };

@@ -115,6 +115,8 @@ describe("provider model selection", () => {
     );
     expect(args.join(" ")).toContain("mcp_servers.selected=");
     expect(args.join(" ")).not.toContain("omitted");
+    expect(args).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(args).not.toContain("--full-auto");
     expect(command.displayCommand).not.toContain("selected-server");
     expect(command.secrets).toEqual(
       expect.arrayContaining(["selected-server", "--safe"]),
@@ -173,9 +175,10 @@ describe("provider model selection", () => {
       policyHash: "0".repeat(64),
     };
 
-    expect(
-      providerCommand("codex", undefined, policy).args.join(" "),
-    ).not.toContain("unsafe.name");
+    const args = providerCommand("codex", undefined, policy).args;
+    expect(args.join(" ")).not.toContain("unsafe.name");
+    expect(args).toContain("--full-auto");
+    expect(args).not.toContain("--dangerously-bypass-approvals-and-sandbox");
   });
 
   it("refuses to treat an unknown Codex inventory as an empty allowlist", () => {
