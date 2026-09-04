@@ -391,6 +391,29 @@ describe("process runner supervision", () => {
     ]);
   });
 
+  it("classifies a fatal MCP transport configuration error", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-mcp-config-"));
+    const result = await runProcess({
+      executable: process.execPath,
+      args: [
+        "-e",
+        'console.error("Error loading config.toml: invalid transport\\nin `mcp_servers.cua_repl`"); process.exit(1)',
+      ],
+      cwd: root,
+      timeoutMs: 2_000,
+      logPrefix: path.join(root, "logs", "mcp-config"),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.transportFailures).toEqual([
+      expect.objectContaining({
+        kind: "transport",
+        detail:
+          "Error loading config.toml: invalid transport\nin `mcp_servers.cua_repl`",
+      }),
+    ]);
+  });
+
   it("does not promote optional MCP states from provider initialization", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-mcp-init-"));
     const init = JSON.stringify({

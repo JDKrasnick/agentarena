@@ -201,7 +201,8 @@ function findTransportFailures(
   ambientMcpWasNonFatal = false,
 ): NonNullable<CommandResult["transportFailures"]> {
   const failures: NonNullable<CommandResult["transportFailures"]> = [];
-  for (const line of output.split("\n")) {
+  const lines = output.split("\n");
+  for (const [index, line] of lines.entries()) {
     const detail = line.trim();
     if (!detail) continue;
     // Provider init records describe every configured MCP server. An optional
@@ -213,8 +214,21 @@ function findTransportFailures(
     // stderr, then continues the turn normally. Preserve that warning in the
     // stderr artifact without promoting it to an invocation failure.
     if (ambientMcpWasNonFatal && isAmbientMcpStartupWarning(detail)) continue;
-    const kind =
-      /mcp/i.test(detail) && /(oauth|refresh|expired|auth)/i.test(detail)
+    const mcpConfigDetail = /error loading config(?:\.toml)?:/i.test(detail)
+      ? lines
+          .slice(index, index + 3)
+          .map((candidate) => candidate.trim())
+          .filter(Boolean)
+          .join("\n")
+      : undefined;
+    const fatalMcpConfig =
+      mcpConfigDetail && /\bmcp_servers\.[\w-]+\b/i.test(mcpConfigDetail)
+        ? mcpConfigDetail
+        : undefined;
+    const failureDetail = fatalMcpConfig ?? detail;
+    const kind = fatalMcpConfig
+      ? "transport"
+      : /mcp/i.test(detail) && /(oauth|refresh|expired|auth)/i.test(detail)
         ? "mcp_auth"
         : /reconnect(?:ing|ed)?/i.test(detail)
           ? "reconnect"
@@ -226,10 +240,13 @@ function findTransportFailures(
     if (
       kind &&
       !failures.some(
-        (failure) => failure.kind === kind && failure.detail === detail,
+        (failure) => failure.kind === kind && failure.detail === failureDetail,
       )
     ) {
-      failures.push({ kind, detail: redact(detail, secrets).slice(0, 512) });
+      failures.push({
+        kind,
+        detail: redact(failureDetail, secrets).slice(0, 512),
+      });
     }
     if (failures.length === 20) break;
   }
