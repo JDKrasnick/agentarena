@@ -7,6 +7,7 @@ import { runDeliverCommand } from "./commands/deliver.js";
 import { exitCodeForStatus, runFight, runResume } from "./commands/fight.js";
 import { runInspectCommand, runReviewCommand } from "./commands/review.js";
 import { resolveCoverage } from "./commands/resolve-coverage.js";
+import { cleanupRunWorktrees } from "./commands/cleanup-worktrees.js";
 import { ContestantIdSchema } from "./core/types.js";
 import { DeliveryActionSchema } from "./delivery/types.js";
 
@@ -14,6 +15,27 @@ const program = new Command()
   .name("agent-arena")
   .description("Make your coding agents fight for the merge.")
   .version("0.1.0");
+
+program
+  .command("cleanup-worktrees")
+  .description("Remove every Git worktree registered to a run")
+  .argument("<run-id>", "Run ID under .agent-arena/runs")
+  .action(async (runId: string) => {
+    const result = await cleanupRunWorktrees({ runId });
+    for (const worktree of result.removed)
+      process.stdout.write(`Removed worktree: ${worktree}\n`);
+    for (const worktree of result.alreadyRemoved)
+      process.stdout.write(`Already removed: ${worktree}\n`);
+    for (const manifestPath of result.manifestPaths)
+      process.stdout.write(`Worktree manifest: ${manifestPath}\n`);
+    if (result.failed.length > 0) {
+      for (const failure of result.failed)
+        process.stderr.write(
+          `Failed to remove ${failure.path}: ${failure.error}\n`,
+        );
+      process.exitCode = 1;
+    }
+  });
 
 program
   .command("resolve-coverage")

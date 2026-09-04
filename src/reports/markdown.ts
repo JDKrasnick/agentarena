@@ -20,6 +20,7 @@ import {
 import { qualityCategoryRows } from "../quality/presentation.js";
 import { projectImplementationEligibility } from "../outcomes/eligibility.js";
 import { describeTokenPressureV1 } from "../effort/policy.js";
+import { retainedWorktreePathsSync } from "../repo/worktree-manifest.js";
 
 function attackOwner(attack: Attack): string {
   return attack.origin.kind === "house" ? "House" : attack.origin.contestant;
@@ -403,6 +404,18 @@ export function renderBattleReport(state: RunState): string {
         "Telemetry unavailable (legacy or incomplete run).",
         "",
       ];
+  const retainedWorktrees = state.config.keepWorktrees
+    ? retainedWorktreePathsSync(state.artifacts.worktreeManifest)
+    : [];
+  const retentionSection = state.config.keepWorktrees
+    ? [
+        "## Retained worktrees",
+        "",
+        ...retainedWorktrees.map((worktree) => `- \`${worktree}\``),
+        `- ${artifactLink(state, "Worktree manifest", state.artifacts.worktreeManifest)}`,
+        "",
+      ]
+    : [];
   if (state.terminalOutcome) {
     const terminal = state.terminalOutcome;
     const recommended =
@@ -467,6 +480,7 @@ export function renderBattleReport(state: RunState): string {
       "No review, attack, repair, quality comparison, or coverage stage ran.",
       "",
       ...usageSection,
+      ...retentionSection,
       "| Contestant | Eligibility | Cause | Diagnostics |",
       "| --- | --- | --- | --- |",
       ...dispositions,
@@ -659,6 +673,7 @@ export function renderBattleReport(state: RunState): string {
     "",
     "## Handoff",
     "",
+    ...retentionSection,
     "### Already done",
     "",
     `- Required validation ran for ${contestants.map((contestant) => contestantLabel(state.config.contestants, contestant.id)).join(" and ")}.`,

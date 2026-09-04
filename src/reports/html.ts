@@ -21,6 +21,7 @@ import {
 import { qualityCategoryRows } from "../quality/presentation.js";
 import { projectImplementationEligibility } from "../outcomes/eligibility.js";
 import { describeTokenPressureV1 } from "../effort/policy.js";
+import { retainedWorktreePathsSync } from "../repo/worktree-manifest.js";
 
 function escapeHtml(value: string): string {
   return value.replace(
@@ -127,6 +128,12 @@ export function renderBattleHtml(state: RunState): string {
         ),
       ].join("")
     : `<tr><td colspan="6">Telemetry unavailable (legacy or incomplete run).</td></tr>`;
+  const retainedWorktrees = state.config.keepWorktrees
+    ? retainedWorktreePathsSync(state.artifacts.worktreeManifest)
+    : [];
+  const retentionHtml = state.config.keepWorktrees
+    ? `<section class="section"><h2>Retained worktrees</h2><ul>${retainedWorktrees.map((worktree) => `<li><code>${escapeHtml(worktree)}</code></li>`).join("")}<li>${link(state, "Worktree manifest", state.artifacts.worktreeManifest)}</li></ul></section>`
+    : "";
   if (state.terminalOutcome) {
     const terminal = state.terminalOutcome;
     const recommended =
@@ -162,7 +169,7 @@ export function renderBattleHtml(state: RunState): string {
                 `<tr><td>${escapeHtml(contestantLabel(state.config.contestants, id))}</td><td>ineligible</td><td>${escapeHtml(terminal.reasonCode)}</td><td>legacy record</td></tr>`,
             )
             .join("");
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Arena — pre-review result</title><style>:root{color-scheme:dark}body{margin:0;background:#0b1017;color:#edf3f8;font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}main{max-width:1180px;margin:auto;padding:48px}.panel{background:#121b26;border:1px solid #36526b;border-radius:14px;padding:24px;margin-top:24px}h1{margin:0}p{color:#d7e0ea}table{border-collapse:collapse;width:100%;margin-top:20px}th,td{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid #36526b}td div{margin-top:6px;color:#d7e0ea;font-size:13px}pre{max-width:560px;overflow:auto;white-space:pre-wrap}</style></head><body><main><h1>Agent Arena — pre-review result</h1><div class="panel"><strong>${escapeHtml(terminal.kind.toUpperCase())} · ${escapeHtml(terminal.reasonCode)}</strong><p>${escapeHtml(terminal.reason)}</p><p>Recommended production patch: ${escapeHtml(recommended)}.</p><p>No review, attack, repair, quality comparison, or coverage stage ran.</p><p>Provider usage: ${escapeHtml(conciseUsage(usageSummary))}</p><table><thead><tr><th>Contestant</th><th>Eligibility</th><th>Cause</th><th>Validation evidence</th></tr></thead><tbody>${rows}</tbody></table></div></main></body></html>`;
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Arena — pre-review result</title><style>:root{color-scheme:dark}body{margin:0;background:#0b1017;color:#edf3f8;font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}main{max-width:1180px;margin:auto;padding:48px}.panel{background:#121b26;border:1px solid #36526b;border-radius:14px;padding:24px;margin-top:24px}h1{margin:0}p{color:#d7e0ea}table{border-collapse:collapse;width:100%;margin-top:20px}th,td{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid #36526b}td div{margin-top:6px;color:#d7e0ea;font-size:13px}pre{max-width:560px;overflow:auto;white-space:pre-wrap}</style></head><body><main><h1>Agent Arena — pre-review result</h1><div class="panel"><strong>${escapeHtml(terminal.kind.toUpperCase())} · ${escapeHtml(terminal.reasonCode)}</strong><p>${escapeHtml(terminal.reason)}</p><p>Recommended production patch: ${escapeHtml(recommended)}.</p><p>No review, attack, repair, quality comparison, or coverage stage ran.</p><p>Provider usage: ${escapeHtml(conciseUsage(usageSummary))}</p><table><thead><tr><th>Contestant</th><th>Eligibility</th><th>Cause</th><th>Validation evidence</th></tr></thead><tbody>${rows}</tbody></table></div>${retentionHtml}</main></body></html>`;
   }
   const contestants = reportContestants(state);
   const implementationEligibility = projectImplementationEligibility(state);
@@ -482,6 +489,7 @@ ${terminalNotice}
 <section class="section"><h2>Attack ledger — bugs found, misses, and repairs</h2><p class="note">Each row reports its recorded evidence basis; partial-judge rulings apply exact 35% damage. Zero landed attacks is not presented as proof of correctness.</p><div class="table-wrap" tabindex="0"><table><caption>All submitted contestant and house attacks</caption><thead><tr><th>Round</th><th>Author</th><th>Target</th><th>Result</th><th>Evidence class</th><th>What failed / why</th><th>Severity & score</th><th>Evidence</th></tr></thead><tbody>${attacks}</tbody></table></div></section>
 <section class="section"><h2>Failure handling ledger</h2><p class="note">Each distinct stage failure gets at most two attempts. Judge outcomes identify semantic evidence and never masquerade as mechanical execution.</p><div class="table-wrap" tabindex="0"><table><thead><tr><th>Failure</th><th>Stage</th><th>Attempts</th><th>Disposition</th><th>Judge basis</th><th>Confidence effect</th><th>Score effect</th><th>Diagnostics</th></tr></thead><tbody>${failureRows}</tbody></table></div></section>
 <section class="section"><h2>Submission artifacts</h2><p class="note">Exact provider bytes are retained locally and linked, never embedded. Parsed artifacts contain accepted normalized values and redacted diagnostics.</p><ul>${submissionArtifacts || "<li>No permanent submission artifacts recorded (legacy run).</li>"}</ul></section>
+${retentionHtml}
 <section class="section handoff" id="handoff"><div><h3>Already done</h3><p>Required validation was run, ${String(defects.length)} distinct defect(s) were adjudicated, and final patches were frozen for review.</p></div><div><h3>What remains</h3><p>${unresolved.length ? `Review ${String(unresolved.length)} unresolved defect(s) before accepting a patch.` : "Choose and inspect the recommended patch; no unresolved proven defect remains."}</p><p>${link(state, "Open the review handoff", state.artifacts.battle)}</p></div></section>
 </main></body></html>`;
 }

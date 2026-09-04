@@ -32,6 +32,12 @@ export async function prepareWorktreeWithRetry(options: {
     try {
       worktree = await options.worktrees.create(
         `${options.name}-attempt-${String(attempt)}`,
+        {
+          purpose: options.subject,
+          ...(options.contestantId
+            ? { contestantId: options.contestantId }
+            : {}),
+        },
       );
       for (const patch of patches)
         await options.worktrees.applyPatch(worktree, patch);

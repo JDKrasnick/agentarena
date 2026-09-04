@@ -612,6 +612,10 @@ export function Dashboard({
       setView("result");
   }, [state.status]);
   useInput((input, key) => {
+    if (key.ctrl && input === "c") {
+      control.cancel(new Error("Interrupted"));
+      return;
+    }
     if (note !== undefined) {
       if (key.escape) setNote(undefined);
       else if (key.return) {
