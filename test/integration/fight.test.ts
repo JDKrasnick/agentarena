@@ -1767,7 +1767,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
         claude: new CommandAgentAdapter({
           id: "claude",
           executable: process.execPath,
-          args: [fixtureAgent],
+          args: ["-e", "setInterval(() => undefined, 1_000)"],
         }),
       },
       verifier: new RuleBasedVerifier("claude"),
@@ -1798,6 +1798,53 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(outcome.state.patchRecommendation).toBeUndefined();
     expect(outcome.state.ranking).toBeUndefined();
     expect(outcome.state.attacks).toEqual([]);
+  });
+
+  it("retains a peer failure completed before an MCP transport failure", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const delayedBrokenProvider = new CommandAgentAdapter({
+      id: "codex",
+      executable: process.execPath,
+      args: [
+        "-e",
+        'setTimeout(() => { console.error("Error loading config.toml: invalid transport\\nin `mcp_servers.cua_repl`"); process.exit(1); }, 150)',
+      ],
+    });
+    const failedPeer = new CommandAgentAdapter({
+      id: "claude",
+      executable: process.execPath,
+      args: ["-e", "process.exit(1)"],
+    });
+
+    const outcome = await new Arena({
+      adapters: {
+        codex: delayedBrokenProvider,
+        claude: failedPeer,
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(duelConfig(repositoryRoot));
+
+    expect(outcome.state.status).toBe("inconclusive");
+    expect(outcome.state.terminalOutcome).toMatchObject({
+      version: 2,
+      phase: "pre_review",
+      kind: "inconclusive",
+      reasonCode: "provider_transport_failure",
+      affectedContestantIds: ["a"],
+      eligibleContestantIds: [],
+      contestants: [
+        expect.objectContaining({
+          contestantId: "a",
+          eligible: false,
+          reasonCode: "provider_transport_failure",
+        }),
+        expect.objectContaining({
+          contestantId: "b",
+          eligible: false,
+          reasonCode: "implementation_failed",
+        }),
+      ],
+    });
   });
 
   it("preserves implementation timeout as the pre-review reason", async () => {

@@ -2248,17 +2248,6 @@ export class RoundEngine {
           latestRequiredPass(contestant),
       )
       .map((contestant) => contestant.id);
-    const providerTransportContestantIds = new Set(
-      contestants
-        .filter(
-          (contestant) =>
-            contestant.implementation?.status === "infrastructure_error" &&
-            Boolean(
-              contestant.implementation.command?.transportFailures?.length,
-            ),
-        )
-        .map((contestant) => contestant.id),
-    );
     const contestantReason = (
       contestant: ContestantResult,
     ):
@@ -2288,8 +2277,6 @@ export class RoundEngine {
         return "provider_transport_failure";
       if (contestant.implementation?.status === "infrastructure_error")
         return "harness_infrastructure_failure";
-      if (providerTransportContestantIds.size > 0)
-        return "peer_cancelled_due_to_transport";
       if (contestant.implementation?.status === "timed_out")
         return "implementation_timeout";
       if (contestant.implementation?.status === "failed")
