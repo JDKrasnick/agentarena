@@ -1625,6 +1625,7 @@ export const TerminalContestantDispositionSchema = z.object({
     .union([
       PreReviewReasonCodeSchema,
       z.literal("peer_cancelled_due_to_transport"),
+      z.literal("peer_validation_skipped_due_to_transport"),
       z.literal("test_only_role"),
     ])
     .optional(),

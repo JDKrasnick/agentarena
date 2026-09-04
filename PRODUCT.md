@@ -304,7 +304,10 @@ remain in diagnostic logs but do not constitute invocation-level transport
 evidence when the provider exits successfully or continues useful work. A
 transport failure cancels the peer implementation through a phase-local
 controller. The peer's diagnostics are retained, and the peer is labeled as
-cancelled by the transport event rather than blamed for a failure.
+cancelled by the transport event rather than blamed for a failure. When that
+peer already completed implementation successfully but initial validation has
+not started, its disposition instead records that validation was skipped due to
+the transport event.
 
 Every provider-backed stage has one bounded automatic recovery path after its
 normal targeted retry establishes a causal provider infrastructure failure and

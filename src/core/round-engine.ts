@@ -2282,6 +2282,17 @@ export class RoundEngine {
           latestRequiredPass(contestant),
       )
       .map((contestant) => contestant.id);
+    const providerTransportContestantIds = new Set(
+      contestants
+        .filter(
+          (contestant) =>
+            contestant.implementation?.status === "infrastructure_error" &&
+            contestant.implementation.command?.failureClass !==
+              "arena_infrastructure" &&
+            contestant.implementation.command?.transportFailures?.length,
+        )
+        .map((contestant) => contestant.id),
+    );
     const contestantReason = (
       contestant: ContestantResult,
     ):
@@ -2301,6 +2312,15 @@ export class RoundEngine {
         !context.controller.signal.aborted
       )
         return "peer_cancelled_due_to_transport";
+      if (
+        providerTransportContestantIds.size > 0 &&
+        !providerTransportContestantIds.has(contestant.id) &&
+        contestant.implementation?.status === "succeeded" &&
+        contestant.patchSize > 0 &&
+        Boolean(contestant.currentPatchPath) &&
+        !contestant.checks.some((check) => check.id === "initial-required")
+      )
+        return "peer_validation_skipped_due_to_transport";
       if (
         contestant.implementation?.status === "infrastructure_error" &&
         contestant.implementation.command?.failureClass ===
@@ -2465,7 +2485,8 @@ export class RoundEngine {
       ) ?? contestants.find((contestant) => !eligible.includes(contestant.id));
     const failedReason = failed ? contestantReason(failed) : undefined;
     const reasonCode =
-      failedReason === "peer_cancelled_due_to_transport"
+      failedReason === "peer_cancelled_due_to_transport" ||
+      failedReason === "peer_validation_skipped_due_to_transport"
         ? "provider_transport_failure"
         : (failedReason ?? "implementation_failed");
     const isForfeit =
