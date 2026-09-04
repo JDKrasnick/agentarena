@@ -697,11 +697,13 @@ prune`. With `keepWorktrees`, successfully created worktrees transition to
 `retained` only after they are confirmed to remain registered. Invalid partial
 directories and every non-worktree runtime resource remain transient.
 
-Each initial, resumed, or provider-recovery execution appends a session to the
-same run manifest. Terminal success, failure, timeout, cancellation, and
-patch-capture errors finalize the session before report rendering. The manifest
-is registered in `state.artifacts` during initialization so every durable
-outcome exposes it.
+An initial execution creates its run manifest, and resume appends a session to
+that same manifest. Provider recovery creates a replacement-run manifest linked
+to its parent by the digest-verified recovery artifact, allowing explicit
+cleanup from the returned replacement run ID to traverse the complete chain.
+Terminal success, failure, timeout, cancellation, and patch-capture errors
+finalize the session before report rendering. The manifest is registered in
+`state.artifacts` during initialization so every durable outcome exposes it.
 
 Subprocesses receive:
 
@@ -1300,14 +1302,14 @@ idempotently in `finally`. The default policy deletes them. `keepWorktrees`
 retains all successfully created fight worktrees and reports only confirmed,
 existing retained paths plus the manifest link.
 
-`agent-arena cleanup-worktrees <run-id>` resolves the manifest inside the
-current repository's run artifact directory, validates the recorded repository
-root and Git common directory, verifies each path is contained by its recorded
-execution root, removes registered trees, prunes stale registrations, and
-atomically marks each confirmed removal. Missing trees reconcile to `removed`.
-Failures remain `cleanup_failure` and produce a nonzero command result. The
-operation is idempotent across original, resumed, and provider-recovery
-sessions.
+`agent-arena cleanup-worktrees <run-id>` follows digest-verified
+provider-recovery parent links, resolves each linked manifest inside the current
+repository's run artifact directory, validates the recorded repository root and
+Git common directory, verifies each path is contained by its recorded execution
+root, removes registered trees, prunes stale registrations, and atomically
+marks each confirmed removal. Missing trees reconcile to `removed`. Failures
+remain `cleanup_failure` and produce a nonzero command result. The operation is
+idempotent across original, resumed, and provider-recovery sessions.
 
 ## Applying a result
 

@@ -26,7 +26,8 @@ program
       process.stdout.write(`Removed worktree: ${worktree}\n`);
     for (const worktree of result.alreadyRemoved)
       process.stdout.write(`Already removed: ${worktree}\n`);
-    process.stdout.write(`Worktree manifest: ${result.manifestPath}\n`);
+    for (const manifestPath of result.manifestPaths)
+      process.stdout.write(`Worktree manifest: ${manifestPath}\n`);
     if (result.failed.length > 0) {
       for (const failure of result.failed)
         process.stderr.write(

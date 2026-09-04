@@ -4,6 +4,7 @@ import path from "node:path";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { cleanupRunWorktrees } from "../../src/commands/cleanup-worktrees.js";
+import { calculateCanonicalHash } from "../../src/contracts/round.js";
 import { WorktreeManager } from "../../src/repo/git.js";
 import {
   readWorktreeManifest,
@@ -22,13 +23,25 @@ async function exists(candidate: string): Promise<boolean> {
 
 async function createManager(keepWorktrees: boolean) {
   const repositoryRoot = await createSlugRepository();
+  return createManagerForRun({
+    repositoryRoot,
+    keepWorktrees,
+    runId: "worktree-test-run",
+  });
+}
+
+async function createManagerForRun(options: {
+  repositoryRoot: string;
+  keepWorktrees: boolean;
+  runId: string;
+}) {
+  const { repositoryRoot, keepWorktrees, runId } = options;
   const baseCommit = (
     await execa("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot })
   ).stdout;
   const temporaryRoot = await mkdtemp(
     path.join(os.tmpdir(), "agent-arena-worktrees-"),
   );
-  const runId = "worktree-test-run";
   const artifactRoot = path.join(repositoryRoot, ".agent-arena", "runs");
   const manifestPath = path.join(
     artifactRoot,
@@ -188,6 +201,76 @@ describe("WorktreeManager retention manifest", () => {
       artifactRoot: fixture.artifactRoot,
     });
     expect(cleanup.removed).toEqual([initial, continuation]);
+  });
+
+  it("cleans every retained manifest in a provider-recovery chain", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const parent = await createManagerForRun({
+      repositoryRoot,
+      keepWorktrees: true,
+      runId: "parent-run",
+    });
+    const parentWorktree = await parent.manager.create("implement-a");
+    await parent.manager.finalize();
+
+    const replacement = await createManagerForRun({
+      repositoryRoot,
+      keepWorktrees: true,
+      runId: "replacement-run",
+    });
+    const replacementWorktree = await replacement.manager.create("repair-a");
+    await replacement.manager.finalize();
+    await writeFile(
+      path.join(replacement.artifactRoot, replacement.runId, "result.json"),
+      JSON.stringify({
+        schemaVersion: 11,
+        runId: replacement.runId,
+        provenance: { parentRunId: parent.runId },
+      }),
+    );
+    const recoveryPayload = {
+      version: 1 as const,
+      parentRunId: parent.runId,
+      providers: ["codex"],
+      createdAt: new Date().toISOString(),
+      probeAttempts: [],
+      disposition: "provider_recovered" as const,
+      restartOrdinal: 1,
+      replacementRunId: replacement.runId,
+      runChain: [parent.runId, replacement.runId],
+    };
+    await writeFile(
+      path.join(parent.artifactRoot, parent.runId, "transport-recovery.json"),
+      JSON.stringify({
+        ...recoveryPayload,
+        recoveryHash: calculateCanonicalHash(recoveryPayload),
+      }),
+    );
+
+    const cleanup = await cleanupRunWorktrees({
+      runId: replacement.runId,
+      repositoryRoot,
+      artifactRoot: replacement.artifactRoot,
+    });
+    expect(cleanup.failed).toEqual([]);
+    expect(cleanup.removed).toEqual([parentWorktree, replacementWorktree]);
+    expect(cleanup.manifestPaths).toEqual([
+      parent.manifestPath,
+      replacement.manifestPath,
+    ]);
+    expect(await exists(parentWorktree)).toBe(false);
+    expect(await exists(replacementWorktree)).toBe(false);
+
+    const repeated = await cleanupRunWorktrees({
+      runId: replacement.runId,
+      repositoryRoot,
+      artifactRoot: replacement.artifactRoot,
+    });
+    expect(repeated.failed).toEqual([]);
+    expect(repeated.alreadyRemoved).toEqual([
+      parentWorktree,
+      replacementWorktree,
+    ]);
   });
 
   it("rejects manifest paths outside their recorded execution root", async () => {

@@ -1,7 +1,9 @@
-import { realpath, rmdir } from "node:fs/promises";
+import { readFile, realpath, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { execa } from "execa";
+import { z } from "zod";
 import { ArtifactStore } from "../artifacts/store.js";
+import { calculateCanonicalHash } from "../contracts/round.js";
 import { resolveRepositoryRoot } from "../repo/git.js";
 import {
   readWorktreeManifest,
@@ -9,12 +11,85 @@ import {
   type WorktreeManifest,
   type WorktreeManifestEntry,
 } from "../repo/worktree-manifest.js";
+import { TransportRecoverySchema } from "../recovery/transport.js";
 
 export interface CleanupWorktreesResult {
   manifestPath: string;
+  manifestPaths: string[];
   removed: string[];
   alreadyRemoved: string[];
   failed: Array<{ path: string; error: string }>;
+}
+
+const CleanupRunSummarySchema = z
+  .object({
+    schemaVersion: z.literal(11),
+    runId: z.string().min(1),
+    provenance: z
+      .object({ parentRunId: z.string().min(1).optional() })
+      .passthrough(),
+  })
+  .passthrough();
+
+function assertSafeRunId(runId: string): void {
+  if (
+    !runId ||
+    runId === "." ||
+    runId === ".." ||
+    path.basename(runId) !== runId
+  )
+    throw new Error(`Invalid run ID: ${runId}`);
+}
+
+async function resolveCleanupRunChain(
+  artifactRoot: string,
+  requestedRunId: string,
+): Promise<string[]> {
+  const runIds = [requestedRunId];
+  const seen = new Set(runIds);
+  let childRunId = requestedRunId;
+  while (true) {
+    const childStore = new ArtifactStore(artifactRoot, childRunId);
+    let summary: z.infer<typeof CleanupRunSummarySchema>;
+    try {
+      summary = CleanupRunSummarySchema.parse(
+        JSON.parse(await readFile(childStore.resolve("result.json"), "utf8")),
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") break;
+      throw error;
+    }
+    if (summary.runId !== childRunId)
+      throw new Error("Run summary ID does not match its artifact directory");
+    const parentRunId = summary.provenance.parentRunId;
+    if (!parentRunId) break;
+    assertSafeRunId(parentRunId);
+    if (seen.has(parentRunId))
+      throw new Error("Provider-recovery run chain contains a cycle");
+
+    const parentStore = new ArtifactStore(artifactRoot, parentRunId);
+    const recovery = TransportRecoverySchema.parse(
+      JSON.parse(
+        await readFile(parentStore.resolve("transport-recovery.json"), "utf8"),
+      ),
+    );
+    const { recoveryHash, ...recoveryPayload } = recovery;
+    if (calculateCanonicalHash(recoveryPayload) !== recoveryHash)
+      throw new Error("Provider-recovery artifact digest does not match");
+    if (
+      recovery.parentRunId !== parentRunId ||
+      recovery.replacementRunId !== childRunId ||
+      recovery.runChain.at(-2) !== parentRunId ||
+      recovery.runChain.at(-1) !== childRunId
+    )
+      throw new Error(
+        "Provider-recovery artifact does not link the requested run chain",
+      );
+    runIds.unshift(parentRunId);
+    seen.add(parentRunId);
+    childRunId = parentRunId;
+  }
+  return runIds;
 }
 
 async function git(
@@ -88,18 +163,13 @@ async function validateEntryContainment(
     throw new Error("Registered worktree path escapes its execution root");
 }
 
-export async function cleanupRunWorktrees(options: {
+async function cleanupSingleRunWorktrees(options: {
   runId: string;
-  repositoryRoot?: string;
-  artifactRoot?: string;
+  repositoryRoot: string;
+  artifactRoot: string;
   now?: () => Date;
 }): Promise<CleanupWorktreesResult> {
-  const repositoryRoot = await resolveRepositoryRoot(
-    options.repositoryRoot ?? process.cwd(),
-  );
-  const artifactRoot = path.resolve(
-    options.artifactRoot ?? path.join(repositoryRoot, ".agent-arena", "runs"),
-  );
+  const { repositoryRoot, artifactRoot } = options;
   const store = new ArtifactStore(artifactRoot, options.runId);
   const manifestPath = store.resolve("worktrees/manifest.json");
   const manifest = await readWorktreeManifest(manifestPath);
@@ -198,5 +268,47 @@ export async function cleanupRunWorktrees(options: {
   }
   manifest.updatedAt = now().toISOString();
   await writeWorktreeManifest(manifestPath, manifest);
-  return { manifestPath, removed, alreadyRemoved, failed };
+  return {
+    manifestPath,
+    manifestPaths: [manifestPath],
+    removed,
+    alreadyRemoved,
+    failed,
+  };
+}
+
+export async function cleanupRunWorktrees(options: {
+  runId: string;
+  repositoryRoot?: string;
+  artifactRoot?: string;
+  now?: () => Date;
+}): Promise<CleanupWorktreesResult> {
+  assertSafeRunId(options.runId);
+  const repositoryRoot = await resolveRepositoryRoot(
+    options.repositoryRoot ?? process.cwd(),
+  );
+  const artifactRoot = path.resolve(
+    options.artifactRoot ?? path.join(repositoryRoot, ".agent-arena", "runs"),
+  );
+  const runIds = await resolveCleanupRunChain(artifactRoot, options.runId);
+  const results: CleanupWorktreesResult[] = [];
+  for (const runId of runIds) {
+    results.push(
+      await cleanupSingleRunWorktrees({
+        runId,
+        repositoryRoot,
+        artifactRoot,
+        ...(options.now ? { now: options.now } : {}),
+      }),
+    );
+  }
+  return {
+    manifestPath: new ArtifactStore(artifactRoot, options.runId).resolve(
+      "worktrees/manifest.json",
+    ),
+    manifestPaths: results.flatMap((result) => result.manifestPaths),
+    removed: results.flatMap((result) => result.removed),
+    alreadyRemoved: results.flatMap((result) => result.alreadyRemoved),
+    failed: results.flatMap((result) => result.failed),
+  };
 }

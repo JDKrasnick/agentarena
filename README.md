@@ -341,9 +341,10 @@ linked from reports. Retention can consume substantial disk space and preserves
 the checked-out source plus any agent-created files with the permissions of the
 current OS account. Processes, services, credential leases, failed partial
 directories, and other non-worktree runtime resources are never retained.
-Cleanup validates repository identity and path containment, is safe to repeat,
-and exits nonzero while preserving any cleanup-failure record it could not
-resolve.
+Cleanup follows validated provider-recovery parent links from the supplied run,
+validates repository identity and path containment for every linked manifest,
+is safe to repeat, and exits nonzero while preserving any cleanup-failure
+record it could not resolve.
 
 Non-interactive clients must provide the full displayed digest with
 `--confirm-sha256`. `agent-arena apply <run-id>` accepts no contestant override
