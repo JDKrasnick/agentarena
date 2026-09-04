@@ -1847,6 +1847,52 @@ describe("fake-adapter fight on a mocked real issue", () => {
     });
   });
 
+  it("does not blame a successful peer whose validation is skipped by an MCP transport failure", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const delayedBrokenProvider = new CommandAgentAdapter({
+      id: "codex",
+      executable: process.execPath,
+      args: [
+        "-e",
+        'setTimeout(() => { console.error("Error loading config.toml: invalid transport\\nin `mcp_servers.cua_repl`"); process.exit(1); }, 1000)',
+      ],
+    });
+
+    const outcome = await new Arena({
+      adapters: {
+        codex: delayedBrokenProvider,
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(duelConfig(repositoryRoot));
+
+    expect(outcome.state.status).toBe("inconclusive");
+    expect(outcome.state.terminalOutcome).toMatchObject({
+      version: 2,
+      phase: "pre_review",
+      kind: "inconclusive",
+      reasonCode: "provider_transport_failure",
+      affectedContestantIds: ["a"],
+      eligibleContestantIds: [],
+      contestants: [
+        expect.objectContaining({
+          contestantId: "a",
+          eligible: false,
+          reasonCode: "provider_transport_failure",
+        }),
+        expect.objectContaining({
+          contestantId: "b",
+          eligible: false,
+          reasonCode: "peer_validation_skipped_due_to_transport",
+        }),
+      ],
+    });
+  });
+
   it("preserves implementation timeout as the pre-review reason", async () => {
     const repositoryRoot = await createSlugRepository();
     const timedOut = new CommandAgentAdapter({

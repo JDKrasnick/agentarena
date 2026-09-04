@@ -722,6 +722,7 @@ const RoundResultBaseSchema = z
                     "harness_infrastructure_failure",
                     "external_cancellation",
                     "peer_cancelled_due_to_transport",
+                    "peer_validation_skipped_due_to_transport",
                     "test_only_role",
                   ])
                   .optional(),
