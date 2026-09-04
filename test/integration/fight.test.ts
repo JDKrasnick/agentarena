@@ -1672,6 +1672,46 @@ describe("fake-adapter fight on a mocked real issue", () => {
     }
   });
 
+  it("seals target-relative overlay integrity failures as inconclusive", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const capture = vi
+      .spyOn(WorktreeManager.prototype, "capturePatchAgainstSnapshot")
+      .mockRejectedValue(
+        new PatchCaptureIntegrityError("injected overlay verification failure"),
+      );
+
+    try {
+      const outcome = await new Arena({
+        adapters: {
+          codex: new CommandAgentAdapter({
+            id: "codex",
+            executable: process.execPath,
+            args: [fixtureAgent],
+            environment: { AGENT_ARENA_FAKE_DIRECT_ATTACK: "1" },
+          }),
+          claude: new CommandAgentAdapter({
+            id: "claude",
+            executable: process.execPath,
+            args: [fixtureAgent],
+            environment: { AGENT_ARENA_FAKE_DIRECT_ATTACK: "1" },
+          }),
+        },
+        verifier: new RuleBasedVerifier("claude"),
+      }).fight({ ...duelConfig(repositoryRoot), rounds: 1 });
+
+      expect(capture).toHaveBeenCalled();
+      expect(outcome.state.status).toBe("inconclusive");
+      expect(outcome.state.terminalOutcome).toMatchObject({
+        phase: "pre_review",
+        kind: "inconclusive",
+        reasonCode: "harness_infrastructure_failure",
+      });
+      expect(outcome.state.patchRecommendation).toBeUndefined();
+    } finally {
+      capture.mockRestore();
+    }
+  });
+
   it("keeps valid siblings when a same-round correction remains malformed", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = FightConfigSchema.parse({

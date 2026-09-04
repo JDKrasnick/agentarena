@@ -6509,6 +6509,7 @@ export class RoundEngine {
         ],
       };
     } catch (error) {
+      if (error instanceof PatchCaptureIntegrityError) throw error;
       failureRecord = await this.recordFailureAttempt(context, {
         stage: "model_invocation",
         subject: `case-generation:${String(round)}:${attacker}:${String(entry.rank)}${artifactKey ? `:${artifactKey}` : ""}`,
@@ -8091,6 +8092,7 @@ export class RoundEngine {
             );
           }
           const materializable = undeclaredPaths.length ? [] : accepted;
+          let materializedAttackCount = 0;
           for (const entry of materializable) {
             try {
               if (legacySubmission) {
@@ -8118,6 +8120,7 @@ export class RoundEngine {
                     },
                   ),
                 );
+                materializedAttackCount += 1;
                 continue;
               }
               const overlayPath = context.store.resolve(
@@ -8137,6 +8140,7 @@ export class RoundEngine {
                     patchPath: overlayPath,
                   }),
                 );
+                materializedAttackCount += 1;
                 continue;
               }
               const overlayPaths = [
@@ -8162,7 +8166,9 @@ export class RoundEngine {
                   patchPath: overlayPath,
                 }),
               );
+              materializedAttackCount += 1;
             } catch (error) {
+              if (error instanceof PatchCaptureIntegrityError) throw error;
               context.state.warnings.push(
                 `Attack rank ${String(entry.rank)} from ${agent} was rejected without suppressing siblings: ${error instanceof Error ? error.message : String(error)}`,
               );
@@ -8179,7 +8185,7 @@ export class RoundEngine {
               captured.parsed.outcome === "partial"
                 ? "partially_submitted"
                 : "submitted",
-            attackCount: materializable.length,
+            attackCount: materializedAttackCount,
             parseOutcome: captured.parsed.outcome,
             sectionOutcomes: Object.fromEntries(
               Object.entries(captured.parsed.sections).map(([key, section]) => [
@@ -8209,6 +8215,7 @@ export class RoundEngine {
             );
           }
         } catch (error) {
+          if (error instanceof PatchCaptureIntegrityError) throw error;
           const detail = error instanceof Error ? error.message : String(error);
           if (submissionFailure?.attempts.length === 1) {
             await this.recordSubmissionAttempt(context, {
@@ -8244,7 +8251,11 @@ export class RoundEngine {
           );
         }
       } catch (error) {
-        if (context.state.providerFailure) throw error;
+        if (
+          context.state.providerFailure ||
+          error instanceof PatchCaptureIntegrityError
+        )
+          throw error;
         context.state.warnings.push(
           `Attack collection failed for ${agent}: ${error instanceof Error ? error.message : String(error)}`,
         );
@@ -8453,6 +8464,7 @@ export class RoundEngine {
             );
           }
         } catch (error) {
+          if (error instanceof PatchCaptureIntegrityError) throw error;
           context.state.warnings.push(
             `House scout failed for Candidate ${String(candidateIndex + 1)} without health effect: ${error instanceof Error ? error.message : String(error)}`,
           );
@@ -9842,6 +9854,7 @@ export class RoundEngine {
       replay.evidenceRevision = revised.evidenceRevision;
       return replay;
     } catch (error) {
+      if (error instanceof PatchCaptureIntegrityError) throw error;
       context.state.warnings.push(
         `Infrastructure review failed for ${provisional.id}: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -10394,6 +10407,7 @@ export class RoundEngine {
           });
         }
       } catch (error) {
+        if (error instanceof PatchCaptureIntegrityError) throw error;
         context.state.warnings.push(
           `Case builder failed for ${attack.id}: ${error instanceof Error ? error.message : String(error)}`,
         );
