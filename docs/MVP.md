@@ -1360,9 +1360,26 @@ containing:
 - `transport-recovery.json`: compatibility-named provider recovery ledger with
   the failed stage, causal evidence, health probes, chain-wide continuation
   ordinal, replacement link, and complete run-ID chain.
+- `worktrees/manifest.json`: an atomically replaced, run-owned ledger of every
+  successfully created Git worktree, including its purpose, contestant when
+  applicable, unique physical path, execution session, and confirmed active,
+  retained, removed, or cleanup-failure state.
 
-Generated worktrees are temporary and may be removed after the report is safely
-written. Run artifacts are retained until the user deletes them.
+Generated worktrees are removed by default after their patches and logs are
+safely captured. With `keepWorktrees: true`, every successfully created fight
+worktree is retained and its existing path plus the manifest location is shown
+in console, Markdown, and HTML output. Reused logical names receive distinct
+paths. Resume and provider recovery append execution sessions and retain all
+earlier entries. Resources that never became valid Git worktrees, processes,
+services, credential leases, and other non-worktree runtime resources are
+always transient. Run artifacts are retained until the user deletes them.
+
+`agent-arena cleanup-worktrees <run-id>` reads only the manifest under that
+run, validates repository identity and containment beneath each recorded
+execution root, removes registered Git worktrees, prunes stale registrations,
+and atomically records confirmed results. Repeating the command safely
+reconciles already-removed paths. Any cleanup failure remains recorded and
+causes a nonzero exit.
 
 ## Failure behavior
 
@@ -1409,8 +1426,8 @@ Failures should be useful and recoverable:
 - An unresolved infrastructure failure during implementation, repair, required
   validation, or final validation makes the run inconclusive instead of blaming
   a contestant.
-- `Ctrl-C` stops child processes, saves partial logs, and removes temporary
-  worktrees when safe.
+- `Ctrl-C` stops child processes, saves partial logs, and finalizes worktree
+  states according to the run's retention policy.
 - Unexpected harness failures preserve enough state to diagnose or resume
   manually.
 

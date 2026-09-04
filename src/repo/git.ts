@@ -1,6 +1,21 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { execa } from "execa";
+import type { ContestantId } from "../core/types.js";
+import {
+  readWorktreeManifest,
+  writeWorktreeManifest,
+  type WorktreeManifest,
+  type WorktreeManifestEntry,
+} from "./worktree-manifest.js";
 
 async function git(
   repositoryRoot: string,
@@ -141,20 +156,103 @@ export async function assertCleanRepository(
 
 export class WorktreeManager {
   private readonly worktrees = new Set<string>();
+  private readonly allocatedPaths = new Set<string>();
+  private manifest?: WorktreeManifest;
+  private executionSessionId?: string;
+  private initialized = false;
+  private finalized = false;
+  private operationTail: Promise<void> = Promise.resolve();
 
   constructor(
     readonly repositoryRoot: string,
     readonly temporaryRoot: string,
     readonly baseCommit: string,
+    private readonly options: {
+      keepWorktrees?: boolean;
+      manifestPath?: string;
+      runId?: string;
+      executionKind?: "initial" | "resume" | "provider_recovery";
+      now?: () => Date;
+    } = {},
   ) {}
 
   async initialize(): Promise<void> {
     await mkdir(this.temporaryRoot, { recursive: true });
+    if (!this.options.manifestPath) {
+      this.initialized = true;
+      return;
+    }
+    if (!this.options.runId)
+      throw new Error("A run ID is required for a worktree manifest");
+    const now = this.timestamp();
+    const repository = await this.repositoryIdentity();
+    let manifest: WorktreeManifest;
+    try {
+      manifest = await readWorktreeManifest(this.options.manifestPath);
+      if (
+        manifest.runId !== this.options.runId ||
+        manifest.repository.root !== repository.root ||
+        manifest.repository.gitCommonDirectory !== repository.gitCommonDirectory
+      )
+        throw new Error(
+          "Existing worktree manifest repository identity does not match",
+        );
+      if (manifest.retentionEnabled !== (this.options.keepWorktrees ?? false))
+        throw new Error(
+          "Existing worktree manifest retention policy does not match",
+        );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      manifest = {
+        version: 1,
+        runId: this.options.runId,
+        repository,
+        retentionEnabled: this.options.keepWorktrees ?? false,
+        createdAt: now,
+        updatedAt: now,
+        executions: [],
+        worktrees: [],
+      };
+    }
+    this.executionSessionId = `execution-${String(manifest.executions.length + 1)}-${randomUUID().slice(0, 8)}`;
+    manifest.executions.push({
+      id: this.executionSessionId,
+      kind: this.options.executionKind ?? "initial",
+      temporaryRoot: path.resolve(this.temporaryRoot),
+      startedAt: now,
+    });
+    this.manifest = manifest;
+    await this.persistManifest();
+    this.initialized = true;
   }
 
-  async create(name: string): Promise<string> {
-    const target = path.join(this.temporaryRoot, name);
-    await rm(target, { recursive: true, force: true });
+  async create(
+    name: string,
+    metadata: { purpose?: string; contestantId?: ContestantId } = {},
+  ): Promise<string> {
+    return this.exclusive(() => this.createUnlocked(name, metadata));
+  }
+
+  private async createUnlocked(
+    name: string,
+    metadata: { purpose?: string; contestantId?: ContestantId } = {},
+  ): Promise<string> {
+    if (!this.initialized)
+      throw new Error("WorktreeManager is not initialized");
+    const logicalName = this.safeLogicalName(name);
+    let ordinal = 1;
+    let target: string;
+    do {
+      target = path.join(
+        this.temporaryRoot,
+        ordinal === 1 ? logicalName : `${logicalName}-${String(ordinal)}`,
+      );
+      ordinal += 1;
+    } while (
+      this.allocatedPaths.has(target) ||
+      this.manifest?.worktrees.some((entry) => entry.path === target) ||
+      (await this.pathExists(target))
+    );
     await git(this.repositoryRoot, [
       "worktree",
       "add",
@@ -163,6 +261,35 @@ export class WorktreeManager {
       this.baseCommit,
     ]);
     this.worktrees.add(target);
+    this.allocatedPaths.add(target);
+    if (this.manifest && this.executionSessionId) {
+      const entry: WorktreeManifestEntry = {
+        id: `worktree-${String(this.manifest.worktrees.length + 1)}-${randomUUID().slice(0, 8)}`,
+        executionSessionId: this.executionSessionId,
+        logicalName,
+        purpose: metadata.purpose ?? logicalName,
+        ...(metadata.contestantId
+          ? { contestantId: metadata.contestantId }
+          : {}),
+        path: target,
+        state: "active",
+        createdAt: this.timestamp(),
+      };
+      this.manifest.worktrees.push(entry);
+      try {
+        await this.persistManifest();
+      } catch (error) {
+        await git(this.repositoryRoot, [
+          "worktree",
+          "remove",
+          "--force",
+          target,
+        ]).catch(() => undefined);
+        this.worktrees.delete(target);
+        this.manifest.worktrees.pop();
+        throw error;
+      }
+    }
     return target;
   }
 
@@ -250,17 +377,226 @@ export class WorktreeManager {
   }
 
   async remove(worktree: string): Promise<void> {
+    await this.exclusive(() => this.removeUnlocked(worktree));
+  }
+
+  private async removeUnlocked(worktree: string): Promise<void> {
     if (!this.worktrees.has(worktree)) return;
-    await git(this.repositoryRoot, ["worktree", "remove", "--force", worktree]);
-    this.worktrees.delete(worktree);
+    const entry = this.manifest?.worktrees.find(
+      (candidate) => candidate.path === worktree,
+    );
+    const exists = await this.pathExists(worktree);
+    let registered = await this.isRegisteredWorktree(worktree);
+    if (!exists && registered) {
+      await git(this.repositoryRoot, ["worktree", "prune"]);
+      registered = await this.isRegisteredWorktree(worktree);
+    }
+    if (this.options.keepWorktrees) {
+      if (exists && registered) {
+        if (entry) {
+          entry.state = "retained";
+          entry.retainedAt ??= this.timestamp();
+          delete entry.cleanupError;
+          delete entry.cleanupFailedAt;
+          await this.persistManifest();
+        }
+        return;
+      }
+      if (registered) {
+        const error = `Absent worktree remains registered after prune: ${worktree}`;
+        if (entry) {
+          entry.state = "cleanup_failure";
+          entry.cleanupFailedAt = this.timestamp();
+          entry.cleanupError = error;
+          await this.persistManifest();
+        }
+        throw new Error(error);
+      }
+      this.worktrees.delete(worktree);
+      if (entry) {
+        entry.state = "removed";
+        entry.removedAt = this.timestamp();
+        await this.persistManifest();
+      }
+      return;
+    }
+    if (!registered) {
+      this.worktrees.delete(worktree);
+      if (entry) {
+        entry.state = "removed";
+        entry.removedAt = this.timestamp();
+        await this.persistManifest();
+      }
+      return;
+    }
+    try {
+      await git(this.repositoryRoot, [
+        "worktree",
+        "remove",
+        "--force",
+        worktree,
+      ]);
+      if (await this.isRegisteredWorktree(worktree))
+        throw new Error(
+          `Git still registers worktree after removal: ${worktree}`,
+        );
+      this.worktrees.delete(worktree);
+      if (entry) {
+        entry.state = "removed";
+        entry.removedAt = this.timestamp();
+        delete entry.cleanupError;
+        delete entry.cleanupFailedAt;
+        await this.persistManifest();
+      }
+    } catch (error) {
+      if (entry) {
+        entry.state = "cleanup_failure";
+        entry.cleanupFailedAt = this.timestamp();
+        entry.cleanupError =
+          error instanceof Error ? error.message : String(error);
+        await this.persistManifest();
+      }
+      throw error;
+    }
   }
 
   async cleanup(): Promise<void> {
+    const failures: unknown[] = [];
     for (const worktree of [...this.worktrees]) {
-      await this.remove(worktree);
+      try {
+        await this.remove(worktree);
+      } catch (error) {
+        failures.push(error);
+      }
     }
-    await git(this.repositoryRoot, ["worktree", "prune"]);
-    await rm(this.temporaryRoot, { recursive: true, force: true });
+    if (!this.options.keepWorktrees) {
+      try {
+        await git(this.repositoryRoot, ["worktree", "prune"]);
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length === 0)
+        await rm(this.temporaryRoot, { recursive: true, force: true });
+    }
+    if (this.manifest && this.executionSessionId) {
+      const execution = this.manifest.executions.find(
+        (candidate) => candidate.id === this.executionSessionId,
+      );
+      if (execution) execution.finalizedAt = this.timestamp();
+      await this.persistManifest();
+    }
+    if (failures.length > 0)
+      throw new AggregateError(
+        failures,
+        "One or more worktrees could not be cleaned up",
+      );
+  }
+
+  async finalize(): Promise<void> {
+    if (this.finalized) return;
+    await this.cleanup();
+    this.finalized = true;
+  }
+
+  retainedPaths(): string[] {
+    return (
+      this.manifest?.worktrees
+        .filter((entry) => entry.state === "retained")
+        .map((entry) => entry.path) ?? []
+    );
+  }
+
+  private timestamp(): string {
+    return (this.options.now ?? (() => new Date()))().toISOString();
+  }
+
+  private async exclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.operationTail;
+    let release!: () => void;
+    this.operationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  private safeLogicalName(name: string): string {
+    const normalized = name.trim();
+    if (
+      !normalized ||
+      normalized === "." ||
+      normalized === ".." ||
+      path.basename(normalized) !== normalized
+    )
+      throw new Error(`Invalid worktree logical name: ${name}`);
+    return normalized;
+  }
+
+  private async pathExists(candidate: string): Promise<boolean> {
+    try {
+      await access(candidate);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+  }
+
+  private async isRegisteredWorktree(candidate: string): Promise<boolean> {
+    const listing = await git(this.repositoryRoot, [
+      "worktree",
+      "list",
+      "--porcelain",
+    ]);
+    const resolved = await this.canonicalPath(candidate);
+    const registered = listing
+      .split("\n")
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => line.slice("worktree ".length));
+    return (
+      await Promise.all(
+        registered.map((worktree) => this.canonicalPath(worktree)),
+      )
+    ).some((worktree) => worktree === resolved);
+  }
+
+  private async canonicalPath(candidate: string): Promise<string> {
+    let current = path.resolve(candidate);
+    const suffix: string[] = [];
+    while (true) {
+      try {
+        return path.join(await realpath(current), ...suffix);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        const parent = path.dirname(current);
+        if (parent === current) return path.resolve(candidate);
+        suffix.unshift(path.basename(current));
+        current = parent;
+      }
+    }
+  }
+
+  private async repositoryIdentity(): Promise<{
+    root: string;
+    gitCommonDirectory: string;
+  }> {
+    const root = await realpath(this.repositoryRoot);
+    const common = await git(this.repositoryRoot, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]);
+    return { root, gitCommonDirectory: await realpath(common) };
+  }
+
+  private async persistManifest(): Promise<void> {
+    if (!this.manifest || !this.options.manifestPath) return;
+    this.manifest.updatedAt = this.timestamp();
+    await writeWorktreeManifest(this.options.manifestPath, this.manifest);
   }
 }
 

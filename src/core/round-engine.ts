@@ -1132,6 +1132,13 @@ export class RoundEngine {
       repositoryRoot,
       temporaryRoot,
       baseCommit,
+      {
+        keepWorktrees: config.keepWorktrees,
+        manifestPath: store.resolve("worktrees/manifest.json"),
+        runId,
+        executionKind: replacement ? "provider_recovery" : "initial",
+        now: this.now,
+      },
     );
     await worktrees.initialize();
     const controller = new AbortController();
@@ -1315,6 +1322,7 @@ export class RoundEngine {
           operatorInterventions: store.resolve(
             "operations/operator-interventions.json",
           ),
+          worktreeManifest: store.resolve("worktrees/manifest.json"),
         },
         warnings: [
           "Worktrees isolate accidental changes; they are not a hostile-code security sandbox.",
@@ -1499,6 +1507,7 @@ export class RoundEngine {
           })(),
         now: this.now(),
       });
+      await this.finalizeWorktrees(context);
       await this.transition(context, "report");
       const report = renderBattleReport(context.state);
       await store.writeText("BATTLE.md", report);
@@ -1527,6 +1536,7 @@ export class RoundEngine {
         );
         if (!cancelled)
           await this.finalizeCoverage(context).catch(() => undefined);
+        await this.finalizeWorktrees(context);
         await context.store.writeState(context.state).catch(() => undefined);
         await context.store
           .writeText("BATTLE.md", renderBattleReport(context.state))
@@ -1546,12 +1556,23 @@ export class RoundEngine {
           context,
           cancelled ? "cancelled" : "inconclusive",
         ).catch(() => undefined);
+        if (config.keepWorktrees) {
+          const detail = [
+            ...worktrees
+              .retainedPaths()
+              .map((worktree) => `Retained worktree: ${worktree}`),
+            `Worktree manifest: ${store.resolve("worktrees/manifest.json")}`,
+          ].join("\n");
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)}\n${detail}`,
+            { cause: error },
+          );
+        }
       }
       throw error;
     } finally {
       externalSignal?.removeEventListener("abort", abort);
-      if (!config.keepWorktrees)
-        await worktrees.cleanup().catch(() => undefined);
+      await worktrees.finalize().catch(() => undefined);
       await journal.flush().catch(() => undefined);
     }
   }
@@ -1875,8 +1896,17 @@ export class RoundEngine {
       repositoryRoot,
       temporaryRoot,
       runSpec.baseCommit,
+      {
+        keepWorktrees: config.keepWorktrees,
+        manifestPath: store.resolve("worktrees/manifest.json"),
+        runId: options.runId,
+        executionKind: "resume",
+        now: this.now,
+      },
     );
     await worktrees.initialize();
+    state.artifacts.worktreeManifest = store.resolve("worktrees/manifest.json");
+    await store.writeState(state, ledger);
     const controller = new AbortController();
     const abort = (): void => controller.abort(externalSignal?.reason);
     externalSignal?.addEventListener("abort", abort, { once: true });
@@ -1996,6 +2026,7 @@ export class RoundEngine {
       }
       if (context.state.stage !== "report")
         await this.transition(context, "report");
+      await this.finalizeWorktrees(context);
       await store.writeText("BATTLE.md", renderBattleReport(context.state));
       await store.writeText("BATTLE.html", renderBattleHtml(context.state));
       await store.writeText("BATTLE.svg", renderBattleVisual(context.state));
@@ -2022,8 +2053,7 @@ export class RoundEngine {
       };
     } finally {
       externalSignal?.removeEventListener("abort", abort);
-      if (!config.keepWorktrees)
-        await worktrees.cleanup().catch(() => undefined);
+      await worktrees.finalize().catch(() => undefined);
       await journal.flush().catch(() => undefined);
     }
   }
@@ -4035,6 +4065,7 @@ export class RoundEngine {
       context.state.warnings.push(
         ...result.diagnostics.map((entry) => entry.message),
       );
+    await this.finalizeWorktrees(context);
     await this.expireSteering(context);
     await this.persist(context);
     await context.store.writeText(
@@ -4072,6 +4103,16 @@ export class RoundEngine {
     });
     if (this.runtime) return;
     await context.store.writeState(context.state, context.appliedEnvelopes);
+  }
+
+  private async finalizeWorktrees(context: ArenaContext): Promise<void> {
+    try {
+      await context.worktrees.finalize();
+    } catch (error) {
+      const warning = `Worktree cleanup was incomplete: ${error instanceof Error ? error.message : String(error)}`;
+      if (!context.state.warnings.includes(warning))
+        context.state.warnings.push(warning);
+    }
   }
 
   private syncSteeringLedger(context: ArenaContext): void {
@@ -10740,7 +10781,13 @@ export class RoundEngine {
     const manifestPaths =
       facts.version === 2 ? facts.categories.manifest.paths : [];
     if (manifestPaths.length > 0 && context.config.baseCommit) {
-      const worktree = await context.worktrees.create(`quality-facts-${agent}`);
+      const worktree = await context.worktrees.create(
+        `quality-facts-${agent}`,
+        {
+          purpose: "quality-facts-worktree",
+          contestantId: agent,
+        },
+      );
       try {
         await context.worktrees.applyPatch(worktree, patchPath);
         const baseContent: Record<string, string> = {};

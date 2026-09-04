@@ -17,6 +17,61 @@ describe("built CLI smoke flow", () => {
     await execa("npm", ["run", "build"], { cwd: projectRoot });
   });
 
+  it("prints retained paths and explicitly cleans them from the manifest", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const bin = await mkdtemp(path.join(os.tmpdir(), "arena-retained-bin-"));
+    for (const executable of ["codex", "claude"]) {
+      const target = path.join(bin, executable);
+      await writeFile(
+        target,
+        `#!/bin/sh\nexec "${process.execPath}" "${fixtureAgent}" "$@"\n`,
+      );
+      await chmod(target, 0o755);
+    }
+    const env = {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+    };
+    const fight = await execa(
+      process.execPath,
+      [
+        cli,
+        "fight",
+        "Collapse repeated whitespace in slugs.",
+        "--test",
+        "node --test",
+        "--agents",
+        "codex,claude",
+        "--rounds",
+        "1",
+        "--effort",
+        "ultra-low",
+        "--yes",
+        "--keep-worktrees",
+        "--no-window",
+      ],
+      { cwd: repositoryRoot, env, timeout: 60_000 },
+    );
+    expect(fight.stdout).toContain("Retained worktree:");
+    expect(fight.stdout).toContain("Worktree manifest:");
+    const [runId] = await readdir(
+      path.join(repositoryRoot, ".agent-arena", "runs"),
+    );
+    const cleanup = await execa(
+      process.execPath,
+      [cli, "cleanup-worktrees", runId!],
+      { cwd: repositoryRoot, env },
+    );
+    expect(cleanup.stdout).toContain("Removed worktree:");
+    expect(cleanup.stdout).toContain("Worktree manifest:");
+    const again = await execa(
+      process.execPath,
+      [cli, "cleanup-worktrees", runId!],
+      { cwd: repositoryRoot, env },
+    );
+    expect(again.stdout).toContain("Already removed:");
+  }, 90_000);
+
   it("runs a fight, reviews, accepts, applies, and retests without network", async () => {
     const repositoryRoot = await createSlugRepository();
     const bin = await mkdtemp(path.join(os.tmpdir(), "arena-fake-bin-"));
@@ -87,6 +142,7 @@ describe("built CLI smoke flow", () => {
       "Continuing automatically with only MCP servers that passed isolated readiness and authentication checks",
     );
     expect(fight.stdout).toContain("Use --review-mcp");
+    expect(fight.stdout).not.toContain("Retained worktree:");
     const runsRoot = path.join(repositoryRoot, ".agent-arena", "runs");
     const [runId] = await readdir(runsRoot);
     expect(runId).toBeTruthy();

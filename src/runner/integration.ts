@@ -50,12 +50,16 @@ export async function provisionIntegrationProfile(options: {
     agent: ContestantId,
     phase: IntegrationFailureAttempt["phase"],
     command: string,
-    worktree: string,
+    resolveWorktree: string | (() => string),
     subject: string = phase,
     beforeRetry?: () => Promise<void>,
   ): Promise<boolean> => {
     let failedOnce = false;
     for (const attempt of [1, 2] as const) {
+      const worktree =
+        typeof resolveWorktree === "function"
+          ? resolveWorktree()
+          : resolveWorktree;
       const startedAt = now().toISOString();
       const invocationId = `integration-${agent}-${phase}-${String(attempt)}`;
       await options.observer?.publish({
@@ -173,7 +177,7 @@ export async function provisionIntegrationProfile(options: {
         agent,
         "teardown",
         profile.teardownCommand,
-        worktree,
+        () => worktree,
         subject,
       );
       await recreate();
@@ -184,7 +188,7 @@ export async function provisionIntegrationProfile(options: {
         agent,
         "setup",
         profile.setupCommand,
-        worktree,
+        () => worktree,
         "setup",
         () => cleanServiceBeforeRetry("cleanup-before-setup-retry"),
       );
@@ -199,7 +203,7 @@ export async function provisionIntegrationProfile(options: {
         agent,
         "steady-state",
         profile.checkCommand,
-        worktree,
+        () => worktree,
         "steady-state",
         async () => {
           await cleanServiceBeforeRetry("cleanup-before-steady-state-retry");
@@ -207,7 +211,7 @@ export async function provisionIntegrationProfile(options: {
             agent,
             "setup",
             profile.setupCommand,
-            worktree,
+            () => worktree,
             "setup-before-steady-state-retry",
             () =>
               cleanServiceBeforeRetry(
@@ -233,7 +237,7 @@ export async function provisionIntegrationProfile(options: {
           agent,
           "teardown",
           profile.teardownCommand,
-          worktree,
+          () => worktree,
           "teardown",
         );
       }
