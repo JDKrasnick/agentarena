@@ -13,6 +13,7 @@ import {
 } from "./presentation.js";
 import { conciseUsage, readRunUsageSummarySync } from "../telemetry/usage.js";
 import { projectImplementationEligibility } from "../outcomes/eligibility.js";
+import { describeTokenPressureV1 } from "../effort/policy.js";
 
 export interface ConsoleRenderOptions {
   color?: boolean;
@@ -122,11 +123,15 @@ export function renderConsoleSummary(
   const profile = state.config.resolvedEffortProfile;
   const decisionLines = state.adaptiveDecisions.map((decision) => {
     const tokens = decision.consumption.tokenTelemetry;
+    const pressure =
+      decision.version === 3
+        ? ` · ${describeTokenPressureV1(decision.consumption.tokenPressureEvaluation)}`
+        : "";
     const signal =
       "signal" in decision
         ? ` · signal ${String(decision.signal.competitiveLandings)} competitive/${String(decision.signal.sharedDefects)} shared/${String(decision.signal.explicitEmptyLanes)} empty · low-signal streak ${String(decision.signal.consecutiveLowSignalCount)}`
         : "";
-    return `Round ${String(decision.round)} decision: ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s · ${String(decision.consumption.providerCalls)} calls · tokens ${tokens.state}${tokens.totalTokens === undefined ? "" : ` (${String(tokens.totalTokens)})`}${signal} · ${decision.action} (${decision.reason})`;
+    return `Round ${String(decision.round)} decision: ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s · ${String(decision.consumption.providerCalls)} calls · tokens ${tokens.state}${tokens.totalTokens === undefined ? "" : ` (${String(tokens.totalTokens)} processed)`}${pressure}${signal} · ${decision.action} (${decision.reason})`;
   });
 
   return [
@@ -144,7 +149,7 @@ export function renderConsoleSummary(
     `Effort: ${state.config.resolvedEffortProfile?.tier ?? state.config.effortMode}${state.config.effortAssessment?.fallback ? " (medium fallback)" : ""} · ${state.config.fixedRounds ? `${String(state.config.rounds)} fixed` : `${String(state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds)} planned`} round(s)`,
     ...(profile
       ? [
-          `Sealed-round pressure thresholds: ${(profile.roundEnvelopeMs / 60_000).toFixed(0)}m · ${String(profile.maxProviderCallsPerRound)} provider calls · ${String(profile.maxTokensPerRound)} tokens; phase limits ${String(profile.implementationMs / 60_000)}m/${String(profile.reviewMs / 60_000)}m/${String(profile.attackMs / 60_000)}m/${String(profile.judgeMs / 60_000)}m/${String(profile.repairMs / 60_000)}m`,
+          `Sealed-round pressure thresholds: ${(profile.roundEnvelopeMs / 60_000).toFixed(0)}m · ${String(profile.maxProviderCallsPerRound)} provider calls · ${String(profile.maxTokensPerRound)} weighted token units (v1; cache reads ×0.1); phase limits ${String(profile.implementationMs / 60_000)}m/${String(profile.reviewMs / 60_000)}m/${String(profile.attackMs / 60_000)}m/${String(profile.judgeMs / 60_000)}m/${String(profile.repairMs / 60_000)}m`,
         ]
       : []),
     `Rounds completed: ${String(completedRounds)}/${String(state.config.fixedRounds ? state.config.rounds : (state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds))}${completedRounds > (state.config.resolvedEffortProfile?.plannedRounds ?? state.config.rounds) ? " (extended)" : ""}`,

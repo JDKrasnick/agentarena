@@ -664,6 +664,13 @@ Each round has its own symmetric, versioned prompt and investigation brief:
 | 5 — Durability extension | Test recurrence, recovery, restart, and durability for a newly qualified trigger. | Regression recurrence, persistence/restart checks, recovery invariants, and bounded failure sequences. |
 
 After every sealed round, the harness records convergence and budget pressure.
+Token pressure uses policy v1: `uncached input + output + cache creation +
+ceil(cache reads / 10)`. It is evaluated only when every token component is
+complete. Raw processed tokens remain the audit total and are never rewritten
+to the weighted value. Each adaptive decision persists the raw components,
+weighted total, threshold, cache-read weight, and whether new I/O, cache
+creation, cache reads, or their combination triggered pressure; user-facing
+reports show that breakdown beside any skipped investigation briefs.
 Crossing a pressure threshold can stop unqualified continuation but does not
 interrupt the completed round; strong accepted evidence may still qualify the
 next bounded round.

@@ -19,6 +19,7 @@ import {
 } from "./presentation.js";
 import { qualityCategoryRows } from "../quality/presentation.js";
 import { projectImplementationEligibility } from "../outcomes/eligibility.js";
+import { describeTokenPressureV1 } from "../effort/policy.js";
 
 function attackOwner(attack: Attack): string {
   return attack.origin.kind === "house" ? "House" : attack.origin.contestant;
@@ -517,7 +518,7 @@ export function renderBattleReport(state: RunState): string {
           "| ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- |",
           ...state.adaptiveDecisions.map(
             (decision) =>
-              `| ${String(decision.round)} | ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s | ${String(decision.consumption.providerCalls)} | ${decision.consumption.tokenTelemetry.state}${decision.consumption.tokenTelemetry.totalTokens === undefined ? "" : ` (${String(decision.consumption.tokenTelemetry.totalTokens)})`} | ${"signal" in decision ? `${String(decision.signal.competitiveLandings)} competitive / ${String(decision.signal.sharedDefects)} shared / ${String(decision.signal.explicitEmptyLanes)} empty` : "legacy"} | ${"signal" in decision ? String(decision.signal.consecutiveLowSignalCount) : "—"} | ${decision.convergence.passed ? "yes" : "no"} | ${decision.extensionQualified ? decision.extensionTriggerDefectIds.join(", ") || "yes" : "no"} | ${decision.action}: ${decision.reason} |`,
+              `| ${String(decision.round)} | ${(decision.consumption.wallTimeMs / 1000).toFixed(1)}s | ${String(decision.consumption.providerCalls)} | ${decision.consumption.tokenTelemetry.state}${decision.consumption.tokenTelemetry.totalTokens === undefined ? "" : ` (${String(decision.consumption.tokenTelemetry.totalTokens)} processed)`}${decision.version === 3 ? `<br>${describeTokenPressureV1(decision.consumption.tokenPressureEvaluation)}` : ""} | ${"signal" in decision ? `${String(decision.signal.competitiveLandings)} competitive / ${String(decision.signal.sharedDefects)} shared / ${String(decision.signal.explicitEmptyLanes)} empty` : "legacy"} | ${"signal" in decision ? String(decision.signal.consecutiveLowSignalCount) : "—"} | ${decision.convergence.passed ? "yes" : "no"} | ${decision.extensionQualified ? decision.extensionTriggerDefectIds.join(", ") || "yes" : "no"} | ${decision.action}: ${decision.reason} |`,
           ),
           "",
         ]

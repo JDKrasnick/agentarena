@@ -755,7 +755,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
 
     expect(converged.state.adaptiveDecisions).toHaveLength(1);
     expect(converged.state.adaptiveDecisions[0]).toMatchObject({
-      version: 2,
+      version: 3,
       round: 1,
       action: "stop",
       reason: "adaptive_convergence",
@@ -831,7 +831,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     });
     expect(durableResult.outcome).not.toHaveProperty("championId");
     expect(durableResult.adaptiveDecisions?.[0]).toMatchObject({
-      version: 2,
+      version: 3,
       signal: {
         lowSignal: true,
         consecutiveLowSignalCount: 1,

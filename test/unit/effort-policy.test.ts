@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   EFFORT_PROFILES,
+  evaluateTokenPressureV1,
   hasProviderCallPressure,
   decideAdaptiveRound,
   nextLowSignalCount,
@@ -171,6 +172,79 @@ describe("task-scaled effort policy", () => {
         totalTokens: 9,
       }),
     ).toThrow(/total must equal/u);
+  });
+
+  it("weights cache reads separately for identical new I/O", () => {
+    const threshold = EFFORT_PROFILES.medium.maxTokensPerRound;
+    const base = {
+      state: "complete" as const,
+      uncachedInputTokens: 150_000,
+      cacheWriteTokens: 50_000,
+      outputTokens: 50_000,
+    };
+    const lowCache = evaluateTokenPressureV1(
+      { ...base, cacheReadTokens: 100_000, totalTokens: 350_000 },
+      threshold,
+    );
+    const highCache = evaluateTokenPressureV1(
+      { ...base, cacheReadTokens: 3_500_000, totalTokens: 3_750_000 },
+      threshold,
+    );
+
+    expect(lowCache).toMatchObject({
+      version: 1,
+      state: "complete",
+      newInputOutputTokens: 200_000,
+      cacheReadTokens: 100_000,
+      weightedCacheReadTokens: 10_000,
+      weightedTokens: 260_000,
+      pressure: false,
+      trigger: "none",
+    });
+    expect(highCache).toMatchObject({
+      version: 1,
+      state: "complete",
+      newInputOutputTokens: 200_000,
+      cacheReadTokens: 3_500_000,
+      weightedCacheReadTokens: 350_000,
+      weightedTokens: 600_000,
+      pressure: false,
+      trigger: "none",
+    });
+  });
+
+  it("records the component that exhausts weighted token pressure", () => {
+    expect(
+      evaluateTokenPressureV1(
+        {
+          state: "complete",
+          uncachedInputTokens: 100_000,
+          cacheReadTokens: 16_000_000,
+          cacheWriteTokens: 0,
+          outputTokens: 50_000,
+          totalTokens: 16_150_000,
+        },
+        EFFORT_PROFILES.medium.maxTokensPerRound,
+      ),
+    ).toMatchObject({
+      weightedTokens: 1_750_000,
+      pressure: true,
+      trigger: "cache_reads",
+    });
+  });
+
+  it("does not infer weighted pressure from partial telemetry", () => {
+    expect(
+      evaluateTokenPressureV1(
+        { state: "partial", cacheReadTokens: 20_000_000 },
+        EFFORT_PROFILES.medium.maxTokensPerRound,
+      ),
+    ).toEqual({
+      version: 1,
+      state: "unavailable",
+      thresholdTokens: EFFORT_PROFILES.medium.maxTokensPerRound,
+      reason: "incomplete_token_telemetry",
+    });
   });
 
   it("requires immediately requalified evidence for each extension", () => {

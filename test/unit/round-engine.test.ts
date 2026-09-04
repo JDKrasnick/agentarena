@@ -6,7 +6,11 @@ import {
   type RoundSnapshot,
   validateRoundSnapshot,
 } from "../../src/contracts/round.js";
-import { RoundEngine } from "../../src/core/round-engine.js";
+import {
+  aggregateInvocationTokenTelemetry,
+  RoundEngine,
+} from "../../src/core/round-engine.js";
+import { evaluateTokenPressureV1 } from "../../src/effort/policy.js";
 
 const HASH = "a".repeat(64);
 
@@ -191,6 +195,34 @@ function result(
 }
 
 describe("RoundEngine boundary", () => {
+  it("keeps legacy incomplete ledger counters from creating token pressure", () => {
+    const telemetry = aggregateInvocationTokenTelemetry([
+      {
+        usage: {
+          uncachedInputTokens: 700_000,
+          cacheCreationTokens: null,
+          cacheReadTokens: null,
+          outputTokens: 100_000,
+          reasoningTokens: null,
+          processedTokens: 800_000,
+          newInputOutputTokens: 800_000,
+          completeness: "complete",
+        },
+      },
+    ]);
+
+    expect(telemetry).toMatchObject({
+      state: "partial",
+      totalTokens: 800_000,
+    });
+    expect(evaluateTokenPressureV1(telemetry, 750_000)).toEqual({
+      version: 1,
+      state: "unavailable",
+      thresholdTokens: 750_000,
+      reason: "incomplete_token_telemetry",
+    });
+  });
+
   it.each(["completed", "inconclusive", "cancelled", "failed"] as const)(
     "returns a validated %s result without advancing another round",
     async (status) => {
