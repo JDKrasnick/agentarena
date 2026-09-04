@@ -32,7 +32,13 @@ import type { PriorAdjudicationContext } from "../attacks/challenges.js";
 import { runProcess, type ProcessRequest } from "../runner/process-runner.js";
 import { z } from "zod";
 import type { ArenaObserver, OutputSource } from "../observability/events.js";
-import { agentMcpNames, type FrozenMcpPolicy } from "../mcp/policy.js";
+import {
+  agentMcpNames,
+  type CodexMcpRuntimeDefinition,
+  type FrozenMcpPolicy,
+  type McpRuntimeDefinitions,
+} from "../mcp/policy.js";
+import type { McpExposure } from "../telemetry/usage.js";
 import type {
   ProviderStage,
   ProviderStageFailure,
@@ -490,14 +496,75 @@ export interface CommandAdapterOptions {
   id: AgentId;
   executable: string;
   args: string[];
+  displayCommand?: string;
   model?: string;
   environment?: Record<string, string>;
+  secrets?: readonly string[];
   providerStream?: ProviderStreamKind;
+  mcpExposure?: McpExposure;
 }
 
-function codexMcpOverrideArgs(
+function tomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function tomlStringArray(values: readonly string[]): string {
+  return `[${values.map(tomlString).join(",")}]`;
+}
+
+function tomlStringMap(values: Readonly<Record<string, string>>): string {
+  return `{${Object.entries(values)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${tomlString(key)}=${tomlString(value)}`)
+    .join(",")}}`;
+}
+
+export function codexMcpInlineTable(
+  definition: CodexMcpRuntimeDefinition,
+): string {
+  const fields: string[] = [];
+  const transport = definition.transport;
+  if (transport.type === "stdio") {
+    fields.push(`command=${tomlString(transport.command)}`);
+    if (transport.args.length)
+      fields.push(`args=${tomlStringArray(transport.args)}`);
+    if (transport.env_vars.length)
+      fields.push(`env_vars=${tomlStringArray(transport.env_vars)}`);
+    if (transport.cwd) fields.push(`cwd=${tomlString(transport.cwd)}`);
+  } else {
+    fields.push(`url=${tomlString(transport.url)}`);
+    if (transport.bearer_token_env_var)
+      fields.push(
+        `bearer_token_env_var=${tomlString(transport.bearer_token_env_var)}`,
+      );
+    if (transport.env_http_headers)
+      fields.push(
+        `env_http_headers=${tomlStringMap(transport.env_http_headers)}`,
+      );
+  }
+  if (definition.enabled_tools?.length)
+    fields.push(`enabled_tools=${tomlStringArray(definition.enabled_tools)}`);
+  if (definition.disabled_tools?.length)
+    fields.push(`disabled_tools=${tomlStringArray(definition.disabled_tools)}`);
+  if (
+    definition.startup_timeout_sec !== null &&
+    definition.startup_timeout_sec !== undefined
+  )
+    fields.push(
+      `startup_timeout_sec=${String(definition.startup_timeout_sec)}`,
+    );
+  if (
+    definition.tool_timeout_sec !== null &&
+    definition.tool_timeout_sec !== undefined
+  )
+    fields.push(`tool_timeout_sec=${String(definition.tool_timeout_sec)}`);
+  return `{${fields.join(",")}}`;
+}
+
+function codexMcpSelectedOnlyArgs(
   policy: FrozenMcpPolicy,
   selectedNames: readonly string[],
+  runtimeDefinitions: McpRuntimeDefinitions,
 ): string[] {
   const inventory = policy.inventory.find(
     (entry) => entry.provider === "codex",
@@ -506,23 +573,61 @@ function codexMcpOverrideArgs(
     throw new Error(
       "Codex MCP inventory is unknown, so Arena cannot isolate the run-scoped allowlist",
     );
-  return inventory.servers.flatMap((server) => {
-    const selected = selectedNames.includes(server.name);
-    if (server.enabled === selected) return [];
-    // Codex's dotted -c parser does not support quoted path segments. Refuse
-    // names that cannot be addressed without changing which server they name.
-    if (!/^[A-Za-z0-9_-]+$/.test(server.name))
-      throw new Error(
-        `Codex MCP server ${JSON.stringify(server.name)} cannot be isolated safely through the CLI configuration path`,
+  return [...selectedNames]
+    .sort((left, right) => left.localeCompare(right))
+    .flatMap((name) => {
+      if (!/^[A-Za-z0-9_-]+$/.test(name))
+        throw new Error(
+          `Codex MCP server ${JSON.stringify(name)} cannot be isolated safely through the CLI configuration path`,
+        );
+      const definitions = runtimeDefinitions.filter(
+        (definition) =>
+          definition.provider === "codex" && definition.name === name,
       );
-    return ["-c", `mcp_servers.${server.name}.enabled=${String(selected)}`];
-  });
+      if (definitions.length !== 1)
+        throw new Error(
+          `Codex MCP server ${JSON.stringify(name)} has no unique validated runtime definition`,
+        );
+      return [
+        "-c",
+        `mcp_servers.${name}=${codexMcpInlineTable(definitions[0]!)}`,
+      ];
+    });
+}
+
+function codexMcpRedactionValues(definitions: McpRuntimeDefinitions): string[] {
+  return [
+    ...new Set(
+      definitions.flatMap((definition) => {
+        const transport = definition.transport;
+        return [
+          codexMcpInlineTable(definition),
+          ...(transport.type === "stdio"
+            ? [
+                transport.command,
+                ...transport.args,
+                ...transport.env_vars,
+                ...(transport.cwd ? [transport.cwd] : []),
+              ]
+            : [
+                transport.url,
+                ...(transport.bearer_token_env_var
+                  ? [transport.bearer_token_env_var]
+                  : []),
+                ...Object.keys(transport.env_http_headers ?? {}),
+                ...Object.values(transport.env_http_headers ?? {}),
+              ]),
+        ];
+      }),
+    ),
+  ];
 }
 
 export function providerCommand(
   id: AgentId,
   model?: string,
   mcpPolicy?: FrozenMcpPolicy,
+  mcpRuntimeDefinitions: McpRuntimeDefinitions = [],
 ): Omit<CommandAdapterOptions, "id"> {
   // `gpt-5.6` is the default-family name, while ChatGPT-authenticated Codex
   // CLI expects the concrete flagship model identifier.
@@ -536,6 +641,28 @@ export function providerCommand(
   const unselectedMcp = providerInventory?.servers
     .filter((server) => !selectedMcp?.includes(server.name))
     .map((server) => server.name);
+  const mcpExposure: McpExposure | undefined = mcpPolicy
+    ? {
+        version: 1,
+        policyHash: mcpPolicy.policyHash,
+        isolationMode:
+          id === "codex"
+            ? "codex_ignore_user_config"
+            : id === "claude"
+              ? "claude_strict_config"
+              : "gemini_server_allowlist",
+        appsDisabled: id === "codex",
+        exposedServerNames: [...(selectedMcp ?? [])].sort((left, right) =>
+          left.localeCompare(right),
+        ),
+      }
+    : undefined;
+  const selectedCodexDefinitions = mcpRuntimeDefinitions.filter(
+    (definition) => selectedMcp?.includes(definition.name) ?? false,
+  );
+  const codexExecutionArgs = selectedCodexDefinitions.length
+    ? ["--dangerously-bypass-approvals-and-sandbox"]
+    : ["--full-auto"];
   switch (id) {
     case "codex":
       return {
@@ -546,17 +673,33 @@ export function providerCommand(
           "--json",
           ...(mcpPolicy
             ? [
+                "--ignore-user-config",
                 "-c",
                 "features.apps=false",
-                ...codexMcpOverrideArgs(mcpPolicy, selectedMcp ?? []),
+                ...codexMcpSelectedOnlyArgs(
+                  mcpPolicy,
+                  selectedMcp ?? [],
+                  mcpRuntimeDefinitions,
+                ),
               ]
             : []),
           ...modelArgs,
-          "--full-auto",
+          ...codexExecutionArgs,
           "--skip-git-repo-check",
           "-",
         ],
         ...(resolvedModel ? { model: resolvedModel } : {}),
+        ...(mcpExposure ? { mcpExposure } : {}),
+        ...(selectedCodexDefinitions.length
+          ? {
+              secrets: codexMcpRedactionValues(selectedCodexDefinitions),
+            }
+          : {}),
+        ...(mcpPolicy
+          ? {
+              displayCommand: `codex exec --json --ignore-user-config -c features.apps=false [validated MCP definitions omitted] ${codexExecutionArgs.join(" ")}`,
+            }
+          : {}),
       };
     case "claude":
       if (mcpPolicy && selectedMcp?.length)
@@ -586,6 +729,7 @@ export function providerCommand(
               ])),
         ],
         ...(resolvedModel ? { model: resolvedModel } : {}),
+        ...(mcpExposure ? { mcpExposure } : {}),
       };
     case "gemini":
       return {
@@ -601,6 +745,7 @@ export function providerCommand(
         ],
         providerStream: "gemini",
         ...(resolvedModel ? { model: resolvedModel } : {}),
+        ...(mcpExposure ? { mcpExposure } : {}),
       };
   }
 }
@@ -652,6 +797,10 @@ export class CommandAgentAdapter implements AgentAdapter {
     const command = await runProcess({
       executable: this.options.executable,
       args: this.options.args,
+      ...(this.options.displayCommand
+        ? { displayCommand: this.options.displayCommand }
+        : {}),
+      ...(this.options.secrets ? { secrets: this.options.secrets } : {}),
       input: prompt,
       cwd: input.cwd,
       timeoutMs: input.timeoutMs,
@@ -674,6 +823,9 @@ export class CommandAgentAdapter implements AgentAdapter {
         ...(this.options.model ? { requestedModel: this.options.model } : {}),
         role: "contestant",
         stage: "provider_health_probe",
+        ...(this.options.mcpExposure
+          ? { mcpExposure: this.options.mcpExposure }
+          : {}),
       },
     });
     const finished = new Date();
@@ -765,6 +917,10 @@ export class CommandAgentAdapter implements AgentAdapter {
     const request: ProcessRequest = {
       executable: this.options.executable,
       args: this.options.args,
+      ...(this.options.displayCommand
+        ? { displayCommand: this.options.displayCommand }
+        : {}),
+      ...(this.options.secrets ? { secrets: this.options.secrets } : {}),
       input: input.prompt,
       cwd: input.worktree,
       timeoutMs: input.timeoutMs,
@@ -791,6 +947,9 @@ export class CommandAgentAdapter implements AgentAdapter {
         ...(input.contestantId ? { contestantId: input.contestantId } : {}),
         stage,
         ...(input.round === undefined ? {} : { round: input.round }),
+        ...(this.options.mcpExposure
+          ? { mcpExposure: this.options.mcpExposure }
+          : {}),
       },
       onOutput: (stream, text) =>
         input.observer?.publish({
@@ -930,10 +1089,11 @@ export function createProviderAdapter(
   id: AgentId,
   model?: string,
   mcpPolicy?: FrozenMcpPolicy,
+  mcpRuntimeDefinitions: McpRuntimeDefinitions = [],
 ): CommandAgentAdapter {
   return new CommandAgentAdapter({
     id,
-    ...providerCommand(id, model, mcpPolicy),
+    ...providerCommand(id, model, mcpPolicy, mcpRuntimeDefinitions),
   });
 }
 
@@ -1046,6 +1206,10 @@ export class CommandAttackVerifier implements AttackVerifier {
       {
         executable: this.command.executable,
         args: this.command.args,
+        ...(this.command.displayCommand
+          ? { displayCommand: this.command.displayCommand }
+          : {}),
+        ...(this.command.secrets ? { secrets: this.command.secrets } : {}),
         input: prompt,
         cwd: input.worktree,
         timeoutMs: input.timeoutMs,
@@ -1059,6 +1223,9 @@ export class CommandAttackVerifier implements AttackVerifier {
           ...(this.command.model ? { requestedModel: this.command.model } : {}),
           role: "judge",
           stage: "effort-assessment",
+          ...(this.command.mcpExposure
+            ? { mcpExposure: this.command.mcpExposure }
+            : {}),
         },
       },
       {
@@ -1193,6 +1360,10 @@ export class CommandAttackVerifier implements AttackVerifier {
       {
         executable: this.command.executable,
         args: this.command.args,
+        ...(this.command.displayCommand
+          ? { displayCommand: this.command.displayCommand }
+          : {}),
+        ...(this.command.secrets ? { secrets: this.command.secrets } : {}),
         input: prompt,
         cwd: input.worktree,
         timeoutMs: input.timeoutMs,
@@ -1206,6 +1377,9 @@ export class CommandAttackVerifier implements AttackVerifier {
           ...(this.command.model ? { requestedModel: this.command.model } : {}),
           role: "judge",
           stage: "attack-verifier",
+          ...(this.command.mcpExposure
+            ? { mcpExposure: this.command.mcpExposure }
+            : {}),
         },
       },
       {
@@ -1352,6 +1526,10 @@ export class CommandAttackVerifier implements AttackVerifier {
       {
         executable: this.command.executable,
         args: this.command.args,
+        ...(this.command.displayCommand
+          ? { displayCommand: this.command.displayCommand }
+          : {}),
+        ...(this.command.secrets ? { secrets: this.command.secrets } : {}),
         input: prompt,
         cwd: input.worktree,
         timeoutMs: input.timeoutMs,
@@ -1365,6 +1543,9 @@ export class CommandAttackVerifier implements AttackVerifier {
           ...(this.command.model ? { requestedModel: this.command.model } : {}),
           role: "judge",
           stage: "judge-fallback",
+          ...(this.command.mcpExposure
+            ? { mcpExposure: this.command.mcpExposure }
+            : {}),
         },
       },
       {
@@ -1477,6 +1658,10 @@ export class CommandAttackVerifier implements AttackVerifier {
       {
         executable: this.command.executable,
         args: this.command.args,
+        ...(this.command.displayCommand
+          ? { displayCommand: this.command.displayCommand }
+          : {}),
+        ...(this.command.secrets ? { secrets: this.command.secrets } : {}),
         input: prompt,
         cwd: input.worktree,
         timeoutMs: input.timeoutMs,
@@ -1490,6 +1675,9 @@ export class CommandAttackVerifier implements AttackVerifier {
           ...(this.command.model ? { requestedModel: this.command.model } : {}),
           role: "judge",
           stage: "repair-judge",
+          ...(this.command.mcpExposure
+            ? { mcpExposure: this.command.mcpExposure }
+            : {}),
         },
       },
       {
@@ -1543,6 +1731,10 @@ async function invokeStructuredGenerator(
     {
       executable: command.executable,
       args: command.args,
+      ...(command.displayCommand
+        ? { displayCommand: command.displayCommand }
+        : {}),
+      ...(command.secrets ? { secrets: command.secrets } : {}),
       input: input.prompt,
       cwd: input.worktree,
       timeoutMs: input.timeoutMs,
@@ -1557,6 +1749,7 @@ async function invokeStructuredGenerator(
         role: "judge",
         stage,
         round: input.round,
+        ...(command.mcpExposure ? { mcpExposure: command.mcpExposure } : {}),
       },
       env: {
         AGENT_ARENA_AGENT: id,

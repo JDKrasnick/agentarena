@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  codexMcpInlineTable,
   CommandAgentAdapter,
   parseModelSubmission,
   providerCommand,
@@ -33,7 +34,7 @@ describe("provider model selection", () => {
     expect(command.model).toBe("gpt-5.6-sol");
   });
 
-  it("applies the frozen MCP allowlist without changing global configuration", () => {
+  it("applies the frozen MCP allowlist without leaking its definition", async () => {
     const policy = {
       version: 1 as const,
       mode: "configure_selection" as const,
@@ -86,14 +87,70 @@ describe("provider model selection", () => {
       frozenAt: "2026-08-25T00:00:00.000Z",
       policyHash: "0".repeat(64),
     };
-    const args = providerCommand("codex", undefined, policy).args;
+    const command = providerCommand("codex", undefined, policy, [
+      {
+        provider: "codex",
+        name: "selected",
+        transport: {
+          type: "stdio",
+          command: "selected-server",
+          args: ["--safe"],
+          env_vars: [],
+          cwd: null,
+        },
+        enabled_tools: null,
+        disabled_tools: null,
+        startup_timeout_sec: null,
+        tool_timeout_sec: null,
+      },
+    ]);
+    const args = command.args;
 
-    expect(args).toEqual(expect.arrayContaining(["-c", "features.apps=false"]));
-    expect(args).not.toContain("mcp_servers.selected.enabled=true");
-    expect(args).toContain("mcp_servers.omitted.enabled=false");
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--ignore-user-config",
+        "-c",
+        "features.apps=false",
+      ]),
+    );
+    expect(args.join(" ")).toContain("mcp_servers.selected=");
+    expect(args.join(" ")).not.toContain("omitted");
+    expect(args).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(args).not.toContain("--full-auto");
+    expect(command.displayCommand).not.toContain("selected-server");
+    expect(command.secrets).toEqual(
+      expect.arrayContaining(["selected-server", "--safe"]),
+    );
+    expect(command.mcpExposure).toEqual({
+      version: 1,
+      policyHash: "0".repeat(64),
+      isolationMode: "codex_ignore_user_config",
+      appsDisabled: true,
+      exposedServerNames: ["selected"],
+    });
+
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-mcp-adapter-"));
+    const adapter = new CommandAgentAdapter({
+      id: "codex",
+      ...command,
+      executable: "definitely-missing-agent-arena-executable",
+    });
+    const probe = await adapter.probeConnectivity({
+      cwd: root,
+      transcriptPrefix: path.join(root, "probe"),
+      timeoutMs: 2_000,
+      signal: new AbortController().signal,
+    });
+    const diagnostics = [
+      probe.command.command,
+      probe.command.failureExcerpt ?? "",
+      await readFile(probe.command.stderrPath, "utf8"),
+    ].join("\n");
+    expect(diagnostics).not.toContain("selected-server");
+    expect(diagnostics).not.toContain("--safe");
   });
 
-  it("refuses Codex MCP names that its dotted configuration path cannot isolate", () => {
+  it("does not reference unsafe unselected Codex MCP names", () => {
     const policy = {
       version: 1 as const,
       mode: "keep_configured" as const,
@@ -118,9 +175,10 @@ describe("provider model selection", () => {
       policyHash: "0".repeat(64),
     };
 
-    expect(() => providerCommand("codex", undefined, policy)).toThrow(
-      /cannot be isolated safely/,
-    );
+    const args = providerCommand("codex", undefined, policy).args;
+    expect(args.join(" ")).not.toContain("unsafe.name");
+    expect(args).toContain("--full-auto");
+    expect(args).not.toContain("--dangerously-bypass-approvals-and-sandbox");
   });
 
   it("refuses to treat an unknown Codex inventory as an empty allowlist", () => {
@@ -235,13 +293,77 @@ describe("provider model selection", () => {
       servers: [{ provider: "gemini" as const, ...selection }],
     });
 
-    expect(codex.args).toContain("mcp_servers.secrets.enabled=false");
+    expect(codex.args).toContain("--ignore-user-config");
+    expect(codex.args.join(" ")).not.toContain("mcp_servers.secrets");
     expect(claude.args).toEqual(
       expect.arrayContaining(["--strict-mcp-config"]),
     );
     expect(gemini.args).toEqual(
       expect.arrayContaining(["--allowed-mcp-server-names", ""]),
     );
+  });
+
+  it("refuses a selected Codex server without a validated runtime definition", () => {
+    const policy = {
+      version: 1 as const,
+      mode: "configure_selection" as const,
+      inventory: [
+        {
+          provider: "codex" as const,
+          state: "known" as const,
+          servers: [
+            {
+              name: "selected",
+              enabled: true,
+              authentication: "ready" as const,
+              readiness: "ready" as const,
+            },
+          ],
+          diagnosticArtifactRefs: [],
+        },
+      ],
+      servers: [
+        {
+          provider: "codex" as const,
+          name: "selected",
+          enabledInSnapshot: true,
+          authentication: "ready" as const,
+          readiness: "ready" as const,
+          role: "agent" as const,
+          requirement: "required" as const,
+          decision: "included" as const,
+          reason: "selected",
+        },
+      ],
+      coverageGaps: [],
+      frozenAt: "2026-08-25T00:00:00.000Z",
+      policyHash: "0".repeat(64),
+    };
+
+    expect(() => providerCommand("codex", undefined, policy)).toThrow(
+      /no unique validated runtime definition/,
+    );
+  });
+
+  it("serializes supported HTTP credential references without literal headers", () => {
+    const table = codexMcpInlineTable({
+      provider: "codex",
+      name: "remote",
+      transport: {
+        type: "streamable_http",
+        url: "https://mcp.example.test/api",
+        bearer_token_env_var: "MCP_BEARER_TOKEN",
+        env_http_headers: { "X-Api-Key": "MCP_API_KEY" },
+      },
+      enabled_tools: ["resources/list"],
+      disabled_tools: null,
+      startup_timeout_sec: 5,
+      tool_timeout_sec: null,
+    });
+
+    expect(table).toContain('bearer_token_env_var="MCP_BEARER_TOKEN"');
+    expect(table).toContain('env_http_headers={"X-Api-Key"="MCP_API_KEY"}');
+    expect(table).not.toContain("Authorization: Bearer");
   });
 });
 

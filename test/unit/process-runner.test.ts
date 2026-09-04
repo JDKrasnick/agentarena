@@ -45,6 +45,29 @@ describe("process runner supervision", () => {
     });
   });
 
+  it("redacts sensitive arguments from spawn failures", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-mcp-spawn-"));
+    const definition =
+      'mcp_servers.selected={command="private-mcp-server-command"}';
+    const result = await runProcess({
+      executable: "definitely-missing-agent-arena-executable",
+      args: ["-c", definition],
+      displayCommand: "codex [validated MCP definitions omitted]",
+      cwd: root,
+      timeoutMs: 2_000,
+      logPrefix: path.join(root, "logs", "missing-provider"),
+      secrets: [definition, "private-mcp-server-command"],
+    });
+
+    expect(result.command).not.toContain("private-mcp-server-command");
+    expect(result.failureExcerpt ?? "").not.toContain(
+      "private-mcp-server-command",
+    );
+    expect(await readFile(result.stderrPath, "utf8")).not.toContain(
+      "private-mcp-server-command",
+    );
+  });
+
   it.skipIf(!["darwin", "linux"].includes(process.platform))(
     "bounds and removes a launcher tree whose descendants escape process groups and hold pipes",
     async () => {
