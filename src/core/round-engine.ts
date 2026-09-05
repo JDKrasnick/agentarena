@@ -2389,6 +2389,14 @@ export class RoundEngine {
         >
       | undefined => {
       if (eligible.includes(contestant.id)) return undefined;
+      const implementationSalvaged =
+        contestant.implementation?.status === "timed_out" &&
+        context.state.failureRecords.some(
+          (failure) =>
+            failure.stage === "implementation" &&
+            failure.subject === `implementation:${contestant.id}` &&
+            failure.terminalDisposition === "recovered",
+        );
       if (
         contestant.implementation?.status === "cancelled" &&
         !context.controller.signal.aborted
@@ -2397,7 +2405,8 @@ export class RoundEngine {
       if (
         providerTransportContestantIds.size > 0 &&
         !providerTransportContestantIds.has(contestant.id) &&
-        contestant.implementation?.status === "succeeded" &&
+        (contestant.implementation?.status === "succeeded" ||
+          implementationSalvaged) &&
         contestant.patchSize > 0 &&
         Boolean(contestant.currentPatchPath) &&
         !contestant.checks.some((check) => check.id === "initial-required")
@@ -2409,11 +2418,17 @@ export class RoundEngine {
           "arena_infrastructure"
       )
         return "harness_infrastructure_failure";
-      if (contestant.implementation?.command?.transportFailures?.length)
+      if (
+        !implementationSalvaged &&
+        contestant.implementation?.command?.transportFailures?.length
+      )
         return "provider_transport_failure";
       if (contestant.implementation?.status === "infrastructure_error")
         return "harness_infrastructure_failure";
-      if (contestant.implementation?.status === "timed_out")
+      if (
+        !implementationSalvaged &&
+        contestant.implementation?.status === "timed_out"
+      )
         return "implementation_timeout";
       if (contestant.implementation?.status === "failed")
         return "implementation_failed";
@@ -4853,34 +4868,22 @@ export class RoundEngine {
             implementationSalvaged ||= salvagedDeadline;
             contestant.implementation = invocation;
             if (invocation.status === "succeeded" || salvagedDeadline) {
-              if (implementationFailure) {
-                await this.recordFailureAttempt(context, {
-                  stage: "implementation",
-                  subject: `implementation:${agent}`,
-                  category: implementationFailure.category,
-                  attempt: 2,
-                  startedAt,
-                  finishedAt,
-                  status: "succeeded",
-                  diagnosticArtifactRefs: [promptPath, transcriptPrefix],
-                  contestantId: agent,
-                  existing: implementationFailure,
-                  terminalDisposition: "recovered",
-                });
-              }
-              if (salvagedDeadline) {
+              if (implementationFailure || salvagedDeadline) {
                 const invocationTimeout = timeoutEvidence(invocation.command);
                 await this.recordFailureAttempt(context, {
                   stage: "implementation",
                   subject: `implementation:${agent}`,
-                  category: "timeout",
-                  attempt: 1,
+                  category: implementationFailure?.category ?? "timeout",
+                  attempt,
                   startedAt,
                   finishedAt,
                   status: "succeeded",
                   diagnosticArtifactRefs: [promptPath, transcriptPrefix],
                   ...(invocationTimeout ? { timeout: invocationTimeout } : {}),
                   contestantId: agent,
+                  ...(implementationFailure
+                    ? { existing: implementationFailure }
+                    : {}),
                   terminalDisposition: "recovered",
                 });
               }
