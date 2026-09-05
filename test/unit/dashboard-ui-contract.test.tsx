@@ -1,5 +1,11 @@
+import {
+  Children,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   initialDashboardState,
   projectEvent,
@@ -17,7 +23,64 @@ import {
   TestLabArena,
 } from "../../src/web/client/App.js";
 
+type ClickableElement = ReactElement<{
+  children?: ReactNode;
+  className?: string;
+  onClick?: () => void;
+}>;
+
+function findByClassName(
+  node: ReactNode,
+  className: string,
+): ClickableElement | undefined {
+  if (!isValidElement(node)) return undefined;
+  const element = node as ClickableElement;
+  if (element.props.className === className) return element;
+  for (const child of Children.toArray(element.props.children)) {
+    const found = findByClassName(child, className);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 describe("dashboard UI contracts", () => {
+  it("opens round review except when a pre-review forfeit points to eligibility", () => {
+    const state = initialDashboardState();
+    state.status = "complete";
+    state.result = {
+      roundsCompleted: 1,
+      recommendedId: "b",
+    };
+    const onReview = vi.fn();
+    const onOpenFighter = vi.fn();
+
+    findByClassName(
+      ResultScreen({ state, onReview, onOpenFighter }),
+      "review-battle",
+    )?.props.onClick?.();
+
+    expect(onReview).toHaveBeenCalledOnce();
+    expect(onOpenFighter).not.toHaveBeenCalled();
+
+    state.result = {
+      roundsCompleted: 0,
+      recommendedId: "b",
+      terminalOutcome: {
+        kind: "forfeit",
+        reasonCode: "implementation_empty_patch",
+        reason: "Only Fighter B passed initial validation.",
+      },
+    };
+
+    findByClassName(
+      ResultScreen({ state, onReview, onOpenFighter }),
+      "review-battle",
+    )?.props.onClick?.();
+
+    expect(onReview).toHaveBeenCalledOnce();
+    expect(onOpenFighter).toHaveBeenCalledWith("b");
+  });
+
   it("renders non-discriminating evidence and an independent recommendation without winner styling", () => {
     const state = initialDashboardState();
     state.status = "complete";
@@ -116,6 +179,41 @@ describe("dashboard UI contracts", () => {
     expect(markup).toContain("Attempt 1 · timeout");
     expect(markup).toContain("168 tests passed; waiting for teardown");
     expect(markup).toContain("Attempt 2 · exit");
+  });
+
+  it("presents a pre-review forfeit as an uncontested recommendation", () => {
+    const state = initialDashboardState();
+    state.status = "complete";
+    state.contestants.b.provider = "claude";
+    state.result = {
+      roundsCompleted: 0,
+      recommendedId: "b",
+      terminalOutcome: {
+        kind: "forfeit",
+        reasonCode: "implementation_empty_patch",
+        reason: "Only Fighter B passed initial validation.",
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <ResultScreen
+        state={state}
+        onReview={() => undefined}
+        onOpenFighter={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain(
+      "Claude is recommended after a pre-review forfeit.",
+    );
+    expect(markup).toContain("Not contested — pre-review forfeit");
+    expect(markup).toContain("Not applicable — no attack rounds ran");
+    expect(markup).toContain("Not applicable");
+    expect(markup).toContain("Not competitively exercised");
+    expect(markup).toContain("Inspect eligibility");
+    expect(markup).not.toContain("won the arena");
+    expect(markup).not.toContain("Legacy / unknown");
+    expect(markup).not.toContain("Competitive");
   });
 
   it("renders eligibility evidence after a successful completed validation", () => {

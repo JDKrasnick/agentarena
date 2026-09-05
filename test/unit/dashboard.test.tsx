@@ -7,6 +7,60 @@ import { ArenaBattleControl } from "../../src/observability/control.js";
 const update = () => new Promise((resolve) => setTimeout(resolve, 30));
 
 describe("terminal dashboard", () => {
+  it("renders a pre-review forfeit without competitive victory language", async () => {
+    const observer = new DashboardObserver();
+    const control = new ArenaBattleControl(new AbortController());
+    observer.publish({
+      type: "battle_started",
+      runId: "forfeit-run",
+      task: "Fix it",
+      contestants: [
+        { id: "a", provider: "codex" },
+        { id: "b", provider: "claude" },
+      ],
+    });
+    observer.publish({
+      type: "battle_completed",
+      status: "complete",
+      roundsCompleted: 0,
+      recommendedId: "b",
+      terminalOutcome: {
+        kind: "forfeit",
+        reasonCode: "implementation_empty_patch",
+        affectedContestantIds: ["a"],
+        eligibleContestantIds: ["b"],
+        reason: "Only Fighter B passed initial validation.",
+        artifactPaths: [],
+      },
+      contestants: [
+        {
+          id: "a",
+          health: 0,
+          status: "failed",
+          checksPassed: 0,
+          checksTotal: 1,
+        },
+        {
+          id: "b",
+          health: 100,
+          status: "survived",
+          checksPassed: 1,
+          checksTotal: 1,
+        },
+      ],
+    });
+    const view = render(<Dashboard observer={observer} control={control} />);
+    await update();
+
+    expect(view.lastFrame()).toContain("PRE-REVIEW FORFEIT");
+    expect(view.lastFrame()).toContain(
+      "Fighter B is recommended after a pre-review forfeit.",
+    );
+    expect(view.lastFrame()).toContain("Not contested — no attack rounds ran.");
+    expect(view.lastFrame()).not.toContain("PATCH HARDENED");
+    view.unmount();
+  });
+
   it("renders overview updates and navigates to filtered agent output", async () => {
     const observer = new DashboardObserver();
     const control = new ArenaBattleControl(new AbortController());

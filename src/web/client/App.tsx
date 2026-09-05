@@ -634,6 +634,9 @@ export function ResultScreen({
   if (!state.result) return null;
   const championId = state.result.championId;
   const recommendedId = state.result.recommendedId;
+  const preReviewForfeit =
+    state.result.terminalOutcome?.kind === "forfeit" &&
+    state.result.roundsCompleted === 0;
   const nonDiscriminating = state.result.outcomeKind === "non_discriminating";
   const landed = state.attacks.filter(
     (attack) => attack.phase === "landed" && attack.evidenceClass !== "shared",
@@ -661,13 +664,16 @@ export function ResultScreen({
     (state.result.coverageConfidence === "provisional"
       ? "Coverage was unresolved, so no champion or recommendation is published."
       : "Review the evidence-backed result before merging.");
-  const resultHeading = nonDiscriminating
-    ? "Non-discriminating battle."
-    : championId
-      ? `Fighter ${championId.toUpperCase()} won the arena.`
-      : recommendedId
-        ? `${title(state.contestants[recommendedId].provider)} (Fighter ${recommendedId.toUpperCase()}) is recommended for review.`
-        : "No competitive winner was published.";
+  const resultHeading =
+    preReviewForfeit && recommendedId
+      ? `${title(state.contestants[recommendedId].provider)} is recommended after a pre-review forfeit.`
+      : nonDiscriminating
+        ? "Non-discriminating battle."
+        : championId
+          ? `Fighter ${championId.toUpperCase()} won the arena.`
+          : recommendedId
+            ? `${title(state.contestants[recommendedId].provider)} (Fighter ${recommendedId.toUpperCase()}) is recommended for review.`
+            : "No competitive winner was published.";
 
   return (
     <section className="results-screen" aria-live="polite">
@@ -677,8 +683,16 @@ export function ResultScreen({
           <p>{verdict}</p>
         </div>
         <div className="result-actions">
-          <button className="review-battle" type="button" onClick={onReview}>
-            Review rounds
+          <button
+            className="review-battle"
+            type="button"
+            onClick={() =>
+              preReviewForfeit && recommendedId
+                ? onOpenFighter(recommendedId)
+                : onReview()
+            }
+          >
+            {preReviewForfeit ? "Inspect eligibility" : "Review rounds"}
           </button>
           <button
             className="finish-session"
@@ -694,11 +708,13 @@ export function ResultScreen({
         <div>
           <dt>Arena result</dt>
           <dd>
-            {nonDiscriminating
-              ? "No champion"
-              : championId
-                ? `Fighter ${championId.toUpperCase()}`
-                : "Withheld"}
+            {preReviewForfeit
+              ? "Not contested — pre-review forfeit"
+              : nonDiscriminating
+                ? "No champion"
+                : championId
+                  ? `Fighter ${championId.toUpperCase()}`
+                  : "Withheld"}
           </dd>
         </div>
         <div>
@@ -711,7 +727,11 @@ export function ResultScreen({
         </div>
         <div>
           <dt>Coverage</dt>
-          <dd>{state.result.coverageConfidence ?? "Legacy / unknown"}</dd>
+          <dd>
+            {preReviewForfeit
+              ? "Not applicable — no attack rounds ran"
+              : (state.result.coverageConfidence ?? "Legacy / unknown")}
+          </dd>
         </div>
         <div>
           <dt>Rounds completed</dt>
@@ -720,17 +740,19 @@ export function ResultScreen({
         <div>
           <dt>Evidence signal</dt>
           <dd>
-            {state.result.competitiveLandingCount ?? 0} competitive ·{" "}
-            {state.result.sharedDefectCount ?? 0} shared ·{" "}
-            {state.result.explicitEmptyLaneCount ?? 0} empty lanes
+            {preReviewForfeit
+              ? "Not applicable"
+              : `${String(state.result.competitiveLandingCount ?? 0)} competitive · ${String(state.result.sharedDefectCount ?? 0)} shared · ${String(state.result.explicitEmptyLaneCount ?? 0)} empty lanes`}
           </dd>
         </div>
         <div>
           <dt>Run integrity</dt>
           <dd>
-            {state.assisted
-              ? "Assisted — not competitively comparable"
-              : "Competitive"}
+            {preReviewForfeit
+              ? "Not competitively exercised"
+              : state.assisted
+                ? "Assisted — not competitively comparable"
+                : "Competitive"}
           </dd>
         </div>
       </dl>
@@ -832,73 +854,77 @@ export function ResultScreen({
         </section>
       ) : null}
 
-      <div className="result-evidence">
-        <section>
-          <header>
-            <h2>Competitive landings</h2>
-            <span>{state.result.competitiveLandingCount ?? landed.length}</span>
-          </header>
-          {landed.length ? (
-            <ol>
-              {landed.map((attack, index) => (
-                <li key={`${attack.id}-${String(index)}`}>
-                  <strong>{attackDisplayLabel(attack)}</strong>
-                  <span>
-                    {attack.severity ?? "verified"}
-                    {attack.damage ? ` · ${String(attack.damage)} HP` : ""}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p>
-              No contestant-authored differential attack produced a verified
-              defect.
-            </p>
-          )}
-        </section>
-        <section>
-          <header>
-            <h2>Shared QA defects</h2>
-            <span>{state.result.sharedDefectCount ?? shared.length}</span>
-          </header>
-          {shared.length ? (
-            <ol>
-              {shared.map((attack, index) => (
-                <li key={`${attack.id}-shared-${String(index)}`}>
-                  <strong>{attackDisplayLabel(attack)}</strong>
-                  <span>
-                    Neutral evidence · {attack.severity ?? "verified"}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p>No shared neutral defect was recorded.</p>
-          )}
-        </section>
-        <section>
-          <header>
-            <h2>Repairs verified</h2>
-            <span>{repairs.length}</span>
-          </header>
-          {repairs.length ? (
-            <ol>
-              {repairs.map(({ id, change }) => (
-                <li key={`${id}-${String(change.sequence)}`}>
-                  <strong>{change.reason}</strong>
-                  <span>
-                    {title(state.contestants[id].provider)} · +{change.amount}{" "}
-                    HP
-                  </span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p>No health-restoring repairs were verified.</p>
-          )}
-        </section>
-      </div>
+      {!preReviewForfeit ? (
+        <div className="result-evidence">
+          <section>
+            <header>
+              <h2>Competitive landings</h2>
+              <span>
+                {state.result.competitiveLandingCount ?? landed.length}
+              </span>
+            </header>
+            {landed.length ? (
+              <ol>
+                {landed.map((attack, index) => (
+                  <li key={`${attack.id}-${String(index)}`}>
+                    <strong>{attackDisplayLabel(attack)}</strong>
+                    <span>
+                      {attack.severity ?? "verified"}
+                      {attack.damage ? ` · ${String(attack.damage)} HP` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p>
+                No contestant-authored differential attack produced a verified
+                defect.
+              </p>
+            )}
+          </section>
+          <section>
+            <header>
+              <h2>Shared QA defects</h2>
+              <span>{state.result.sharedDefectCount ?? shared.length}</span>
+            </header>
+            {shared.length ? (
+              <ol>
+                {shared.map((attack, index) => (
+                  <li key={`${attack.id}-shared-${String(index)}`}>
+                    <strong>{attackDisplayLabel(attack)}</strong>
+                    <span>
+                      Neutral evidence · {attack.severity ?? "verified"}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p>No shared neutral defect was recorded.</p>
+            )}
+          </section>
+          <section>
+            <header>
+              <h2>Repairs verified</h2>
+              <span>{repairs.length}</span>
+            </header>
+            {repairs.length ? (
+              <ol>
+                {repairs.map(({ id, change }) => (
+                  <li key={`${id}-${String(change.sequence)}`}>
+                    <strong>{change.reason}</strong>
+                    <span>
+                      {title(state.contestants[id].provider)} · +{change.amount}{" "}
+                      HP
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p>No health-restoring repairs were verified.</p>
+            )}
+          </section>
+        </div>
+      ) : null}
 
       <footer className="result-footer">
         <p>

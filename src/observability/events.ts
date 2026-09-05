@@ -34,6 +34,13 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
   event("battle_started", {
     runId: z.string(),
     task: z.string(),
+    /** Resolved before startup; absent on legacy event journals. */
+    roundPlan: z
+      .object({
+        planned: z.number().int().min(1).max(5),
+        maximum: z.number().int().min(1).max(5),
+      })
+      .optional(),
     contestants: z
       .array(
         z.object({

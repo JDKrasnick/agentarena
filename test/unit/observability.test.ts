@@ -349,6 +349,31 @@ describe("arena observability", () => {
     expect(state.contestants.a.output).toEqual([]);
   });
 
+  it("restores the resolved round plan when a new battle starts", () => {
+    const state = initialDashboardState();
+    const timestamp = new Date().toISOString();
+    projectEvent(state, {
+      version: 1,
+      sequence: 1,
+      timestamp,
+      type: "effort_resolved",
+      tier: "medium",
+      plannedRounds: 2,
+      maxRounds: 4,
+    });
+    projectEvent(state, {
+      version: 1,
+      sequence: 2,
+      timestamp,
+      type: "battle_started",
+      runId: "replacement",
+      task: "Continue after recovery",
+      roundPlan: { planned: 2, maximum: 4 },
+    });
+
+    expect(state.roundPlan).toEqual({ planned: 2, maximum: 4 });
+  });
+
   it("keeps invocation, output, and checks scoped to their round", () => {
     const state = initialDashboardState();
     const timestamp = new Date().toISOString();

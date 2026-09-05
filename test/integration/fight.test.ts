@@ -1582,6 +1582,29 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(outcome.state.patchRecommendation).toMatchObject({
       contestantId: "b",
     });
+    const events = (await readFile(outcome.state.artifacts.events!, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => ArenaEventSchema.parse(JSON.parse(line)));
+    const started = events.find((event) => event.type === "battle_started");
+    expect(started).toMatchObject({
+      roundPlan: { planned: 3, maximum: 3 },
+    });
+    const completed = events.findLast(
+      (event) => event.type === "battle_completed",
+    );
+    if (!completed || completed.type !== "battle_completed")
+      throw new Error("Expected a battle completion event");
+    expect(completed).toMatchObject({
+      status: "complete",
+      roundsCompleted: 0,
+      recommendedId: "b",
+    });
+    expect(completed.implementationEligibility).toEqual(expect.any(Array));
+    expect(completed).not.toHaveProperty("championId");
+    expect(completed).not.toHaveProperty("outcomeKind");
+    expect(completed).not.toHaveProperty("competitiveLandingCount");
+    expect(completed).not.toHaveProperty("coverageConfidence");
     expect(outcome.state.ranking?.winner).toBe("b");
     expect(outcome.state.arenaOutcome?.championId).toBe("b");
     expect(outcome.state.patchQualityFacts.b?.patchSha256).toHaveLength(64);

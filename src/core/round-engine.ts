@@ -1430,6 +1430,12 @@ export class RoundEngine {
         type: "battle_started",
         runId,
         task: config.task,
+        roundPlan: {
+          planned: config.rounds,
+          maximum: config.fixedRounds
+            ? config.rounds
+            : (config.resolvedEffortProfile?.maxRounds ?? config.rounds),
+        },
         contestants: config.contestants.map((contestant) => ({
           id: contestant.id,
           provider: contestant.provider,
@@ -4389,6 +4395,9 @@ export class RoundEngine {
     const implementationEligibility = projectImplementationEligibility(
       context.state,
     );
+    const preReviewForfeit =
+      context.state.terminalOutcome?.phase === "pre_review" &&
+      context.state.terminalOutcome.kind === "forfeit";
     await this.emit(context, {
       type: "battle_completed",
       status,
@@ -4400,10 +4409,12 @@ export class RoundEngine {
             .map((round) => Number(round.round)),
         ),
       ),
-      ...(context.state.arenaOutcome?.championId
+      ...(!preReviewForfeit && context.state.arenaOutcome?.championId
         ? { championId: context.state.arenaOutcome.championId }
         : {}),
-      ...(context.state.arenaOutcome && "kind" in context.state.arenaOutcome
+      ...(!preReviewForfeit &&
+      context.state.arenaOutcome &&
+      "kind" in context.state.arenaOutcome
         ? {
             outcomeKind: context.state.arenaOutcome.kind,
             decisionBasis: context.state.arenaOutcome.decisionBasis,
@@ -4423,7 +4434,7 @@ export class RoundEngine {
               context.state.patchRecommendation.rationale.join(" "),
           }
         : {}),
-      ...(context.state.coverageAssessment
+      ...(!preReviewForfeit && context.state.coverageAssessment
         ? { coverageConfidence: context.state.coverageAssessment.confidence }
         : {}),
       ...(implementationEligibility.length
