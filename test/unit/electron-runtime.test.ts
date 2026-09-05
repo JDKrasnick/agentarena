@@ -18,6 +18,7 @@ import { prepareElectronRuntime } from "../../src/dashboard/electron-runtime.js"
 const temporaryRoots: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(
     temporaryRoots
       .splice(0)
@@ -234,6 +235,22 @@ setInterval(() => {}, 100);
 
     await expect(prepareElectronRuntime(runtimeOptions(fixture))).resolves.toBe(
       path.join(fixture.packageDirectory, "dist", "electron"),
+    );
+  });
+
+  it("returns a ready runtime from ELECTRON_OVERRIDE_DIST_PATH", async () => {
+    const fixture = await runtimeFixture("throw new Error('should not run');");
+    const overrideDirectory = path.join(fixture.root, "electron-override");
+    await mkdir(overrideDirectory);
+    await writeFile(path.join(overrideDirectory, "electron"), "ready");
+    await writeFile(
+      path.join(fixture.packageDirectory, "path.txt"),
+      "electron\n",
+    );
+    vi.stubEnv("ELECTRON_OVERRIDE_DIST_PATH", overrideDirectory);
+
+    await expect(prepareElectronRuntime(runtimeOptions(fixture))).resolves.toBe(
+      path.join(overrideDirectory, "electron"),
     );
   });
 

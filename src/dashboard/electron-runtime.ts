@@ -36,9 +36,15 @@ function readExecutable(packageDirectory: string): string | undefined {
   const relativeExecutable = readFileSync(pathFile, "utf8").trim();
   if (!relativeExecutable) return undefined;
 
-  const executable = path.resolve(packageDirectory, "dist", relativeExecutable);
-  const distDirectory = path.resolve(packageDirectory, "dist") + path.sep;
-  return executable.startsWith(distDirectory) && existsSync(executable)
+  const runtimeDirectory = path.resolve(
+    process.env.ELECTRON_OVERRIDE_DIST_PATH ??
+      path.join(packageDirectory, "dist"),
+  );
+  const executable = path.resolve(runtimeDirectory, relativeExecutable);
+  const relativePath = path.relative(runtimeDirectory, executable);
+  return relativePath !== ".." &&
+    !relativePath.startsWith(`..${path.sep}`) &&
+    existsSync(executable)
     ? executable
     : undefined;
 }
