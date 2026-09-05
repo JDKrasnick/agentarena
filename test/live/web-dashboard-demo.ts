@@ -11,7 +11,7 @@ const controller = new AbortController();
 const control = new ArenaBattleControl(controller);
 const dashboard = await startWebDashboard(control);
 const desktopWindow = process.argv.includes("--window")
-  ? startDesktopDashboardWindow(dashboard.url, {
+  ? await startDesktopDashboardWindow(dashboard.url, {
       onUserClose: () => void dashboard.close(),
     })
   : undefined;
