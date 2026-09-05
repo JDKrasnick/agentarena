@@ -1,7 +1,15 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  rmdir,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -71,50 +79,93 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
-async function lockOwnerIsDead(lockPath: string): Promise<boolean> {
+async function removeOwner(lockPath: string, ownerFile: string): Promise<void> {
+  // Remove only this generation's marker. A replacement lock is published
+  // already populated, so rmdir cannot delete another owner's lock.
+  await rm(path.join(lockPath, ownerFile), { force: true });
   try {
-    const owner = Number.parseInt(
-      (await readFile(path.join(lockPath, "pid"), "utf8")).trim(),
-      10,
+    await rmdir(lockPath);
+  } catch (error) {
+    if (
+      !["ENOENT", "ENOTEMPTY", "EEXIST"].includes(
+        (error as NodeJS.ErrnoException).code ?? "",
+      )
+    )
+      throw error;
+  }
+}
+
+async function reclaimDeadOwner(lockPath: string): Promise<void> {
+  try {
+    const files = await readdir(lockPath);
+    // `pid` is the marker written by the original lock implementation.
+    const ownerFile = files.length === 1 ? files[0] : undefined;
+    if (
+      !ownerFile ||
+      (ownerFile !== "pid" && !/^owner-[0-9a-f-]+$/.test(ownerFile))
+    )
+      return;
+    const owner = Number(
+      (await readFile(path.join(lockPath, ownerFile), "utf8")).trim(),
     );
-    return Number.isInteger(owner) && owner > 0 && !processIsAlive(owner);
-  } catch {
-    // A newly created lock may not have written its PID yet. Treat it as live.
-    return false;
+    if (Number.isInteger(owner) && owner > 0 && !processIsAlive(owner)) {
+      await removeOwner(lockPath, ownerFile);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }
 
 async function acquireLock(
   lockPath: string,
-  timeoutMs: number,
+  deadline: number,
   pollIntervalMs: number,
   onWait?: () => void,
 ): Promise<() => Promise<void>> {
-  const deadline = Date.now() + timeoutMs;
+  const stagingPath = await mkdtemp(`${lockPath}.pending-`);
+  const ownerFile = `owner-${randomUUID()}`;
   let waitingReported = false;
-  while (true) {
-    try {
-      await mkdir(lockPath);
-      await writeFile(path.join(lockPath, "pid"), `${process.pid}\n`);
-      return async () => rm(lockPath, { recursive: true, force: true });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
+  try {
+    await writeFile(path.join(stagingPath, ownerFile), `${process.pid}\n`);
+    while (true) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          "timed out waiting for the Electron display installation",
+        );
+      }
+      try {
+        // Atomic publication never exposes an empty owned lock. Renaming over
+        // a nonempty directory fails, while an abandoned empty lock is safe.
+        await rename(stagingPath, lockPath);
+        return async () => removeOwner(lockPath, ownerFile);
+      } catch (error) {
+        if (
+          !["EEXIST", "ENOTEMPTY"].includes(
+            (error as NodeJS.ErrnoException).code ?? "",
+          )
+        )
+          throw error;
+      }
 
-    if (await lockOwnerIsDead(lockPath)) {
-      await rm(lockPath, { recursive: true, force: true });
-      continue;
-    }
-    if (!waitingReported) {
-      waitingReported = true;
-      onWait?.();
-    }
-    if (Date.now() >= deadline) {
-      throw new Error(
-        "timed out waiting for the Electron display installation",
+      await reclaimDeadOwner(lockPath);
+      if (!waitingReported) {
+        waitingReported = true;
+        onWait?.();
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          "timed out waiting for the Electron display installation",
+        );
+      }
+      await new Promise<void>((resolve) =>
+        setTimeout(
+          resolve,
+          Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())),
+        ),
       );
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, pollIntervalMs));
+  } finally {
+    await rm(stagingPath, { recursive: true, force: true });
   }
 }
 
@@ -125,19 +176,44 @@ async function clearIncompleteRuntime(packageDirectory: string): Promise<void> {
   ]);
 }
 
-async function runInstaller(packageDirectory: string): Promise<void> {
+async function runInstaller(
+  packageDirectory: string,
+  deadline: number,
+): Promise<void> {
   const installer = path.join(packageDirectory, "install.js");
   if (!existsSync(installer)) {
     throw new Error("Electron's bundled installer is missing");
   }
+  if (Date.now() >= deadline)
+    throw new Error("Electron display installation timed out");
   await new Promise<void>((resolve, reject) => {
     const child = spawn(process.execPath, [installer], {
       cwd: packageDirectory,
       stdio: ["ignore", "ignore", "inherit"],
     });
-    child.once("error", reject);
+    let timedOut = false;
+    let escalation: ReturnType<typeof setTimeout> | undefined;
+    const timeout = setTimeout(
+      () => {
+        timedOut = true;
+        child.kill("SIGTERM");
+        escalation = setTimeout(() => child.kill("SIGKILL"), 1_000);
+      },
+      Math.max(0, deadline - Date.now()),
+    );
+    const clearTimers = () => {
+      clearTimeout(timeout);
+      clearTimeout(escalation);
+    };
+    child.once("error", (error) => {
+      clearTimers();
+      reject(error);
+    });
     child.once("exit", (code, signal) => {
-      if (code === 0) resolve();
+      clearTimers();
+      if (timedOut)
+        reject(new Error("Electron display installation timed out"));
+      else if (code === 0) resolve();
       else {
         reject(
           new Error(
@@ -165,13 +241,14 @@ export async function prepareElectronRuntime(
   const readyExecutable = readExecutable(packageDirectory);
   if (readyExecutable) return readyExecutable;
 
+  const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const release = await acquireLock(
     lockPathFor(
       packageDirectory,
       version,
       options.lockDirectory ?? os.tmpdir(),
     ),
-    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    deadline,
     options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
     options.onWait ??
       (() =>
@@ -185,7 +262,7 @@ export async function prepareElectronRuntime(
 
     await clearIncompleteRuntime(packageDirectory);
     try {
-      await runInstaller(packageDirectory);
+      await runInstaller(packageDirectory, deadline);
     } catch (error) {
       await clearIncompleteRuntime(packageDirectory);
       throw error;

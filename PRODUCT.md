@@ -72,6 +72,9 @@ fights can remain open concurrently without sharing renderer or session state.
 Cold Electron runtime preparation is serialized across concurrent fights; a
 display-install failure remains a display-launch failure and never becomes a
 battle result or user cancellation.
+Waiting and installation share a five-minute deadline. A timed-out installer
+is terminated and reaped before incomplete runtime state is cleared and another
+launcher can install; termination escalates after a one-second grace period.
 The theme preference remains an atomically written app-wide file outside those
 profiles, and Electron launch failures are reported as display failures rather
 than battle failures or user cancellation.
