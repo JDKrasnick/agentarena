@@ -687,7 +687,9 @@ export function ResultScreen({
             className="review-battle"
             type="button"
             onClick={() =>
-              recommendedId ? onOpenFighter(recommendedId) : onReview()
+              preReviewForfeit && recommendedId
+                ? onOpenFighter(recommendedId)
+                : onReview()
             }
           >
             {preReviewForfeit ? "Inspect eligibility" : "Review rounds"}

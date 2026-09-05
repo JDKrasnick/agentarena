@@ -9,6 +9,7 @@ const update = () => new Promise((resolve) => setTimeout(resolve, 30));
 describe("terminal dashboard", () => {
   it("renders a pre-review forfeit without competitive victory language", async () => {
     const observer = new DashboardObserver();
+    const control = new ArenaBattleControl(new AbortController());
     observer.publish({
       type: "battle_started",
       runId: "forfeit-run",
@@ -48,7 +49,7 @@ describe("terminal dashboard", () => {
         },
       ],
     });
-    const view = render(<Dashboard observer={observer} />);
+    const view = render(<Dashboard observer={observer} control={control} />);
     await update();
 
     expect(view.lastFrame()).toContain("PRE-REVIEW FORFEIT");
