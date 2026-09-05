@@ -1,10 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { prepareElectronRuntime } from "./electron-runtime.js";
 
 export interface DesktopDashboardWindow {
   close(): Promise<void>;
@@ -35,27 +35,24 @@ function isReadyMessage(
   );
 }
 
-function resolveElectronPath(): string {
-  const require = createRequire(import.meta.url);
-  try {
-    return require("electron") as string;
-  } catch {
-    throw new Error(
-      "The desktop window runtime is unavailable. Reinstall agent-arena with optional dependencies enabled, or use --display terminal.",
-    );
-  }
-}
-
-export function startDesktopDashboardWindow(
+export async function startDesktopDashboardWindow(
   url: string,
   options: DesktopWindowOptions = {},
-): DesktopDashboardWindow {
+): Promise<DesktopDashboardWindow> {
   const parsedUrl = new URL(url);
   if (parsedUrl.protocol !== "http:" || parsedUrl.hostname !== "127.0.0.1") {
     throw new Error("The desktop dashboard only accepts a loopback URL");
   }
 
-  const electronPath = options.electronPath ?? resolveElectronPath();
+  let electronPath: string;
+  try {
+    electronPath = options.electronPath ?? (await prepareElectronRuntime());
+  } catch (error) {
+    throw new Error(
+      `Agent Arena window failed to launch: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
   const adjacentMainScript = fileURLToPath(
     new URL("./electron-main.js", import.meta.url),
   );

@@ -26,7 +26,7 @@ describe("desktop dashboard window", () => {
   it("launches Electron with a loopback URL and isolated profile", async () => {
     const { child, killProcess } = fakeChild();
     const spawnProcess = readySpawn(child);
-    const window = startDesktopDashboardWindow("http://127.0.0.1:4321/", {
+    const window = await startDesktopDashboardWindow("http://127.0.0.1:4321/", {
       electronPath: "/electron",
       mainScriptPath: "/desktop-main.js",
       spawnProcess,
@@ -61,7 +61,7 @@ describe("desktop dashboard window", () => {
   it("reports a user close once", async () => {
     const { child } = fakeChild();
     const onUserClose = vi.fn();
-    const window = startDesktopDashboardWindow("http://127.0.0.1:4321/", {
+    const window = await startDesktopDashboardWindow("http://127.0.0.1:4321/", {
       electronPath: "/electron",
       mainScriptPath: "/desktop-main.js",
       spawnProcess: readySpawn(child),
@@ -80,7 +80,7 @@ describe("desktop dashboard window", () => {
   it("reports an early Electron exit as a display launch failure", async () => {
     const { child } = fakeChild();
     const onUserClose = vi.fn();
-    const window = startDesktopDashboardWindow("http://127.0.0.1:4321/", {
+    const window = await startDesktopDashboardWindow("http://127.0.0.1:4321/", {
       electronPath: "/electron",
       mainScriptPath: "/desktop-main.js",
       spawnProcess: readySpawn(child),
@@ -99,7 +99,7 @@ describe("desktop dashboard window", () => {
   it("times out a launch, stops Electron, and removes its profile", async () => {
     const { child, killProcess } = fakeChild();
     const spawnProcess = readySpawn(child);
-    const window = startDesktopDashboardWindow("http://127.0.0.1:4321/", {
+    const window = await startDesktopDashboardWindow("http://127.0.0.1:4321/", {
       electronPath: "/electron",
       mainScriptPath: "/desktop-main.js",
       spawnProcess,
@@ -126,16 +126,22 @@ describe("desktop dashboard window", () => {
       .fn()
       .mockReturnValueOnce(first.child)
       .mockReturnValueOnce(second.child) as unknown as typeof spawn;
-    const firstWindow = startDesktopDashboardWindow("http://127.0.0.1:4321/", {
-      electronPath: "/electron",
-      mainScriptPath: "/main.js",
-      spawnProcess,
-    });
-    const secondWindow = startDesktopDashboardWindow("http://127.0.0.1:4322/", {
-      electronPath: "/electron",
-      mainScriptPath: "/main.js",
-      spawnProcess,
-    });
+    const firstWindow = await startDesktopDashboardWindow(
+      "http://127.0.0.1:4321/",
+      {
+        electronPath: "/electron",
+        mainScriptPath: "/main.js",
+        spawnProcess,
+      },
+    );
+    const secondWindow = await startDesktopDashboardWindow(
+      "http://127.0.0.1:4322/",
+      {
+        electronPath: "/electron",
+        mainScriptPath: "/main.js",
+        spawnProcess,
+      },
+    );
 
     const firstProfile =
       vi.mocked(spawnProcess).mock.calls[0]?.[2]?.env?.[
@@ -158,9 +164,9 @@ describe("desktop dashboard window", () => {
     await secondWindow.close();
   });
 
-  it("rejects non-loopback dashboard URLs", () => {
-    expect(() => startDesktopDashboardWindow("https://example.com")).toThrow(
-      "only accepts a loopback URL",
-    );
+  it("rejects non-loopback dashboard URLs", async () => {
+    await expect(
+      startDesktopDashboardWindow("https://example.com"),
+    ).rejects.toThrow("only accepts a loopback URL");
   });
 });

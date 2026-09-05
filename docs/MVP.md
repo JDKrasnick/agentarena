@@ -13,6 +13,10 @@ The MVP exists to prove one idea:
 > Does an adversarial attack-and-repair round produce a better patch than simply
 > running multiple coding agents and choosing the first patch that passes?
 
+Concurrent windowed fights serialize cold Electron runtime preparation. A
+failed or timed-out preparation is reported as a display-launch failure only;
+it does not cancel a fight or create a battle result.
+
 The result is confidence-qualified. New runs use exactly two contestant adapters
 and one fresh, identity-blind judge adapter. Duel and catch-up require both
 directions in every executed attack round; siege requires attacker-to-defender

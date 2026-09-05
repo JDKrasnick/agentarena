@@ -492,7 +492,7 @@ export async function runFight(
       ]);
     webDashboard = await startWebDashboard(control);
     try {
-      desktopWindow = startDesktopDashboardWindow(webDashboard.url, {
+      desktopWindow = await startDesktopDashboardWindow(webDashboard.url, {
         onUserClose: () => {
           control.cancel(new Error("Agent Arena window closed"));
           void webDashboard?.close();
