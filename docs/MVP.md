@@ -113,6 +113,9 @@ remains `timed_out`; the failure ledger preserves timeout kind, elapsed time,
 last meaningful progress, configured deadline policy, and full termination and
 signal-escalation evidence. An idle timeout without usable output remains a
 `timeout` and receives the one targeted retry.
+If process-tree cleanup is incomplete, the result remains a
+`harness_infrastructure_failure` and cannot be salvaged: its submission may
+have been written after the deadline.
 
 Implementation and target-relative overlay capture persists the exact bytes from
 `git diff --binary --full-index`, without text decoding, trimming, or

@@ -140,6 +140,7 @@ class DeterministicTimedReviewAdapter extends CommandAgentAdapter {
 class DeterministicTimedImplementationAdapter extends CommandAgentAdapter {
   retryBeforeSalvage = false;
   implementationCalls = 0;
+  cleanupComplete = true;
 
   override async implement(input: ImplementInput) {
     const invocation = await super.implement(input);
@@ -150,17 +151,20 @@ class DeterministicTimedImplementationAdapter extends CommandAgentAdapter {
     if (!invocation.command) throw new Error("Expected implementation command");
     return AgentInvocationSchema.parse({
       ...invocation,
-      status: "timed_out",
+      status: this.cleanupComplete ? "timed_out" : "infrastructure_error",
       command: {
         ...invocation.command,
         timedOut: true,
+        ...(this.cleanupComplete
+          ? {}
+          : { failureClass: "arena_infrastructure" as const }),
         deadline: {
           kind: "idle",
           expiredAt: invocation.finishedAt,
           elapsedMs: invocation.durationMs,
           graceMs: 0,
           cleanupDurationMs: 0,
-          cleanupComplete: true,
+          cleanupComplete: this.cleanupComplete,
           signalEscalation: [],
           remainingDescendants: [],
         },
@@ -2354,6 +2358,36 @@ describe("fake-adapter fight on a mocked real issue", () => {
     },
     30_000,
   );
+
+  it("does not salvage a submission when deadline cleanup is incomplete", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const adapter = new DeterministicTimedImplementationAdapter({
+      id: "codex",
+      executable: process.execPath,
+      args: [fixtureAgent],
+    });
+    adapter.cleanupComplete = false;
+
+    const outcome = await new Arena({
+      adapters: {
+        codex: adapter,
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(duelConfig(repositoryRoot));
+
+    expect(adapter.implementationCalls).toBe(2);
+    expect(outcome.state.contestants.a?.patchSize).toBe(0);
+    expect(outcome.state.terminalOutcome).toMatchObject({
+      kind: "inconclusive",
+      reasonCode: "harness_infrastructure_failure",
+      affectedContestantIds: ["a"],
+    });
+  });
 
   it.each([false, true])(
     "keeps unstable validation inconclusive after implementation salvage (retry: %s)",

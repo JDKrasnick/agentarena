@@ -638,6 +638,9 @@ invocation, deadline policy, meaningful-progress timestamp, elapsed duration,
 and termination escalation remain durable evidence, while normal patch capture
 and initial validation continue without a redundant retry. Unusable output
 records the same causal evidence and takes the one permitted targeted retry.
+Incomplete process-tree cleanup remains a harness-infrastructure failure and
+cannot salvage a submission, because the harness cannot establish that it
+existed by the deadline.
 
 Provider calls emit structured operational activity independently of visible
 stdout: assistant messages, tool starts and finishes, progress, and completion.

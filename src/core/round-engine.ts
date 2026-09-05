@@ -4864,6 +4864,7 @@ export class RoundEngine {
             invocation.role = contestant.role;
             const salvagedDeadline =
               invocation.status === "timed_out" &&
+              invocation.command?.deadline?.cleanupComplete === true &&
               (await hasValidImplementationSubmission(invocation));
             implementationSalvaged ||= salvagedDeadline;
             contestant.implementation = invocation;

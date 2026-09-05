@@ -98,10 +98,10 @@ async function runObservedProcess(
   await observation.observer.publish({
     type: "invocation_finished",
     invocationId,
-    status: result.timedOut
-      ? "timed_out"
-      : result.failureClass === "arena_infrastructure"
-        ? "infrastructure_error"
+    status: result.failureClass === "arena_infrastructure"
+      ? "infrastructure_error"
+      : result.timedOut
+        ? "timed_out"
         : result.exitCode === 0
           ? "succeeded"
           : "failed",
@@ -1000,10 +1000,10 @@ export class CommandAgentAdapter implements AgentAdapter {
       status:
         input.signal.aborted && !command.transportFailures?.length
           ? "cancelled"
-          : command.timedOut
-            ? "timed_out"
-            : command.failureClass === "arena_infrastructure"
-              ? "infrastructure_error"
+          : command.failureClass === "arena_infrastructure"
+            ? "infrastructure_error"
+            : command.timedOut
+              ? "timed_out"
               : usableTerminalResult
                 ? "succeeded"
                 : command.transportFailures?.length && command.exitCode !== 0
