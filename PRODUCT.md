@@ -632,6 +632,13 @@ least one accepted finding. The review record is marked salvaged while its
 invocation remains `timed_out`; invalid, empty partial, and missing files
 receive the ordinary targeted retry and may lose coverage.
 
+Implementation uses the same deadline contract. A schema-valid implementation
+submission written before a harness deadline is salvaged: its timed-out
+invocation, deadline policy, meaningful-progress timestamp, elapsed duration,
+and termination escalation remain durable evidence, while normal patch capture
+and initial validation continue without a redundant retry. Unusable output
+records the same causal evidence and takes the one permitted targeted retry.
+
 Provider calls emit structured operational activity independently of visible
 stdout: assistant messages, tool starts and finishes, progress, and completion.
 The harness retains redacted assistant text plus normalized event, stdout, and

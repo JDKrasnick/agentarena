@@ -137,6 +137,36 @@ class DeterministicTimedReviewAdapter extends CommandAgentAdapter {
   }
 }
 
+class DeterministicTimedImplementationAdapter extends CommandAgentAdapter {
+  override async implement(input: ImplementInput) {
+    const invocation = await super.implement(input);
+    if (!invocation.command) throw new Error("Expected implementation command");
+    return AgentInvocationSchema.parse({
+      ...invocation,
+      status: "timed_out",
+      command: {
+        ...invocation.command,
+        timedOut: true,
+        deadline: {
+          kind: "idle",
+          expiredAt: invocation.finishedAt,
+          elapsedMs: invocation.durationMs,
+          graceMs: 0,
+          cleanupDurationMs: 0,
+          cleanupComplete: true,
+          signalEscalation: [],
+          remainingDescendants: [],
+        },
+        termination: {
+          ...invocation.command.termination,
+          cause: "timeout",
+          timeoutType: "wall_clock",
+        },
+      },
+    });
+  }
+}
+
 class ConvergedEmptyLaneAdapter extends CommandAgentAdapter {
   readonly seenPrompts: string[] = [];
 
@@ -2231,6 +2261,66 @@ describe("fake-adapter fight on a mocked real issue", () => {
       eligibleContestantIds: ["b"],
     });
   });
+
+  it("salvages a valid implementation submission written before an idle deadline", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const config = duelConfig(repositoryRoot);
+    const outcome = await new Arena({
+      adapters: {
+        codex: new DeterministicTimedImplementationAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+          providerStream: "codex",
+        }),
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(config);
+
+    const implementation = outcome.state.contestants.a?.implementation;
+    expect(implementation).toMatchObject({ status: "timed_out" });
+    expect(outcome.state.contestants.a).toMatchObject({
+      patchSize: expect.any(Number),
+    });
+    expect(outcome.state.failureRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "implementation",
+          contestantId: "a",
+          category: "timeout",
+          terminalDisposition: "recovered",
+          attempts: [
+            expect.objectContaining({
+              attempt: 1,
+              status: "succeeded",
+              timeout: expect.objectContaining({
+                kind: "idle",
+                elapsedMs: expect.any(Number),
+                policy: expect.objectContaining({
+                  softTimeoutMs: 900_000,
+                  absoluteTimeoutMs: 2_700_000,
+                }),
+                termination: expect.objectContaining({ cause: "timeout" }),
+              }),
+            }),
+          ],
+        }),
+      ]),
+    );
+    expect(outcome.state.failureRecords).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subject: "implementation:a",
+          attempts: [expect.objectContaining({ attempt: 2 })],
+        }),
+      ]),
+    );
+  }, 30_000);
 
   it("retries runner-shaped validation once and persists unstable and deterministic evidence", async () => {
     const repositoryRoot = await createSlugRepository();

@@ -106,6 +106,14 @@ to review without producing review, attack, repair, quality, or coverage
 artifacts. The persisted pre-review terminal outcome controls resume and CLI
 status reporting.
 
+When an implementation provider writes its schema-valid terminal submission
+before a harness deadline, Arena salvages that terminal result, captures and
+validates the patch normally, and does not spend its one retry. The invocation
+remains `timed_out`; the failure ledger preserves timeout kind, elapsed time,
+last meaningful progress, configured deadline policy, and full termination and
+signal-escalation evidence. An idle timeout without usable output remains a
+`timeout` and receives the one targeted retry.
+
 Implementation and target-relative overlay capture persists the exact bytes from
 `git diff --binary --full-index`, without text decoding, trimming, or
 newline reconstruction. Every non-empty patch must pass

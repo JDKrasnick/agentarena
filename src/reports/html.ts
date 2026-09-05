@@ -461,7 +461,16 @@ export function renderBattleHtml(state: RunState): string {
                 : disposition === "judge_rejected"
                   ? "normal rank recoil"
                   : "none";
-          return `<tr><td>${escapeHtml(failure.failureId)}</td><td>${escapeHtml(failure.stage)}</td><td>${String(failure.attempts.length)}/2</td><td>${escapeHtml(disposition)}</td><td>${escapeHtml(judgeBasis)}</td><td>${escapeHtml(confidence)}</td><td>${escapeHtml(score)}</td><td>${failure.diagnosticArtifactRefs.map((artifact) => link(state, "diagnostic", artifact)).join(" · ") || "—"}</td></tr>`;
+          const timeoutCause = failure.attempts
+            .flatMap((attempt) =>
+              attempt.timeout
+                ? [
+                    `${attempt.timeout.kind} timeout (${String(attempt.timeout.elapsedMs)}ms)`,
+                  ]
+                : [],
+            )
+            .join(", ");
+          return `<tr><td>${escapeHtml(failure.failureId)}</td><td>${escapeHtml(`${failure.stage}${timeoutCause ? ` · ${timeoutCause}` : ""}`)}</td><td>${String(failure.attempts.length)}/2</td><td>${escapeHtml(disposition)}</td><td>${escapeHtml(judgeBasis)}</td><td>${escapeHtml(confidence)}</td><td>${escapeHtml(score)}</td><td>${failure.diagnosticArtifactRefs.map((artifact) => link(state, "diagnostic", artifact)).join(" · ") || "—"}</td></tr>`;
         })
         .join("")
     : `<tr><td colspan="8">No bounded failures were recorded.</td></tr>`;

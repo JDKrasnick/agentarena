@@ -54,6 +54,49 @@ export const FailureAttemptSchema = z
     finishedAt: z.string().datetime(),
     status: z.enum(["failed", "succeeded"]),
     diagnosticArtifactRefs: z.array(z.string()),
+    timeout: z
+      .object({
+        kind: z.enum(["fixed", "idle", "absolute"]),
+        elapsedMs: z.number().int().nonnegative(),
+        lastMeaningfulProgressAt: z.string().datetime().optional(),
+        policy: z.object({
+          mode: z.enum(["fixed", "progress_extended"]),
+          softTimeoutMs: z.number().int().positive(),
+          absoluteTimeoutMs: z.number().int().positive(),
+          startedAt: z.string().datetime(),
+          initialSoftDeadlineAt: z.string().datetime(),
+          absoluteDeadlineAt: z.string().datetime(),
+          lastProgressAt: z.string().datetime().optional(),
+          progressExtensions: z.number().int().nonnegative(),
+        }),
+        termination: z.object({
+          cause: z.enum([
+            "exit",
+            "signal",
+            "timeout",
+            "cancelled",
+            "spawn_error",
+          ]),
+          timeoutType: z.literal("wall_clock").nullable(),
+          startedAt: z.string().datetime(),
+          finishedAt: z.string().datetime(),
+          lastOutputAt: z.string().datetime().nullable(),
+          escalation: z.array(
+            z.object({
+              pid: z.number().int().positive(),
+              identity: z.string().min(1),
+              signal: z.enum(["SIGTERM", "SIGKILL"]),
+              outcome: z.enum([
+                "sent",
+                "already_exited",
+                "identity_changed",
+                "error",
+              ]),
+            }),
+          ),
+        }),
+      })
+      .optional(),
   })
   .strict();
 export type FailureAttempt = z.infer<typeof FailureAttemptSchema>;

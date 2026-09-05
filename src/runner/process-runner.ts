@@ -690,10 +690,10 @@ async function run(
   });
   const failureClass = result.spawnError
     ? (classifySpawnError(result.spawnError) ?? "arena_infrastructure")
-    : result.deadline?.cleanupComplete === false
-      ? "arena_infrastructure"
-      : result.timedOut
-        ? timeoutFailureClass
+    : result.timedOut
+      ? timeoutFailureClass
+      : result.deadline?.cleanupComplete === false
+        ? "arena_infrastructure"
         : undefined;
   if (result.spawnError) {
     result.stderr = redact(describeError(result.spawnError), request.secrets);

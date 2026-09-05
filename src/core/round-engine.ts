@@ -199,6 +199,7 @@ import {
   FightConfigSchema,
   PermissionPolicySchema,
   PatchRecommendationSchema,
+  StageSubmissionSchema,
   RepairJudgmentRecordSchema,
   type AgentId,
   type AgentInvocation,
@@ -672,6 +673,44 @@ function preReviewArtifactPaths(contestant: ContestantResult): string[] {
       ].filter((path): path is string => Boolean(path)),
     ),
   ];
+}
+
+function timeoutEvidence(
+  command: CommandResult | undefined,
+): NonNullable<FailureRecord["attempts"][number]["timeout"]> | undefined {
+  if (
+    !command?.timedOut ||
+    !command.deadline ||
+    !command.timeoutPolicy ||
+    !command.termination
+  )
+    return undefined;
+  return {
+    kind: command.deadline.kind,
+    elapsedMs: command.deadline.elapsedMs,
+    ...(command.deadline.lastProgressAt || command.timeoutPolicy.lastProgressAt
+      ? {
+          lastMeaningfulProgressAt:
+            command.deadline.lastProgressAt ??
+            command.timeoutPolicy.lastProgressAt,
+        }
+      : {}),
+    policy: command.timeoutPolicy,
+    termination: command.termination,
+  };
+}
+
+async function hasValidImplementationSubmission(
+  invocation: AgentInvocation,
+): Promise<boolean> {
+  if (!invocation.submissionPath) return false;
+  try {
+    return StageSubmissionSchema.safeParse(
+      JSON.parse(await readFile(invocation.submissionPath, "utf8")) as unknown,
+    ).success;
+  } catch {
+    return false;
+  }
 }
 
 function opponentOf(
@@ -3428,6 +3467,7 @@ export class RoundEngine {
       finishedAt: string;
       status: "failed" | "succeeded";
       diagnosticArtifactRefs: string[];
+      timeout?: NonNullable<FailureRecord["attempts"][number]["timeout"]>;
       reusedArtifactRefs?: string[];
       contestantId?: ContestantId;
       laneId?: string;
@@ -3475,6 +3515,7 @@ export class RoundEngine {
           finishedAt: options.finishedAt,
           status: options.status,
           diagnosticArtifactRefs: options.diagnosticArtifactRefs,
+          ...(options.timeout ? { timeout: options.timeout } : {}),
         },
       ],
       reusedArtifactRefs:
@@ -4787,6 +4828,7 @@ export class RoundEngine {
           const contestant = getContestant(context.state, agent);
           let invocation!: AgentInvocation;
           let implementationFailure: FailureRecord | undefined;
+          let implementationSalvaged = false;
           for (const attempt of [1, 2] as const) {
             const startedAt = this.now().toISOString();
             const transcriptPrefix = context.store.resolve(
@@ -4805,8 +4847,12 @@ export class RoundEngine {
             const finishedAt = this.now().toISOString();
             invocation.contestantId = agent;
             invocation.role = contestant.role;
+            const salvagedDeadline =
+              invocation.status === "timed_out" &&
+              (await hasValidImplementationSubmission(invocation));
+            implementationSalvaged ||= salvagedDeadline;
             contestant.implementation = invocation;
-            if (invocation.status === "succeeded") {
+            if (invocation.status === "succeeded" || salvagedDeadline) {
               if (implementationFailure) {
                 await this.recordFailureAttempt(context, {
                   stage: "implementation",
@@ -4819,6 +4865,22 @@ export class RoundEngine {
                   diagnosticArtifactRefs: [promptPath, transcriptPrefix],
                   contestantId: agent,
                   existing: implementationFailure,
+                  terminalDisposition: "recovered",
+                });
+              }
+              if (salvagedDeadline) {
+                const invocationTimeout = timeoutEvidence(invocation.command);
+                await this.recordFailureAttempt(context, {
+                  stage: "implementation",
+                  subject: `implementation:${agent}`,
+                  category: "timeout",
+                  attempt: 1,
+                  startedAt,
+                  finishedAt,
+                  status: "succeeded",
+                  diagnosticArtifactRefs: [promptPath, transcriptPrefix],
+                  ...(invocationTimeout ? { timeout: invocationTimeout } : {}),
+                  contestantId: agent,
                   terminalDisposition: "recovered",
                 });
               }
@@ -4836,13 +4898,17 @@ export class RoundEngine {
               contestant.status = "failed";
               return;
             }
-            const category = invocation.command?.transportFailures?.length
-              ? ("transport" as const)
-              : invocation.status === "timed_out"
-                ? ("timeout" as const)
-                : invocation.status === "infrastructure_error"
-                  ? ("process_launch" as const)
-                  : ("invalid_output" as const);
+            const category =
+              invocation.command?.transportFailures?.length &&
+              invocation.status !== "timed_out"
+                ? ("transport" as const)
+                : invocation.status === "timed_out" ||
+                    invocation.command?.timedOut
+                  ? ("timeout" as const)
+                  : invocation.status === "infrastructure_error"
+                    ? ("process_launch" as const)
+                    : ("invalid_output" as const);
+            const invocationTimeout = timeoutEvidence(invocation.command);
             implementationFailure = await this.recordFailureAttempt(context, {
               stage: "implementation",
               subject: `implementation:${agent}`,
@@ -4852,6 +4918,7 @@ export class RoundEngine {
               finishedAt,
               status: "failed",
               diagnosticArtifactRefs: [promptPath, transcriptPrefix],
+              ...(invocationTimeout ? { timeout: invocationTimeout } : {}),
               contestantId: agent,
               ...(implementationFailure
                 ? { existing: implementationFailure }
@@ -4886,7 +4953,8 @@ export class RoundEngine {
             contestant.status = "failed";
             return;
           }
-          if (invocation.status !== "succeeded") return;
+          if (invocation.status !== "succeeded" && !implementationSalvaged)
+            return;
           await removeSubmission(worktree);
           const patchPath = context.store.resolve(
             `patches/${agent}-initial.diff`,
