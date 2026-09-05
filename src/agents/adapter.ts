@@ -98,14 +98,13 @@ async function runObservedProcess(
   await observation.observer.publish({
     type: "invocation_finished",
     invocationId,
-    status:
-      result.failureClass === "arena_infrastructure"
-        ? "infrastructure_error"
-        : result.timedOut
-          ? "timed_out"
-          : result.exitCode === 0
-            ? "succeeded"
-            : "failed",
+    status: result.failureClass === "arena_infrastructure"
+      ? "infrastructure_error"
+      : result.timedOut
+        ? "timed_out"
+        : result.exitCode === 0
+          ? "succeeded"
+          : "failed",
     durationMs: result.durationMs,
     ...(result.providerDiagnostics?.sessionId
       ? { sessionId: result.providerDiagnostics.sessionId }

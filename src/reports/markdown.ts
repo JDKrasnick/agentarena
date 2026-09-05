@@ -823,7 +823,16 @@ export function renderBattleReport(state: RunState): string {
                 : disposition === "judge_rejected"
                   ? "normal rank recoil"
                   : "none";
-          return `| ${failure.failureId} | ${failure.stage} | ${String(failure.attempts.length)}/2 | ${disposition} | ${judgeBasis} | ${confidence} | ${score} | ${failure.diagnosticArtifactRefs.map((artifact) => artifactLink(state, "diagnostic", artifact)).join(" · ") || "—"} |`;
+          const timeoutCause = failure.attempts
+            .flatMap((attempt) =>
+              attempt.timeout
+                ? [
+                    `${attempt.timeout.kind} timeout (${String(attempt.timeout.elapsedMs)}ms)`,
+                  ]
+                : [],
+            )
+            .join(", ");
+          return `| ${failure.failureId} | ${failure.stage}${timeoutCause ? ` · ${timeoutCause}` : ""} | ${String(failure.attempts.length)}/2 | ${disposition} | ${judgeBasis} | ${confidence} | ${score} | ${failure.diagnosticArtifactRefs.map((artifact) => artifactLink(state, "diagnostic", artifact)).join(" · ") || "—"} |`;
         })
       : ["| — | — | 0/2 | no failures recorded | — | none | none | — |"]),
     "",

@@ -29,7 +29,10 @@ await writeFile(statePath, String(invocation), "utf8");
 if (invocation === 1) {
   console.log("168 runtime tests passed; waiting for teardown");
   setInterval(() => undefined, 1_000);
-} else if (invocation === 2 && scenario === "timeout-then-pass") {
+} else if (
+  (invocation === 2 && scenario === "timeout-then-pass") ||
+  scenario === "timeout-then-all-pass"
+) {
   console.log("168 runtime tests passed; teardown completed");
 } else {
   console.error(

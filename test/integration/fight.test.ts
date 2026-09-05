@@ -137,6 +137,47 @@ class DeterministicTimedReviewAdapter extends CommandAgentAdapter {
   }
 }
 
+class DeterministicTimedImplementationAdapter extends CommandAgentAdapter {
+  retryBeforeSalvage = false;
+  implementationCalls = 0;
+  cleanupComplete = true;
+
+  override async implement(input: ImplementInput) {
+    const invocation = await super.implement(input);
+    this.implementationCalls += 1;
+    if (this.retryBeforeSalvage && this.implementationCalls === 1) {
+      await rm(invocation.submissionPath!);
+    }
+    if (!invocation.command) throw new Error("Expected implementation command");
+    return AgentInvocationSchema.parse({
+      ...invocation,
+      status: this.cleanupComplete ? "timed_out" : "infrastructure_error",
+      command: {
+        ...invocation.command,
+        timedOut: true,
+        ...(this.cleanupComplete
+          ? {}
+          : { failureClass: "arena_infrastructure" as const }),
+        deadline: {
+          kind: "idle",
+          expiredAt: invocation.finishedAt,
+          elapsedMs: invocation.durationMs,
+          graceMs: 0,
+          cleanupDurationMs: 0,
+          cleanupComplete: this.cleanupComplete,
+          signalEscalation: [],
+          remainingDescendants: [],
+        },
+        termination: {
+          ...invocation.command.termination,
+          cause: "timeout",
+          timeoutType: "wall_clock",
+        },
+      },
+    });
+  }
+}
+
 class ConvergedEmptyLaneAdapter extends CommandAgentAdapter {
   readonly seenPrompts: string[] = [];
 
@@ -2254,6 +2295,173 @@ describe("fake-adapter fight on a mocked real issue", () => {
       eligibleContestantIds: ["b"],
     });
   });
+
+  it.each([false, true])(
+    "salvages a valid implementation submission before an idle deadline (retry: %s)",
+    async (retryBeforeSalvage) => {
+      const repositoryRoot = await createSlugRepository();
+      const config = duelConfig(repositoryRoot);
+      const adapter = new DeterministicTimedImplementationAdapter({
+        id: "codex",
+        executable: process.execPath,
+        args: [fixtureAgent],
+        providerStream: "codex",
+      });
+      adapter.retryBeforeSalvage = retryBeforeSalvage;
+      const outcome = await new Arena({
+        adapters: {
+          codex: adapter,
+          claude: new CommandAgentAdapter({
+            id: "claude",
+            executable: process.execPath,
+            args: [fixtureAgent],
+          }),
+        },
+        verifier: new RuleBasedVerifier("claude"),
+      }).fight(config);
+
+      const implementation = outcome.state.contestants.a?.implementation;
+      expect(implementation).toMatchObject({ status: "timed_out" });
+      expect(outcome.state.contestants.a?.patchSize).toBeGreaterThan(0);
+      expect(
+        outcome.state.contestants.a?.checks.find(
+          (check) => check.id === "initial-required",
+        )?.status,
+      ).toBe("passed");
+      expect(outcome.state.terminalOutcome).toBeUndefined();
+      const failures = outcome.state.failureRecords.filter(
+        (failure) => failure.subject === "implementation:a",
+      );
+      expect(failures).toHaveLength(1);
+      const failure = failures[0]!;
+      expect(failure).toMatchObject({
+        stage: "implementation",
+        contestantId: "a",
+        category: "timeout",
+        terminalDisposition: "recovered",
+      });
+      expect(adapter.implementationCalls).toBe(retryBeforeSalvage ? 2 : 1);
+      expect(
+        failure.attempts.map((attempt) => ({
+          attempt: attempt.attempt,
+          status: attempt.status,
+        })),
+      ).toEqual(
+        retryBeforeSalvage
+          ? [
+              { attempt: 1, status: "failed" },
+              { attempt: 2, status: "succeeded" },
+            ]
+          : [{ attempt: 1, status: "succeeded" }],
+      );
+      for (const attempt of failure.attempts) {
+        expect(attempt.timeout).toMatchObject({
+          kind: "idle",
+          policy: { softTimeoutMs: 900_000, absoluteTimeoutMs: 2_700_000 },
+          termination: { cause: "timeout" },
+        });
+        expect(attempt.timeout?.elapsedMs).toBeGreaterThanOrEqual(0);
+        expect(attempt.diagnosticArtifactRefs).toContainEqual(
+          expect.stringContaining(
+            `implementation-a-attempt-${String(attempt.attempt)}`,
+          ),
+        );
+      }
+      const persisted: unknown = JSON.parse(
+        await readFile(
+          path.join(
+            path.dirname(outcome.state.artifacts.result!),
+            "failures",
+            `${failure.failureId}.json`,
+          ),
+          "utf8",
+        ),
+      );
+      expect(persisted).toEqual(failure);
+    },
+    30_000,
+  );
+
+  it("does not salvage a submission when deadline cleanup is incomplete", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const adapter = new DeterministicTimedImplementationAdapter({
+      id: "codex",
+      executable: process.execPath,
+      args: [fixtureAgent],
+    });
+    adapter.cleanupComplete = false;
+
+    const outcome = await new Arena({
+      adapters: {
+        codex: adapter,
+        claude: new CommandAgentAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("claude"),
+    }).fight(duelConfig(repositoryRoot));
+
+    expect(adapter.implementationCalls).toBe(2);
+    expect(outcome.state.contestants.a?.patchSize).toBe(0);
+    expect(outcome.state.terminalOutcome).toMatchObject({
+      kind: "inconclusive",
+      reasonCode: "harness_infrastructure_failure",
+      affectedContestantIds: ["a"],
+    });
+  });
+
+  it.each([false, true])(
+    "keeps unstable validation inconclusive after implementation salvage (retry: %s)",
+    async (retryBeforeSalvage) => {
+      const repositoryRoot = await createSlugRepository();
+      const statePath = path.join(repositoryRoot, "validation-invocations.txt");
+      const config = FightConfigSchema.parse({
+        ...duelConfig(repositoryRoot),
+        testCommand: `${JSON.stringify(process.execPath)} ${JSON.stringify(requiredValidationOutcomes)} ${JSON.stringify(statePath)} timeout-then-all-pass`,
+      });
+      config.limits.attackMs = 1000;
+      config.phaseOverrides.attack = true;
+      const adapter = new DeterministicTimedImplementationAdapter({
+        id: "codex",
+        executable: process.execPath,
+        args: [fixtureAgent],
+      });
+      adapter.retryBeforeSalvage = retryBeforeSalvage;
+      const outcome = await new Arena({
+        adapters: {
+          codex: adapter,
+          claude: new CommandAgentAdapter({
+            id: "claude",
+            executable: process.execPath,
+            args: [fixtureAgent],
+          }),
+        },
+        verifier: new RuleBasedVerifier("claude"),
+      }).fight(config);
+      expect(adapter.implementationCalls).toBe(retryBeforeSalvage ? 2 : 1);
+      const terminal = outcome.state.terminalOutcome;
+      if (!terminal || terminal.version !== 2)
+        throw new Error("Expected a v2 terminal outcome");
+      expect(
+        terminal.contestants.find(
+          (contestant) => contestant.contestantId === "a",
+        )?.validation?.outcome,
+      ).toBe("unstable");
+      expect(outcome.state.status).toBe("inconclusive");
+      expect(outcome.state.terminalOutcome).toMatchObject({
+        kind: "inconclusive",
+        reasonCode: "initial_validation_unstable",
+        eligibleContestantIds: ["b"],
+      });
+      const persisted = JSON.parse(
+        await readFile(outcome.state.artifacts.result!, "utf8"),
+      ) as { terminalOutcome: unknown };
+      expect(persisted.terminalOutcome).toEqual(outcome.state.terminalOutcome);
+    },
+    30_000,
+  );
 
   it("retries runner-shaped validation once and persists unstable and deterministic evidence", async () => {
     const repositoryRoot = await createSlugRepository();
