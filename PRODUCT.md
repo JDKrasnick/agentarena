@@ -287,8 +287,9 @@ build exits fail immediately; timeouts and runner-shaped terminations receive
 one clean retry against the same patch. Disagreeing attempts make eligibility
 unstable and the run inconclusive instead of eliminating a contestant.
 In a duel, exactly one production patch that
-applies and passes required validation wins by forfeit and is the only
-reviewable recommendation; no eligible patch is inconclusive. Provider,
+applies and passes required validation is recommended by forfeit and is the only
+reviewable recommendation; it is not an arena champion and carries no coverage
+or competitive-integrity claim. No eligible patch is inconclusive. Provider,
 transport, authentication, reconnect, and harness failures are inconclusive,
 not forfeits. A failed frozen incumbent in catch-up ends inconclusively before
 the challenger is invoked, and siege never recommends its test-only attacker.

@@ -200,6 +200,7 @@ export function projectEvent(state: DashboardState, event: ArenaEvent): void {
       state.task = event.task;
       state.startedAt = event.timestamp;
       state.links = event.links ?? [];
+      if (event.roundPlan) state.roundPlan = structuredClone(event.roundPlan);
       for (const configured of event.contestants ?? []) {
         state.contestants[configured.id].provider = configured.provider;
         if (configured.model)

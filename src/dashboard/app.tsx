@@ -146,7 +146,7 @@ function BattleStatus({ state }: { state: DashboardState }) {
     ? state.round === "recovery"
       ? "RECOVERY"
       : state.round
-        ? `ROUND ${String(state.round)}/${String(state.roundPlan?.maximum ?? 5)}${state.roundPlan ? ` · ${String(state.roundPlan.planned)} planned` : ""}`
+        ? `ROUND ${String(state.round)}${state.roundPlan ? `/${String(state.roundPlan.maximum)} · ${String(state.roundPlan.planned)} planned` : ""}`
         : "ATTACK ROUND"
     : detail.chapter.toUpperCase();
   return (
@@ -435,6 +435,30 @@ function SuccessScreen({ state }: { state: DashboardState }) {
   const recommended = state.result?.recommendedId?.toUpperCase();
   const champion = state.result?.championId?.toUpperCase();
   const nonDiscriminating = state.result?.outcomeKind === "non_discriminating";
+  const preReviewForfeit =
+    state.result?.terminalOutcome?.kind === "forfeit" && rounds === 0;
+  if (preReviewForfeit) {
+    return (
+      <Box
+        borderStyle="double"
+        borderColor="yellow"
+        flexDirection="column"
+        paddingX={1}
+      >
+        <Text bold color="yellow">
+          PRE-REVIEW FORFEIT
+        </Text>
+        <Text>
+          Fighter {recommended ?? "—"} is recommended after a pre-review
+          forfeit.
+        </Text>
+        <Text>Not contested — no attack rounds ran.</Text>
+        <Text dimColor>
+          Inspect eligibility and validation evidence before review.
+        </Text>
+      </Box>
+    );
+  }
   return (
     <Box flexDirection="column">
       <Box

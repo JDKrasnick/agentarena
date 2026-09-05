@@ -101,9 +101,10 @@ closed:
 Round 1 first seals implementation eligibility. A local implementation timeout,
 failed exit, empty or unappliable patch, or failed required validation is a
 forfeit; provider/harness transport, authentication, or reconnect failures are
-inconclusive. A one-sided duel promotes the eligible validated patch directly
-to review without producing review, attack, repair, quality, or coverage
-artifacts. The persisted pre-review terminal outcome controls resume and CLI
+inconclusive. A one-sided duel recommends the eligible validated patch directly
+for review without producing review, attack, repair, quality, or coverage
+artifacts; it does not publish an arena champion, coverage assessment, or
+competitive-integrity claim. The persisted pre-review terminal outcome controls resume and CLI
 status reporting.
 
 Implementation and target-relative overlay capture persists the exact bytes from

@@ -230,16 +230,24 @@ export function createArenaPresentation(
   selectedRound: RoundSelection,
   connected: boolean,
 ): ArenaPresentation {
-  const configuredMaximum = state.roundPlan?.maximum ?? 5;
+  const configuredMaximum = state.roundPlan?.maximum;
   const found = new Set<NonNullable<DashboardState["round"]>>(
-    Array.from({ length: configuredMaximum }, (_, index) =>
-      Math.min(5, index + 1),
-    ) as Array<NonNullable<DashboardState["round"]>>,
+    configuredMaximum
+      ? (Array.from(
+          { length: configuredMaximum },
+          (_, index) => index + 1,
+        ) as Array<NonNullable<DashboardState["round"]>>)
+      : [],
   );
   const addRecordedRound = (
     round: NonNullable<DashboardState["round"]> | undefined,
   ) => {
-    if (round && (typeof round !== "number" || round <= configuredMaximum))
+    if (
+      round &&
+      (typeof round !== "number" ||
+        configuredMaximum === undefined ||
+        round <= configuredMaximum)
+    )
       found.add(round);
   };
   addRecordedRound(state.round);

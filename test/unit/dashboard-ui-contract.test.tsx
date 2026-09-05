@@ -118,6 +118,41 @@ describe("dashboard UI contracts", () => {
     expect(markup).toContain("Attempt 2 · exit");
   });
 
+  it("presents a pre-review forfeit as an uncontested recommendation", () => {
+    const state = initialDashboardState();
+    state.status = "complete";
+    state.contestants.b.provider = "claude";
+    state.result = {
+      roundsCompleted: 0,
+      recommendedId: "b",
+      terminalOutcome: {
+        kind: "forfeit",
+        reasonCode: "implementation_empty_patch",
+        reason: "Only Fighter B passed initial validation.",
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <ResultScreen
+        state={state}
+        onReview={() => undefined}
+        onOpenFighter={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain(
+      "Claude is recommended after a pre-review forfeit.",
+    );
+    expect(markup).toContain("Not contested — pre-review forfeit");
+    expect(markup).toContain("Not applicable — no attack rounds ran");
+    expect(markup).toContain("Not applicable");
+    expect(markup).toContain("Not competitively exercised");
+    expect(markup).toContain("Inspect eligibility");
+    expect(markup).not.toContain("won the arena");
+    expect(markup).not.toContain("Legacy / unknown");
+    expect(markup).not.toContain("Competitive");
+  });
+
   it("renders eligibility evidence after a successful completed validation", () => {
     const state = initialDashboardState();
     state.status = "complete";

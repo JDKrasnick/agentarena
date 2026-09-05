@@ -55,7 +55,7 @@ describe("dashboard presentation model", () => {
     expect(live.attacks).toEqual(replay.attacks);
     expect(live.counts.mounting).toBe(1);
     expect(live.canSteer).toBe(true);
-    expect(replay.rounds).toEqual([1, 2, 3, 4, 5]);
+    expect(replay.rounds).toEqual([2]);
   });
 
   it("shows only possible rounds and separates planned work from extensions", () => {
@@ -71,6 +71,19 @@ describe("dashboard presentation model", () => {
     const presentation = createArenaPresentation(state, "live", true);
     expect(presentation.rounds).toEqual([1, 2, 3, 4]);
     expect(presentation.rounds).not.toContain(5);
+  });
+
+  it("does not invent future rounds when a legacy snapshot has no plan", () => {
+    const state = initialDashboardState();
+    state.round = 2;
+    state.attacks.push({
+      id: "recorded-round",
+      round: 1,
+      phase: "mounting",
+      status: "mounting",
+    });
+
+    expect(createArenaPresentation(state, "live", true).rounds).toEqual([1, 2]);
   });
 
   it.each(["complete", "inconclusive", "failed", "cancelled"] as const)(
