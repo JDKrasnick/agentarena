@@ -21,6 +21,7 @@ export interface PriorAdjudicationContext {
   scoreEffect: AdjudicationRecord["scoreEffect"];
   exactAmount: number;
   severity?: AdjudicationRecord["severity"];
+  canonicalDefectId?: string;
 }
 
 interface ChallengeRelationshipVerdict {
@@ -60,6 +61,35 @@ export function challengeRelationshipFailure(
   if (!priorAdjudications.some((entry) => entry.adjudicationId === relatedId))
     return `Inferred challenge references unavailable adjudication ${relatedId}`;
   return undefined;
+}
+
+/** An affirmation extends an existing defect; a judge cannot rename it. */
+export function bindAffirmedDefect(
+  attack: Attack,
+  history: readonly Attack[],
+): Attack {
+  if (
+    attack.challengeRelationship !== "affirm" ||
+    attack.adjudication?.verdict !== "valid"
+  )
+    return attack;
+  const relatedId =
+    attack.relatedAdjudicationId ?? attack.challengeAdjudicationId;
+  const prior = priorAdjudicationContext(attack, history).find(
+    (entry) => entry.adjudicationId === relatedId,
+  );
+  if (prior?.verdict !== "valid" || !prior.canonicalDefectId || !prior.severity)
+    return attack;
+  return {
+    ...attack,
+    rootDefectId: prior.canonicalDefectId,
+    severity: prior.severity,
+    adjudication: {
+      ...attack.adjudication,
+      canonicalDefectId: prior.canonicalDefectId,
+      severity: prior.severity,
+    },
+  };
 }
 
 function canonical(value: unknown): string {
@@ -166,6 +196,9 @@ export function priorAdjudicationContext(
       oracle: candidate.oracle,
       verdict: candidate.adjudication!.verdict,
       rationale: candidate.adjudication!.rationale,
+      ...(candidate.adjudication!.canonicalDefectId
+        ? { canonicalDefectId: candidate.adjudication!.canonicalDefectId }
+        : {}),
       ...(candidate.evidenceFingerprint
         ? { evidenceFingerprint: candidate.evidenceFingerprint }
         : {}),

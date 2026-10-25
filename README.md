@@ -289,6 +289,21 @@ Focused checks: `test:unit`, `test:integration`, and `test:smoke`. CI uses fake
 providers and temporary repositories, without network or paid provider sessions.
 Live checks are manual; `npm run test:live` skips unless `AGENT_ARENA_LIVE=1`.
 
+Run a real Codex-only stateful duel in a fresh local repository:
+
+```bash
+AGENT_ARENA_LIVE=1 npm run test:live:codex-stateful -- --case outbox \
+  --models gpt-6-luna,gpt-6.1-sol --require-signal
+```
+
+Use `--case cache` for stale-load, TTL, and LRU coverage. Model IDs are optional
+and must be available to your Codex account. These checks use real providers,
+two fixed rounds, and explicit per-stage time limits; they expose no MCP
+servers and perform no GitHub writes. Results and disposable repositories stay
+under `.context/live-stateful/`. `--require-signal` fails the check if no damage,
+healing, or recoil was recorded; it never changes scoring or forces an attack.
+Without `AGENT_ARENA_LIVE=1`, the command skips before building or starting a
+provider session.
 Found a bug or have an idea? [Open an issue](https://github.com/JDKrasnick/agentarena/issues).
 For a change, include the problem, approach, and validation in your pull request.
 

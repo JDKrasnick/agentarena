@@ -46,6 +46,19 @@ import type {
 import type { TaskEffortDimensions, TokenTelemetry } from "../effort/policy.js";
 import type { ProviderStreamKind } from "./provider-stream.js";
 
+async function persistJudgePrompt(
+  input: { promptPath: string; transcriptPrefix: string },
+  prompt: string,
+): Promise<void> {
+  for (const target of new Set([
+    input.promptPath,
+    `${input.transcriptPrefix}.prompt.md`,
+  ])) {
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, prompt, "utf8");
+  }
+}
+
 async function runObservedProcess(
   request: ProcessRequest,
   observation?: {
@@ -665,7 +678,7 @@ export function providerCommand(
   );
   const codexExecutionArgs = selectedCodexDefinitions.length
     ? ["--dangerously-bypass-approvals-and-sandbox"]
-    : ["--full-auto"];
+    : ["--sandbox", "workspace-write", "-c", 'approval_policy="never"'];
   switch (id) {
     case "codex":
       return {
@@ -1101,6 +1114,7 @@ export function createProviderAdapter(
 }
 
 const AttackVerdictSchema = z.object({
+  evidenceSufficient: z.boolean(),
   relevant: z.boolean(),
   oracleSupported: z.boolean(),
   oracleRationale: z.string(),
@@ -1112,6 +1126,14 @@ const AttackVerdictSchema = z.object({
     .optional(),
   priorAdjudicationId: z.string().min(1).optional(),
 });
+
+function judgeEvidenceInstructions(outputPath: string): string {
+  return [
+    "Use only the supplied packet and its listed immutable artifact paths as evidence. Do not modify evidence, inspect unrelated files, execute repository code, or run tests.",
+    "You may use read-only file tools or shell commands solely to read the listed artifact paths. Reading those files is permitted even when no dedicated file-reading tool is available.",
+    `You may use file-writing tools or shell commands solely to create the verdict at ${outputPath}. Write that file before finishing; an assistant message alone is not a submission.`,
+  ].join("\n");
+}
 
 const JudgeAttackVerdictSchema = z.object({
   decision: z.enum(["confirmed", "supported_untestable", "rejected", "unable"]),
@@ -1203,7 +1225,7 @@ export class CommandAttackVerifier implements AttackVerifier {
           ]
         : []),
     ].join("\n\n");
-    await writeFile(input.promptPath, prompt, "utf8");
+    await persistJudgePrompt(input, prompt);
     await rm(outputPath, { force: true });
     const result = await runObservedProcess(
       {
@@ -1308,6 +1330,11 @@ export class CommandAttackVerifier implements AttackVerifier {
   async assess(input: AnonymizedAttackInput): Promise<AttackVerdict> {
     const outputPath = path.join(input.worktree, ".agent-arena-verdict.json");
     const patchBytes = await readFile(input.attack.patchPath);
+    const attackEvidencePath = path.join(
+      input.worktree,
+      ".agent-arena-judge-attack.diff",
+    );
+    await writeFile(attackEvidencePath, patchBytes);
     const sourcePointers = await stageJudgeSources(
       input.runSpec,
       input.worktree,
@@ -1334,6 +1361,7 @@ export class CommandAttackVerifier implements AttackVerifier {
           artifactId: "attack-overlay",
           sha256: sha256(patchBytes),
           description: "Executable attack overlay",
+          path: attackEvidencePath,
         },
       ],
     });
@@ -1342,13 +1370,16 @@ export class CommandAttackVerifier implements AttackVerifier {
       "You do not know either contestant's identity. Mechanical execution already established an author-side pass and target-side failure.",
       "Assess only oracle support, task relevance, canonical root-defect identity, and the lowest fully supported severity.",
       "Do not infer correctness from the test or the presence of a source ID. Read the frozen task and source text and confirm that it clearly supports the claimed expected behavior. Critical means security bypass/data loss/corruption/catastrophic failure; High means a core criterion, normal crash/hang, or major wrong result; Medium is a realistic edge or secondary requirement; Low is narrow robustness/performance impact. Ambiguous High/Critical must be capped at Medium.",
+      "Read the executable attack overlay as well as the frozen sources. Check that its trigger is reachable through supported operations or a realistic persisted state supported by the task. A passing differential does not validate a test that depends on private representation, directly manufactures unsupported internal state, or requires infeasible resource counts. Unless the frozen contract explicitly requires that scenario, reject such a claim as irrelevant rather than rescuing it with Low severity. State the supported trigger in the rationale.",
       "",
       "# Digest-linked identity-blind judge packet",
       JSON.stringify(packet, null, 2),
-      "Read any packet artifact path only as immutable evidence. Do not edit it or execute commands.",
+      judgeEvidenceInstructions(outputPath),
+      "Set evidenceSufficient to false if required source evidence cannot be accessed or is insufficient to assess the oracle. Inability to assess is not an unsupported oracle and must not be reported as a rejection.",
       "",
-      "When prior adjudications are supplied, classify the claim as independent, affirm, overturn, or unresolved and name the related adjudication. Overturn requires material contradictory evidence.",
-      `Write only valid JSON to ${outputPath} with keys relevant, oracleSupported, oracleRationale, rootDefectId, severity, rationale, optional relationship, and optional priorAdjudicationId.`,
+      "When prior adjudications are supplied, classify the claim as independent, affirm, overturn, or unresolved. For independent claims, omit priorAdjudicationId; unrelated prior records do not create a relationship. For affirm, overturn, or unresolved, name the exact related priorAdjudicationId. Overturn requires material contradictory evidence.",
+      `Write only valid JSON to ${outputPath} with keys evidenceSufficient, relevant, oracleSupported, oracleRationale, rootDefectId, severity, rationale, optional relationship, and optional priorAdjudicationId.`,
+      'The first three fields are booleans; oracleRationale, rootDefectId, and rationale are nonempty strings. severity must be exactly "critical", "high", "medium", or "low", including for rejected claims; it does not assign damage when relevant or oracleSupported is false.',
       ...(input.retryReason
         ? [
             "",
@@ -1358,6 +1389,7 @@ export class CommandAttackVerifier implements AttackVerifier {
           ]
         : []),
     ].join("\n");
+    await persistJudgePrompt(input, prompt);
     await rm(outputPath, { force: true });
     const result = await runObservedProcess(
       {
@@ -1396,6 +1428,10 @@ export class CommandAttackVerifier implements AttackVerifier {
         AttackVerdictSchema,
         await readFile(outputPath, "utf8"),
       );
+      if (!verdict.evidenceSufficient)
+        throw new Error(
+          `Insufficient judge evidence: ${verdict.oracleRationale || verdict.rationale}`,
+        );
       return {
         relevant: verdict.relevant,
         oracleSupported: verdict.oracleSupported,
@@ -1510,11 +1546,12 @@ export class CommandAttackVerifier implements AttackVerifier {
     });
     const prompt = [
       "# Neutral Agent Arena semantic adjudication",
-      "Contestant identities are unavailable. Do not execute commands or modify evidence.",
+      "Contestant identities are unavailable.",
+      judgeEvidenceInstructions(outputPath),
       "Use confirmed only for definitive semantic evidence, supported_untestable only when the task clearly supports the oracle and evidence points to the defect, rejected when unsupported, and unable when evidence is insufficient.",
       JSON.stringify(packet, null, 2),
       "Read the digest-linked target patch, attack overlay, and diagnostics from the packet artifact paths before deciding.",
-      "When prior adjudications are supplied, classify the claim as independent, affirm, overturn, or unresolved and name the related adjudication. A pass on a changed target patch is repair evidence, not an overturn.",
+      "When prior adjudications are supplied, classify the claim as independent, affirm, overturn, or unresolved. For independent claims, omit priorAdjudicationId; otherwise name the exact related priorAdjudicationId. A pass on a changed target patch is repair evidence, not an overturn.",
       `Write only valid JSON to ${outputPath} with keys decision, relevant, expectedBehaviorClearlySupported, evidencePointsToDefect, optional rootDefectId, optional severity, rationale, optional relationship, and optional priorAdjudicationId.`,
       ...(input.retryReason
         ? [
@@ -1524,6 +1561,7 @@ export class CommandAttackVerifier implements AttackVerifier {
           ]
         : []),
     ].join("\n\n");
+    await persistJudgePrompt(input, prompt);
     await rm(outputPath, { force: true });
     const result = await runObservedProcess(
       {
@@ -1639,7 +1677,8 @@ export class CommandAttackVerifier implements AttackVerifier {
     });
     const prompt = [
       "# Neutral Agent Arena repair adjudication",
-      "Contestant identities are unavailable. Do not execute commands or modify evidence.",
+      "Contestant identities are unavailable.",
+      judgeEvidenceInstructions(outputPath),
       "Decide repaired only when the candidate patch clearly fixes the immutable claim and oracle without changing their meaning. Decide not_repaired when it clearly does not. Decide unable when the bounded evidence is insufficient.",
       "Read any packet artifact path only as immutable task evidence.",
       JSON.stringify(packet, null, 2),
@@ -1652,6 +1691,7 @@ export class CommandAttackVerifier implements AttackVerifier {
           ]
         : []),
     ].join("\n\n");
+    await persistJudgePrompt(input, prompt);
     await rm(outputPath, { force: true });
     const schema = z.object({
       decision: z.enum(["repaired", "not_repaired", "unable"]),

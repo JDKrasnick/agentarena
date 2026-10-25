@@ -7,6 +7,24 @@ import {
 import { makeRunState } from "../helpers/run-state.js";
 
 describe("recommended patch selection", () => {
+  it("does not describe an unavailable quality judgment as equivalent patches", () => {
+    const state = makeRunState();
+    const recommendation = selectRecommendedPatch({
+      contestants: state.contestants,
+      outcomeKind: "non_discriminating",
+      qualityVerdict: {
+        version: 1,
+        verdict: "inconclusive",
+        criteria: [],
+        rationale: ["Quality verifier failed after the targeted retry."],
+      },
+    });
+    expect(recommendation.contestantId).toBeUndefined();
+    expect(recommendation.rationale).toEqual([
+      "The identity-blind quality comparison was inconclusive; no quality recommendation is available.",
+    ]);
+  });
+
   it("can recommend the cleaner 95 HP patch when the margin is recoil only", () => {
     const state = makeRunState();
     expect(

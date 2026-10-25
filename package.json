@@ -40,6 +40,7 @@
     "test:coverage": "vitest run test/unit test/integration --coverage.enabled --coverage.reporter=text --coverage.reporter=json-summary",
     "test:live": "tsx test/live/run.ts",
     "test:live:codex-mcp": "tsx test/live/codex-mcp-isolation.ts",
+    "test:live:codex-stateful": "tsx test/live/codex-stateful.ts",
     "demo:dashboard": "tsx test/live/dashboard-demo.tsx",
     "demo:web": "npm run build:web && tsx test/live/web-dashboard-demo.ts",
     "demo:window": "npm run build && tsx test/live/web-dashboard-demo.ts --window",

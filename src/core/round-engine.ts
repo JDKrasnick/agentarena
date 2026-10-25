@@ -50,6 +50,7 @@ import {
   validateSiegeAttack,
 } from "../attacks/validate.js";
 import {
+  bindAffirmedDefect,
   evidenceFingerprint,
   priorAdjudicationContext,
 } from "../attacks/challenges.js";
@@ -99,6 +100,7 @@ import {
 import { collectPatchQualityFacts } from "../quality/collect-facts.js";
 import {
   inconclusiveQualityVerdict,
+  loadPatchQualitySources,
   type PatchQualityVerifier,
 } from "../quality/verifier.js";
 import { compareQualityWithRetry } from "../quality/retry.js";
@@ -3260,6 +3262,7 @@ export class RoundEngine {
       name: string;
       subject: string;
       patches?: readonly string[];
+      evidencePatches?: readonly string[];
       contestantId?: ContestantId;
       attackId?: string;
       laneId?: string;
@@ -3272,6 +3275,7 @@ export class RoundEngine {
       name: options.name,
       subject: options.subject,
       patches: options.patches ?? [],
+      evidencePatches: options.evidencePatches ?? [],
       persistFailureRecord: (record) =>
         this.persistFailureRecord(context, record),
       terminalDisposition: options.runLevel
@@ -9140,7 +9144,8 @@ export class RoundEngine {
               const checkTree = await this.prepareWorktree(context, {
                 name: `round-${String(round)}-repair-attempt-${agent}-${String(attemptNumber)}-validation-${String(validationAttempt)}-${attack.id}`,
                 subject: `repair-attempt-case-worktree:${String(round)}:${agent}:${String(attemptNumber)}:${String(validationAttempt)}:${attack.id}`,
-                patches: [candidatePath, attack.patchPath],
+                patches: [candidatePath],
+                evidencePatches: [attack.patchPath],
                 contestantId: agent,
                 attackId: attack.id,
                 runLevel: true,
@@ -9600,7 +9605,8 @@ export class RoundEngine {
               const caseTree = await this.prepareWorktree(context, {
                 name: `round-${String(round)}-heal-${agent}-${caseEntry.id}`,
                 subject: `heal-case-worktree:${String(round)}:${agent}:${caseEntry.id}`,
-                patches: [currentPatch, caseEntry.patchPath],
+                patches: [currentPatch],
+                evidencePatches: [caseEntry.patchPath],
                 contestantId: agent,
                 attackId: attack.id,
                 runLevel: true,
@@ -10065,6 +10071,7 @@ export class RoundEngine {
     history: readonly Attack[] = context.state.attacks,
   ): Promise<void> {
     result.adjudication = normalizeAttackAdjudication(result);
+    Object.assign(result, bindAffirmedDefect(result, history));
     const priorCanonicals = result.targets.map((target) =>
       getContestant(context.state, target).healthLedger.canonicalDefects?.find(
         (defect) =>
@@ -10691,7 +10698,8 @@ export class RoundEngine {
                 caseTree = await this.prepareWorktree(context, {
                   name: `final-${agent}-${caseEntry.id}`,
                   subject: `final-case-worktree:${agent}:${caseEntry.id}`,
-                  patches: [currentPatch, caseEntry.patchPath],
+                  patches: [currentPatch],
+                  evidencePatches: [caseEntry.patchPath],
                   contestantId: agent,
                   attackId: attack.id,
                   runLevel: true,
@@ -11037,6 +11045,7 @@ export class RoundEngine {
         );
         const input = {
           taskContract: context.runSpec.task,
+          taskSources: await loadPatchQualitySources(context.runSpec.task),
           finalValidation: Object.fromEntries(
             (["a", "b"] as const).map((contestantId) => [
               contestantId === anonymizationMap.patch_a ? "patch_a" : "patch_b",
@@ -11065,6 +11074,7 @@ export class RoundEngine {
         await context.store.writeImmutableJson("quality/input.json", {
           ...input,
           signal: undefined,
+          observer: undefined,
           worktree: undefined,
           transcriptPrefix: undefined,
         });

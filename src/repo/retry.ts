@@ -11,6 +11,7 @@ export async function prepareWorktreeWithRetry(options: {
   worktrees: WorktreeManager;
   name: string;
   patches?: readonly string[];
+  evidencePatches?: readonly string[];
   subject: string;
   persistFailureRecord?: (record: FailureRecord) => Promise<void>;
   terminalDisposition?: Exclude<FailureDisposition, "recovered">;
@@ -21,8 +22,12 @@ export async function prepareWorktreeWithRetry(options: {
 }): Promise<string> {
   const now = options.now ?? (() => new Date());
   const patches = options.patches ?? [];
+  const evidencePatches = options.evidencePatches ?? [];
+  const artifactRefs = [...patches, ...evidencePatches];
   const causalDigest = createHash("sha256")
-    .update(JSON.stringify({ subject: options.subject, patches }))
+    .update(
+      JSON.stringify({ subject: options.subject, patches, evidencePatches }),
+    )
     .digest("hex");
   let record: FailureRecord | undefined;
   let lastError: unknown;
@@ -41,6 +46,8 @@ export async function prepareWorktreeWithRetry(options: {
       );
       for (const patch of patches)
         await options.worktrees.applyPatch(worktree, patch);
+      for (const patch of evidencePatches)
+        await options.worktrees.applyEvidencePatch(worktree, patch);
       if (record) {
         record = FailureRecordSchema.parse({
           ...record,
@@ -51,7 +58,7 @@ export async function prepareWorktreeWithRetry(options: {
               startedAt,
               finishedAt: now().toISOString(),
               status: "succeeded",
-              diagnosticArtifactRefs: [...patches],
+              diagnosticArtifactRefs: [...artifactRefs],
             },
           ],
           terminalDisposition: "recovered",
@@ -77,11 +84,11 @@ export async function prepareWorktreeWithRetry(options: {
             startedAt,
             finishedAt: now().toISOString(),
             status: "failed",
-            diagnosticArtifactRefs: [...patches],
+            diagnosticArtifactRefs: [...artifactRefs],
           },
         ],
-        reusedArtifactRefs: [...patches],
-        diagnosticArtifactRefs: [...patches],
+        reusedArtifactRefs: [...artifactRefs],
+        diagnosticArtifactRefs: [...artifactRefs],
         ...(options.contestantId ? { contestantId: options.contestantId } : {}),
         ...(options.attackId ? { attackId: options.attackId } : {}),
         ...(options.laneId ? { laneId: options.laneId } : {}),

@@ -47,7 +47,11 @@ judge call, bounded to six same-target records. The judge returns an
 independent, affirm, overturn, or unresolved relationship with its rationale.
 Affirmations never score twice, but their reproducers join the canonical
 defect's repair and final-verification set. A failing affirm after healing
-reactivates the existing canonical damage without adding damage. Overturns
+reactivates the existing canonical damage without adding damage. Its canonical
+identity and severity come from the referenced decision, even if the judge
+renames the variant. A trusted failing final reproducer completes evidence
+coverage while retaining active damage; missing or infrastructure-failed
+reproducers still prevent full confidence. Overturns
 append recoil refunds or defect-damage corrections and mark withdrawn defects
 superseded; unresolved challenges keep the prior score temporarily but prevent
 full-confidence completion.
@@ -931,7 +935,10 @@ names, and supported transient definitions without literal or
 environment-backed credential material. Every frozen-policy Codex child ignores
 ambient user configuration, disables Apps, and receives only those selected
 definitions, including an explicit empty tool allowlist that exposes zero
-tools. A Codex child with an approved selected server uses the CLI's
+tools. Without a selected server, Codex uses explicit `workspace-write`
+sandboxing with approval policy `never` for unattended execution rather than
+the removed `--full-auto` shorthand. A Codex child with an approved selected
+server uses the CLI's
 explicit approval-and-sandbox bypass because MCP calls otherwise require
 interactive approval and are cancelled by non-interactive `exec`. The selected
 allowlist remains exact, and this execution mode is covered by the required
@@ -1070,6 +1077,12 @@ damage is applied. Unsupported or genuinely ambiguous expected behavior is
 `unproven`, misses, and deals recoil. The report must label landed attacks as
 additional evidence, not ground truth.
 
+The primary judge must explicitly report whether evidence is sufficient.
+Missing or inaccessible evidence is retried and follows score-neutral
+fallback/coverage handling; it must not be treated as an unsupported oracle.
+Judges may use read-only file tools or shell commands only for the listed
+immutable evidence paths, and may write only the specified verdict file.
+
 ### Repair reproducers and regression checks
 
 Every mechanically landed defect keeps its executable reproducer. After each
@@ -1080,6 +1093,13 @@ accepted reproducers for that canonical defect pass. For judge-based defects
 whose mechanics remain unavailable, an immutable digest-bound repair judgment
 records `repaired`, `not_repaired`, or `unable`; `unable` leaves damage active
 and degrades coverage.
+
+Accepted test overlays are reconstructed from their original Git preimages
+and replayed as immutable file postimages during repair and final verification.
+This preserves accepted assertions even when a candidate changes the same test
+paths, without changing candidate production files or either captured patch.
+Same-path test edits therefore cannot suppress a reproducer or become an
+add/add harness failure.
 
 ### Bounded failure handling and judge fallback
 
@@ -1211,6 +1231,12 @@ advantage, strongest counterweight, and why the advantage is material. Balanced
 evidence is `equivalent`; missing, contradictory, or ambiguous evidence is
 `inconclusive`. Task text supplies requirements evidence, but task and patch
 contents cannot alter the judge's role, rubric, protocol, or output contract.
+The quality bundle includes the digest-checked contents of frozen task sources,
+not just their paths and metadata. It excludes runtime observers and signals.
+The judge may use a file-writing tool only to create its specified verdict
+artifact; the evidence bundle remains its sole source, with no repository
+inspection or additional validation. An unavailable or inconclusive comparison
+is reported as such rather than described as an equivalence finding.
 Equivalent, inconclusive, disabled, or twice-failed comparison
 produces no recommendation, and neither patch size nor the raw ledger may
 supply a fallback. In that case both choices use stable contestant order

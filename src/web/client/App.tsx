@@ -934,7 +934,9 @@ export function ResultScreen({
               ? recommendedId
                 ? "The arena produced no champion; the recommended patch comes only from a separate identity-blind quality comparison."
                 : "The arena produced no champion or automatic recommendation. Inspect either eligible patch and record an explicit choice."
-              : "The recommendation is evidence-backed; inspect the selected patch before merging."}
+              : recommendedId
+                ? "The recommendation is evidence-backed; inspect the selected patch before merging."
+                : "No automatic patch recommendation is available. Inspect the eligible patches and record an explicit choice."}
         </p>
         <div>
           {state.links.map((link) => (

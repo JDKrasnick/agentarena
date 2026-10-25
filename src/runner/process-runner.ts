@@ -232,7 +232,7 @@ function findTransportFailures(
         ? "mcp_auth"
         : /reconnect(?:ing|ed)?/i.test(detail)
           ? "reconnect"
-          : /(transport|connection)\s+(?:error|failed|closed|lost)/i.test(
+          : /(?:failed to authenticate|authentication (?:failed|required)|oauth session expired|not (?:logged|signed) in)|(?:transport|connection)\s+(?:error|failed|closed|lost)/i.test(
                 detail,
               )
             ? "transport"

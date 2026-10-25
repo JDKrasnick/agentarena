@@ -2,7 +2,59 @@
 
 Core duel and GitHub delivery status: complete as of 2026-07-30.
 
-Battle-mode release matrix status: pending explicit authorization.
+Battle-mode release matrix status: incomplete; local Codex mirror validation is
+recorded below. Cross-provider controls require an available second provider.
+
+## 2026-10-25 real Codex mirrors
+
+The user authorized real local battles and explicitly excluded Claude because
+the account is unavailable. All runs used disposable repositories under
+`.context/live-stateful/`; no GitHub delivery or patch application was requested.
+
+- Outbox run `2026-10-25T060418099Z-3ad7b4a6` completed with full coverage and
+  final health **95–100**, using `gpt-5.6-luna` versus `gpt-6.1-sol`. Two genuine
+  defects landed (30 and 15 HP), both healed; an unsupported exact exception-type
+  claim incurred 5 HP recoil. Champion B was reported, with patch recommendation
+  withheld because final correctness evidence did not distinguish the patches.
+- Cache run `2026-10-25T062408602Z-ed2db7e0` completed with full coverage on the
+  same model pair. A fractional-TTL defect landed for 15 HP and healed, yielding
+  a legitimate 100–100 tie. An anonymized quality comparison recommended A.
+- A three-round outbox diagnostic run,
+  `2026-10-25T055609181Z-dfb45508`, remained provisional. Independent replay
+  exposed renamed affirmations that had lost their canonical repair/final-check
+  membership. The fix binds identity and severity to the referenced decision;
+  replay of copies of the real decisions now reopens A to 70 and B to 85 and
+  includes both variants. Historical sealed results were not rewritten.
+- A fresh two-round outbox run, `2026-10-25T063606455Z-099010fc`, also finished
+  95–100 after two landed defects healed and an invalid oracle incurred recoil.
+  It is **provisional**, not a full-coverage success: Codex rejected B's second
+  attack-construction request with `cyber_policy`, before generating any evidence,
+  and rejected the targeted retry. The provider's own session record supplied the
+  reason; the CLI's normalized battle transcripts were empty. Arena retained the
+  unresolved lane and withheld confident delivery. No prompt changes were made
+  to bypass the provider restriction.
+
+These runs exposed and drove fixes for removed Codex CLI arguments, inaccessible
+judge evidence, contradictory verdict-writing instructions, test-path collisions
+during repair, and lost affirmation identity. Trusted failing final reproducers
+retain active damage without being mislabeled missing coverage. Missing or
+infrastructure-failed evidence continues to withhold confidence.
+
+The Electron result screen was checked using recorded real run events, including
+fighter evidence/history, reload, and the withheld-recommendation footer. This
+was a replay of the real run, not an additional provider battle. Screenshot:
+`.context/battle-check/real-results.png`.
+
+Independent late probes found additional implementation defects outside the
+accepted battle evidence. They were retained as diagnostics and did not alter
+sealed scores. Full coverage describes completed required lanes, not proof that
+either generated implementation has no remaining bugs.
+
+Reproduce with `AGENT_ARENA_LIVE=1 npm run test:live:codex-stateful -- --case
+outbox --rounds 2 --models gpt-5.6-luna,gpt-6.1-sol --require-signal`. The flag
+asserts that real health events occurred; it never changes scoring or forces
+unequal final HP. Use `--case cache` for the second task. Each run saves its
+summary under `.agent-arena/LIVE-CHECK.json` in the disposable repository.
 
 ## 2026-07-31 stopped GPT-5.4 mirror attempt
 

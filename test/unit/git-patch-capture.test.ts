@@ -1,4 +1,12 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execa } from "execa";
@@ -33,6 +41,130 @@ async function rawDiff(
 }
 
 describe("Git patch capture integrity", () => {
+  it("never writes accepted evidence through a candidate's directory symlink", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const baseCommit = (
+      await execa("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot })
+    ).stdout;
+    const temporaryRoot = await mkdtemp(
+      path.join(os.tmpdir(), "arena-evidence-link-"),
+    );
+    const outside = await mkdtemp(
+      path.join(os.tmpdir(), "arena-outside-canary-"),
+    );
+    const worktrees = new WorktreeManager(
+      repositoryRoot,
+      temporaryRoot,
+      baseCommit,
+    );
+    await worktrees.initialize();
+    try {
+      await writeFile(path.join(outside, "evidence.txt"), "outside canary\n");
+      const source = await worktrees.create("source");
+      await writeFile(
+        path.join(source, "test/evidence.txt"),
+        "immutable evidence\n",
+      );
+      const patch = path.join(temporaryRoot, "evidence.diff");
+      await worktrees.capturePatch(source, patch, undefined, true);
+      const candidate = await worktrees.create("candidate");
+      await rm(path.join(candidate, "test"), { recursive: true });
+      await symlink(outside, path.join(candidate, "test"), "dir");
+      // Git may replace the link or refuse it; it must never traverse it.
+      await worktrees
+        .applyEvidencePatch(candidate, patch)
+        .catch(() => undefined);
+      expect(await readFile(path.join(outside, "evidence.txt"), "utf8")).toBe(
+        "outside canary\n",
+      );
+    } finally {
+      await worktrees.cleanup();
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("replays immutable test postimages over conflicting repairs without altering production", async () => {
+    const repositoryRoot = await createSlugRepository();
+    await writeFile(
+      path.join(repositoryRoot, "test/remove-me.txt"),
+      "fixture\n",
+    );
+    const baseCommit = await commitAll(repositoryRoot, "Evidence fixture");
+    const temporaryRoot = await mkdtemp(
+      path.join(os.tmpdir(), "arena-evidence-"),
+    );
+    const worktrees = new WorktreeManager(
+      repositoryRoot,
+      temporaryRoot,
+      baseCommit,
+    );
+    await worktrees.initialize();
+    try {
+      const source = await worktrees.create("evidence");
+      const existingTest = "test/slug.test.mjs";
+      const addedTest = "test/accepted.test.mjs";
+      const immutable = 'throw new Error("original accepted assertion");\n';
+      await writeFile(path.join(source, existingTest), immutable);
+      await writeFile(path.join(source, addedTest), immutable);
+      const binary = Buffer.from([0, 1, 255, 13, 10, 0, 17]);
+      await writeFile(path.join(source, "test/binary.dat"), binary);
+      await writeFile(path.join(source, "test/run.sh"), "#!/bin/sh\nexit 1\n");
+      await chmod(path.join(source, "test/run.sh"), 0o755);
+      await rm(path.join(source, "test/remove-me.txt"));
+      const evidencePath = path.join(temporaryRoot, "evidence.diff");
+      await worktrees.capturePatch(source, evidencePath, undefined, true);
+      const evidenceBytes = await readFile(evidencePath);
+
+      const candidate = await worktrees.create("candidate");
+      const production = 'export function slug(value) { return "repaired"; }\n';
+      await writeFile(path.join(candidate, "src/slug.mjs"), production);
+      await writeFile(
+        path.join(candidate, existingTest),
+        "// weakened assertion\n",
+      );
+      await writeFile(
+        path.join(candidate, addedTest),
+        "// same-path regression\n",
+      );
+      await writeFile(path.join(candidate, "test/binary.dat"), "different\n");
+      await writeFile(path.join(candidate, "test/remove-me.txt"), "changed\n");
+      const candidatePath = path.join(temporaryRoot, "candidate.diff");
+      await worktrees.capturePatch(candidate, candidatePath, undefined, true);
+      const candidateBytes = await readFile(candidatePath);
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt === 1)
+          await writeFile(
+            path.join(candidate, "test/remove-me.txt"),
+            "untracked replacement\n",
+          );
+        await worktrees.applyEvidencePatch(candidate, evidencePath);
+        expect(await readFile(path.join(candidate, existingTest), "utf8")).toBe(
+          immutable,
+        );
+        expect(await readFile(path.join(candidate, addedTest), "utf8")).toBe(
+          immutable,
+        );
+        expect(await readFile(path.join(candidate, "test/binary.dat"))).toEqual(
+          binary,
+        );
+        expect(
+          (await stat(path.join(candidate, "test/run.sh"))).mode & 0o111,
+        ).toBe(0o111);
+        await expect(
+          stat(path.join(candidate, "test/remove-me.txt")),
+        ).rejects.toThrow();
+        expect(
+          await readFile(path.join(candidate, "src/slug.mjs"), "utf8"),
+        ).toBe(production);
+      }
+      expect(await readFile(evidencePath)).toEqual(evidenceBytes);
+      expect(await readFile(candidatePath)).toEqual(candidateBytes);
+    } finally {
+      await worktrees.cleanup();
+    }
+  });
+
   it("keeps provider pathspec errors outside the integrity boundary with readable diagnostics", async () => {
     const repositoryRoot = await createSlugRepository();
     const baseCommit = (

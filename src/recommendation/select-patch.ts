@@ -174,7 +174,7 @@ export function selectRecommendedPatch(
         input.qualityVerdict?.verdict === "equivalent"
           ? "The identity-blind quality comparison found the eligible patches equivalent."
           : input.qualityVerdict?.verdict === "inconclusive"
-            ? "The identity-blind quality comparison found no reliable differentiator."
+            ? "The identity-blind quality comparison was inconclusive; no quality recommendation is available."
             : "No identity-blind quality recommendation was available.",
       ],
       comparison,

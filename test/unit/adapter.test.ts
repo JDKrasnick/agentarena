@@ -177,7 +177,15 @@ describe("provider model selection", () => {
 
     const args = providerCommand("codex", undefined, policy).args;
     expect(args.join(" ")).not.toContain("unsafe.name");
-    expect(args).toContain("--full-auto");
+    expect(args).not.toContain("--full-auto");
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--sandbox",
+        "workspace-write",
+        "-c",
+        'approval_policy="never"',
+      ]),
+    );
     expect(args).not.toContain("--dangerously-bypass-approvals-and-sandbox");
   });
 

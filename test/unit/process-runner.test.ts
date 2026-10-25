@@ -348,14 +348,14 @@ describe("process runner supervision", () => {
       type: "item.completed",
       item: { type: "agent_message", text: "heartbeat" },
     });
-    const program = `setInterval(() => console.log(${JSON.stringify(activity)}), 60)`;
+    const program = `console.log(${JSON.stringify(activity)}); setInterval(() => console.log(${JSON.stringify(activity)}), 60)`;
 
     const result = await runProcess({
       executable: process.execPath,
       args: ["-e", program],
       cwd: root,
-      timeoutMs: 120,
-      absoluteTimeoutMs: 320,
+      timeoutMs: 500,
+      absoluteTimeoutMs: 1_500,
       logPrefix: path.join(root, "logs", "absolute"),
       providerStream: "codex",
     });
@@ -412,6 +412,21 @@ describe("process runner supervision", () => {
       "mcp_auth",
       "reconnect",
     ]);
+  });
+
+  it("records provider login failure without requiring MCP or connection wording", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "arena-auth-"));
+    const detail =
+      "Failed to authenticate: OAuth session expired and could not be refreshed";
+    const result = await runProcess({
+      executable: process.execPath,
+      args: ["-e", `console.log(${JSON.stringify(detail)}); process.exit(1)`],
+      cwd: root,
+      timeoutMs: 2_000,
+      logPrefix: path.join(root, "logs", "auth"),
+    });
+    expect(result.transportFailures).toEqual([{ kind: "transport", detail }]);
+    expect(result.timedOut).toBe(false);
   });
 
   it("classifies a fatal MCP transport configuration error", async () => {
@@ -498,7 +513,7 @@ describe("process runner supervision", () => {
       executable: process.execPath,
       args: ["-e", program],
       cwd: root,
-      timeoutMs: 50,
+      timeoutMs: 500,
       logPrefix: path.join(root, "logs", "mcp-active"),
       providerStream: "codex",
     });

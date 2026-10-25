@@ -289,12 +289,60 @@ export function assessBattleCoverage(
     if (finalEvidenceInfrastructure)
       reasonCodes.push("final_reproducer_infrastructure");
     if (finalEvidenceSemanticFailure)
-      reasonCodes.push("final_reproducer_failed");
+      reasonCodes.push("final_reproducer_confirms_active_defect");
     const targetRound = state.contestants[target]?.rounds.find(
       (entry) => entry.round === round,
     );
+    const priorAttemptIds = new Set(
+      state.contestants[target]?.rounds
+        .filter(
+          (entry) => typeof entry.round === "number" && entry.round < round,
+        )
+        .flatMap((entry) =>
+          (entry.repairAttempts ?? (entry.repair ? [entry.repair] : [])).map(
+            (_, index) =>
+              stableId(
+                "repair-attempt",
+                state.runId,
+                String(entry.round),
+                target,
+                String(index + 1),
+              ),
+          ),
+        ) ?? [],
+    );
+    const repairAllowanceExhausted =
+      hasRepairableDefect &&
+      usable
+        .filter(
+          (entry) =>
+            entry.status === "landed" || entry.status === "shared_defect",
+        )
+        .every((entry) => {
+          if (entry.status !== "landed") return false;
+          const canonical = state.contestants[
+            target
+          ]?.healthLedger.canonicalDefects?.find(
+            (defect) => defect.rootDefectId === entry.rootDefectId,
+          );
+          if (!canonical || canonical.status !== "active") return false;
+          const allowance =
+            canonical.repairAllowance ??
+            (canonical.baseSeverity === "high" ||
+            canonical.baseSeverity === "critical"
+              ? 3
+              : 2);
+          return (
+            canonical.repairAttemptIds.filter((id) => priorAttemptIds.has(id))
+              .length >= allowance
+          );
+        });
     const repairRequired =
-      hasRepairableDefect && targetRound?.postAttackStatus !== "downed";
+      hasRepairableDefect &&
+      targetRound?.postAttackStatus !== "downed" &&
+      !repairAllowanceExhausted;
+    if (repairAllowanceExhausted)
+      reasonCodes.push("repair_allowance_exhausted");
     const repairAttempts =
       targetRound?.repairAttempts ??
       (targetRound?.repair ? [targetRound.repair] : []);
@@ -371,9 +419,7 @@ export function assessBattleCoverage(
         ...(finalEvidenceRequired
           ? [
               attempt(
-                finalEvidenceResolved && !finalEvidenceSemanticFailure
-                  ? "succeeded"
-                  : "failed",
+                finalEvidenceResolved ? "succeeded" : "failed",
                 finalChecks.flatMap((check) =>
                   check.command
                     ? [check.command.stdoutPath, check.command.stderrPath]
@@ -383,9 +429,7 @@ export function assessBattleCoverage(
                   ? "final_reproducer_missing"
                   : finalEvidenceInfrastructure
                     ? "final_reproducer_infrastructure"
-                    : finalEvidenceSemanticFailure
-                      ? "final_reproducer_failed"
-                      : undefined,
+                    : undefined,
                 2,
               ),
             ]
@@ -431,8 +475,7 @@ export function assessBattleCoverage(
       (partial.length > 0 ||
         focused?.parseOutcome === "partial" ||
         review?.parseOutcome === "partial" ||
-        reasonCodes.includes("submitted_path_lost") ||
-        finalEvidenceSemanticFailure);
+        reasonCodes.includes("submitted_path_lost"));
     const evidenceBasis: CoverageLaneAssessment["evidenceBasis"] = explicitEmpty
       ? "explicit_empty"
       : partial.length
