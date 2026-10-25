@@ -11,6 +11,7 @@ import {
   resolveRound,
 } from "../../src/core/scoring.js";
 import type { Attack, ContestantResult } from "../../src/core/types.js";
+import { bindAffirmedDefect } from "../../src/attacks/challenges.js";
 
 function contestant(id: "a" | "b", patchSize = 20): ContestantResult {
   return {
@@ -517,19 +518,27 @@ describe("ledger scoring", () => {
       1,
     ).contestants.b!;
     const healed = healDefect(landed, "root", 1);
-    const affirm: Attack = {
+    const renamedAffirm: Attack = {
       ...original,
       id: "affirm-variant",
       round: 2,
+      rootDefectId: "judge-renamed-root",
+      challengeRelationship: "affirm",
+      relatedAdjudicationId: original.adjudication.id,
       adjudication: {
         ...original.adjudication,
         id: "adjudication:affirm-variant",
+        canonicalDefectId: "judge-renamed-root",
         relationship: "affirm",
         priorAdjudicationId: original.adjudication.id,
         scoreEffect: "none",
         exactAmount: 0,
       },
     };
+    const affirm = bindAffirmedDefect(renamedAffirm, [original]);
+    expect(defectEvidenceAttacks([original, affirm], "b", "root")).toHaveLength(
+      2,
+    );
 
     const affirmed = resolveRound(
       { a: contestant("a"), b: healed },

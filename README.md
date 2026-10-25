@@ -380,3 +380,19 @@ fakes, fake provider executables, and controlled check transitions. No network
 or paid provider session runs in CI. `npm run test:live` exits with a clear skip
 unless `AGENT_ARENA_LIVE=1`; live reads and disposable-repository writes remain
 manual, explicitly authorized release checks.
+
+Run a real Codex-only stateful duel in a fresh local repository:
+
+```bash
+AGENT_ARENA_LIVE=1 npm run test:live:codex-stateful -- --case outbox \
+  --models gpt-6-luna,gpt-6.1-sol --require-signal
+```
+
+Use `--case cache` for stale-load, TTL, and LRU coverage. Model IDs are optional
+and must be available to your Codex account. These checks use real providers,
+two fixed rounds, and explicit per-stage time limits; they expose no MCP
+servers and perform no GitHub writes. Results and disposable repositories stay
+under `.context/live-stateful/`. `--require-signal` fails the check if no damage,
+healing, or recoil was recorded; it never changes scoring or forces an attack.
+Without `AGENT_ARENA_LIVE=1`, the command skips before building or starting a
+provider session.

@@ -332,7 +332,8 @@ describe("PR battle modes", () => {
       `${path.sep}patches${path.sep}a-round-`,
     );
     expect(resumed.state.contestants.a?.checks[0]?.id).toBe("initial-required");
-  });
+    // This case executes both a three-round fight and recovery from its baseline.
+  }, 180_000);
 
   it("does not award a catch-up forfeit when the challenger is ineligible", async () => {
     const repositoryRoot = await createSlugRepository();

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bindAffirmedDefect,
   challengeRelationshipFailure,
   evidenceFingerprint,
   normalizedBrowserActionFingerprint,
@@ -43,6 +44,40 @@ function attack(id: string, round: 1 | 2 | 3): Attack {
 }
 
 describe("contextual adjudication challenges", () => {
+  it("binds renamed affirmations to the referenced defect and frozen severity", () => {
+    const original = {
+      ...attack("original", 1),
+      status: "landed" as const,
+      rootDefectId: "canonical-root",
+      severity: "high" as const,
+      damage: 30 as const,
+    };
+    original.adjudication = normalizeAttackAdjudication(original);
+    const variant: Attack = {
+      ...attack("variant", 2),
+      status: "landed",
+      rootDefectId: "judge-renamed-root",
+      severity: "critical",
+      damage: 50,
+      challengeRelationship: "affirm",
+      relatedAdjudicationId: original.adjudication.id,
+    };
+    variant.adjudication = normalizeAttackAdjudication(variant);
+    expect(bindAffirmedDefect(variant, [original])).toMatchObject({
+      rootDefectId: "canonical-root",
+      severity: "high",
+      adjudication: { canonicalDefectId: "canonical-root", severity: "high" },
+    });
+    expect(variant.rootDefectId).toBe("judge-renamed-root");
+    expect(
+      bindAffirmedDefect({ ...variant, targets: ["a"] }, [original]),
+    ).toBeDefined();
+    expect(
+      bindAffirmedDefect({ ...variant, targets: ["a"] }, [original])
+        .rootDefectId,
+    ).toBe("judge-renamed-root");
+  });
+
   it("matches renamed browser probes by normalized non-assert actions", () => {
     const prior = attack("round-two", 2);
     const challenge = attack("round-three", 3);

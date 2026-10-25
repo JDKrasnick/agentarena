@@ -3,4 +3,5 @@ dist/
 coverage/
 .agent-arena/
 .serena/
+.impeccable/hook.cache.json
 *.log

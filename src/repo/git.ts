@@ -371,6 +371,73 @@ export class WorktreeManager {
     );
   }
 
+  /** Replay accepted evidence from its own preimage, never a repair's test edits. */
+  async applyEvidencePatch(worktree: string, patchPath: string): Promise<void> {
+    const temporaryRoot = await mkdtemp(
+      path.join(os.tmpdir(), "agent-arena-evidence-index-"),
+    );
+    const indexPath = path.join(temporaryRoot, "index");
+    const indexed = async (args: string[]): Promise<Buffer> => {
+      const result = await execa("git", args, {
+        cwd: worktree,
+        env: { GIT_INDEX_FILE: indexPath },
+        encoding: "buffer",
+        stripFinalNewline: false,
+      });
+      return Buffer.from(result.stdout);
+    };
+    try {
+      // --numstat disables working-tree application. The temporary index starts
+      // from the full-index patch's original blobs, including target-owned tests.
+      await gitRaw(
+        this.repositoryRoot,
+        ["apply", "--numstat", `--build-fake-ancestor=${indexPath}`, patchPath],
+        worktree,
+      );
+      const ancestor = (await indexed(["write-tree"])).toString("utf8").trim();
+      await indexed(["apply", "--cached", "--whitespace=nowarn", patchPath]);
+      const deleted = (
+        await indexed([
+          "diff",
+          "--cached",
+          "--name-only",
+          "--diff-filter=D",
+          "-z",
+          ancestor,
+          "--",
+        ])
+      )
+        .toString("utf8")
+        .split("\0")
+        .filter(Boolean);
+      const written = (await indexed(["ls-files", "-z"]))
+        .toString("utf8")
+        .split("\0")
+        .filter(Boolean);
+      if (deleted.length)
+        for (const args of [
+          ["rm", "--force", "--ignore-unmatch", "--", ...deleted],
+          ["clean", "--force", "-d", "-x", "--", ...deleted],
+        ])
+          await gitRaw(
+            this.repositoryRoot,
+            ["--literal-pathspecs", ...args],
+            worktree,
+          );
+      // Git handles path safety, binary blobs, modes, and symlinks. Only the
+      // accepted overlay's postimages are copied; production stays untouched.
+      await indexed(["checkout-index", "--force", "--all"]);
+      if (written.length)
+        await gitRaw(
+          this.repositoryRoot,
+          ["--literal-pathspecs", "add", "--force", "--", ...written],
+          worktree,
+        );
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  }
+
   /**
    * Freeze the worktree's current tracked state as a Git tree. Unlike HEAD or
    * the mutable index, this remains a stable target-relative baseline even if

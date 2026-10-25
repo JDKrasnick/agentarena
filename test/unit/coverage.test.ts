@@ -17,6 +17,7 @@ import {
   requiredCoverageLanes,
 } from "../../src/confidence/assessment.js";
 import { healDefect, resolveRound } from "../../src/core/scoring.js";
+import { stableId } from "../../src/core/ids.js";
 import type {
   AgentInvocation,
   Attack,
@@ -306,6 +307,86 @@ describe("coverage assessment", () => {
       stage: "repair",
       result: "succeeded",
     });
+  });
+
+  it("counts a trusted failing final reproducer as completed evidence, preserving active damage", () => {
+    const state = makeRunState();
+    addLaneRecords(state);
+    state.attackInvocations[0]!.parseOutcome = "valid";
+    state.attackInvocations[0]!.attackCount = 1;
+    const attack: Attack = {
+      ...baseAttack(),
+      status: "landed",
+      rootDefectId: "unfixed-root",
+      severity: "high",
+      damage: 30,
+      damageActive: true,
+      evidenceProvenance: "mechanical",
+    };
+    state.attacks.push(attack);
+    state.contestants.b = contestant("b");
+    addRepairAttempts(state, "b", 1, ["succeeded"]);
+    state.contestants.b.finalHealth = 70;
+    state.contestants.b.checks.push(
+      { id: "final-required", kind: "required", status: "passed" },
+      {
+        id: `final-${stableId("case", attack.id, "visible")}`,
+        kind: "focused",
+        status: "failed",
+      },
+    );
+    const assessment = assessBattleCoverage(state);
+    expect(assessment.confidence).toBe("full_confidence");
+    expect(assessment.reasonCodes).toContain(
+      "final_reproducer_confirms_active_defect",
+    );
+    expect(state.contestants.b.finalHealth).toBe(70);
+    state.contestants.b.checks[1]!.status = "infrastructure_error";
+    expect(assessBattleCoverage(state).confidence).toBe("provisional");
+    state.contestants.b.checks.pop();
+    expect(assessBattleCoverage(state).confidence).toBe("provisional");
+  });
+
+  it("does not demand more repairs after the canonical allowance was consumed in an earlier round", () => {
+    const state = makeRunState();
+    addLaneRecords(state);
+    state.attackInvocations[2]!.parseOutcome = "valid";
+    state.attackInvocations[2]!.attackCount = 1;
+    state.attacks.push({
+      ...baseAttack(),
+      round: 2,
+      status: "landed",
+      rootDefectId: "exhausted",
+      severity: "high",
+      damage: 30,
+      evidenceProvenance: "mechanical",
+    });
+    state.contestants.b = contestant("b");
+    addRepairAttempts(state, "b", 1, ["succeeded", "succeeded", "succeeded"]);
+    const canonical = {
+      rootDefectId: "exhausted",
+      firstAttackId: "original",
+      baseSeverity: "high" as const,
+      currentMultiplier: 1 as const,
+      currentDamage: 30 as const,
+      evidenceHistory: [],
+      status: "active" as const,
+      repairAllowance: 3,
+      repairAttemptsUsed: 3,
+      regressionResets: 0,
+      repairAttemptIds: [1, 2, 3].map((index) =>
+        stableId("repair-attempt", state.runId, "1", "b", String(index)),
+      ),
+    };
+    state.contestants.b.healthLedger.canonicalDefects = [canonical];
+    expect(assessBattleCoverage(state).confidence).toBe("full_confidence");
+    expect(assessBattleCoverage(state).reasonCodes).toContain(
+      "repair_allowance_exhausted",
+    );
+    // A healed defect reopening gets a fresh allowance; old attempts cannot excuse a missing repair.
+    canonical.repairAttemptIds = [];
+    canonical.repairAttemptsUsed = 0;
+    expect(assessBattleCoverage(state).confidence).toBe("provisional");
   });
 
   it("records all three v2 repair attempts and leaves an unable judge repair unresolved", () => {

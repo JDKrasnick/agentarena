@@ -15,7 +15,7 @@ const fixtureAgent = fileURLToPath(
 describe("built CLI smoke flow", () => {
   beforeAll(async () => {
     await execa("npm", ["run", "build"], { cwd: projectRoot });
-  });
+  }, 120_000);
 
   it("prints retained paths and explicitly cleans them from the manifest", async () => {
     const repositoryRoot = await createSlugRepository();

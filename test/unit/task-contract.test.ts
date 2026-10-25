@@ -126,6 +126,9 @@ describe("run specification", () => {
     expect(prompt).toContain('"artifactId": "attack-overlay"');
     expect(prompt).toContain('"artifactId": "target-patch"');
     expect(prompt).toContain('"artifactId": "mechanical-diagnostic-1"');
+    expect(prompt).toContain("read-only file tools or shell commands");
+    expect(prompt).toContain("Do not modify evidence");
+    expect(prompt).not.toContain("Do not execute commands");
     expect(
       await readFile(
         path.join(root, ".agent-arena-judge-evidence/target-patch.diff"),
@@ -133,6 +136,102 @@ describe("run specification", () => {
       ),
     ).toBe("target patch\n");
   });
+
+  it.each([true, false, undefined])(
+    "keeps inaccessible evidence separate from oracle rejection (sufficient=%s)",
+    async (evidenceSufficient) => {
+      const root = await mkdtemp(path.join(os.tmpdir(), "arena-judge-access-"));
+      const runSpec = await buildRunSpec({
+        runId: "run-judge-access",
+        baseCommit: "b".repeat(40),
+        config: config(
+          root,
+          ["Normalize whitespace"],
+          [],
+          "Normalize whitespace",
+        ),
+        permissions,
+        repositoryRoot: root,
+        sourceDirectory: path.join(root, "snapshots"),
+      });
+      const attackPath = path.join(root, "attack.diff");
+      await writeFile(attackPath, "attack evidence\n");
+      const verifier = new CommandAttackVerifier("codex", {
+        executable: process.execPath,
+        args: [
+          "-e",
+          `const fs = require("node:fs");
+let prompt = "";
+process.stdin.on("data", chunk => { prompt += chunk; });
+process.stdin.on("end", () => {
+  fs.writeFileSync("captured-prompt.txt", prompt);
+  fs.writeFileSync(".agent-arena-verdict.json", JSON.stringify({
+    evidenceSufficient: ${String(evidenceSufficient)},
+    relevant: true, oracleSupported: true, oracleRationale: "Required source evidence unavailable",
+    rootDefectId: "whitespace", severity: "medium", rationale: "Judge evidence result"
+  }));
+});`,
+        ],
+      });
+      const assessment = verifier.assess({
+        attack: {
+          claim: "Whitespace is mishandled",
+          impact: "Wrong output",
+          oracle: {
+            expectedBehavior: "Normalize whitespace",
+            rationale: "Task",
+          },
+          assertionFingerprint: "whitespace",
+          patchPath: attackPath,
+        },
+        runSpec,
+        authorPassed: true,
+        targetFailed: true,
+        worktree: root,
+        promptPath: path.join(root, "judge.prompt.md"),
+        transcriptPrefix: path.join(root, "judge-attempt-1"),
+        timeoutMs: 2_000,
+        signal: new AbortController().signal,
+      });
+      if (evidenceSufficient)
+        await expect(assessment).resolves.toMatchObject({
+          oracleSupported: true,
+        });
+      else if (evidenceSufficient === false)
+        await expect(assessment).rejects.toThrow("Insufficient judge evidence");
+      else await expect(assessment).rejects.toThrow("evidenceSufficient");
+      const prompt = await readFile(
+        path.join(root, "captured-prompt.txt"),
+        "utf8",
+      );
+      expect(await readFile(path.join(root, "judge.prompt.md"), "utf8")).toBe(
+        prompt,
+      );
+      expect(
+        await readFile(path.join(root, "judge-attempt-1.prompt.md"), "utf8"),
+      ).toBe(prompt);
+      expect(prompt).toContain("read-only file tools or shell commands");
+      expect(prompt).toContain("Set evidenceSufficient to false");
+      expect(prompt).toContain(
+        "For independent claims, omit priorAdjudicationId",
+      );
+      expect(prompt).toContain(
+        'severity must be exactly "critical", "high", "medium", or "low"',
+      );
+      expect(prompt).toContain("Write that file before finishing");
+      expect(prompt).not.toContain("Do not edit it or execute commands");
+      expect(prompt).toContain(
+        "directly manufactures unsupported internal state",
+      );
+      expect(
+        await readFile(
+          path.join(root, ".agent-arena-judge-attack.diff"),
+          "utf8",
+        ),
+      ).toBe("attack evidence\n");
+      expect(prompt).toContain(".agent-arena-judge-attack.diff");
+    },
+  );
 
   it("records an exhausted primary-verifier provider failure for recovery", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "arena-judge-recovery-"));

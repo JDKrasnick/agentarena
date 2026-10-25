@@ -944,6 +944,237 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(evidence.state.adaptiveDecisions.at(-1)?.action).toBe("stop");
   }, 60_000);
 
+  it("verifies immutable attacks when a repair adds a different test at the same path", async () => {
+    const repositoryRoot = await createSlugRepository();
+    class CollidingRepairAdapter extends FreshEvidenceAdapter {
+      override async attack(input: AttackInput) {
+        const invocation = await super.attack(input);
+        await rm(path.join(input.worktree, "test/arena-uppercase.test.mjs"), {
+          force: true,
+        });
+        return invocation;
+      }
+      override async repair(input: RepairInput) {
+        const invocation = await super.repair(input);
+        await writeFile(
+          path.join(input.worktree, "test/arena-repeated-whitespace.test.mjs"),
+          "// Contestant-created regression using the accepted test's path.\n",
+        );
+        return invocation;
+      }
+    }
+    const outcome = await new Arena({
+      adapters: {
+        codex: new FreshEvidenceAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new CollidingRepairAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: new RuleBasedVerifier("codex"),
+    }).fight(
+      FightConfigSchema.parse({
+        ...duelConfig(repositoryRoot),
+        acceptanceCriteria: ["Collapse every run of whitespace to one hyphen"],
+        fixedRounds: true,
+        rounds: 1,
+        selectionEnabled: false,
+      }),
+    );
+    expect(outcome.state.status).toBe("complete");
+    expect(
+      outcome.state.attacks.some((attack) => attack.status === "landed"),
+    ).toBe(true);
+    expect(outcome.state.contestants.b?.healthEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "target_damage" }),
+        expect.objectContaining({ type: "heal" }),
+      ]),
+    );
+    expect(outcome.state.coverageAssessment?.confidence).toBe(
+      "full_confidence",
+    );
+    expect(outcome.state.warnings.join("\n")).not.toContain("with conflicts");
+  }, 60_000);
+
+  it("reopens a healed defect when an affirmed variant is renamed by the judge", async () => {
+    const repositoryRoot = await createSlugRepository();
+    const criterion =
+      "Collapse every run of whitespace to one hyphen, including U+0085";
+    class AffirmVariantAdapter extends FreshEvidenceAdapter {
+      private reviewBody = "";
+      override async repair(input: RepairInput) {
+        const invocation = await super.repair(input);
+        await writeFile(
+          path.join(input.worktree, "src/slug.mjs"),
+          'export function slug(value) { return value.trim().toLowerCase().replace(/\\s+/g, "-"); }\n',
+        );
+        return invocation;
+      }
+      override async implement(input: ImplementInput) {
+        const invocation = await super.implement(input);
+        if (this.id === "codex")
+          await writeFile(
+            path.join(input.worktree, "src/slug.mjs"),
+            'export function slug(value) { return value.trim().toLowerCase().replace(/[\\s\\u0085]+/g, "-"); }\n',
+          );
+        return invocation;
+      }
+      override async review(input: ReviewInput) {
+        const invocation = await super.review(input);
+        const submission = path.join(
+          input.worktree,
+          ".agent-arena-submission.json",
+        );
+        if (this.id === "claude")
+          await writeFile(
+            submission,
+            JSON.stringify({ version: 2, findings: [] }),
+          );
+        else if (input.round === 1)
+          this.reviewBody = await readFile(submission, "utf8");
+        else {
+          const body = JSON.parse(this.reviewBody) as {
+            findings: Array<{
+              observations: Array<{ statement: string }>;
+              trigger_sequence: string[];
+            }>;
+          };
+          body.findings[0]!.observations[0]!.statement =
+            "The repaired target still fails to normalize U+0085 whitespace.";
+          body.findings[0]!.trigger_sequence = [
+            "Call slug with U+0085 between words",
+          ];
+          await writeFile(submission, JSON.stringify(body));
+        }
+        return invocation;
+      }
+      override async attack(input: AttackInput) {
+        const invocation = await super.attack(input);
+        for (const name of [
+          "repeated-whitespace",
+          "uppercase",
+          "tab-whitespace",
+        ])
+          await rm(path.join(input.worktree, `test/arena-${name}.test.mjs`), {
+            force: true,
+          });
+        const submission = path.join(
+          input.worktree,
+          ".agent-arena-submission.json",
+        );
+        if (this.id === "claude") {
+          await writeFile(
+            submission,
+            JSON.stringify({ version: 2, sharedSupportPaths: [], attacks: [] }),
+          );
+          return invocation;
+        }
+        const testPath = `test/arena-variant-${String(input.round)}.test.mjs`;
+        const value = input.round === 1 ? "Alpha   Beta" : "Alpha\u0085Beta";
+        await writeFile(
+          path.join(input.worktree, testPath),
+          `import test from "node:test"; import assert from "node:assert/strict"; import {slug} from "../src/slug.mjs"; test("whitespace",()=>assert.equal(slug(${JSON.stringify(value)}),"alpha-beta"));\n`,
+        );
+        await writeFile(
+          submission,
+          JSON.stringify({
+            version: 2,
+            sharedSupportPaths: [],
+            attacks: [
+              {
+                rank: 1,
+                claim: "Required whitespace is not collapsed",
+                impact: "Wrong slug",
+                oracle: {
+                  expectedBehavior: criterion,
+                  rationale: "Explicit acceptance criterion",
+                },
+                proposedSeverity: "high",
+                confidence: 98,
+                focusedCommand: `node --test ${testPath}`,
+                paths: [testPath],
+                requiredCapabilities: [],
+              },
+            ],
+          }),
+        );
+        return invocation;
+      }
+    }
+    const rules = new RuleBasedVerifier("codex");
+    const outcome = await new Arena({
+      adapters: {
+        codex: new AffirmVariantAdapter({
+          id: "codex",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+        claude: new AffirmVariantAdapter({
+          id: "claude",
+          executable: process.execPath,
+          args: [fixtureAgent],
+        }),
+      },
+      verifier: {
+        id: "codex",
+        async assess(input) {
+          const verdict = await rules.assess(input);
+          const prior = input.priorAdjudications?.[0];
+          return prior
+            ? {
+                ...verdict,
+                rootDefectId: "judge-renamed-variant",
+                severity: "critical",
+                relationship: "affirm",
+                priorAdjudicationId: prior.adjudicationId,
+              }
+            : { ...verdict, rootDefectId: "whitespace-root", severity: "high" };
+        },
+      },
+    }).fight(
+      FightConfigSchema.parse({
+        ...duelConfig(repositoryRoot),
+        acceptanceCriteria: [criterion],
+        fixedRounds: true,
+        rounds: 2,
+        selectionEnabled: false,
+      }),
+    );
+    expect(outcome.state.status).toBe("complete");
+    expect(outcome.state.coverageAssessment?.confidence).toBe(
+      "full_confidence",
+    );
+    expect(outcome.state.contestants.b?.finalHealth).toBe(70);
+    expect(outcome.state.contestants.b?.rounds[0]?.endingHealth).toBe(100);
+    expect(
+      outcome.state.contestants.b?.checks.some(
+        (check) => check.id.startsWith("final-") && check.status === "failed",
+      ),
+    ).toBe(true);
+    expect(
+      outcome.state.contestants.b?.healthLedger.canonicalDefects,
+    ).toHaveLength(1);
+    expect(
+      outcome.state.contestants.b?.healthLedger.canonicalDefects?.[0],
+    ).toMatchObject({
+      rootDefectId: "whitespace-root",
+      baseSeverity: "high",
+      status: "active",
+      currentDamage: 30,
+    });
+    expect(
+      outcome.state.attacks
+        .filter((attack) => attack.status === "landed")
+        .map((attack) => attack.rootDefectId),
+    ).toEqual(["whitespace-root", "whitespace-root"]);
+  }, 90_000);
+
   it("uses a fresh anonymized judge comparison only to recommend a non-discriminating patch", async () => {
     const repositoryRoot = await createSlugRepository();
     const config = FightConfigSchema.parse({
@@ -998,6 +1229,24 @@ describe("fake-adapter fight on a mocked real issue", () => {
     const input = compare.mock.calls[0]![0];
     expect(input).not.toHaveProperty("runSpec");
     expect(input.taskContract.task).toBe("Normalize slug whitespace.");
+    expect(
+      input.taskSources.some((source) =>
+        source.content.includes("Normalize slug whitespace."),
+      ),
+    ).toBe(true);
+    const savedInput = JSON.parse(
+      await readFile(
+        path.join(
+          config.artifactRoot,
+          outcome.state.runId,
+          "quality/input.json",
+        ),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(savedInput.taskSources).toEqual(input.taskSources);
+    for (const key of ["observer", "signal", "worktree", "transcriptPrefix"])
+      expect(savedInput).not.toHaveProperty(key);
     expect(Object.keys(input.finalValidation).sort()).toEqual([
       "patch_a",
       "patch_b",
@@ -3604,7 +3853,7 @@ describe("fake-adapter fight on a mocked real issue", () => {
     expect(
       (await execa("node", ["--test"], { cwd: repositoryRoot })).exitCode,
     ).toBe(0);
-  });
+  }, 120_000);
 
   it("records judge-unable verifier infrastructure without an extra round", async () => {
     const repositoryRoot = await createSlugRepository();

@@ -19,6 +19,11 @@ new-run quality comparison is a fresh post-validation invocation of the same
 configured judge role, used for an equal-HP, equal-active-damage competitive
 tie or to provide an independent recommendation for a non-discriminating duel
 or catch-up.
+The quality bundle includes digest-checked frozen task-source contents, so the
+judge can evaluate requirements without repository inspection. That judge may
+use a file-writing tool solely to create its specified verdict artifact.
+An unavailable or
+inconclusive comparison is reported as such rather than as an equivalence finding.
 
 Champion and patch-recommendation language is conditional on coverage. Duel
 and catch-up require both attack directions in every executed round; siege
@@ -248,12 +253,18 @@ assertion identity and normalized browser actions. The existing neutral judge
 receives up to six same-target decisions and classifies the new evidence as
 independent, affirming, overturning, or unresolved. Affirmations do not repeat
 damage or recoil, but each affirmed reproducer joins the canonical defect's
-repair and final-verification set. If an affirmed variant still fails after the
+repair and final-verification set. The referenced decision fixes its canonical
+identity and severity even if the judge names the variant differently.
+If an affirmed variant still fails after the
 defect was healed, Arena reactivates the existing canonical damage without
 adding new damage. Overturns preserve both immutable decisions and append score
 corrections; unresolved conflicts remain score-neutral and make coverage
 provisional. A browser pass against a changed target patch is repair evidence,
 not proof that the earlier observation was wrong.
+
+A trusted final reproducer that still fails is completed evidence of an active
+defect and retains its damage; it is not a coverage gap. Missing reproducers,
+infrastructure failures, and unavailable repair judgments remain coverage gaps.
 
 Complete adjudications and rationale remain local. Agent packets are
 deterministic, digest-linked role-safe projections targeting 8 KiB with a 24
@@ -868,7 +879,12 @@ That differential is necessary but not sufficient: it does not prove that the
 attacker's expected output is correct. Each attack states the expected behavior
 and why the frozen task or source text supports it. A neutral attack verifier
 reads that text and decides whether it clearly supports the claim; the presence
-of a source ID is never sufficient by itself. Unsupported or ambiguous
+of a source ID is never sufficient by itself. Judges may use read-only file
+tools or shell commands only to read listed immutable evidence paths, and may
+write only their specified verdict. A primary judgment must explicitly state
+whether its evidence is sufficient. Inaccessible or insufficient evidence
+receives the targeted retry and score-neutral fallback/coverage handling,
+rather than an oracle rejection. Unsupported or ambiguous
 expectations are `unproven`, deal no target damage, and count as a miss.
 
 When the same stable focused reproducer fails on both contestant patches and
@@ -924,6 +940,14 @@ For each attack, it must:
 * Or concede the issue.
 
 Agents should heal damage for acknowledging and repairing valid defects. The system should not reward stubborn rhetorical defense.
+
+Repair and final verification reconstruct each accepted test overlay from its
+original Git preimage and replay its immutable file postimages over the
+candidate. Candidate test files with the same paths cannot weaken the accepted
+assertions or turn an otherwise valid repair into an add/add merge failure.
+This replay changes only accepted evidence paths in disposable verification
+worktrees; production files and the captured candidate and attack patches stay
+unchanged.
 
 Every canonical Critical/High defect receives three total repair attempts across
 the run; Medium/Low receives two. Each non-infrastructure terminal invocation
@@ -1202,7 +1226,9 @@ names, and a supported transient definition without literal or
 environment-backed credential material. Every frozen-policy Codex child ignores
 the ambient user configuration, disables Apps, and receives only the validated
 selected definitions, preserving an explicit empty tool allowlist as zero
-allowed tools. Because Codex MCP calls otherwise request interactive
+allowed tools. Non-MCP Codex sessions use explicit `workspace-write` sandboxing
+with approval policy `never` for unattended execution; they do not depend on
+the removed `--full-auto` shorthand. Because Codex MCP calls request interactive
 approval and fail closed in non-interactive `exec` sessions, a child with an
 approved selected server uses Codex's explicit approval-and-sandbox bypass. This
 does not widen the selected MCP allowlist and remains covered by the required

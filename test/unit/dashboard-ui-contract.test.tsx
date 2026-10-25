@@ -44,6 +44,27 @@ function findByClassName(
 }
 
 describe("dashboard UI contracts", () => {
+  it("does not imply a patch recommendation from an arena champion alone", () => {
+    const state = initialDashboardState();
+    state.status = "complete";
+    state.result = {
+      roundsCompleted: 1,
+      championId: "b",
+      outcomeKind: "winner",
+      coverageConfidence: "full_confidence",
+    };
+    const markup = renderToStaticMarkup(
+      <ResultScreen
+        state={state}
+        onReview={() => undefined}
+        onOpenFighter={() => undefined}
+      />,
+    );
+    expect(markup).toContain("Fighter B won the arena.");
+    expect(markup).toContain("No automatic patch recommendation is available.");
+    expect(markup).not.toContain("The recommendation is evidence-backed");
+  });
+
   it("opens round review except when a pre-review forfeit points to eligibility", () => {
     const state = initialDashboardState();
     state.status = "complete";

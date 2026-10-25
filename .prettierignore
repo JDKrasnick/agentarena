@@ -3,6 +3,7 @@ dist/
 coverage/
 .agent-arena/
 .serena/
+.impeccable/hook.cache.json
 PRODUCT.md
 docs/MVP.md
 docs/MVP_IMPLEMENTATION.md
