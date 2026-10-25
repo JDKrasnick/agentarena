@@ -1,60 +1,76 @@
-# Agent Arena
+<p align="center">
+  <img src="docs/assets/agent-arena-banner.png" alt="Agent Arena — two terminal-armored contenders face off in a circuit-board arena" width="100%" />
+</p>
 
-**Make your coding agents fight for the merge.**
+<p align="center">
+  <strong>Two agents. Different perspectives. A patch backed by evidence.</strong><br />
+  Automate the implement → review → repair loop, then choose what to merge.
+</p>
 
-Agent Arena is a local CLI and TypeScript library that gives two coding agents
-the same task, lets them challenge each other's implementations, and hands you
-the patches, tests, and evidence to decide what to merge.
+<p align="center">
+  <a href="https://github.com/JDKrasnick/agentarena/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/JDKrasnick/agentarena/ci.yml?branch=main&amp;style=flat-square&amp;label=CI" alt="CI status on main" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-7dd3fc?style=flat-square" alt="License: MIT" /></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22%2B-86efac?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js 22 or newer" /></a>
+  <a href="src/index.ts"><img src="https://img.shields.io/badge/TypeScript-3178c6?style=flat-square&amp;logo=typescript&amp;logoColor=white" alt="Built with TypeScript" /></a>
+</p>
 
-[Quick start](#quick-start) · [How it works](#how-it-works) ·
-[Battle modes](#battle-modes) · [Review and handoff](#review-and-handoff) ·
-[Documentation](#documentation)
+<p align="center">
+  <a href="#quick-start"><strong>Quick start</strong></a> ·
+  <a href="#why-i-built-this">Why I built this</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#review-and-handoff">Handoff</a> ·
+  <a href="#documentation">Docs</a>
+</p>
+
+<p align="center">
+  Works with <strong>Codex CLI</strong> · <strong>Claude Code</strong> · <strong>Gemini CLI</strong><br />
+  <sub>Local execution · Separate Git worktrees · Bring your authenticated agent CLIs</sub>
+</p>
+
+---
+
+Agent Arena gives two coding agents the same repository task, lets them challenge
+each other's implementations with reproducible evidence, and gives both a chance
+to repair their patches. You get the final implementations, regression tests,
+and an explained recommendation when the evidence supports one.
+
+```bash
+agent-arena fight "fix the refresh-token race condition" \
+  --agents codex,claude --test "npm test"
+```
 
 ## Why I built this
 
-I kept repeating the same workflow: ask an agent to implement a change, ask
-another to review it, send the findings back for fixes, rerun checks, and decide
-which version to keep. Using different agents gave me different perspectives,
-but I was doing the coordination myself—moving context between sessions,
-checking claims, and keeping track of what had actually been tested.
+I kept doing the same thing: ask one agent to implement a change, send it to
+another for review, bring the findings back for fixes, rerun checks, and decide
+which version to keep. Different agents gave me different perspectives. I was
+still doing all the coordination—moving context around, checking claims, and
+remembering what had actually been tested.
 
-Agent Arena automates that implement–review–repair pipeline. Two agents work
-independently, inspect each other's solutions, and try to turn their concerns
-into reproducible failures. Each gets a chance to repair its patch before the
-final comparison. The goal is to make those different perspectives useful and
-choose the strongest implementation the available evidence supports.
+Agent Arena automates that pipeline. The goal is to get stronger implementations
+from independent approaches and adversarial review, then pick the best one the
+evidence supports. The handoff is part of the product: **what changed, what broke,
+what was repaired, what passed, and what still needs attention**. I want a patch
+I can review and evidence I can trace.
 
-The handoff matters as much as the competition: what changed, what broke, what
-was repaired, which checks ran, and what still needs human attention. I want to
-finish with a patch I can review and a record I can follow back to the evidence.
+## What makes it useful
 
-## What you get
-
-- **Independent implementations** in separate Git worktrees, using Codex CLI,
-  Claude Code, or Gemini CLI. Same-provider model comparisons are supported too.
-- **Adversarial review and repair**, with executable attacks and regression
-  checks carried through final validation.
-- **An explained result**, including health, accepted defects, repairs, and an
-  independent patch recommendation when the evidence supports one.
-- **A reviewable handoff** with final patches, a check matrix, logs, a clickable
-  HTML evidence dossier, and a deterministic visual replay.
-- **A live battle view** in a dedicated desktop window, with terminal and plain
-  output modes for other workflows.
-
-Surviving the arena is additional evidence, not a correctness guarantee. The
-result can be a winner, draw, non-discriminating comparison, or inconclusive
-run. You review and explicitly accept the exact patch before it is applied.
+| Capability                     | What it does                                                                                                                        |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **⚔️ Independent approaches**  | Two implementations from the same frozen task and base commit, each in a separate Git worktree.                                     |
+| **🔎 Review with evidence**    | Agents turn concerns into executable attacks. Arena checks reproducibility and whether the expected behavior follows from the task. |
+| **🛠️ A chance to repair**      | Accepted failures go back to the contestants. Required checks, active reproducers, and healed-defect regressions run again.         |
+| **⚖️ An explained comparison** | Defects and repairs drive the health ledger. An identity-blind judge evaluates semantic validity and can compare patch quality.     |
+| **📺 Watch the fight**         | A live desktop observatory, terminal mode, recorded-round replay, and six local themes.                                             |
+| **📦 A usable handoff**        | Final patches, a check matrix, linked logs, an HTML evidence dossier, and explicit human acceptance before apply.                   |
 
 ## Quick start
 
-### Requirements
+**You need:** macOS or Linux, Node.js 22+, Git, and installed, authenticated CLIs
+for your selected providers. Use a clean target repository with a passing test
+command. The current adapters are Codex CLI, Claude Code, and Gemini CLI.
 
-- macOS or Linux, Node.js 22 or newer, and Git.
-- Installed and authenticated coding-agent CLIs for the providers you select.
-  Available adapters are Codex CLI, Claude Code, and Gemini CLI.
-- A clean local Git repository with a passing automated test command.
-
-### Install from source
+### 1. Install from source
 
 ```bash
 git clone https://github.com/JDKrasnick/agentarena.git
@@ -64,132 +80,21 @@ npm run build
 npm link
 ```
 
-Then run a fight **from the repository you want to change**:
+### 2. Run a fight in your repository
 
 ```bash
+cd /path/to/your/repository
 agent-arena fight "fix repeated whitespace in generated slugs" \
   --agents codex,claude \
   --permissions confirm \
   --test "npm test"
 ```
 
-Arena presents a permission plan before starting battle agents. Native agent
-and test processes run with your OS account's permissions; Git worktrees isolate
-patches but are not a hostile-code sandbox. Use a sanitized account or an external
-container for repositories that need stronger isolation. See the
-[security model](docs/SECURITY.md).
+Arena presents a permission plan before starting battle agents. A dedicated
+Electron window opens by default; use `--no-window` for terminal output, or
+`--display plain` for logs and automation.
 
-Try the displays with mock data and no provider credentials:
-
-```bash
-npm run demo:dashboard  # Terminal
-npm run demo:window     # Desktop window
-```
-
-## How it works
-
-```text
-Task + frozen requirements
-          │
-          ├── Agent A → implementation A
-          └── Agent B → implementation B
-                         │
-                  Validate both patches
-                         │
-            Review → attack → verify → repair
-                         │
-                  Final regression checks
-                         │
-           Compare → evidence handoff → human review
-```
-
-1. **Freeze the task.** Arena snapshots the base commit, requirements,
-   repository instructions, and approved capabilities into an immutable run
-   specification. Issue, PR, and local spec references can supply context.
-2. **Implement independently.** Each contestant gets a separate worktree and
-   the same task contract. Arena captures and validates both patches.
-3. **Review and attack.** Contestants inspect the opposing patch and submit up
-   to three ranked attacks per round. Mechanical confirmation requires an
-   attack to pass twice on its author and fail twice on its target. A fresh,
-   identity-blind judge checks whether the claimed behavior follows from the
-   frozen requirements; bounded fallback judgments are labeled separately.
-4. **Repair and recheck.** Contestants receive accepted evidence and bounded
-   repair opportunities. Arena reruns required checks, active reproducers, and
-   regression tests for previously healed defects.
-5. **Compare and hand off.** Final validation and recorded evidence determine
-   the result. Reports retain eligible patches and the reasoning behind
-   any recommendation.
-
-Fights run one to five task-scaled attack–repair rounds. `--effort auto` is the
-default; an explicit effort tier pins a profile. `--rounds 1..5` selects an exact
-count with medium timings and cannot be combined with `--effort auto`.
-
-### Evidence and scoring
-
-Both contestants start at 100 HP. Confirmed Critical, High, Medium, and Low
-defects deal 50, 30, 15, and 5 HP respectively. Missed attacks incur rank-based
-recoil of 5, 10, or 15 HP. A distinct defect scores once; a verified repair heals
-its active damage, while recoil remains permanent.
-
-Competitive results follow the health ledger. A fresh identity-blind quality
-comparison may break a tie when HP and active defect damage are both equal.
-For a fully covered duel or catch-up, when both final patches pass required
-checks, have equal active defect damage, and no still-valid contestant attack
-distinguishes them, Arena reports a **non-discriminating** result. A separate
-quality comparison may still recommend an implementation without declaring a
-champion.
-
-Incomplete required attack coverage leaves the result provisional and blocks
-ordinary review and apply. The user must resolve the exact coverage assessment
-as reduced-confidence or inconclusive. See the
-[full evidence and outcome rules](docs/MVP.md#product-rules).
-
-## Battle modes
-
-| Mode         | Starting point                                          | Purpose                                                                                      |
-| ------------ | ------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| **Duel**     | Two independent implementations of one task             | Compare approaches and challenge both patches.                                               |
-| **Catch-up** | A frozen PR versus a fresh implementation from its base | Test whether a challenger can produce a stronger solution without seeing the incumbent diff. |
-| **Siege**    | A frozen PR with a defender and a test-only attacker    | Find defects and repair the defender's patch. Only the defender's patch is deliverable.      |
-
-The quick-start command runs a duel. To compare models from the same provider:
-
-```bash
-agent-arena fight "fix repeated whitespace in generated slugs" \
-  --agents codex,codex \
-  --models model-a,model-b \
-  --test "npm test"
-```
-
-Replace `model-a` and `model-b` with IDs supported by your provider CLI. Model
-selection follows contestant order; omitting `--models` uses each CLI's
-configured default.
-
-For an existing PR:
-
-```bash
-# Catch-up: recreate the solution independently, then compare.
-agent-arena fight "fix issue #241" --pr 87 --incumbent-from-pr \
-  --incumbent claude --challenger codex --test "npm test"
-
-# Siege: attack and repair the existing patch.
-agent-arena defend --pr 87 \
-  --attacker codex --defender claude --test "npm test"
-```
-
-`--incumbent` can be omitted only when PR attribution is confirmed. On its own,
-`--pr` supplies requirements context; use `--base-from-pr 87` explicitly when
-both contestants should start from that PR's head.
-
-## Review and handoff
-
-Each run lives under `.agent-arena/runs/<run-id>/`. Start with `BATTLE.md` or
-the clickable `BATTLE.html` dossier for the outcome, check matrix, defects,
-repairs, and linked evidence. Final patches, `result.json`, source snapshots,
-prompts, redacted transcripts, and the event history remain available for
-inspection. `BATTLE.svg` provides a deterministic share image.
-
-Review, inspect, and explicitly accept an available recommendation:
+### 3. Review the result
 
 ```bash
 agent-arena review <run-id>
@@ -197,31 +102,131 @@ agent-arena inspect <run-id> --agent a --view diff
 agent-arena accept <run-id> --selection recommended --apply
 ```
 
-Patch commands use contestant IDs `a` and `b`, as shown by `review`, rather than
-provider names. If there is no recommendation, inspect the eligible choices and
-select one with `agent-arena accept <run-id> --agent <contestant>`. Acceptance binds to the
-exact patch digest and base commit. `agent-arena apply <run-id>` applies the
-accepted patch after clean-tree and apply checks, without committing it.
+Patch commands use contestant IDs `a` and `b`, as shown by `review`. If there is
+no recommendation, inspect the eligible choices and select one explicitly with
+`agent-arena accept <run-id> --agent <contestant>`.
+
+> [!NOTE]
+> Try the interface without provider credentials: `npm run demo:window` for the
+> desktop observatory or `npm run demo:dashboard` for the terminal.
+
+> [!IMPORTANT]
+> Agent code and tests run with your OS account's permissions. Git worktrees
+> isolate patches; they are not a hostile-code sandbox. Use a sanitized account
+> or external container when stronger isolation is needed. [Security model →](docs/SECURITY.md)
+
+## How it works
+
+```mermaid
+flowchart LR
+    Task[Task + frozen requirements] --> A[Agent A implements]
+    Task --> B[Agent B implements]
+    A --> Review[Review + verify attacks]
+    B --> Review
+    Review --> Repair[Repair + regression checks]
+    Repair --> Handoff[Compare + evidence handoff]
+```
+
+Fights run **one to five attack–repair rounds**, scaled to the task. Each agent
+can submit up to three ranked attacks per round. Mechanical confirmation
+requires an attack to pass twice on its author and fail twice on its target.
+The judge checks claims against frozen requirements; fallback judgments are
+labeled separately from mechanical evidence.
+
+Surviving the arena adds evidence, not a correctness guarantee. A run can finish
+with a winner, a draw, a non-discriminating comparison, or an inconclusive result.
+Arena preserves uncertainty when the evidence cannot justify a winner.
+
+<details>
+<summary><strong>Scoring, coverage, and quality recommendations</strong></summary>
+
+Both contestants start at 100 HP. Confirmed Critical, High, Medium, and Low
+defects deal 50, 30, 15, and 5 HP. Missed attacks incur rank-based recoil of 5,
+10, or 15 HP. A distinct defect scores once; a verified repair heals its active
+damage, while recoil remains permanent.
+
+Competitive results follow the health ledger. A fresh identity-blind quality
+comparison may break a tie when HP and active defect damage are both equal.
+For a fully covered duel or catch-up, when both final patches pass required
+checks, have equal active defect damage, and no still-valid contestant attack
+distinguishes them, Arena reports a **non-discriminating** result. A separate
+quality comparison may recommend an implementation without declaring a champion.
+
+Incomplete required attack coverage leaves the result provisional and blocks
+ordinary review and apply. The user must resolve the exact coverage assessment
+as reduced-confidence or inconclusive. See the [full rules](docs/MVP.md#product-rules).
+
+</details>
+
+## Battle modes
+
+| Mode         | Start with                                            | Use it to                                                                                  |
+| ------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| **Duel**     | A task and two fresh implementations                  | Compare independent approaches and challenge both patches.                                 |
+| **Catch-up** | An existing PR and a challenger working from its base | See whether another approach can improve on the incumbent without seeing its diff.         |
+| **Siege**    | An existing PR, a defender, and a test-only attacker  | Find and repair defects in the defender's patch. Only the defender's patch is deliverable. |
+
+<details>
+<summary><strong>Commands for PR battles and model comparisons</strong></summary>
+
+```bash
+# Catch-up
+agent-arena fight "fix issue #241" --pr 87 --incumbent-from-pr \
+  --incumbent claude --challenger codex --test "npm test"
+
+# Siege
+agent-arena defend --pr 87 \
+  --attacker codex --defender claude --test "npm test"
+
+# Same provider, different models: replace these with supported model IDs.
+agent-arena fight "fix issue #241" \
+  --agents codex,codex --models model-a,model-b --test "npm test"
+```
+
+Models follow contestant order; omitting `--models` uses each CLI's configured
+default. `--incumbent` can be omitted only when PR attribution is confirmed.
+On its own, `--pr` supplies requirements context. Use `--base-from-pr 87`
+explicitly when both contestants should start from that PR's head.
+
+</details>
+
+## Review and handoff
+
+Every run saves its evidence under `.agent-arena/runs/<run-id>/`:
+
+| Artifact                     | What it gives you                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------- |
+| **`BATTLE.html`**            | A clickable evidence dossier with results, checks, defects, repairs, and linked logs. |
+| **`BATTLE.md`**              | The text replay and review handoff.                                                   |
+| **Final patches**            | The exact implementations available for review and acceptance.                        |
+| **`BATTLE.svg`**             | A deterministic visual replay to share.                                               |
+| **Run data and transcripts** | Source snapshots, prompts, redacted output, and event history for deeper inspection.  |
+
+Acceptance binds to the exact patch digest and base commit. Applying an accepted
+patch checks the clean tree and patch applicability, without committing it.
 Non-interactive acceptance requires the full displayed `--confirm-sha256`.
 
-Acceptance does not authorize a commit, push, PR, or merge. Optional GitHub
-delivery is separately authorized and disabled by default; see
-[review and delivery security](docs/SECURITY.md).
+GitHub delivery is **separately authorized and disabled by default**. Accepting
+a patch does not authorize a commit, push, PR, or merge.
 
-Interrupted runs can resume from a sealed boundary:
+<details>
+<summary><strong>Resume and worktree cleanup</strong></summary>
 
 ```bash
 agent-arena resume <run-id> --display console
+agent-arena cleanup-worktrees <run-id>
 ```
 
-Material runtime drift requires approval bound to the displayed report hash via
-`--approve-drift <report-sha256>`. For debugging, `fight --keep-worktrees`
-retains successfully created worktrees; `agent-arena cleanup-worktrees <run-id>`
-removes them afterward.
+Resume continues from a sealed boundary. Material runtime drift requires
+approval bound to the displayed report hash via `--approve-drift <report-sha256>`.
+Use `fight --keep-worktrees` to retain successfully created worktrees for debugging,
+then clean them up with the command above.
 
-## Configuration and live view
+</details>
 
-An optional `agent-arena.yaml` makes settings repeatable:
+## Configuration
+
+Save repeatable settings in `agent-arena.yaml`. Explicit CLI flags override YAML.
 
 ```yaml
 test: npm test
@@ -232,48 +237,42 @@ effort: auto
 permissions:
   default: confirm
   deny: [production_credentials, production_deploy]
-review:
-  required_for_apply: true
 delivery:
   enabled: false
   merge_enabled: false
 ```
 
-Explicit CLI flags override YAML. `bootstrap: auto` selects a locked dependency
-install. The [configuration reference](docs/MVP.md#configuration) covers model
-selection, sources, limits, and an optional integration profile.
+`bootstrap: auto` selects a locked dependency install. `effort: auto` scales
+rounds to the task; `--rounds 1..5` requests an exact count with medium timings
+and cannot be combined with explicit `--effort auto`.
 
-MCP readiness and authentication checks run before battle agents start. Arena
-displays the final policy and excludes failed servers. `--review-mcp` enables
-interactive per-server review and provider-managed authentication retries.
+MCP readiness checks run before battle agents start. Arena shows the final
+policy and excludes failed servers; `--review-mcp` enables per-server review
+and provider-managed authentication retries.
 
-`fight` and `defend` open the live React observatory in a dedicated Electron
-window. Use `--no-window` for an interactive terminal display or plain output
-when redirected; `--display window|terminal|plain` selects a mode explicitly.
-
-The rich displays show contestant output, checks, rounds, and evidence. In the
-desktop window, select a fighter to inspect its workstream or a completed round
-to replay recorded state. Six local themes are available. Cancellation and
-one-time contestant steering are supported; applied steering marks the result
-**Assisted — not competitively comparable**.
-
-### Chat and IDE integration
-
-The library exports typed operations for hosts that present review in chat:
-`reviewRun`, `inspectPatch`, `recordReviewDecision`, and `applyAcceptedPatch`.
-Delivery has separate planning, decision, execution, and status operations.
-The host maps authenticated user actions to strict schemas; the core does not
-parse conversational approval or store raw chat text or attestation tokens.
+See the [configuration reference](docs/MVP.md#configuration) for sources,
+models, limits, and integration profiles.
 
 ## Documentation
 
-| Guide                                      | Contents                                                           |
-| ------------------------------------------ | ------------------------------------------------------------------ |
-| [Product](PRODUCT.md)                      | Motivation, workflow, architecture, and product behavior.          |
-| [MVP specification](docs/MVP.md)           | Scope, evidence rules, configuration, and failure behavior.        |
-| [Artifact reference](docs/ARTIFACTS.md)    | Run files, immutable evidence, review records, and delivery state. |
-| [Security](docs/SECURITY.md)               | Execution boundaries and review/delivery authorization.            |
-| [Live validation](docs/LIVE_VALIDATION.md) | Manual release checks using real providers.                        |
+|                                            |                                                             |
+| ------------------------------------------ | ----------------------------------------------------------- |
+| [Product](PRODUCT.md)                      | Product behavior, architecture, and design direction.       |
+| [MVP specification](docs/MVP.md)           | Scope, evidence rules, configuration, and failure behavior. |
+| [Artifacts](docs/ARTIFACTS.md)             | Immutable run evidence and post-fight records.              |
+| [Security](docs/SECURITY.md)               | Execution boundaries and review/delivery authorization.     |
+| [Live validation](docs/LIVE_VALIDATION.md) | Manual release checks using real providers.                 |
+
+<details>
+<summary><strong>Embedding Arena in a chat or IDE host</strong></summary>
+
+The TypeScript library exports `reviewRun`, `inspectPatch`,
+`recordReviewDecision`, and `applyAcceptedPatch`. Delivery has separate planning,
+decision, execution, and status operations. The host maps authenticated user
+actions to strict schemas; the core does not parse conversational approval or
+store raw chat text or attestation tokens.
+
+</details>
 
 ## Development
 
@@ -286,12 +285,16 @@ npm test
 npm run build
 ```
 
-For focused checks, use `test:unit`, `test:integration`, or `test:smoke`.
-Integration and smoke tests use temporary repositories, fake provider
-executables, and controlled check transitions. CI runs without network or paid
-provider sessions. Live checks are manual; `npm run test:live` skips unless
-`AGENT_ARENA_LIVE=1` is set.
+Focused checks: `test:unit`, `test:integration`, and `test:smoke`. CI uses fake
+providers and temporary repositories, without network or paid provider sessions.
+Live checks are manual; `npm run test:live` skips unless `AGENT_ARENA_LIVE=1`.
 
-## License
+Found a bug or have an idea? [Open an issue](https://github.com/JDKrasnick/agentarena/issues).
+For a change, include the problem, approach, and validation in your pull request.
 
-[MIT](LICENSE)
+---
+
+<p align="center">
+  Built for the implement–review loop. Made to leave evidence.<br />
+  <a href="LICENSE">MIT licensed</a>
+</p>
